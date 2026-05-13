@@ -1,4 +1,4 @@
-[🏠 Index](../README.md) | [← AI Strategy](README.md)
+[🏠 Index](../README.md)
 
 # System Context Document
 

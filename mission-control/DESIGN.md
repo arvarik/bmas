@@ -1,4 +1,4 @@
-[🏠 Index](../README.md) | [← Mission Control](06_mission_control_web_ui.md)
+[🏠 Index](../README.md) | [📋 Context](../docs/CONTEXT.md)
 
 # Mission Control — Design System
 
