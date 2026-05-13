@@ -1,0 +1,70 @@
+# ─────────────────────────────────────────────────────────────────────
+# bMAS — Blackboard Multi-Agent System
+# Root .gitignore
+# ─────────────────────────────────────────────────────────────────────
+
+# ── Environment & Secrets ──────────────────────────────────────────
+.env
+.env.*
+*.pem
+
+# ── Python ─────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+venv/
+*.egg
+
+# ── Node / Next.js ─────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+build/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+*.tsbuildinfo
+next-env.d.ts
+.vercel
+
+# ── Docker (compose overrides, volumes) ────────────────────────────
+docker-compose.override.yml
+
+# ── Redis (dump files) ─────────────────────────────────────────────
+dump.rdb
+appendonly.aof
+redis/data/
+
+# ── LiteLLM (runtime data) ────────────────────────────────────────
+litellm/data/
+
+# ── Triage (model cache) ──────────────────────────────────────────
+triage/data/
+triage/cache/
+
+# ── OS / Editor ────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# ── Debug Logs ─────────────────────────────────────────────────────
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ── Coverage & Testing ────────────────────────────────────────────
+coverage/
+.nyc_output/
+.pytest_cache/
+htmlcov/
