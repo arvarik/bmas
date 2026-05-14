@@ -1,19 +1,23 @@
 [🏠 Index](../README.md)
 
-# System Context Document
+# Stigmergic — System Context Document
 
 > [!ABSTRACT] Purpose
-> This document is the **comprehensive reference guide** for any human or AI agent working on the bMAS (Blackboard Multi-Agent System) project. It provides the full hardware inventory, network topology, service map, software architecture, and Mission Control UI context needed to understand, debug, or extend the system.
+> This document is the **comprehensive reference guide** for any human or AI agent working on **Stigmergic** — a distributed AI swarm built on the Blackboard Multi-Agent System (bMAS) architecture. It provides the full hardware inventory, network topology, service map, software architecture, and Mission Control UI context needed to understand, debug, or extend the system.
 >
-> Read this document first before working on any bMAS component.
+> Read this document first before working on any Stigmergic component.
 
 ---
 
 ## 1. Project Overview
 
-### What Is bMAS?
+### What Is Stigmergic?
 
-bMAS (Blackboard Multi-Agent System) is a **distributed AI swarm** running on a home lab Proxmox cluster. It coordinates multiple LLM-powered agents to decompose, execute, and audit complex tasks through a structured debate-and-consensus workflow.
+**Stigmergic** is a **distributed AI swarm** running on a home lab Proxmox cluster, built on the Blackboard Multi-Agent System (bMAS) architecture. It coordinates multiple LLM-powered agents to decompose, execute, and audit complex tasks through a structured debate-and-consensus workflow.
+
+> *The name comes from [stigmergy](https://en.wikipedia.org/wiki/Stigmergy) — the biological mechanism by which organisms coordinate through shared environmental signals rather than direct communication. In Stigmergic, the Redis blackboard serves this role: agents read from and write to a shared state store, enabling emergent coordination without point-to-point messaging.*
+>
+> *Internal code, Redis key prefixes, Docker containers, and systemd services use the `bmas` shorthand throughout.*
 
 The system is designed around three principles:
 1. **Cost optimization** — Route tasks by complexity. Simple tasks run on local 4B models at $0. Complex tasks escalate to cloud Gemini Pro only when necessary.

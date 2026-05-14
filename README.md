@@ -1,10 +1,12 @@
-# bMAS — Blackboard Multi-Agent System
+# Stigmergic
 
-A **distributed AI swarm** running on a home lab Proxmox cluster. bMAS coordinates multiple LLM-powered agents to decompose, execute, and audit complex tasks through a structured debate-and-consensus workflow.
+**A distributed AI swarm built on the Blackboard Multi-Agent System (bMAS) architecture.** Stigmergic coordinates multiple LLM-powered agents across a home lab Proxmox cluster to decompose, execute, and audit complex tasks through a structured debate-and-consensus workflow.
+
+> *Named after [stigmergy](https://en.wikipedia.org/wiki/Stigmergy) — the mechanism by which individual agents coordinate through shared environmental signals (the blackboard) rather than direct communication.*
 
 ## Architecture
 
-![bMAS AI Strategy Topology](docs/ai-topology/ai-strategy-topology.png)
+![Stigmergic Architecture](docs/ai-topology/ai-strategy-topology.png)
 
 ## Repository Structure
 
@@ -59,6 +61,18 @@ done
 > See [docs/CONTEXT.md](docs/CONTEXT.md) for the full hardware inventory, network topology, and service reference.
 
 ## Documentation
+
+Each component has its own detailed README:
+
+| Directory | README | Description |
+|:---|:---|:---|
+| `daemon/` | [README](daemon/README.md) | Orchestrator — task lifecycle, blackboard client, triage routing, agent personas |
+| `mission-control/` | [README](mission-control/README.md) | Dashboard — 7 feature panels, API routes, design system, tech stack |
+| `litellm/` | [README](litellm/README.md) | Model gateway — routing aliases, cost tracking, cloud + local model config |
+| `redis/` | [README](redis/README.md) | Blackboard — namespace schema, persistence config, deployment |
+| `triage/` | [README](triage/README.md) | Complexity classifier — 117-case evaluation suite, tier definitions |
+
+### Reference Documents
 
 - **[CONTEXT.md](docs/CONTEXT.md)** — Comprehensive system reference (hardware, network, services, architecture)
 - **[DESIGN.md](mission-control/DESIGN.md)** — Mission Control UI design system specification

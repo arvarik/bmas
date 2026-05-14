@@ -23,9 +23,9 @@ const jetbrainsMono = JetBrains_Mono({
 // ── Metadata ─────────────────────────────────────────────────────────
 
 export const metadata: Metadata = {
-  title: "Mission Control — bMAS Dashboard",
+  title: "Mission Control — Stigmergic",
   description:
-    "Real-time operations dashboard for the Blackboard Multi-Agent System. Monitor DAG execution, agent logs, cost tracking, and swarm telemetry.",
+    "Real-time operations dashboard for Stigmergic, a distributed AI swarm built on the Blackboard Multi-Agent System architecture. Monitor DAG execution, agent logs, cost tracking, and swarm telemetry.",
 };
 
 // ── Root Layout ──────────────────────────────────────────────────────
