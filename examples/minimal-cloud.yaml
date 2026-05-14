@@ -1,0 +1,36 @@
+# ─────────────────────────────────────────────────────────────────────
+# bMAS Configuration — Minimal Cloud-Only Deployment
+# ─────────────────────────────────────────────────────────────────────
+# No edge nodes, no GPU, single cloud provider.
+# The simplest possible bMAS deployment.
+
+project:
+  name: "My bMAS"
+  description: "Cloud-powered AI agent swarm"
+
+control_plane:
+  host: "localhost"
+  ports:
+    redis: 6379
+    litellm: 4000
+    daemon: 9000
+    dashboard: 9321
+
+nodes: []
+
+triage:
+  enabled: false
+  default_complexity: medium
+
+models:
+  claude-sonnet:
+    provider: anthropic
+    model: "claude-sonnet-4-20250514"
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 8192
+
+routing:
+  complex: claude-sonnet
+  medium: claude-sonnet
+  light: claude-sonnet
+  simple: claude-sonnet

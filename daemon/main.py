@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import httpx
 from orchestrator import Orchestrator
-from config import AGENT_ENDPOINTS
+from config import AGENT_ENDPOINTS, PROJECT_NAME
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
     await orch.close()
 
 
-app = FastAPI(title="bMAS Daemon", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title=f"{PROJECT_NAME} — bMAS Daemon", version="1.0.0", lifespan=lifespan)
 
 
 class TaskSubmission(BaseModel):

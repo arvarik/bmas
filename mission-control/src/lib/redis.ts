@@ -1,8 +1,5 @@
 import { createClient, type RedisClientType } from "redis";
-
-const REDIS_URL =
-  process.env.REDIS_URL ??
-  "redis://:bmas-redis-secret-2026@192.168.4.240:6379";
+import { REDIS_URL } from "@/lib/config";
 
 /**
  * Singleton Redis client for the Mission Control backend.

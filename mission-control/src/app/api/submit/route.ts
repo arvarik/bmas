@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-
-const DAEMON_SUBMIT_URL =
-  process.env.DAEMON_SUBMIT_URL ?? "http://192.168.4.240:9000/submit";
+import { DAEMON_SUBMIT_URL } from "@/lib/config";
 
 interface SubmitPayload {
   task: string;

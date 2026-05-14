@@ -1,0 +1,33 @@
+# ─────────────────────────────────────────────────────────────────────
+# bMAS — Development Overrides
+# ─────────────────────────────────────────────────────────────────────
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# This file overrides the production compose for local development:
+#   - Mounts source code into containers for hot reload
+#   - Runs dev servers instead of production builds
+# ─────────────────────────────────────────────────────────────────────
+
+services:
+  daemon:
+    build:
+      context: ./daemon
+    volumes:
+      - ./bmas.yaml:/etc/bmas/bmas.yaml:ro
+      - ./daemon:/app                    # Mount source for hot reload
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000", "--reload"]
+
+  dashboard:
+    build:
+      context: ./mission-control
+      target: builder                    # Use the builder stage (has devDependencies)
+    volumes:
+      - ./bmas.yaml:/etc/bmas/bmas.yaml:ro
+      - ./mission-control:/app           # Mount source for hot reload
+      - /app/node_modules                # Exclude node_modules from mount
+      - /app/.next                       # Exclude .next from mount
+    command: ["npx", "next", "dev", "--turbopack", "-H", "0.0.0.0", "-p", "9321"]
+    environment:
+      - BMAS_CONFIG=/etc/bmas/bmas.yaml
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - ALLOWED_DEV_ORIGINS=${ALLOWED_DEV_ORIGINS:-}

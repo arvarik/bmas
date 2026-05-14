@@ -1,4 +1,5 @@
-# bMAS Blackboard Redis Configuration
+# bMAS Blackboard Redis Configuration Template
+# Passwords are injected via environment variable substitution at container startup.
 
 # Network
 bind 0.0.0.0
@@ -20,8 +21,8 @@ dir /data
 # (XADD/XREAD) instead of Pub/Sub + LPUSH/LTRIM. Streams provide built-in
 # persistence, consumer groups, and ID-based replay for late-joining clients.
 
-# Security — set a password for production
-requirepass bmas-redis-secret-2026
+# Security — password injected from REDIS_PASSWORD env var
+requirepass ${REDIS_PASSWORD}
 
 # Logging
 loglevel notice

@@ -1,11 +1,5 @@
 import { NextResponse } from "next/server";
-
-/** Map of agent names to their LXC container IPs. */
-const AGENT_HOSTS: Record<string, string> = {
-  planner: "http://192.168.4.103:8000",
-  executor: "http://192.168.4.112:8000",
-  auditor: "http://192.168.4.122:8000",
-};
+import { AGENT_HOSTS } from "@/lib/config";
 
 type AgentName = keyof typeof AGENT_HOSTS;
 

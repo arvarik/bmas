@@ -3,3 +3,4 @@ uvicorn[standard]>=0.46.0  # ASGI server with uvloop + httptools
 httpx>=0.28.0           # Async HTTP client for agent dispatch
 redis[hiredis]>=7.4.0   # Async Redis with C-accelerated parser
 pydantic>=2.13.0        # Request/response validation
+pyyaml>=6.0             # bmas.yaml config file loading

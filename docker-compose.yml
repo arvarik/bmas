@@ -1,0 +1,143 @@
+# ─────────────────────────────────────────────────────────────────────
+# bMAS — Unified Docker Compose (Control Plane)
+# ─────────────────────────────────────────────────────────────────────
+# Runs all 5 control plane services from a single compose file.
+# Configuration: bmas.yaml (mounted read-only into containers)
+# Secrets: .env (loaded by Docker Compose automatically)
+#
+# Usage:
+#   cp bmas.example.yaml bmas.yaml   # configure your deployment
+#   cp .env.example .env             # fill in secrets
+#   docker compose up -d             # start everything
+#   docker compose logs -f           # watch logs
+# ─────────────────────────────────────────────────────────────────────
+
+services:
+  # ── Redis (Blackboard) ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: bmas-redis
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    volumes:
+      - ./redis/redis.conf.template:/etc/redis/redis.conf.template:ro
+      - ./redis/entrypoint.sh:/entrypoint.sh:ro
+      - redis-data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bmas
+
+  # ── LiteLLM (Model Router) ────────────────────────────────────────
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: bmas-litellm
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./bmas.yaml:/etc/bmas/bmas.yaml:ro
+      - ./litellm/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      - LITELLM_LOG_LEVEL=INFO
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    ports:
+      - "${LITELLM_PORT:-4000}:4000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health/readiness"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bmas
+
+  # ── Triage (Complexity Classifier) ─────────────────────────────────
+  # Requires NVIDIA GPU. Set TRIAGE_ENABLED=false in bmas.yaml to skip.
+  triage:
+    image: vllm/vllm-openai:latest
+    container_name: bmas-triage
+    restart: unless-stopped
+    profiles:
+      - gpu     # Only starts with: docker compose --profile gpu up
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+    # Model and GPU settings should match the triage section in bmas.yaml.
+    # Override via .env or shell environment if your config differs.
+    command: >
+      --model ${TRIAGE_MODEL:-Qwen/Qwen3-1.7B}
+      --gpu-memory-utilization ${TRIAGE_GPU_MEMORY:-0.35}
+      --max-model-len ${TRIAGE_MAX_MODEL_LEN:-8192}
+      --host 0.0.0.0
+      --port 8000
+    ports:
+      - "${TRIAGE_PORT:-8001}:8000"
+    networks:
+      - bmas
+
+  # ── Daemon (Orchestrator) ──────────────────────────────────────────
+  daemon:
+    build:
+      context: ./daemon
+    container_name: bmas-daemon
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./bmas.yaml:/etc/bmas/bmas.yaml:ro
+    environment:
+      - BMAS_CONFIG=/etc/bmas/bmas.yaml
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+    ports:
+      - "${DAEMON_PORT:-9000}:9000"
+    networks:
+      - bmas
+
+  # ── Mission Control (Dashboard) ────────────────────────────────────
+  dashboard:
+    build:
+      context: ./mission-control
+    container_name: bmas-dashboard
+    restart: unless-stopped
+    depends_on:
+      - daemon
+    volumes:
+      - ./bmas.yaml:/etc/bmas/bmas.yaml:ro
+    environment:
+      - BMAS_CONFIG=/etc/bmas/bmas.yaml
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    ports:
+      - "${DASHBOARD_PORT:-9321}:9321"
+    networks:
+      - bmas
+
+# ── Volumes ──────────────────────────────────────────────────────────
+volumes:
+  redis-data:
+    driver: local
+
+# ── Networks ─────────────────────────────────────────────────────────
+networks:
+  bmas:
+    driver: bridge

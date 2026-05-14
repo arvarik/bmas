@@ -1,0 +1,80 @@
+# ─────────────────────────────────────────────────────────────────────
+# bMAS Configuration — Multi-Provider Routing
+# ─────────────────────────────────────────────────────────────────────
+# Demonstrates mixing multiple cloud providers with local inference.
+# Each complexity tier routes to a different provider.
+
+project:
+  name: "Multi-Provider Swarm"
+  description: "AI swarm with Gemini, Claude, and local inference"
+
+control_plane:
+  host: "192.168.1.100"
+  ports:
+    redis: 6379
+    litellm: 4000
+    triage: 8001
+    daemon: 9000
+    dashboard: 9321
+
+nodes:
+  - name: "gpu-node-1"
+    host: "192.168.1.101"
+    port: 8000
+    role: planner
+    inference:
+      host: "192.168.1.102"
+      port: 8080
+      model: "llama-3.1-8b"
+
+  - name: "gpu-node-2"
+    host: "192.168.1.111"
+    port: 8000
+    role: executor
+    inference:
+      host: "192.168.1.112"
+      port: 8080
+      model: "llama-3.1-8b"
+
+  - name: "gpu-node-3"
+    host: "192.168.1.121"
+    port: 8000
+    role: auditor
+    inference:
+      host: "192.168.1.122"
+      port: 8080
+      model: "llama-3.1-8b"
+
+triage:
+  enabled: true
+  model: "Qwen/Qwen3-1.7B"
+  gpu_memory_utilization: 0.35
+
+models:
+  # Google Gemini — most capable, used for hardest tasks
+  gemini-pro:
+    provider: gemini
+    model: "gemini-3.1-pro-preview"
+    api_key_env: GEMINI_API_KEY
+    max_tokens: 8192
+
+  # Anthropic Claude — excellent for analysis and writing
+  claude-sonnet:
+    provider: anthropic
+    model: "claude-sonnet-4-20250514"
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 8192
+
+  # OpenAI GPT-4o — good all-rounder
+  gpt-4o:
+    provider: openai
+    model: "gpt-4o"
+    api_key_env: OPENAI_API_KEY
+    max_tokens: 4096
+
+# Mix and match: each tier uses a different provider!
+routing:
+  complex: gemini-pro      # Hardest tasks → Gemini Pro
+  medium: claude-sonnet    # Analysis → Claude
+  light: gpt-4o            # General tasks → GPT-4o
+  simple: local            # Free tasks → edge nodes

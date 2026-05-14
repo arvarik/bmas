@@ -2,7 +2,7 @@
 
 The shared state backbone for Stigmergic. Redis serves as the "blackboard" in the Blackboard Multi-Agent System architecture — the central knowledge store through which all agents coordinate without direct communication.
 
-> Runs as Docker container `bmas-redis` on the HP OMEN at `192.168.4.240:6379`.
+> Runs as Docker container `bmas-redis` on the control plane.
 
 ## Why Redis as the Blackboard?
 
@@ -33,8 +33,8 @@ All keys use the `bmas:` prefix with a hierarchical namespace structure:
 
 | File | Purpose |
 |:---|:---|
-| `docker-compose.yml` | Container definition with health check (`redis-cli ping`), resource limits, and volume mounts |
-| `redis.conf` | Redis server configuration — memory limits, persistence, security, logging |
+| `entrypoint.sh` | Renders `redis.conf` from template at startup (injects `REDIS_PASSWORD` via `sed`) |
+| `redis.conf.template` | Redis server configuration template — password injected at runtime |
 | `data/` | Persistent data directory (RDB snapshots, logs) — **not committed to git** |
 
 ## Configuration Highlights
@@ -50,29 +50,29 @@ All keys use the `bmas:` prefix with a hierarchical namespace structure:
 ## Deployment
 
 ```bash
-# Start the container
-docker compose up -d
+# Start the container (part of root docker-compose.yml)
+docker compose up -d redis
 
 # Check health
-docker exec bmas-redis redis-cli -a bmas-redis-secret-2026 ping
+docker exec bmas-redis redis-cli -a $REDIS_PASSWORD ping
 
 # Monitor commands in real-time
-docker exec bmas-redis redis-cli -a bmas-redis-secret-2026 MONITOR
+docker exec bmas-redis redis-cli -a $REDIS_PASSWORD MONITOR
 
 # Inspect blackboard state
-docker exec bmas-redis redis-cli -a bmas-redis-secret-2026 HGETALL bmas:public:state
-docker exec bmas-redis redis-cli -a bmas-redis-secret-2026 HGETALL bmas:public:tasks
+docker exec bmas-redis redis-cli -a $REDIS_PASSWORD HGETALL bmas:public:state
+docker exec bmas-redis redis-cli -a $REDIS_PASSWORD HGETALL bmas:public:tasks
 
 # View log streams
-docker exec bmas-redis redis-cli -a bmas-redis-secret-2026 XRANGE bmas:logs:daemon - + COUNT 10
+docker exec bmas-redis redis-cli -a $REDIS_PASSWORD XRANGE bmas:logs:daemon - + COUNT 10
 
 # Check memory usage
-docker exec bmas-redis redis-cli -a bmas-redis-secret-2026 INFO memory
+docker exec bmas-redis redis-cli -a $REDIS_PASSWORD INFO memory
 ```
 
 ## Resource Limits
 
 - **Memory**: 2 GB (container limit; Redis `maxmemory` is 1 GB)
 - **CPUs**: 2 cores
-- **Network**: Bound to `192.168.4.240:6379` (LAN only)
+- **Network**: Bound to control plane host (LAN only)
 - **Persistence**: RDB snapshots to `/data/bmas-blackboard.rdb`

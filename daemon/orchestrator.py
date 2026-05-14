@@ -13,7 +13,7 @@ from typing import Optional
 from datetime import datetime, timezone
 
 from blackboard import Blackboard
-from triage_router import TriageRouter, TriageResult, Complexity  # Phase 4 §4.4
+from triage_router import TriageRouter, TriageResult, Complexity, MODEL_ROUTING  # Phase 4 §4.4
 from personas import DEFAULT_PERSONAS, generate_expert_persona
 from config import AGENT_ENDPOINTS, LITELLM_URL, LITELLM_KEY, TRIAGE_URL
 
@@ -91,7 +91,8 @@ class Orchestrator:
                 await self._safe_log("daemon",
                     f"WARN: Triage unavailable ({e}), defaulting to MEDIUM")
                 triage = TriageResult(
-                    complexity=Complexity.MEDIUM, litellm_model="medium"
+                    complexity=Complexity.MEDIUM,
+                    litellm_model=MODEL_ROUTING.get(Complexity.MEDIUM, "medium"),
                 )
             await self._safe_log("daemon",
                 f"Triage: {triage.complexity.value} → {triage.litellm_model}")
@@ -195,7 +196,7 @@ class Orchestrator:
                 f"{LITELLM_URL}/chat/completions",
                 headers={"Authorization": f"Bearer {LITELLM_KEY}"},
                 json={
-                    "model": "heavy",  # Gemini Pro — persona generation needs capable model
+                    "model": MODEL_ROUTING.get(Complexity.COMPLEX, "gemini-pro"),
                     "messages": [{
                         "role": "user",
                         "content": f"""Given this research task, identify exactly 3 expert domains needed.

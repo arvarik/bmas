@@ -1,19 +1,10 @@
 import { getRedis } from "@/lib/redis";
+import { STREAM_KEYS } from "@/lib/config";
 import type { RedisClientType } from "redis";
 
 // Force Node.js runtime (not Edge) for long-lived SSE streams with blocking Redis reads.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-/**
- * The three Redis Streams we tail for log output.
- * Each stream maps to one bMAS agent.
- */
-const STREAM_KEYS = [
-  "bmas:logs:planner",
-  "bmas:logs:executor",
-  "bmas:logs:auditor",
-] as const;
 
 /** Parsed entry coming out of a Redis XREAD response. */
 interface StreamEntry {

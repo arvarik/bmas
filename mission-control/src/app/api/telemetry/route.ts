@@ -1,19 +1,14 @@
 import { NextResponse } from "next/server";
-
-/**
- * Beszel Hub is a PocketBase-based monitoring system.
- * The Hub runs on TrueNAS at 192.168.4.229:8090.
- *
- * Beszel requires authentication for most data endpoints.
- * This proxy route provides a server-side fetch so the browser
- * never hits CORS issues. If the Hub is unreachable or returns
- * an auth error, we return a graceful error to the frontend.
- */
-
-const BESZEL_HUB_URL =
-  process.env.BESZEL_HUB_URL ?? "http://192.168.4.229:8090";
+import { BESZEL_HUB_URL } from "@/lib/config";
 
 export async function GET(): Promise<NextResponse> {
+  if (!BESZEL_HUB_URL) {
+    return NextResponse.json({
+      hub_status: "not_configured",
+      note: "Monitoring is not configured in bmas.yaml. Add monitoring.beszel_hub to enable.",
+    });
+  }
+
   try {
     // Try the Beszel health endpoint first
     const healthRes = await fetch(`${BESZEL_HUB_URL}/api/health`, {

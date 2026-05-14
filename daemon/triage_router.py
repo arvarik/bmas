@@ -2,7 +2,7 @@
 """
 Semantic Triage Router.
 Uses the local Qwen3-1.7B model to classify task complexity and route
-to the appropriate LiteLLM model alias (heavy/medium/light/edge).
+to the appropriate LiteLLM model alias via the MODEL_ROUTING config table.
 
 vLLM's guided_choice constrained decoding constrains output tokens.
 Hardened label extraction strips markdown formatting and falls back
@@ -15,6 +15,9 @@ import re
 import httpx
 from enum import Enum
 from dataclasses import dataclass
+
+from config import MODEL_ROUTING as _CONFIG_ROUTING
+from config import TRIAGE_ENABLED, TRIAGE_DEFAULT_COMPLEXITY, TRIAGE_MODEL
 
 
 class Complexity(Enum):
@@ -60,11 +63,12 @@ Respond with ONLY the tier name. /no_think
 # Precompiled regex for stripping Qwen3 thinking tags
 _THINK_RE = re.compile(r"<think>.*?</think>", flags=re.DOTALL)
 
+# Build MODEL_ROUTING from the config file's routing section.
+# The config stores {"simple": "edge-node-1", "medium": "gemini-flash", ...}
+# and we convert to {Complexity.SIMPLE: "edge-node-1", ...}
 MODEL_ROUTING = {
-    Complexity.SIMPLE: "edge-node-1",  # Free — local Gemma 4B
-    Complexity.LIGHT: "light",          # Gemini 3.1 Flash Lite (cheap cloud)
-    Complexity.MEDIUM: "medium",        # Gemini 3 Flash
-    Complexity.COMPLEX: "heavy",        # Gemini 3.1 Pro
+    Complexity(tier): model
+    for tier, model in _CONFIG_ROUTING.items()
 }
 
 
@@ -87,9 +91,9 @@ def _extract_label(text: str) -> str:
 class TriageRouter:
     def __init__(
         self,
-        triage_url: str = "http://192.168.4.240:8001/v1",
-        litellm_url: str = "http://192.168.4.240:4000/v1",
-        litellm_key: str = "sk-bmas-master-2026",
+        triage_url: str,
+        litellm_url: str,
+        litellm_key: str,
     ):
         self.triage_url = triage_url
         self.litellm_url = litellm_url
@@ -97,11 +101,22 @@ class TriageRouter:
         self.client = httpx.AsyncClient(timeout=30.0)
 
     async def classify(self, task_description: str) -> TriageResult:
-        """Classify task complexity using the local Qwen3-1.7B model with guided_choice."""
+        """Classify task complexity using the local triage model with guided_choice.
+
+        If triage is disabled in bmas.yaml, returns the default_complexity
+        tier without making any API call.
+        """
+        if not TRIAGE_ENABLED:
+            complexity = Complexity(TRIAGE_DEFAULT_COMPLEXITY)
+            return TriageResult(
+                complexity=complexity,
+                litellm_model=MODEL_ROUTING[complexity],
+            )
+
         response = await self.client.post(
             f"{self.triage_url}/chat/completions",
             json={
-                "model": "Qwen/Qwen3-1.7B",
+                "model": TRIAGE_MODEL,
                 "messages": [
                     {"role": "system", "content": TRIAGE_SYSTEM_PROMPT},
                     {"role": "user", "content": task_description},

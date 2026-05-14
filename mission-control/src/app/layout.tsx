@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "./AppShell";
+import { PROJECT_NAME, PROJECT_DESCRIPTION } from "@/lib/config";
 
 // ── Font Loading ─────────────────────────────────────────────────────
 // next/font/google self-hosts fonts — no external requests at runtime.
@@ -22,11 +23,12 @@ const jetbrainsMono = JetBrains_Mono({
 
 // ── Metadata ─────────────────────────────────────────────────────────
 
-export const metadata: Metadata = {
-  title: "Mission Control — Stigmergic",
-  description:
-    "Real-time operations dashboard for Stigmergic, a distributed AI swarm built on the Blackboard Multi-Agent System architecture. Monitor DAG execution, agent logs, cost tracking, and swarm telemetry.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  return {
+    title: `Mission Control — ${PROJECT_NAME}`,
+    description: PROJECT_DESCRIPTION,
+  };
+}
 
 // ── Root Layout ──────────────────────────────────────────────────────
 

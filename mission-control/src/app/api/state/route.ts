@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-
-const DAEMON_STATE_URL =
-  process.env.DAEMON_STATE_URL ?? "http://192.168.4.240:9000/state";
+import { DAEMON_STATE_URL } from "@/lib/config";
 
 export async function GET(): Promise<NextResponse> {
   try {

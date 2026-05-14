@@ -2,7 +2,7 @@
 
 The real-time operations dashboard for **Stigmergic**. A single-pane-of-glass for monitoring, debugging, and controlling the AI swarm. Built with Next.js 16, React 19, TypeScript, and vanilla CSS.
 
-> Runs on the HP OMEN at `http://192.168.4.240:9321`, managed by systemd (`mission-control`).
+> Runs as Docker container `bmas-dashboard` on the control plane at port 9321.
 
 ## Features
 
@@ -44,7 +44,7 @@ Browser (React 19)
     │         │                  │
     ▼         ▼                  ▼
  Daemon    Redis            Beszel Hub
- :9000     :6379          (192.168.4.229:8090)
+ :9000     :6379            :8090
 ```
 
 ## Project Structure
@@ -160,7 +160,7 @@ npm run build
 npm start
 ```
 
-Dashboard runs at `http://192.168.4.240:9321`.
+Dashboard runs at `http://localhost:9321` (or your control plane IP).
 
 ## Documentation
 

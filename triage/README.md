@@ -2,7 +2,9 @@
 
 The cost-optimization gatekeeper for Stigmergic. Before any paid API call is made, the triage router classifies each task's complexity and routes it to the cheapest model capable of handling it.
 
-> Runs as Docker container `bmas-triage` on the HP OMEN's RTX 5060 Ti at `192.168.4.240:8001`, using vLLM with Qwen3-1.7B.
+> Runs as Docker container `bmas-triage` on the control plane host (configured in `bmas.yaml`), using vLLM with the model specified in `triage.model`.
+>
+> **Note:** All host/port references below use the example deployment. Adjust for your infrastructure per `bmas.yaml`.
 
 ## How It Works
 
@@ -41,7 +43,7 @@ User Task
 
 | File | Purpose |
 |:---|:---|
-| `docker-compose.yml` | vLLM container definition with NVIDIA GPU reservation, model config, and resource limits |
+| `docker-compose.yml` | Removed — triage is now defined in the root `docker-compose.yml` under the `gpu` profile |
 | `client.py` | Standalone HTTP client for the vLLM server. Handles request construction, retry logic, `<think>` tag stripping, and response parsing. Zero external dependencies (stdlib only). |
 | `test_triage.py` | Evaluation suite runner. Classifies all test cases, prints a rich CLI table, computes accuracy/confusion matrix/per-tier F1, and optionally exports JSON results. |
 | `test_cases.py` | 117 curated test cases across all 4 tiers with ground truth labels. Covers 9 complexity dimensions including distractor susceptibility and input length variation. |
@@ -56,8 +58,8 @@ The test suite validates classification accuracy against 117 hand-labeled cases:
 # Run evaluation (default endpoint)
 python3 test_triage.py
 
-# Custom endpoint
-python3 test_triage.py --url http://192.168.4.240:8001
+# Custom endpoint (adjust host/port for your deployment)
+python3 test_triage.py --url http://<CONTROL_PLANE_HOST>:8001
 
 # Skip warmup (CUDA graph compilation)
 python3 test_triage.py --no-warmup
@@ -102,10 +104,10 @@ The suite produces:
 docker compose up -d
 
 # Check if model is loaded
-curl http://192.168.4.240:8001/v1/models
+curl http://<CONTROL_PLANE_HOST>:8001/v1/models
 
-# Test a classification
-curl http://192.168.4.240:8001/v1/chat/completions \
+# Test a classification (adjust host for your deployment)
+curl http://<CONTROL_PLANE_HOST>:8001/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "Qwen/Qwen3-1.7B",

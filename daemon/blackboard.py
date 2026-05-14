@@ -11,7 +11,7 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 import redis.asyncio as aioredis
-from config import REDIS_URL, LOCK_TTL_MS
+from config import REDIS_URL, LOCK_TTL_MS, AGENT_ENDPOINTS
 
 
 class Blackboard:
@@ -90,9 +90,8 @@ class Blackboard:
             "tasks": tasks,
             "results": {k: json.loads(v) for k, v in results.items()},
             "agents": {
-                "planner":  {"alive": False, "last_heartbeat": "", "current_task": None},
-                "executor": {"alive": False, "last_heartbeat": "", "current_task": None},
-                "auditor":  {"alive": False, "last_heartbeat": "", "current_task": None},
+                role: {"alive": False, "last_heartbeat": "", "current_task": None}
+                for role in AGENT_ENDPOINTS
             },
         }
 

@@ -41,7 +41,7 @@ model_list:
   - model_name: triage
     litellm_params:
       model: openai/Qwen/Qwen3-1.7B
-      api_base: http://192.168.4.240:8001/v1
+      api_base: os.environ/TRIAGE_INTERNAL_URL
       api_key: not-needed
       max_tokens: 1024
       temperature: 0.1
@@ -52,7 +52,7 @@ model_list:
   - model_name: edge-node-1
     litellm_params:
       model: openai/gemma-4-e4b
-      api_base: http://192.168.4.102:8080/v1
+      api_base: os.environ/EDGE_NODE_1_URL
       api_key: not-needed
       max_tokens: 2048
     model_info:
@@ -61,7 +61,7 @@ model_list:
   - model_name: edge-node-2
     litellm_params:
       model: openai/gemma-4-e4b
-      api_base: http://192.168.4.111:8080/v1
+      api_base: os.environ/EDGE_NODE_2_URL
       api_key: not-needed
       max_tokens: 2048
     model_info:
@@ -70,7 +70,7 @@ model_list:
   - model_name: edge-node-3
     litellm_params:
       model: openai/gemma-4-e4b
-      api_base: http://192.168.4.121:8080/v1
+      api_base: os.environ/EDGE_NODE_3_URL
       api_key: not-needed
       max_tokens: 2048
     model_info:
@@ -96,7 +96,7 @@ router_settings:
 
 # ─── Spend Tracking ──────────────────────────────────────────
 general_settings:
-  master_key: sk-bmas-master-2026
+  master_key: os.environ/LITELLM_MASTER_KEY
 
 litellm_settings:
   # success_callback: ["langfuse"]  # Requires LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST env vars
