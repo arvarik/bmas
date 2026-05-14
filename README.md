@@ -121,7 +121,7 @@ bmas/
 │   ├── QUICKSTART.md  #   Get started in 5 minutes
 │   ├── CONFIGURATION.md#  Full config reference
 │   ├── NODE_SETUP.md  #   Edge node provisioning guide
-│   └── TODO.md        #   Future roadmap
+│   └── ROADMAP.md    #   Future roadmap
 │
 ├── scripts/           # Operational utilities
 │   └── healthcheck.sh #   Post-deploy service health check
@@ -139,7 +139,7 @@ bmas/
 | [Quick Start](docs/QUICKSTART.md) | Get running in 5 minutes |
 | [Configuration](docs/CONFIGURATION.md) | Full `bmas.yaml` reference |
 | [Node Setup](docs/NODE_SETUP.md) | Provisioning edge nodes |
-| [Roadmap](docs/TODO.md) | Future enhancements |
+| [Roadmap](docs/ROADMAP.md) | Future enhancements |
 | [System Context](docs/CONTEXT.md) | Hardware & network reference |
 
 ### Component READMEs
@@ -151,6 +151,15 @@ bmas/
 | LiteLLM | [litellm/README.md](litellm/README.md) |
 | Redis | [redis/README.md](redis/README.md) |
 | Triage | [triage/README.md](triage/README.md) |
+
+## Paper
+
+This project is an implementation of the Blackboard Multi-Agent System (bMAS) architecture proposed in:
+
+> **Han, B. & Zhang, S. (2025).** *Exploring Advanced LLM Multi-Agent Systems Based on Blackboard Architecture.*
+> [arXiv:2507.01701](https://arxiv.org/abs/2507.01701)
+
+The paper introduces a framework where LLM agents coordinate through a shared blackboard with an LLM-driven control unit that dynamically selects agents per round — achieving competitive performance with state-of-the-art multi-agent systems while consuming fewer tokens.
 
 ## License
 
