@@ -1,0 +1,185 @@
+# bMAS System Architecture Topology
+# Render: d2 --theme 200 --layout elk --pad 20 --elk-nodeNodeBetweenLayers 20 --elk-edgeNodeBetweenLayers 20 ai-strategy-topology.d2 ai-strategy-topology.svg
+
+direction: down
+
+classes: {
+  node_card: {
+    style: {
+      border-radius: 6
+      font-size: 14
+      font-color: "#e0f0f0"
+      stroke-width: 2
+    }
+  }
+  img_card: {
+    shape: image
+    width: 60
+    height: 60
+  }
+  mini_card: {
+    style: {
+      fill: transparent
+      stroke: transparent
+      font-size: 10
+      font-color: "#d0c0ff"
+    }
+  }
+}
+
+layout_wrapper: "" {
+  style: { fill: transparent; stroke: transparent }
+  grid-rows: 2
+  grid-gap: 30
+
+  top_row: "" {
+    style: { fill: transparent; stroke: transparent }
+    grid-columns: 3
+    grid-gap: 50
+    
+    spacer1: "" { style: { fill: transparent; stroke: transparent } }
+    
+    cloud_models: "Cloud Fallback (Paid)" {
+      class: node_card
+      style: { fill: "#0a1428"; stroke: "#2196f3"; bold: true; font-size: 14 }
+      grid-columns: 2
+      grid-gap: 20
+    
+      pro: "Gemini 3.1 Pro" {
+        style: { fill: "#162a3a"; stroke: "#00bcd4"; border-radius: 4; font-size: 12 }
+        desc: "COMPLEX" { class: mini_card; style: { font-color: "#b0e0e6" } }
+      }
+      flash: "Gemini 3 Flash" {
+        style: { fill: "#162a3a"; stroke: "#00bcd4"; border-radius: 4; font-size: 12 }
+        desc: "MEDIUM" { class: mini_card; style: { font-color: "#b0e0e6" } }
+      }
+    }
+    
+    spacer2: "" { style: { fill: transparent; stroke: transparent } }
+  }
+
+  lower_planes: "" {
+    style: { fill: transparent; stroke: transparent }
+    grid-columns: 2
+    grid-gap: 250
+    
+    control_plane: "Control Plane (HP OMEN)" {
+      class: node_card
+      style: { fill: "#1a0505"; stroke: "#f44336"; bold: true; font-size: 16 }
+      grid-rows: 3
+      grid-gap: 30
+      
+      gateway: "LiteLLM Gateway" {
+        style: { fill: "#162a3a"; stroke: "#00bcd4"; border-radius: 4 }
+        grid-columns: 2
+        grid-gap: 15
+        img: "" { class: img_card; icon: ./assets/litellm.png; width: 60; height: 60 }
+        desc: "OpenAI API Router" { class: mini_card; style: { font-color: "#b0e0e6" } }
+      }
+    
+      triage: "Semantic Router" {
+        style: { fill: "#2a0808"; stroke: "#e53935"; border-radius: 4 }
+        grid-columns: 2
+        grid-gap: 15
+        img: "" { class: img_card; icon: ./assets/brain.png; width: 60; height: 60 }
+        desc: "vLLM: Qwen3-1.7B" { class: mini_card; style: { font-color: "#ef9a9a" } }
+      }
+    
+      blackboard: "Redis Blackboard" {
+        style: { fill: "#1a1400"; stroke: "#ff9800"; border-radius: 4 }
+        grid-columns: 2
+        grid-gap: 15
+        img: "" { class: img_card; icon: ./assets/redis.png; width: 60; height: 60 }
+        desc: "Streams • Mutex" { class: mini_card; style: { font-color: "#ffe0b0" } }
+      }
+    }
+  
+    edge_plane: "Execution Plane (3× Lenovo M75q)" {
+      class: node_card
+      style: { fill: "#12082a"; stroke: "#6c63ff"; bold: true; font-size: 16 }
+      grid-columns: 3
+      grid-gap: 20
+      
+      node1: "Node 1: Planner" {
+        style: { fill: "#18103a"; stroke: "#5e35b1"; border-radius: 4 }
+        grid-rows: 2
+        grid-gap: 15
+        agent: "" {
+          grid-rows: 2
+          grid-gap: 0
+          class: mini_card
+          img: "" { class: img_card; icon: ./assets/hermes.png; width: 60; height: 60 }
+          desc: "Hermes Agent" { class: mini_card }
+        }
+        model: "" {
+          grid-rows: 2
+          grid-gap: 0
+          class: mini_card
+          img: "" { class: img_card; icon: ./assets/mini_pc.png; width: 60; height: 60 }
+          desc: "Gemma 4 E4B" { class: mini_card }
+        }
+        agent -> model: "Vulkan API" { style: { font-size: 8; stroke: "#b39ddb" } }
+      }
+    
+      node2: "Node 2: Executor" {
+        style: { fill: "#18103a"; stroke: "#5e35b1"; border-radius: 4 }
+        grid-rows: 2
+        grid-gap: 15
+        agent: "" {
+          grid-rows: 2
+          grid-gap: 0
+          class: mini_card
+          img: "" { class: img_card; icon: ./assets/hermes.png; width: 60; height: 60 }
+          desc: "Hermes Agent" { class: mini_card }
+        }
+        model: "" {
+          grid-rows: 2
+          grid-gap: 0
+          class: mini_card
+          img: "" { class: img_card; icon: ./assets/mini_pc.png; width: 60; height: 60 }
+          desc: "Gemma 4 E4B" { class: mini_card }
+        }
+        agent -> model: "Vulkan API" { style: { font-size: 8; stroke: "#b39ddb" } }
+      }
+    
+      node3: "Node 3: Auditor" {
+        style: { fill: "#18103a"; stroke: "#5e35b1"; border-radius: 4 }
+        grid-rows: 2
+        grid-gap: 15
+        agent: "" {
+          grid-rows: 2
+          grid-gap: 0
+          class: mini_card
+          img: "" { class: img_card; icon: ./assets/hermes.png; width: 60; height: 60 }
+          desc: "Hermes Agent" { class: mini_card }
+        }
+        model: "" {
+          grid-rows: 2
+          grid-gap: 0
+          class: mini_card
+          img: "" { class: img_card; icon: ./assets/mini_pc.png; width: 60; height: 60 }
+          desc: "Gemma 4 E4B" { class: mini_card }
+        }
+        agent -> model: "Vulkan API" { style: { font-size: 8; stroke: "#b39ddb" } }
+      }
+    }
+  }
+}
+
+# Layout Connections
+layout_wrapper.lower_planes.control_plane.gateway -> layout_wrapper.lower_planes.control_plane.triage: "Triage" { style: { font-size: 9; stroke-dash: 3; stroke: "#ffcdd2" } }
+
+layout_wrapper.lower_planes.control_plane.gateway -> layout_wrapper.top_row.cloud_models: "Outbound API Routing (Paid Models)" {
+  style: { stroke: "#00bcd4"; animated: true; font-color: "#00bcd4"; font-size: 11; bold: true }
+}
+
+layout_wrapper.lower_planes.control_plane.gateway -> layout_wrapper.lower_planes.edge_plane: "SIMPLE Tasks Route (Free Inference)" {
+  style: { stroke: "#6c63ff"; animated: true; font-color: "#6c63ff"; font-size: 11; bold: true }
+}
+
+# Blackboard Comm (Coming from bottom of edge plane agents to blackboard)
+layout_wrapper.lower_planes.edge_plane.node1.agent -> layout_wrapper.lower_planes.control_plane.blackboard: "Agent State / Pub-Sub Sync" {
+  style: { stroke: "#ff9800"; stroke-dash: 5; font-color: "#ff9800"; font-size: 11; bold: true }
+}
+layout_wrapper.lower_planes.edge_plane.node2.agent -> layout_wrapper.lower_planes.control_plane.blackboard: "" { style: { stroke: "#ff9800"; stroke-dash: 5 } }
+layout_wrapper.lower_planes.edge_plane.node3.agent -> layout_wrapper.lower_planes.control_plane.blackboard: "" { style: { stroke: "#ff9800"; stroke-dash: 5 } }
