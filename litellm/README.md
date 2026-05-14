@@ -36,8 +36,9 @@ The daemon uses model names from `bmas.yaml`'s `routing` section; LiteLLM resolv
 
 | File | Purpose |
 |:---|:---|
-| `entrypoint.sh` | Generates `config.yaml` from `bmas.yaml` at container startup |
-| `config.yaml.example` | Reference LiteLLM configuration (generated dynamically in production) |
+| `Dockerfile` | Extends the official LiteLLM image with the bMAS config generator |
+| `generate_config.py` | Generates LiteLLM `config.yaml` from `bmas.yaml` at container startup |
+| `entrypoint.sh` | Shell entrypoint — runs the generator then starts the LiteLLM proxy |
 
 ## Configuration Details
 

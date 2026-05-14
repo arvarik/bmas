@@ -37,7 +37,8 @@ services:
 
   # ── LiteLLM (Model Router) ────────────────────────────────────────
   litellm:
-    image: ghcr.io/berriai/litellm:main-stable
+    build:
+      context: ./litellm
     container_name: bmas-litellm
     restart: unless-stopped
     depends_on:
@@ -45,8 +46,6 @@ services:
         condition: service_healthy
     volumes:
       - ./bmas.yaml:/etc/bmas/bmas.yaml:ro
-      - ./litellm/entrypoint.sh:/entrypoint.sh:ro
-    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}

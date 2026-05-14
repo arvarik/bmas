@@ -113,6 +113,25 @@ All sizes in `rem` (base 16px). Line heights are unitless multipliers.
 > [!IMPORTANT] The Airbnb Principle
 > Airbnb uses only **3 font weights** across their entire platform (Regular, Medium, Semibold). We do the same: `400`, `500`, `600`. Never use `700`/`800` — it creates visual noise that competes with status colors.
 
+### 3.3 Numeric Typography
+
+Apply `font-variant-numeric: tabular-nums` to **all live-updating numeric values** — cost tickers, token counts, durations, and any other number that changes in real-time. Without this, proportional digit widths in Inter cause layout jitter as values tick (e.g., `$0.0129` → `$0.0134` shifts by 1-3px because `1` is narrower than `3`). Tabular-nums forces monospace digit widths while preserving the font's proportional letter spacing for surrounding text.
+
+```css
+/* Apply globally to elements with changing numbers */
+.metric-value,
+.cost-ticker,
+.token-count,
+.duration-value {
+  font-variant-numeric: tabular-nums;
+}
+```
+
+Inter supports this OpenType feature natively — no fallback needed. This is a zero-cost CSS declaration that eliminates an entire class of layout shifts.
+
+> [!NOTE]
+> This only applies to **live-updating** values where jitter is visible. Static numeric values (e.g., a completed task's final cost in a table row) don't need it, though applying it globally to all mono-font numbers is harmless and recommended for consistency.
+
 ---
 
 ## 4. Spacing & Layout
@@ -205,13 +224,15 @@ Wrapper for the xterm.js terminal instances. Gives each terminal an identity.
 - **Body:** xterm.js fills remaining height. Border: 1px `--border-default`. Border radius bottom: `--radius-xl`.
 - **Border-top accent:** 2px solid line in the agent's identity color across the full width.
 
-### 5.5 SplitView
+### 5.5 DebateList
 
-Used by the Blackboard Inspector. Two panels side-by-side with a visual divider.
+Used by the Blackboard/Debate tab. Chronological list of debate entries from the agent deliberation process. Replaces the old SplitView (Public/Private Redis split).
 
-- **Layout:** 50/50 horizontal split with a 1px vertical divider (`--border-default`).
-- **Each side:** Has its own sub-header (left = "Public Consensus", right = "Private Debate") styled as `--text-sm`, `--text-secondary`, uppercase, letter-spacing `0.05em`.
-- **Content:** Scrollable independently. JSON/data rendered in mono font with syntax coloring.
+- **Layout:** Vertical list of debate entries, newest at the bottom. Each entry shows: agent role identity (colored dot + name), content (text/markdown), timestamp.
+- **Agent identity:** 8px circle dot in the agent's `--agent-{role}` color + role name in `--text-sm`.
+- **Content:** Rendered as text or markdown in `--text-sm`. Long entries are capped with a "Show more" toggle.
+- **Typing indicator:** For running tasks, a special bottom row shows "{agent} is {verb}..." with a bouncing ellipsis animation (see [07-task-detail-views.md](../docs/ui-overhaul/07-task-detail-views.md)).
+- **Smart auto-scrolling:** Uses `IntersectionObserver` on a sentinel element at the bottom. When user scrolls up, auto-scroll suspends and a frosted-glass "↓ N new updates" pill appears.
 
 ### 5.6 ActionButton
 
@@ -251,57 +272,79 @@ Displayed when a Panel has no data (e.g., no tasks submitted, no skills learned)
 
 ## 6. Layout Architecture
 
+Mission Control uses a **task-centric architecture** — the sidebar shows task history, and the main area shows either a landing page (task input) or a task detail page with tabbed sub-views. This replaces the previous monolithic dashboard grid. See [05-frontend-routing.md](../docs/ui-overhaul/05-frontend-routing.md) and [06-sidebar-and-landing.md](../docs/ui-overhaul/06-sidebar-and-landing.md) for full specs.
+
 ### 6.1 Page Structure
 
 ```
 ┌──────────────────────────────────────────────────┐
 │  Top Bar (48px)                                  │
-│  [Logo/Name]     [Swarm Status]     [Cost Ticker]│
-├─────────┬────────────────────────────────────────┤
-│ Sidebar │  Main Content Area                     │
-│ (240px) │                                        │
-│         │  ┌─────────────┬──────────────────┐    │
-│ • DAG   │  │  DAG Panel  │  HITL + Status   │    │
-│ • Logs  │  │  (60%)      │  (40%)           │    │
-│ • Board │  ├─────────────┴──────────────────┤    │
-│ • Cost  │  │  Log Terminals (3 columns)     │    │
-│ • Nodes │  │  [Planner]  [Executor] [Auditor]│   │
-│ • Skills│  ├─────────────┬──────────────────┤    │
-│         │  │  Blackboard │  Cost + Telemetry│    │
-│         │  │  Inspector  │  Metrics         │    │
-│         │  └─────────────┴──────────────────┘    │
-└─────────┴────────────────────────────────────────┘
+│  [Mission Control]  [Daemon Status]  [Cost: $0.04]│
+├──────────┬───────────────────────────────────────┤
+│ Sidebar  │  Main Content Area                    │
+│ (240px)  │                                       │
+│          │  Two views, based on route:           │
+│ [+New]   │                                       │
+│──────────│  A) Landing Page (route: /)            │
+│ TODAY    │     Conversational task input          │
+│ ● task-a │     + recent task history              │
+│ ✓ task-b │                                       │
+│ ✗ task-c │  B) Task Detail (route: /task/[id])    │
+│──────────│     ┌─ Header: label, status, cost ─┐ │
+│ YESTERDAY│     │ [Overview][DAG][Logs][Board][$$]│ │
+│ ✓ task-d │     ├─────────────────────────────────┤ │
+│──────────│     │  Tab content fills this area    │ │
+│ ─System─ │     │  (DAG, Logs, Blackboard, Cost)  │ │
+│ 📡 Infra │     └─────────────────────────────────┘ │
+│ ✨ Skills│                                       │
+│──────────│                                       │
+│ 🟢🟢🔴  │                                       │
+└──────────┴───────────────────────────────────────┘
 ```
 
 ### 6.2 Top Bar
 
 - **Height:** 48px. Background: `--surface-raised`. Bottom border: 1px `--border-default`.
-- **Left section:** App name "Mission Control" in `--text-lg` + a tiny `StatusBadge` showing daemon connection state.
-- **Center section:** Current swarm phase (e.g., "Planning → Task-2a8f") as breadcrumb text. This updates in real-time from the Zustand store.
-- **Right section:** Live cost ticker — total spend in `--text-mono`, updating on each cost poll. Formatted as "$0.0429" with the dollar sign in `--text-tertiary`.
+- **Left section:** App name "Mission Control" in `--text-lg` + a tiny `StatusBadge` showing daemon connection state (data from `useSystemStream()` SSE hook).
+- **Center section:** When viewing a task: breadcrumb showing task ID and current phase (e.g., "task-a8f2 › Planning"). On the landing page: empty.
+- **Right section:** Live cost ticker — total spend in `--text-mono` with `font-variant-numeric: tabular-nums` (§3.3), updating via SSE system stream. Formatted as "$0.0429" with the dollar sign in `--text-tertiary`.
 
 ### 6.3 Sidebar
 
+Replaced from feature-navigation to **task-history sidebar**. See [06-sidebar-and-landing.md §6.1](../docs/ui-overhaul/06-sidebar-and-landing.md) for full spec.
+
 - **Width:** 240px (collapsible to 48px icon-only mode).
 - **Background:** `--surface-raised`
-- **Navigation items:** Icon (20px, lucide-react) + label (`--text-sm`). Height: 36px. Padding: `0 --space-4`. Hover: `--surface-hover`. Active: `--surface-active` + left 2px accent bar (`--accent-primary`).
-- **Sections:** Grouped with uppercase section labels (`--text-xs`, `--text-tertiary`, letter-spacing `0.1em`). Sections: "Operations" (DAG, Logs, HITL), "Intelligence" (Blackboard, Cost), "Infrastructure" (Nodes, Skills).
-- **Collapse behavior:** Click a toggle icon (top-right of sidebar) to collapse. Labels disappear, only icons remain. Sidebar width transitions to 48px over 200ms.
-- **Bottom:** Connection health indicators — three small dots (one per agent node), colored green/red. Hover tooltip shows node name + status.
+- **"+ New Task" button:** Top of sidebar, primary ActionButton, navigates to `/` (landing page).
+- **Task list:** Date-grouped (Today, Yesterday, Last 7 Days, etc.). Each item shows status indicator + task ID + truncated label. Active item (matching `usePathname()`) styled with `--surface-active` + 2px left accent bar.
+- **System section:** Divider + Infrastructure (`/infra`) and Skills (`/skills`) nav items.
+- **Collapse behavior:** Toggle icon collapses to 48px. In collapsed mode: "+" icon for new task, status dots for each task (no labels).
+- **Bottom:** Agent health indicators — three small dots (one per agent node), colored green/red. Data from `useSystemStream()`.
+- **Mobile:** Slide-out drawer (same as before), closes on navigation.
 
-### 6.4 Main Content Grid
+### 6.4 Main Content Area
 
-The main area uses CSS Grid. The grid adapts based on which sidebar nav item is selected:
+The main area renders Next.js App Router pages based on the URL:
 
-- **Dashboard view (default):** 2-column, 3-row grid as shown in §6.1.
-- **Focused views:** Clicking a nav item (e.g., "Logs") expands that panel to fill the entire main area, pushing other panels off-screen. This gives the operator a full-screen focused view without opening a new page. A "Back to Dashboard" breadcrumb appears at top-left of the expanded panel.
+| Route | Content |
+|:---|:---|
+| `/` | Landing page — conversational task input with auto-resize textarea, inline send button, and recent task history cards |
+| `/task/[taskId]` | Task overview — result display, sub-task progress, live phase indicator |
+| `/task/[taskId]/dag` | DAG visualization — React Flow canvas showing task decomposition graph |
+| `/task/[taskId]/logs` | Log terminals — 3-column (or tabbed on mobile) xterm.js terminals filtered by agent role |
+| `/task/[taskId]/blackboard` | Debate history — chronological list of agent debate entries with typing indicators |
+| `/task/[taskId]/cost` | Cost breakdown — per-phase and per-model cost tables with MetricCard heroes |
+| `/infra` | Infrastructure telemetry — Beszel Hub metrics for all nodes |
+| `/skills` | Skills explorer — per-agent skill lists with view/delete actions |
+
+All `/task/[taskId]/*` pages share a **task detail layout** (`task/[taskId]/layout.tsx`) that renders the task header + tab navigation and hosts the `TaskStreamContext.Provider` for SSE data distribution. Tab switches are instantaneous DOM swaps — the SSE connection persists in the layout.
 
 ### 6.5 Responsive Behavior
 
 | Breakpoint | Behavior |
 |:---|:---|
-| ≥1440px | Full layout as designed (sidebar + 2-col grid) |
-| 1024–1439px | Sidebar collapses to icon-only. Grid becomes 1-column stacked. |
+| ≥1440px | Full layout as designed (sidebar + main content) |
+| 1024–1439px | Sidebar collapses to icon-only. |
 | <1024px | Sidebar becomes a slide-out drawer. Single-column layout. Terminal panes stack vertically. |
 
 > [!NOTE] Mission Control is a desktop-first ops dashboard. Mobile is a "read-only glance" mode — show swarm status and cost, but don't attempt full interactivity on small screens.
@@ -314,28 +357,34 @@ The main area uses CSS Grid. The grid adapts based on which sidebar nav item is 
 
 | Action | Feedback |
 |:---|:---|
+| Submit task | Textarea clears, optimistic navigation to `/task/[id]` with submitted text visible immediately via `PendingTaskContext` (see [06-sidebar-and-landing.md](../docs/ui-overhaul/06-sidebar-and-landing.md)). SSE stream connects in the background. |
 | Click "Pause Swarm" | Button immediately transitions to `paused` state (amber). Top bar shows "⏸ PAUSED" badge. Disable button until API confirms. |
 | Click "Resume" | Button shows spinner for up to 500ms, then transitions back to default. Top bar badge disappears. |
 | Submit hint | Input clears. A toast notification slides in from bottom-right: "Hint delivered to task-2a8f" (auto-dismiss 3s). |
 | Delete skill | Confirmation dialog first: "Delete skill 'web-scraping'? This cannot be undone." On confirm, row fades out (200ms). |
 | Task completes | DAG node pulses green once (300ms). Cost ticker morphs to new value. Toast: "Task-2a8f completed." |
 | Task fails | DAG node pulses red once. Toast (persistent, requires dismiss): "Task-2a8f failed: [error summary]." |
+| Switch tabs | Instantaneous — SSE stream persists in the layout, tab pages swap without reconnection. Zero latency. |
 
 ### 7.2 Keyboard Shortcuts
 
 | Shortcut | Action |
 |:---|:---|
 | `Space` | Toggle pause/resume (when no input is focused) |
-| `1`–`6` | Navigate sidebar items (DAG, Logs, Blackboard, Cost, Nodes, Skills) |
-| `Esc` | Close any modal/expanded view, return to dashboard |
+| `Esc` | Close any modal, navigate back to landing page |
 | `⌘ K` / `Ctrl K` | Open command palette (future — reserve the pattern now) |
+
+> [!NOTE]
+> The previous `1`–`6` number key shortcuts for feature-navigation sidebar items were removed with the transition to the task-history sidebar. Those items are now full URL routes, not in-page view switches.
 
 ### 7.3 Real-time Data Transitions
 
-- **Metric value changes:** Numbers count up/down over 400ms (not instant replacement). Use `requestAnimationFrame` for smooth interpolation.
+- **Metric value changes:** Numbers count up/down over 400ms (not instant replacement). Use `requestAnimationFrame` for smooth interpolation. Apply `font-variant-numeric: tabular-nums` (§3.3) to prevent jitter.
 - **DAG node status change:** Node background cross-fades to new color over 300ms. If transitioning to `running`, the connected edge becomes animated (dashed, flowing).
-- **New log lines:** Text appears at bottom of terminal with no animation (instant — animation would feel laggy in a terminal context).
-- **Polling data refresh:** No visual indicator for successful refreshes (it should feel seamless). Only show a subtle "Last updated: 2s ago" text if the poll **fails** to indicate stale data.
+- **New log lines:** Text appears at bottom of terminal with no animation (instant — animation would feel laggy in a terminal context). Smart auto-scrolling suspends when the user scrolls up; a frosted-glass "↓ N new lines" pill appears at the bottom.
+- **New debate entries:** Appended with smooth scroll if the user is near the bottom (IntersectionObserver-based). A "↓ N new updates" pill appears if auto-scroll is suspended.
+- **Typing indicators:** During running tasks, the Blackboard tab shows a live "thinking" row with a bouncing ellipsis for the currently active agent (e.g., "planner is deliberating..."). Respects `prefers-reduced-motion`.
+- **SSE stream events:** No visual indicator for individual events (they should feel seamless). If the SSE connection drops, the header shows a reconnecting indicator.
 
 ---
 
@@ -359,9 +408,9 @@ Every feature component must implement all five states. This matrix is the accep
 | Component | Empty | Loading | Active | Error | Disabled |
 |:---|:---|:---|:---|:---|:---|
 | **DAG Visualizer** | "No active tasks. Submit a task to see the execution graph." + illustration icon | Skeleton: 3 placeholder nodes with faded edges | Interactive React Flow canvas | "Failed to load state" + retry button | N/A |
-| **Log Terminal** | Gray terminal with "Waiting for agent output..." centered | Terminal header shows "Connecting..." with pulsing dot | Live scrolling output | Header turns red, "Disconnected — reconnecting..." | N/A |
+| **Log Terminal** | Gray terminal with "Waiting for agent output..." centered | Terminal header shows "Connecting..." with pulsing dot | Live scrolling output with smart auto-scroll | Header turns red, "Disconnected — reconnecting..." | N/A |
 | **HITL Controls** | All buttons enabled, hint input placeholder: "Enter guidance for the swarm..." | Pause button shows spinner during API call | Amber "PAUSED" state with hint input active | "Daemon unreachable" inline error below buttons | During active task execution with no HITL support |
-| **Blackboard** | Both panels show "No session data" | Skeleton: 4 lines of key-value placeholders | Scrollable JSON with syntax coloring | "Redis connection lost" banner | N/A |
+| **Debate History** | "No debate entries yet — submit a task to see agent deliberation." | Skeleton: 4 debate entry placeholders | Chronological debate list with typing indicators | "Failed to load debate history" + retry button | N/A |
 | **Cost Tracker** | MetricCards show "$0.00" and "0 tokens" (not blank) | Skeleton: 3 MetricCard shapes + chart outline | Live updating numbers and chart | "Metrics unavailable" with last-known values grayed | N/A |
 | **Skills Explorer** | Per-tab: "No skills learned yet. Skills are created as agents complete tasks." | Skeleton: 5 list items | Skill list with view/delete actions | "Agent unreachable" per-tab error | Delete button disabled during delete API call |
 | **Telemetry** | "No telemetry data — verify Beszel Hub connection." | Skeleton: gauge shapes | Live gauges/numbers | "Beszel Hub unreachable" + timestamp of last successful fetch | N/A |
@@ -381,38 +430,54 @@ Every feature component must implement all five states. This matrix is the accep
 
 ## 11. File Organization
 
-The design system implementation should create these files:
+The project uses Next.js App Router with file-based routing. Feature components live alongside their routes as page components, not in a flat `components/` directory. See [05-frontend-routing.md](../docs/ui-overhaul/05-frontend-routing.md) for the full route structure.
 
 ```
 src/
+├── app/
+│   ├── layout.tsx                    # Root layout: TopBar + TaskSidebar + <main>{children}</main>
+│   ├── page.tsx                      # Landing page: task input + recent history
+│   ├── task/
+│   │   └── [taskId]/
+│   │       ├── layout.tsx            # Task detail layout: header + tabs + TaskStreamContext.Provider
+│   │       ├── page.tsx              # Overview tab (default)
+│   │       ├── dag/page.tsx          # DAG visualization
+│   │       ├── logs/page.tsx         # Log terminals (3 columns)
+│   │       ├── blackboard/page.tsx   # Debate history
+│   │       └── cost/page.tsx         # Cost breakdown
+│   ├── infra/page.tsx                # Infrastructure telemetry
+│   └── skills/page.tsx               # Skills explorer
 ├── components/
-│   ├── ui/                    # Design system primitives (this spec)
+│   ├── ui/                           # Design system primitives (this spec)
 │   │   ├── Panel.tsx
 │   │   ├── StatusBadge.tsx
 │   │   ├── MetricCard.tsx
 │   │   ├── TerminalPane.tsx
-│   │   ├── SplitView.tsx
 │   │   ├── ActionButton.tsx
 │   │   ├── Skeleton.tsx
 │   │   ├── EmptyState.tsx
-│   │   ├── Toast.tsx
-│   │   └── Sidebar.tsx
-│   ├── DAGVisualizer.tsx      # Feature: uses Panel, StatusBadge
-│   ├── LogTerminal.tsx        # Feature: uses TerminalPane
-│   ├── BlackboardInspector.tsx # Feature: uses Panel, SplitView
-│   ├── CostTracker.tsx        # Feature: uses Panel, MetricCard
-│   ├── HITLControls.tsx       # Feature: uses Panel, ActionButton
-│   ├── SkillsExplorer.tsx     # Feature: uses Panel, ActionButton
-│   └── Telemetry.tsx          # Feature: uses Panel, MetricCard
-├── app/
-│   ├── layout.tsx             # Root layout: TopBar + Sidebar + Grid
-│   └── page.tsx               # Dashboard grid assembly
+│   │   └── Toast.tsx
+│   ├── TopBar.tsx                    # "use client" — daemon status, cost ticker
+│   ├── TaskSidebar.tsx               # "use client" — task history, system nav
+│   ├── DAGVisualizer.tsx             # Feature: React Flow canvas
+│   ├── LogTerminal.tsx               # Feature: xterm.js + TerminalPane
+│   └── DebateList.tsx                # Feature: debate entries + typing indicator
+├── contexts/
+│   ├── TaskStreamContext.tsx          # Distributes SSE data from useTaskStream to tab pages
+│   └── PendingTaskContext.tsx         # Optimistic UI: ephemeral submitted-text context
+├── hooks/
+│   ├── useTaskStream.ts              # SSE hook for /api/stream/task/[taskId] (logs, phase, debate, etc.)
+│   ├── useSystemStream.ts            # SSE hook for /api/stream/system
+│   └── useTaskHistory.ts             # REST fetch for GET /api/tasks + refetch on system events
 └── lib/
-    └── design-tokens.ts       # Programmatic access to tokens
+    └── design-tokens.ts              # Programmatic access to tokens
 ```
 
 > [!IMPORTANT] Primitive-First Composition
-> Feature components (DAG, Logs, HITL, etc.) must **not** directly use raw Tailwind classes for layout, backgrounds, or spacing. They compose from the `ui/` primitives, which themselves use the token system. This creates one layer of indirection that makes future redesigns possible without touching feature logic.
+> Feature components (DAG, Logs, Debate, etc.) must **not** directly use raw CSS for layout, backgrounds, or spacing. They compose from the `ui/` primitives, which themselves use the token system. This creates one layer of indirection that makes future redesigns possible without touching feature logic.
+
+> [!IMPORTANT] SSE Data Flow
+> The `useTaskStream` hook is called **once** in `task/[taskId]/layout.tsx` and distributed via `TaskStreamContext.Provider`. Individual tab pages consume data via `useTaskData()` — they never create their own `EventSource` connections. This prevents the "tab switch tear" where SSE reconnects cause 200-500ms flickers. See [03-sse-architecture.md §3.4](../docs/ui-overhaul/03-sse-architecture.md).
 
 ---
 

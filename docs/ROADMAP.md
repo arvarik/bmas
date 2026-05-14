@@ -45,14 +45,17 @@ Currently, triage requires an NVIDIA GPU running a local vLLM instance. Users wi
 - [ ] Maintain the same triage prompt and complexity enum
 - [ ] Update documentation
 
-### Mission Control — URL Routing & Smooth Navigation
-Currently, Mission Control uses in-memory state (`activeNav`) to switch between views. There are no URL slugs, so deep-linking and browser back/forward don't work. View transitions also lack animation.
+### Mission Control — Task-Centric UI Overhaul
+Full redesign of Mission Control from a single-task monitoring dashboard to a multi-task, history-aware orchestration interface. Subsumes the previous URL routing item. See [`docs/ui-overhaul/`](ui-overhaul/README.md) for the complete specification.
 
-- [ ] Implement URL-based routing (e.g., `/overview`, `/dag`, `/logs`, `/operator`, `/blackboard`, `/cost`, `/infra`, `/skills`)
-- [ ] Ensure browser back/forward buttons navigate between views correctly
-- [ ] Add smooth page transitions (crossfade or slide) so switching feels snappy, not jarring
-- [ ] Preserve scroll position when navigating back to a previously visited view
-- [ ] Support deep-linking: opening `http://host:9321/infra` goes directly to Infrastructure
+- [ ] SQLite data layer for persistent task history (replaces ephemeral Redis-only storage)
+- [ ] Unified SSE architecture replacing 2-second polling
+- [ ] New daemon API endpoints for task history, debate, cost, and logs
+- [ ] Next.js App Router with proper URL routes and deep-linking
+- [ ] Task history sidebar (replacing feature navigation)
+- [ ] Conversational landing page for task submission
+- [ ] Task detail page with tabbed sub-views (Overview, DAG, Logs, Blackboard, Cost)
+- [ ] Permanent debate history preservation for future replay
 
 ### Private Blackboard Space
 **Paper reference:** §3.2 Blackboard
@@ -114,6 +117,18 @@ Currently hardcoded to `bmas:`. Making it configurable allows multiple deploymen
 - [ ] Support approval workflows for high-cost tasks
 - [ ] Configurable approval thresholds per complexity tier
 - [ ] Slack/Discord notifications for pending approvals
+
+### SQLite Automated Backups
+The daemon's task history is stored in SQLite (`/data/bmas.db`). Currently, backups rely on Docker volume management. A configurable automated backup would improve data safety.
+- [ ] Add `storage.backup_interval` setting to `bmas.yaml` (e.g., `daily`, `weekly`, `never`)
+- [ ] Use SQLite's built-in `.backup` API to create periodic snapshots to a configurable path
+- [ ] Rotate old backups (keep last N)
+
+### Task History Deletion
+Task history is currently immutable — tasks cannot be deleted from the SQLite database. Adding deletion support would give operators more control.
+- [ ] Add `DELETE /tasks/{id}` endpoint to the daemon (cascading delete of sub_tasks, debate, cost, logs)
+- [ ] Add delete button in the task detail page with confirmation dialog
+- [ ] Respect the design system's `ActionButton` danger variant and confirmation pattern from `DESIGN.md` §5.6 and §7.1
 
 ## 🟢 Low Priority
 
