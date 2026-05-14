@@ -121,7 +121,7 @@ bmas/
 │   ├── QUICKSTART.md  #   Get started in 5 minutes
 │   ├── CONFIGURATION.md#  Full config reference
 │   ├── NODE_SETUP.md  #   Edge node provisioning guide
-│   └── ROADMAP.md    #   Future roadmap
+│   └── roadmap/       #   Future roadmap (split by category)
 │
 ├── scripts/           # Operational utilities
 │   └── healthcheck.sh #   Post-deploy service health check
@@ -142,7 +142,7 @@ bmas/
 | [Quick Start](docs/QUICKSTART.md) | Get running in 5 minutes |
 | [Configuration](docs/CONFIGURATION.md) | Full `bmas.yaml` reference |
 | [Node Setup](docs/NODE_SETUP.md) | Provisioning edge nodes |
-| [Roadmap](docs/ROADMAP.md) | Future enhancements |
+| [Roadmap](docs/roadmap/README.md) | Future enhancements (by category) |
 
 ### Component READMEs
 
