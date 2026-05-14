@@ -1,10 +1,40 @@
 "use client";
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, createContext, useContext } from "react";
 import { ToastProvider } from "@/components/ui/Toast";
 import { TopBar } from "@/components/TopBar";
 import { Sidebar } from "@/components/ui/Sidebar";
 import { useBlackboard } from "@/hooks/useBlackboard";
+import type { StatusType } from "@/lib/design-tokens";
+
+// ── Navigation Context ───────────────────────────────────────────────
+
+interface AppShellContext {
+  activeNav: string;
+  setActiveNav: (id: string) => void;
+}
+
+const AppShellCtx = createContext<AppShellContext>({
+  activeNav: "overview",
+  setActiveNav: () => {},
+});
+
+export function useAppShell() {
+  return useContext(AppShellCtx);
+}
+
+// ── Nav labels for breadcrumbs ───────────────────────────────────────
+
+const NAV_LABELS: Record<string, string> = {
+  overview: "Overview",
+  dag: "Task DAG",
+  logs: "Agent Logs",
+  operator: "Operator",
+  blackboard: "Blackboard",
+  cost: "Cost & Tokens",
+  infra: "Infrastructure",
+  skills: "Agent Skills",
+};
 
 /**
  * AppShell — client-side layout wrapper.
@@ -15,7 +45,8 @@ import { useBlackboard } from "@/hooks/useBlackboard";
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [activeNav, setActiveNav] = useState("dashboard");
+  const [activeNav, setActiveNav] = useState("overview");
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
 
   // Pull live data from the blackboard store for the TopBar
   const daemonState = useBlackboard((s) => s.state);
@@ -30,18 +61,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return cleanup;
   }, [startPolling]);
 
-  const daemonStatus = daemonError
-    ? "error" as const
+  const daemonStatus: StatusType = daemonError
+    ? "error"
     : daemonState
-      ? "running" as const
-      : "pending" as const;
+      ? "running"
+      : "pending";
 
   const swarmPhase = daemonState?.phase
     ? `${daemonState.phase} — Iteration ${daemonState.iteration}`
     : undefined;
 
   // Compute total cost from the store (if available)
-  // This will be wired to the cost API in a future phase; for now, placeholder
   const totalCost = 0;
 
   const handleToggleCollapse = useCallback(() => {
@@ -49,14 +79,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   const handleNavigate = useCallback((id: string) => {
-    setActiveNav((prev) => (prev === id ? "dashboard" : id));
+    setActiveNav(id);
+    // Close mobile drawer on navigation
+    setMobileDrawerOpen(false);
   }, []);
 
-  // ── Responsive: auto-collapse sidebar at <1440px ──────────────
+  const handleToggleMobileDrawer = useCallback(() => {
+    setMobileDrawerOpen((prev) => !prev);
+  }, []);
+
+  // ── Responsive: auto-collapse sidebar at <1024px ──────────────
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 1439px)");
+    const mq = window.matchMedia("(max-width: 1023px)");
     const handler = (e: MediaQueryListEvent | MediaQueryList) => {
       setSidebarCollapsed(e.matches);
+      if (!e.matches) setMobileDrawerOpen(false);
     };
     handler(mq);
     mq.addEventListener("change", handler);
@@ -66,8 +103,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // ── Global keyboard shortcuts ─────────────────────────────────
   useEffect(() => {
     const NAV_KEYS: Record<string, string> = {
-      "1": "dag", "2": "logs", "3": "hitl",
-      "4": "blackboard", "5": "cost", "6": "nodes",
+      "1": "overview", "2": "dag", "3": "logs", "4": "operator",
+      "5": "blackboard", "6": "cost", "7": "infra", "8": "skills",
     };
 
     function handleKeyDown(e: KeyboardEvent) {
@@ -75,16 +112,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
-      // Esc → back to dashboard
+      // Esc → back to overview
       if (e.key === "Escape") {
-        setActiveNav("dashboard");
+        setActiveNav("overview");
+        setMobileDrawerOpen(false);
         return;
       }
 
-      // 1–6 → navigate
+      // 1–8 → navigate
       if (NAV_KEYS[e.key]) {
         e.preventDefault();
-        setActiveNav((prev) => (prev === NAV_KEYS[e.key] ? "dashboard" : NAV_KEYS[e.key]));
+        setActiveNav(NAV_KEYS[e.key]);
+        setMobileDrawerOpen(false);
         return;
       }
 
@@ -99,48 +138,46 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  return (
-    <ToastProvider>
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          height: "100vh",
-          overflow: "hidden",
-          background: "var(--surface-base)",
-        }}
-      >
-        <TopBar
-          daemonStatus={daemonStatus}
-          swarmPhase={swarmPhase}
-          totalCost={totalCost}
-        />
+  const contextValue = { activeNav, setActiveNav: handleNavigate };
 
-        <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
-          <Sidebar
-            activeItem={activeNav}
-            onNavigate={handleNavigate}
-            collapsed={sidebarCollapsed}
-            onToggleCollapse={handleToggleCollapse}
+  return (
+    <AppShellCtx.Provider value={contextValue}>
+      <ToastProvider>
+        <div className="app-shell">
+          <TopBar
+            daemonStatus={daemonStatus}
+            swarmPhase={swarmPhase}
+            totalCost={totalCost}
+            currentView={NAV_LABELS[activeNav] ?? "Overview"}
+            onMenuToggle={handleToggleMobileDrawer}
           />
 
-          <main
-            id="main-content"
-            style={{
-              flex: 1,
-              minWidth: 0,
-              overflow: "auto",
-              padding: "var(--space-3)",
-              background: "var(--surface-base)",
-            }}
-          >
-            {/* Pass activeNav to children via a wrapper div with data attribute */}
-            <div data-active-nav={activeNav} style={{ height: "100%" }}>
+          <div className="app-shell__body">
+            {/* Mobile backdrop */}
+            {mobileDrawerOpen && (
+              <div
+                className="mobile-backdrop"
+                onClick={() => setMobileDrawerOpen(false)}
+              />
+            )}
+
+            <Sidebar
+              activeItem={activeNav}
+              onNavigate={handleNavigate}
+              collapsed={sidebarCollapsed}
+              onToggleCollapse={handleToggleCollapse}
+              mobileOpen={mobileDrawerOpen}
+            />
+
+            <main
+              id="main-content"
+              className="app-shell__main"
+            >
               {children}
-            </div>
-          </main>
+            </main>
+          </div>
         </div>
-      </div>
-    </ToastProvider>
+      </ToastProvider>
+    </AppShellCtx.Provider>
   );
 }

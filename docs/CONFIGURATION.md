@@ -198,14 +198,18 @@ Secrets are **never** stored in `bmas.yaml`. They go in `.env`:
 | `ANTHROPIC_API_KEY` | ❌ | Anthropic (Claude) API key. |
 | `OPENAI_API_KEY` | ❌ | OpenAI API key. |
 | `HF_TOKEN` | ❌ | Hugging Face token for gated models. |
+| `BESZEL_EMAIL` | ❌ | Beszel Hub login email (for telemetry). |
+| `BESZEL_PASSWORD` | ❌ | Beszel Hub login password (for telemetry). |
 
 At least one cloud API key is required unless all routing goes to `local`.
+
+**Beszel credentials:** Required if `monitoring.beszel_hub` is set in `bmas.yaml`. These are the email/password you use to log into the Beszel web UI. Without them, the Infrastructure page in Mission Control will show no telemetry data.
 
 ---
 
 ## Example Configurations
 
 See the `examples/` directory:
-- **[stigmergic.yaml](../examples/stigmergic.yaml)** — Full 3-node deployment with Gemini
+- **[stigmergic.yaml](../examples/stigmergic/stigmergic.yaml)** — Full 3-node deployment with Gemini
 - **[minimal-cloud.yaml](../examples/minimal-cloud.yaml)** — No edge nodes, single cloud provider
 - **[multi-provider.yaml](../examples/multi-provider.yaml)** — Mix of Gemini + Claude + local

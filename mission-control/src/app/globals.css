@@ -6,6 +6,7 @@
 /* Google Fonts loaded via next/font/google in layout.tsx (self-hosted) */
 
 @import "tailwindcss";
+@import "./views.css";
 
 /* ── Design Tokens ─────────────────────────────────────────────────── */
 :root {

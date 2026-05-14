@@ -3,26 +3,70 @@
 import { useEffect, useState, useCallback } from "react";
 import { Panel } from "@/components/ui/Panel";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { Monitor } from "lucide-react";
+import { Monitor, Clock, HardDrive, Thermometer, Activity, Wifi } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────
 
-interface SystemInfo {
-  cpu: number; mem: number; memUsed: number; memTotal: number;
-  temps: { label: string; value: number }[];
+interface SystemData {
+  id: string;
+  name: string;
+  host: string;
+  status: string;
+  updatedAt: string;
+  cpu: number;
+  memPct: number;
+  diskPct: number;
+  diskTotalGB: number;
+  temp: number | null;
+  uptimeSec: number;
+  agentVersion: string | null;
+  bandwidthBytes: number;
+  cpuThreads: number;
+  loadAvg: number[];
 }
 
-interface BeszelResponse {
+interface TelemetryResponse {
   hub_status?: string;
-  cpu?: number; memPct?: number; memUsed?: number; memTotal?: number;
-  temperatures?: Array<{ label: string; value: number }>;
-  note?: string;
+  systems?: SystemData[];
   error?: string;
+  note?: string;
 }
 
 const POLL_INTERVAL = 5_000;
 
+// ── Utilities ─────────────────────────────────────────────────────────
+
 function clamp(n: number): number { return Math.max(0, Math.min(100, n)); }
+
+function uptimeStr(sec: number): string {
+  if (sec <= 0) return "—";
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function statusColor(status: string): string {
+  if (status === "up") return "var(--status-success)";
+  if (status === "down") return "var(--status-error)";
+  return "var(--status-paused)";
+}
+
+function gaugeColor(value: number): string {
+  if (value < 50) return "var(--status-success)";
+  if (value < 75) return "var(--status-paused)";
+  if (value < 90) return "hsl(32, 80%, 55%)";
+  return "var(--status-error)";
+}
 
 function tempColor(c: number): string {
   if (c < 50) return "var(--status-success)";
@@ -33,29 +77,125 @@ function tempColor(c: number): string {
 
 // ── Radial Gauge ──────────────────────────────────────────────────────
 
-function RadialGauge({ label, value, unit, color, subtitle }: {
-  label: string; value: number; unit: string; color: string; subtitle?: string;
+function RadialGauge({ label, value, unit, color, size = 72 }: {
+  label: string; value: number; unit: string; color: string; size?: number;
 }) {
-  const r = 36, circ = 2 * Math.PI * r;
+  const r = (size - 12) / 2;
+  const circ = 2 * Math.PI * r;
   const offset = circ - (clamp(value) / 100) * circ;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--space-1)" }}>
-      <div style={{ position: "relative", width: 88, height: 88 }}>
-        <svg width="88" height="88" style={{ transform: "rotate(-90deg)" }}>
-          <circle cx="44" cy="44" r={r} fill="none" stroke="var(--surface-hover)" strokeWidth="7" />
-          <circle cx="44" cy="44" r={r} fill="none" stroke={color} strokeWidth="7"
+    <div className="infra-gauge">
+      <div className="infra-gauge__ring" style={{ width: size, height: size }}>
+        <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--surface-hover)" strokeWidth="6" />
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth="6"
             strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset}
             style={{ transition: "stroke-dashoffset 700ms ease-out, stroke 300ms ease" }} />
         </svg>
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <span style={{ fontSize: "var(--text-lg)", fontWeight: "var(--weight-semibold)", fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>
-            {value.toFixed(1)}{unit}
-          </span>
-        </div>
+        <span className="infra-gauge__value">
+          {value.toFixed(1)}{unit}
+        </span>
       </div>
-      <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-medium)", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--text-secondary)" }}>{label}</span>
-      {subtitle && <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>{subtitle}</span>}
+      <span className="infra-gauge__label">{label}</span>
+    </div>
+  );
+}
+
+// ── Mini Bar ──────────────────────────────────────────────────────────
+
+function MiniBar({ label, value, unit, color, icon: Icon }: {
+  label: string; value: number; unit: string; color: string;
+  icon: React.ComponentType<{ size?: number }>;
+}) {
+  return (
+    <div className="infra-minibar">
+      <div className="infra-minibar__header">
+        <Icon size={13} />
+        <span className="infra-minibar__label">{label}</span>
+        <span className="infra-minibar__value" style={{ color }}>{value.toFixed(1)}{unit}</span>
+      </div>
+      <div className="infra-minibar__track">
+        <div className="infra-minibar__fill" style={{
+          width: `${clamp(value)}%`,
+          background: color,
+        }} />
+      </div>
+    </div>
+  );
+}
+
+// ── Node Card ─────────────────────────────────────────────────────────
+
+function NodeCard({ sys }: { sys: SystemData }) {
+  return (
+    <div className="infra-node-card">
+      {/* Header */}
+      <div className="infra-node-card__header">
+        <div className="infra-node-card__dot" style={{ background: statusColor(sys.status) }} />
+        <div className="infra-node-card__identity">
+          <span className="infra-node-card__name">{sys.name}</span>
+          <span className="infra-node-card__host">{sys.host}</span>
+        </div>
+        <span className="infra-node-card__status" style={{ color: statusColor(sys.status) }}>
+          {sys.status}
+        </span>
+      </div>
+
+      {/* Gauges row */}
+      <div className="infra-node-card__gauges">
+        <RadialGauge label="CPU" value={sys.cpu} unit="%" color={gaugeColor(sys.cpu)} />
+        <RadialGauge label="Memory" value={sys.memPct} unit="%" color={gaugeColor(sys.memPct)} />
+        <RadialGauge label="Disk" value={sys.diskPct} unit="%" color={gaugeColor(sys.diskPct)} />
+      </div>
+
+      {/* Stats grid */}
+      <div className="infra-node-card__stats">
+        {sys.temp !== null && (
+          <MiniBar label="Temp" value={sys.temp} unit="°C" color={tempColor(sys.temp)} icon={Thermometer} />
+        )}
+        {sys.loadAvg.length > 0 && (
+          <div className="infra-minibar">
+            <div className="infra-minibar__header">
+              <Activity size={13} />
+              <span className="infra-minibar__label">Load Avg</span>
+              <span className="infra-minibar__value" style={{ color: "var(--text-primary)" }}>
+                {sys.loadAvg.map((v) => v.toFixed(2)).join(" / ")}
+              </span>
+            </div>
+          </div>
+        )}
+        {sys.diskTotalGB > 0 && (
+          <div className="infra-minibar">
+            <div className="infra-minibar__header">
+              <HardDrive size={13} />
+              <span className="infra-minibar__label">Disk</span>
+              <span className="infra-minibar__value" style={{ color: "var(--text-primary)" }}>
+                {sys.diskTotalGB.toFixed(1)} GB
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Footer meta */}
+      <div className="infra-node-card__footer">
+        <span className="infra-node-card__meta">
+          <Clock size={11} />
+          {uptimeStr(sys.uptimeSec)}
+        </span>
+        {sys.bandwidthBytes > 0 && (
+          <span className="infra-node-card__meta">
+            <Wifi size={11} />
+            {formatBytes(sys.bandwidthBytes)}
+          </span>
+        )}
+        {sys.agentVersion && (
+          <span className="infra-node-card__meta">
+            v{sys.agentVersion}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -63,21 +203,22 @@ function RadialGauge({ label, value, unit, color, subtitle }: {
 // ── Main Component ────────────────────────────────────────────────────
 
 export default function Telemetry() {
-  const [info, setInfo] = useState<SystemInfo | null>(null);
+  const [systems, setSystems] = useState<SystemData[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [lastFetch, setLastFetch] = useState<string | null>(null);
 
   const fetchTelemetry = useCallback(async () => {
     try {
-      // Use the server-side proxy to avoid CORS and IP issues
-      const res = await fetch("/api/telemetry", { cache: "no-store", signal: AbortSignal.timeout(4_000) });
+      const res = await fetch("/api/telemetry", { cache: "no-store", signal: AbortSignal.timeout(6_000) });
       if (!res.ok) { setError(`Beszel returned ${res.status}`); return; }
-      const data = (await res.json()) as BeszelResponse;
+      const data = (await res.json()) as TelemetryResponse;
+
       if (data.error) { setError(data.error); return; }
-      setInfo({ cpu: data.cpu ?? 0, mem: data.memPct ?? 0, memUsed: data.memUsed ?? 0, memTotal: data.memTotal ?? 0, temps: data.temperatures ?? [] });
+      if (data.note) { setNote(data.note); }
+
+      setSystems(data.systems ?? []);
       setError(null);
-      setLastFetch(new Date().toLocaleTimeString());
     } catch (err) { setError(err instanceof Error ? err.message : "Beszel unreachable"); }
     finally { setLoading(false); }
   }, []);
@@ -88,54 +229,40 @@ export default function Telemetry() {
     return () => { clearTimeout(timer); clearInterval(id); };
   }, [fetchTelemetry]);
 
-  const panelStatus = loading ? "loading" as const : error && !info ? "error" as const : undefined;
+  const panelStatus = loading ? "loading" as const : error && systems.length === 0 ? "error" as const : undefined;
+  const upCount = systems.filter((s) => s.status === "up").length;
 
   return (
     <Panel
       title="Infrastructure"
-      subtitle="Hardware telemetry"
+      subtitle={systems.length > 0 ? `${upCount}/${systems.length} systems online` : "Hardware telemetry"}
       status={panelStatus}
       errorMessage={error ? "Beszel Hub unreachable" : undefined}
       emptyIcon={Monitor}
       emptyMessage="No telemetry data"
-      emptyHint="Verify Beszel Hub connection."
+      emptyHint={note ?? "Verify Beszel Hub connection and credentials in .env."}
       onRetry={error ? fetchTelemetry : undefined}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+      <div className="infra-content">
         {/* Stale data warning */}
-        {error && info && (
-          <div style={{ padding: "var(--space-2) var(--space-3)", borderRadius: "var(--radius-sm)", background: "hsl(0,84%,60%,0.1)", borderLeft: "3px solid var(--status-error)", fontSize: "var(--text-xs)", color: "var(--status-error)" }}>
-            ⚠ Beszel Hub unreachable — last successful fetch: {lastFetch}
+        {error && systems.length > 0 && (
+          <div className="infra-stale-warning">
+            ⚠ Beszel Hub unreachable — showing last known data
           </div>
         )}
 
-        {info && (
-          <>
-            {/* CPU + Memory Gauges */}
-            <div style={{ display: "flex", justifyContent: "space-around", gap: "var(--space-4)" }}>
-              <RadialGauge label="CPU" value={info.cpu} unit="%" color={info.cpu < 75 ? "var(--status-running)" : "var(--status-error)"} />
-              <RadialGauge label="RAM" value={info.mem} unit="%" color={info.mem < 75 ? "var(--status-running)" : "var(--status-error)"} subtitle={`${info.memUsed.toFixed(1)} / ${info.memTotal.toFixed(1)} GB`} />
-            </div>
-
-            {/* Thermals */}
-            {info.temps.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-                <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-medium)", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--text-tertiary)" }}>Thermals</span>
-                {info.temps.map((t) => (
-                  <div key={t.label} style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-                    <span style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", width: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={t.label}>{t.label}</span>
-                    <div style={{ flex: 1, height: 6, borderRadius: "var(--radius-full)", background: "var(--surface-hover)", overflow: "hidden" }}>
-                      <div style={{ height: "100%", borderRadius: "var(--radius-full)", width: `${clamp(t.value)}%`, background: tempColor(t.value), transition: "width 500ms ease-out, background 300ms ease" }} />
-                    </div>
-                    <span style={{ fontSize: "var(--text-sm)", fontFamily: "var(--font-mono)", width: 48, textAlign: "right", color: tempColor(t.value) }}>{t.value}°C</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
+        {/* Node cards grid */}
+        {systems.length > 0 && (
+          <div className="infra-nodes-grid">
+            {systems.map((sys) => (
+              <NodeCard key={sys.id} sys={sys} />
+            ))}
+          </div>
         )}
 
-        {!info && !error && <Skeleton variant="metric" />}
+        {!loading && !error && systems.length === 0 && !note && (
+          <Skeleton variant="metric" />
+        )}
       </div>
     </Panel>
   );

@@ -178,6 +178,42 @@ fi
 # 4. Daemon
 check_service "Daemon" "http://$HOST:$DAEMON_PORT/health"
 
+# 5. Beszel Hub (optional — only if configured in bmas.yaml)
+BESZEL_HUB=$(python3 - "$BMAS_CONFIG" <<'PYEOF'
+import sys, yaml
+with open(sys.argv[1]) as f:
+    cfg = yaml.safe_load(f)
+print(cfg.get("monitoring", {}).get("beszel_hub", ""))
+PYEOF
+)
+
+if [[ -n "$BESZEL_HUB" ]]; then
+  check_service "Beszel Hub" "$BESZEL_HUB/api/health"
+
+  # Try authenticated check for data access
+  if [[ -f "$REPO_ROOT/.env" ]]; then
+    source "$REPO_ROOT/.env"
+  fi
+  if [[ -n "${BESZEL_EMAIL:-}" && -n "${BESZEL_PASSWORD:-}" ]]; then
+    AUTH_RESULT=$(curl -sf -X POST "$BESZEL_HUB/api/collections/users/auth-with-password" \
+      -H 'Content-Type: application/json' \
+      -d "{\"identity\":\"$BESZEL_EMAIL\",\"password\":\"$BESZEL_PASSWORD\"}" 2>/dev/null)
+    if echo "$AUTH_RESULT" | grep -q '"token"'; then
+      echo "  ✅ Beszel Auth — credentials valid"
+      ((PASS++))
+    else
+      echo "  ❌ Beszel Auth — invalid credentials (BESZEL_EMAIL/BESZEL_PASSWORD)"
+      ((FAIL++))
+    fi
+  else
+    echo "  ⏭️  Beszel Auth — skipped (no BESZEL_EMAIL/BESZEL_PASSWORD in .env)"
+    ((SKIP++))
+  fi
+else
+  echo "  ⏭️  Beszel Hub — skipped (not configured in bmas.yaml)"
+  ((SKIP++))
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────
 
 echo ""

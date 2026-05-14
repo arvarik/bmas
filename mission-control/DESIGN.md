@@ -1,4 +1,4 @@
-[🏠 Index](../README.md) | [📋 Context](../docs/CONTEXT.md)
+[🏠 Index](../README.md) | [📋 Context](../examples/stigmergic/CONTEXT.md)
 
 # Mission Control — Design System
 

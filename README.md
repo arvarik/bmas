@@ -24,7 +24,7 @@
 
 ## Architecture
 
-![Stigmergic Architecture](docs/ai-topology/ai-strategy-topology.png)
+![Stigmergic Architecture](examples/stigmergic/ai-topology/ai-strategy-topology.png)
 
 ```
 ┌─────────────────── Control Plane (Docker Compose) ───────────────────┐
@@ -127,7 +127,10 @@ bmas/
 │   └── healthcheck.sh #   Post-deploy service health check
 │
 └── examples/          # Example configurations
-    ├── stigmergic.yaml    # Full 3-node homelab deployment
+    ├── stigmergic/        # Stigmergic-specific assets
+    │   ├── stigmergic.yaml# Full 3-node homelab deployment
+    │   ├── CONTEXT.md     # Hardware & network reference
+    │   └── ai-topology/   # Architecture diagrams
     ├── minimal-cloud.yaml # Cloud-only, no GPU required
     └── multi-provider.yaml# Gemini + Claude + OpenAI routing
 ```
@@ -140,7 +143,6 @@ bmas/
 | [Configuration](docs/CONFIGURATION.md) | Full `bmas.yaml` reference |
 | [Node Setup](docs/NODE_SETUP.md) | Provisioning edge nodes |
 | [Roadmap](docs/ROADMAP.md) | Future enhancements |
-| [System Context](docs/CONTEXT.md) | Hardware & network reference |
 
 ### Component READMEs
 

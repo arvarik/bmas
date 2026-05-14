@@ -236,6 +236,12 @@ export const STREAM_KEYS: string[] = (cfg.nodes ?? []).map(
 export const BESZEL_HUB_URL: string | null =
   cfg.monitoring?.beszel_hub ?? null;
 
+/** Beszel Hub credentials for PocketBase auth (optional) */
+export const BESZEL_EMAIL: string | null =
+  process.env.BESZEL_EMAIL || null;
+export const BESZEL_PASSWORD: string | null =
+  process.env.BESZEL_PASSWORD || null;
+
 /** Node configuration (for UI colors, etc.) */
 export const NODES: BmasNode[] = cfg.nodes ?? [];
 

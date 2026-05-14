@@ -10,11 +10,11 @@ The real-time operations dashboard for **Stigmergic**. A single-pane-of-glass fo
 |:---|:---|:---|:---|
 | 1 | **Task DAG Visualizer** | React Flow (`@xyflow/react`) | `GET /api/state` (2s polling) |
 | 2 | **Live Log Terminals** | xterm.js (`@xterm/xterm`) | `GET /api/logs` (SSE, Redis Streams) |
-| 3 | **HITL Controls** | ActionButton + Toast | `POST /api/hitl/{action}` |
+| 3 | **Operator Controls** | ActionButton + Toast | `POST /api/hitl/{action}` |
 | 4 | **Blackboard Inspector** | SplitView (Public vs Private) | `GET /api/state` + `GET /api/private` |
 | 5 | **Cost Tracker** | Recharts + MetricCard | `GET /api/cost` (Redis metrics) |
 | 6 | **Skills Explorer** | Tabbed Panel (per agent) | `GET /api/skills?node={role}` |
-| 7 | **Hardware Telemetry** | MetricCard gauges | `GET /api/telemetry` (Beszel Hub) |
+| 7 | **Hardware Telemetry** | Multi-node cards + gauges | `GET /api/telemetry` (Beszel Hub + PocketBase auth) |
 
 ## Architecture
 
@@ -54,8 +54,8 @@ mission-control/
 ├── src/
 │   ├── app/
 │   │   ├── layout.tsx         # Root layout — fonts, metadata, AppShell
-│   │   ├── page.tsx           # Dashboard grid — assembles all 7 features
-│   │   ├── AppShell.tsx       # Sidebar + TopBar + main content container
+│   │   ├── page.tsx           # View router — renders one view at a time
+│   │   ├── AppShell.tsx       # Sidebar + TopBar + navigation context
 │   │   ├── globals.css        # Design tokens (CSS custom properties)
 │   │   └── api/               # 8 API route handlers (server-side proxies)
 │   │       ├── state/         #   → Daemon :9000/state
@@ -67,6 +67,15 @@ mission-control/
 │   │       ├── submit/        #   → Daemon :9000/submit
 │   │       └── telemetry/     #   → Beszel Hub :8090
 │   ├── components/
+│   │   ├── views/             # 8 dedicated full-page views
+│   │   │   ├── OverviewView   #   Dashboard summary + task input
+│   │   │   ├── DAGView        #   Full-canvas task dependency graph
+│   │   │   ├── LogsView       #   3 terminals (tabbed mobile, grid desktop)
+│   │   │   ├── OperatorView   #   Task submit + pause/resume + hints
+│   │   │   ├── BlackboardView #   Public + private state inspector
+│   │   │   ├── CostView       #   Spend + token charts
+│   │   │   ├── InfraView      #   Multi-node hardware telemetry
+│   │   │   └── SkillsView     #   Agent skills explorer
 │   │   ├── ui/                # Design system primitives (10 components)
 │   │   │   ├── Panel.tsx      #   Container with header/body/states
 │   │   │   ├── StatusBadge.tsx#   Status pill (pending/running/success/error/paused)
@@ -123,7 +132,7 @@ All API routes are server-side proxies that forward requests to backend services
 | `/api/cost` | GET | Redis (`HGETALL`) | Per-model cost + token counters |
 | `/api/skills` | GET/DELETE | Agent LXCs `:8000/skills` | Hermes skills proxy |
 | `/api/submit` | POST | Daemon `:9000/submit` | Task submission |
-| `/api/telemetry` | GET | Beszel Hub `:8090` | Hardware metrics |
+| `/api/telemetry` | GET | Beszel Hub `:8090` (PocketBase auth) | Per-system CPU, RAM, disk, temp, uptime, load |
 
 ### Log Streaming (SSE)
 
@@ -165,4 +174,4 @@ Dashboard runs at `http://localhost:9321` (or your control plane IP).
 ## Documentation
 
 - **[DESIGN.md](DESIGN.md)** — Complete UI design system specification
-- **[../docs/CONTEXT.md](../docs/CONTEXT.md)** — Full system reference (hardware, network, services)
+- **[../examples/stigmergic/CONTEXT.md](../examples/stigmergic/CONTEXT.md)** — Stigmergic system reference (hardware, network, services)

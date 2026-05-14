@@ -45,6 +45,15 @@ Currently, triage requires an NVIDIA GPU running a local vLLM instance. Users wi
 - [ ] Maintain the same triage prompt and complexity enum
 - [ ] Update documentation
 
+### Mission Control — URL Routing & Smooth Navigation
+Currently, Mission Control uses in-memory state (`activeNav`) to switch between views. There are no URL slugs, so deep-linking and browser back/forward don't work. View transitions also lack animation.
+
+- [ ] Implement URL-based routing (e.g., `/overview`, `/dag`, `/logs`, `/operator`, `/blackboard`, `/cost`, `/infra`, `/skills`)
+- [ ] Ensure browser back/forward buttons navigate between views correctly
+- [ ] Add smooth page transitions (crossfade or slide) so switching feels snappy, not jarring
+- [ ] Preserve scroll position when navigating back to a previously visited view
+- [ ] Support deep-linking: opening `http://host:9321/infra` goes directly to Infrastructure
+
 ### Private Blackboard Space
 **Paper reference:** §3.2 Blackboard
 

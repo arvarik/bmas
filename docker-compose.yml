@@ -127,6 +127,8 @@ services:
     environment:
       - BMAS_CONFIG=/etc/bmas/bmas.yaml
       - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - BESZEL_EMAIL=${BESZEL_EMAIL:-}
+      - BESZEL_PASSWORD=${BESZEL_PASSWORD:-}
     ports:
       - "${DASHBOARD_PORT:-9321}:9321"
     networks:
