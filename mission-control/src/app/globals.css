@@ -35,6 +35,7 @@
   --accent-primary-hover: hsl(217 91% 50%);
   --accent-subtle: hsl(217 91% 60% / 0.1);
   --border-default: hsl(222 20% 22%);
+  --border-subtle: hsl(222 20% 18%);
   --border-focus: hsl(217 91% 60%);
 
   /* ── Agent Identity Colors (§2.5) ──────────────────────────────── */

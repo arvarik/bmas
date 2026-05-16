@@ -1,6 +1,6 @@
 # Triage — Semantic Complexity Classifier
 
-The cost-optimization gatekeeper for Stigmergic. Before any paid API call is made, the triage router classifies each task's complexity and routes it to the cheapest model capable of handling it.
+The cost-optimization gatekeeper for bMAS. Before any paid API call is made, the triage router classifies each task's complexity and routes it to the cheapest model capable of handling it.
 
 > Runs as Docker container `bmas-triage` on the control plane host (configured in `bmas.yaml`), using vLLM with the model specified in `triage.model`.
 >

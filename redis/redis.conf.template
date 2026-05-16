@@ -15,11 +15,8 @@ save 60 100
 dbfilename bmas-blackboard.rdb
 dir /data
 
-# Pub/Sub (critical for log streaming)
+# Pub/Sub (critical for real-time event streaming)
 # No special config needed — Pub/Sub is enabled by default
-# NOTE: For durable log persistence, consider migrating to Redis Streams
-# (XADD/XREAD) instead of Pub/Sub + LPUSH/LTRIM. Streams provide built-in
-# persistence, consumer groups, and ID-based replay for late-joining clients.
 
 # Security — password injected from REDIS_PASSWORD env var
 requirepass ${REDIS_PASSWORD}

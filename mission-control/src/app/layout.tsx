@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
-import { AppShell } from "./AppShell";
+import { ClientShell } from "./ClientShell";
 import { PROJECT_NAME, PROJECT_DESCRIPTION } from "@/lib/config";
+
+export const dynamic = "force-dynamic";
 
 // ── Font Loading ─────────────────────────────────────────────────────
 // next/font/google self-hosts fonts — no external requests at runtime.
@@ -43,7 +45,7 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable}`}
     >
       <body>
-        <AppShell>{children}</AppShell>
+        <ClientShell>{children}</ClientShell>
       </body>
     </html>
   );

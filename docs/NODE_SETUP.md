@@ -125,20 +125,24 @@ pip install hermes-agent  # or clone from your repo
 
 ### Configure the Agent Persona
 
-Each agent needs a persona file that defines its bMAS role. Create one based on the role
-you assigned in `bmas.yaml`:
+### Deploy the Agent API Server
 
-- `planner` — Focuses on task decomposition and DAG construction
-- `executor` — Focuses on implementation and research
-- `auditor` — Focuses on review, validation, and conflict resolution
-
-### Start the Agent API Server
+The bMAS repo contains the canonical agent code at `agent/api_server.py`. Copy it to the node:
 
 ```bash
-python api_server.py --host 0.0.0.0 --port 8000 --persona planner
+# From the control plane (where the bmas repo lives)
+scp /opt/bmas/agent/api_server.py root@NODE_IP:/opt/bmas/api_server.py
+scp /opt/bmas/agent/requirements.txt root@NODE_IP:/opt/bmas/requirements.txt
+
+# On the node: install dependencies
+ssh root@NODE_IP 'cd /opt/bmas && pip install -r requirements.txt'
 ```
 
-### Create a systemd Service
+Each agent needs environment variables for its role. Set these in the systemd service (see below):
+
+- `NODE_ID` — e.g. `agent-node1`, `agent-node2`, `agent-node3`
+- `LITELLM_MODEL` — the default model to use (typically `medium`)
+- `HERMES_SKILLS_DIR` — path to Hermes skills directory (default: `~/.hermes/skills`)
 
 ```bash
 cat > /etc/systemd/system/hermes-agent.service << 'EOF'
@@ -148,11 +152,14 @@ After=network.target
 
 [Service]
 Type=simple
-User=agent
-WorkingDirectory=/opt/hermes-agent
-Environment="PATH=/opt/hermes-agent/.venv/bin:/usr/bin"
-ExecStart=/opt/hermes-agent/.venv/bin/python api_server.py \
-  --host 0.0.0.0 --port 8000 --persona planner
+User=root
+WorkingDirectory=/opt/bmas
+Environment="PATH=/opt/hermes-agent/.venv/bin:/usr/local/bin:/usr/bin"
+Environment="NODE_ID=agent-node1"
+Environment="LITELLM_MODEL=medium"
+Environment="LITELLM_URL=http://<CONTROL_PLANE_IP>:4000/v1"
+ExecStart=/opt/hermes-agent/.venv/bin/uvicorn api_server:app \
+  --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=10
 
@@ -164,14 +171,17 @@ systemctl daemon-reload
 systemctl enable --now hermes-agent
 ```
 
+> **Note:** Set `NODE_ID` to `agent-node1`, `agent-node2`, or `agent-node3` depending on the node.
+
 ### Verify
 
 ```bash
 curl http://localhost:8000/health
-# Should return {"status": "ok"}
+# Should return {"status": "healthy", "node_id": "agent-node1", ...}
 
-curl http://localhost:8000/skills
-# Should return the agent's available skills
+# Skills are served by the Hermes Dashboard (port 9119), not the agent API
+curl http://localhost:9119/api/skills/installed
+# Should return installed skills (requires Hermes Dashboard to be running)
 ```
 
 ---

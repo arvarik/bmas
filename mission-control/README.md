@@ -1,6 +1,6 @@
-# Mission Control — Stigmergic Dashboard
+# Mission Control — bMAS Dashboard
 
-The real-time operations dashboard for **Stigmergic**. A single-pane-of-glass for monitoring, debugging, and controlling the AI swarm. Built with Next.js 16, React 19, TypeScript, and vanilla CSS.
+The real-time operations dashboard for **bMAS**. A single-pane-of-glass for monitoring, debugging, and controlling the AI swarm. Built with Next.js 16, React 19, TypeScript, and vanilla CSS.
 
 > Runs as Docker container `bmas-dashboard` on the control plane at port 9321.
 
@@ -117,7 +117,7 @@ The UI follows an enterprise-grade design system defined in [DESIGN.md](DESIGN.m
 - **Five-state coverage** — Every component: empty, loading, active, error, disabled
 - **Agent identity colors** — Planner (purple), Executor (teal), Auditor (amber)
 
-> See [DESIGN.md](DESIGN.md) for the complete specification.
+> See [docs/design/DESIGN.md](../docs/design/DESIGN.md) for the complete specification.
 
 ## API Routes
 
@@ -173,5 +173,5 @@ Dashboard runs at `http://localhost:9321` (or your control plane IP).
 
 ## Documentation
 
-- **[DESIGN.md](DESIGN.md)** — Complete UI design system specification
-- **[../examples/stigmergic/CONTEXT.md](../examples/stigmergic/CONTEXT.md)** — Stigmergic system reference (hardware, network, services)
+- **[../docs/design/DESIGN.md](../docs/design/DESIGN.md)** — Complete UI design system specification
+- **[../examples/stigmergic/CONTEXT.md](../examples/stigmergic/CONTEXT.md)** — Example deployment reference (hardware, network, services)

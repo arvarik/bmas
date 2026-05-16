@@ -1,6 +1,6 @@
 # Redis — Blackboard State Store
 
-The shared state backbone for Stigmergic. Redis serves as the "blackboard" in the Blackboard Multi-Agent System architecture — the central knowledge store through which all agents coordinate without direct communication.
+The shared state backbone for bMAS. Redis serves as the "blackboard" in the Blackboard Multi-Agent System architecture — the central knowledge store through which all agents coordinate without direct communication.
 
 > Runs as Docker container `bmas-redis` on the control plane.
 

@@ -1,6 +1,6 @@
 # LiteLLM — Unified Model Gateway
 
-The centralized AI model router for Stigmergic. Provides a single OpenAI-compatible API endpoint that abstracts all model backends — local edge nodes, the local triage model, and cloud Gemini APIs — behind unified routing, cost tracking, and retry logic.
+The centralized AI model router for bMAS. Provides a single OpenAI-compatible API endpoint that abstracts all model backends — local edge nodes, the local triage model, and cloud Gemini APIs — behind unified routing, cost tracking, and retry logic.
 
 > Runs as Docker container `bmas-litellm` on the control plane at port 4000.
 
@@ -30,7 +30,7 @@ The daemon uses model names from `bmas.yaml`'s `routing` section; LiteLLM resolv
 | `gemini-flash-lite` | `gemini-flash-lite` | Gemini 3.1 Flash Lite (cloud API) | $ |
 | `edge-node-*` | Direct | Local inference via llama-server on edge nodes | Free |
 
-> **Note:** Model names and routing are fully configurable in `bmas.yaml`. The table above shows the default Stigmergic deployment. Triage classification uses the vLLM container directly (port 8001), not LiteLLM.
+> **Note:** Model names and routing are fully configurable in `bmas.yaml`. The table above shows an example deployment. Triage classification uses the vLLM container directly (port 8001), not LiteLLM.
 
 ## Files
 
@@ -44,7 +44,7 @@ The daemon uses model names from `bmas.yaml`'s `routing` section; LiteLLM resolv
 
 ### Router Settings
 
-- **Strategy**: Cost-based routing — prefers cheaper models when multiple can handle the request
+- **Strategy**: `simple-shuffle` — round-robin across available backends in a model group
 - **Retries**: 2 automatic retries per request with 5s backoff
 - **Timeout**: 120s per request (accounts for cold starts on edge nodes)
 - **`drop_params: true`**: Silently drops unsupported parameters instead of erroring (e.g., `guided_choice` sent to Gemini)

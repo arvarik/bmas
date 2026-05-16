@@ -10,6 +10,7 @@
 # ─────────────────────────────────────────────────────────────────────
 
 import argparse
+import os
 import sys
 
 import yaml
@@ -152,7 +153,7 @@ def main():
     )
     args = parser.parse_args()
 
-    if not __import__("os").path.isfile(args.config):
+    if not os.path.isfile(args.config):
         print(f"FATAL: bmas.yaml not found at {args.config}", file=sys.stderr)
         sys.exit(1)
 

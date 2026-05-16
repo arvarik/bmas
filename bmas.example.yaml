@@ -1,18 +1,18 @@
 # ─────────────────────────────────────────────────────────────────────
-# bMAS Configuration — Example (Stigmergic Deployment)
+# bMAS Configuration — Example
 # ─────────────────────────────────────────────────────────────────────
 # This file defines your entire bMAS deployment.
 # Copy to bmas.yaml and customize for your infrastructure.
 # Secrets (API keys, passwords) go in .env, NOT here.
 
 project:
-  name: "Stigmergic"
-  description: "Distributed AI swarm on Proxmox homelab"
+  name: "My Swarm"
+  description: "Distributed AI swarm"
 
 # ── Control Plane ──────────────────────────────────────────────────
 # The machine running Docker Compose (Redis, LiteLLM, Daemon, Dashboard).
 control_plane:
-  host: "192.168.4.240"
+  host: "10.0.0.1"                 # Your control plane IP
   ports:
     redis: 6379
     litellm: 4000
@@ -34,32 +34,33 @@ control_plane:
 # For now, each node has one fixed role.
 nodes:
   - name: "node-1"
-    host: "192.168.4.103"
+    host: "10.0.0.101"             # Agent node IP
     port: 8000
     role: planner
-    color: "#a78bfa"         # UI color (optional, has defaults)
-    inference:               # Optional — omit if no local model
-      host: "192.168.4.102"
+    color: "#a78bfa"               # UI color (optional, has defaults)
+    # dashboard_port: 9119         # Hermes Dashboard port (optional, default 9119)
+    inference:                     # Optional — omit if no local model
+      host: "10.0.0.102"           # Inference server IP (can be same machine)
       port: 8080
       model: "gemma-4-e4b"
 
   - name: "node-2"
-    host: "192.168.4.112"
+    host: "10.0.0.111"
     port: 8000
     role: executor
     color: "#5eead4"
     inference:
-      host: "192.168.4.111"
+      host: "10.0.0.112"
       port: 8080
       model: "gemma-4-e4b"
 
   - name: "node-3"
-    host: "192.168.4.122"
+    host: "10.0.0.121"
     port: 8000
     role: auditor
     color: "#fbbf24"
     inference:
-      host: "192.168.4.121"
+      host: "10.0.0.122"
       port: 8080
       model: "gemma-4-e4b"
 
@@ -131,5 +132,5 @@ routing:
   simple: local
 
 # ── Monitoring (Optional) ─────────────────────────────────────────
-monitoring:
-  beszel_hub: "http://192.168.4.229:8090"
+# monitoring:
+#   beszel_hub: "http://10.0.0.200:8090"

@@ -21,14 +21,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Source .env if present for passwords
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  set -a
+  source "$REPO_ROOT/.env"
+  set +a
+fi
+
 # ── Load Config ──────────────────────────────────────────────────────
 
 BMAS_CONFIG="${BMAS_CONFIG:-/etc/bmas/bmas.yaml}"
 
 # Try local path first (dev), then container path
 if [[ ! -f "$BMAS_CONFIG" ]]; then
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  REPO_ROOT="$(dirname "$SCRIPT_DIR")"
   if [[ -f "$REPO_ROOT/bmas.yaml" ]]; then
     BMAS_CONFIG="$REPO_ROOT/bmas.yaml"
   else
@@ -191,9 +199,6 @@ if [[ -n "$BESZEL_HUB" ]]; then
   check_service "Beszel Hub" "$BESZEL_HUB/api/health"
 
   # Try authenticated check for data access
-  if [[ -f "$REPO_ROOT/.env" ]]; then
-    source "$REPO_ROOT/.env"
-  fi
   if [[ -n "${BESZEL_EMAIL:-}" && -n "${BESZEL_PASSWORD:-}" ]]; then
     AUTH_RESULT=$(curl -sf -X POST "$BESZEL_HUB/api/collections/users/auth-with-password" \
       -H 'Content-Type: application/json' \

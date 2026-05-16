@@ -15,6 +15,7 @@ services:
     volumes:
       - ./bmas.yaml:/etc/bmas/bmas.yaml:ro
       - ./daemon:/app                    # Mount source for hot reload
+      - daemon-data:/data                # SQLite persistence (matches production)
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000", "--reload"]
 
   dashboard:
@@ -31,3 +32,11 @@ services:
       - BMAS_CONFIG=/etc/bmas/bmas.yaml
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - ALLOWED_DEV_ORIGINS=${ALLOWED_DEV_ORIGINS:-}
+
+# ── Volumes ──────────────────────────────────────────────────────────
+# Inherits redis-data from docker-compose.yml; daemon-data must be
+# declared here too since dev compose is loaded as an override.
+volumes:
+  daemon-data:
+    driver: local
+

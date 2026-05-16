@@ -1,0 +1,572 @@
+# /opt/bmas/daemon/database.py
+"""
+bMAS SQLite persistence layer.
+
+Owns all SQLite interactions for task history, debate archives,
+per-task cost tracking, and log archival. Separated from blackboard.py
+which remains Redis-only for real-time state.
+
+Connection pattern: Every function opens and closes its own ephemeral
+connection via _connect(). This prevents WAL checkpoint starvation from
+long-lived connections (e.g., SSE streams) and isolates background tasks
+from request handler lifecycles. See 02-data-layer.md §2.3 for rationale.
+"""
+
+import os
+import json
+import logging
+from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+
+import aiosqlite
+
+logger = logging.getLogger("bmas.database")
+
+DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
+SCHEMA_VERSION = 1
+
+
+# ── Schema DDL ───────────────────────────────────────────────────────
+
+SCHEMA_DDL = """
+-- ── Core task record ─────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS tasks (
+    id              TEXT PRIMARY KEY,
+    label           TEXT NOT NULL,
+    full_input      TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending','running','completed','failed')),
+    complexity      TEXT,
+    model_used      TEXT,
+    error_message   TEXT,
+    result_summary  TEXT,
+    result_json     TEXT,
+    metadata        TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    started_at      TEXT,
+    completed_at    TEXT,
+    duration_ms     INTEGER,
+    total_cost_usd  REAL DEFAULT 0.0,
+    total_tokens    INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+
+-- ── Sub-tasks (DAG nodes) ────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS sub_tasks (
+    id              TEXT PRIMARY KEY,
+    task_id         TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    label           TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending','running','completed','failed')),
+    agent_role      TEXT NOT NULL,
+    depends_on      TEXT,
+    result          TEXT,
+    error           TEXT,
+    started_at      TEXT,
+    completed_at    TEXT,
+    sort_order      INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_subtasks_task ON sub_tasks(task_id);
+
+-- ── Debate entries (preserved permanently) ───────────────────────
+CREATE TABLE IF NOT EXISTS debate_entries (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id         TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    session_id      TEXT NOT NULL,
+    agent_role      TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_debate_task ON debate_entries(task_id);
+CREATE INDEX IF NOT EXISTS idx_debate_session ON debate_entries(session_id);
+
+-- ── Per-task cost entries ────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS cost_entries (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id         TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    model           TEXT NOT NULL,
+    input_tokens    INTEGER DEFAULT 0,
+    output_tokens   INTEGER DEFAULT 0,
+    cost_usd        REAL DEFAULT 0.0,
+    phase           TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cost_task ON cost_entries(task_id);
+
+-- ── Task log entries (archival copy) ─────────────────────────────
+CREATE TABLE IF NOT EXISTS log_entries (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id         TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    agent_role      TEXT NOT NULL,
+    level           TEXT DEFAULT 'info',
+    message         TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_logs_task ON log_entries(task_id);
+
+-- ── Schema versioning ────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS schema_version (
+    version         INTEGER PRIMARY KEY,
+    applied_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+"""
+
+
+# ── Connection Infrastructure ────────────────────────────────────────
+
+@asynccontextmanager
+async def _connect():
+    """Ephemeral async SQLite connection with WAL mode and foreign keys.
+
+    Every CRUD function must use this context manager to open and close
+    its own connection. Do NOT use a shared/singleton connection.
+    See module docstring for rationale.
+    """
+    db = await aiosqlite.connect(DB_PATH, timeout=15.0)
+    await db.execute("PRAGMA journal_mode=WAL")
+    await db.execute("PRAGMA foreign_keys=ON")
+    db.row_factory = aiosqlite.Row
+    try:
+        yield db
+    finally:
+        await db.close()
+
+
+async def check_sqlite_health() -> bool:
+    """Quick health probe for the /health endpoint.
+
+    Opens an ephemeral connection, runs SELECT 1, closes immediately.
+    Uses a shorter timeout (5s) since this runs on every health check.
+    """
+    try:
+        async with aiosqlite.connect(DB_PATH, timeout=5.0) as db:
+            await db.execute("SELECT 1")
+            return True
+    except Exception:
+        return False
+
+
+# ── Schema Management ────────────────────────────────────────────────
+
+async def init_db() -> None:
+    """Initialize SQLite database: validate infrastructure, create schema,
+    check migrations, and recover orphaned tasks.
+
+    Raises RuntimeError on failure — this intentionally crashes the daemon
+    at startup with a clear diagnostic.
+    """
+    db_dir = os.path.dirname(DB_PATH)
+
+    # Validate volume mount exists and is writable
+    if not os.path.isdir(db_dir):
+        raise RuntimeError(
+            f"Database directory does not exist: {db_dir}. "
+            f"Is the daemon-data volume mounted at /data?"
+        )
+    if not os.access(db_dir, os.W_OK):
+        raise RuntimeError(
+            f"Database directory is not writable: {db_dir}. "
+            f"Check volume mount permissions."
+        )
+
+    try:
+        async with _connect() as db:
+            # Run schema DDL (IF NOT EXISTS makes this idempotent)
+            await db.executescript(SCHEMA_DDL)
+
+            # executescript commits and may reset connection state,
+            # so re-set row_factory for subsequent queries
+            db.row_factory = aiosqlite.Row
+
+            # Ensure schema_version row exists
+            cursor = await db.execute(
+                "SELECT MAX(version) as v FROM schema_version"
+            )
+            row = await cursor.fetchone()
+            current_version = row["v"] if row and row["v"] is not None else 0
+
+            if current_version < SCHEMA_VERSION:
+                # Run migrations sequentially (currently none — v1 is the first)
+                # Future: for v in range(current_version + 1, SCHEMA_VERSION + 1):
+                #             await _migrate(db, v)
+                if current_version == 0:
+                    await db.execute(
+                        "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
+                        (SCHEMA_VERSION,)
+                    )
+                await db.commit()
+                logger.info(f"Schema initialized at version {SCHEMA_VERSION}")
+            else:
+                logger.info(f"Schema version {current_version} — up to date")
+
+            # Zombie task recovery: mark orphaned tasks as failed
+            orphaned = await db.execute(
+                "UPDATE tasks SET status = 'failed', "
+                "error_message = 'Daemon restarted unexpectedly', "
+                "completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                "WHERE status IN ('pending', 'running')"
+            )
+            await db.commit()
+            if orphaned.rowcount > 0:
+                logger.warning(
+                    f"Recovered {orphaned.rowcount} orphaned task(s) from unclean shutdown"
+                )
+
+        db_size = os.path.getsize(DB_PATH)
+        logger.info(f"SQLite ready: {DB_PATH} ({db_size} bytes)")
+
+    except Exception as e:
+        raise RuntimeError(
+            f"SQLite initialization failed: {e}. "
+            f"Check that /data is a valid, writable volume mount."
+        ) from e
+
+
+# ── Task CRUD ────────────────────────────────────────────────────────
+
+async def create_task(task_id: str, label: str, full_input: str) -> None:
+    """Create a new task record with status='pending'."""
+    async with _connect() as db:
+        await db.execute(
+            "INSERT INTO tasks (id, label, full_input, status) VALUES (?, ?, ?, 'pending')",
+            (task_id, label, full_input),
+        )
+        await db.commit()
+
+
+async def update_task_status(
+    task_id: str,
+    status: str | None = None,
+    complexity: str | None = None,
+    model_used: str | None = None,
+) -> None:
+    """Update task fields. Only non-None arguments are written."""
+    updates: list[str] = []
+    params: list = []
+
+    if status is not None:
+        updates.append("status = ?")
+        params.append(status)
+        if status == "running":
+            updates.append("started_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')")
+    if complexity is not None:
+        updates.append("complexity = ?")
+        params.append(complexity)
+    if model_used is not None:
+        updates.append("model_used = ?")
+        params.append(model_used)
+
+    if not updates:
+        return
+
+    params.append(task_id)
+    async with _connect() as db:
+        await db.execute(
+            f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        await db.commit()
+
+
+async def complete_task(
+    task_id: str, result_summary: str, result_json: str
+) -> None:
+    """Mark a task as completed with its result."""
+    async with _connect() as db:
+        # Fetch started_at to compute duration
+        cursor = await db.execute(
+            "SELECT started_at FROM tasks WHERE id = ?", (task_id,)
+        )
+        row = await cursor.fetchone()
+        duration_ms = None
+        if row and row["started_at"]:
+            try:
+                started = datetime.fromisoformat(row["started_at"])
+                now = datetime.now(timezone.utc)
+                duration_ms = int((now - started).total_seconds() * 1000)
+            except (ValueError, TypeError):
+                pass
+
+        await db.execute(
+            "UPDATE tasks SET "
+            "status = 'completed', "
+            "result_summary = ?, "
+            "result_json = ?, "
+            "completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
+            "duration_ms = ? "
+            "WHERE id = ?",
+            (result_summary, result_json, duration_ms, task_id),
+        )
+        await db.commit()
+
+
+async def fail_task(task_id: str, error_message: str) -> None:
+    """Mark a task as failed with an error message."""
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE tasks SET "
+            "status = 'failed', "
+            "error_message = ?, "
+            "completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+            "WHERE id = ?",
+            (error_message, task_id),
+        )
+        await db.commit()
+
+
+async def get_task(task_id: str) -> dict | None:
+    """Fetch a single task by ID. Returns None if not found."""
+    async with _connect() as db:
+        cursor = await db.execute(
+            "SELECT * FROM tasks WHERE id = ?", (task_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def list_tasks(
+    limit: int = 50, offset: int = 0, status: str | None = None
+) -> list[dict]:
+    """List tasks newest-first with pagination and optional status filter."""
+    async with _connect() as conn:
+        if status:
+            rows = await conn.execute_fetchall(
+                "SELECT * FROM tasks WHERE status = ? "
+                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (status, limit, offset),
+            )
+        else:
+            rows = await conn.execute_fetchall(
+                "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            )
+        return [dict(r) for r in rows]
+
+
+async def count_tasks(status: str | None = None) -> int:
+    """Count total tasks, optionally filtered by status."""
+    async with _connect() as conn:
+        if status:
+            cursor = await conn.execute(
+                "SELECT COUNT(*) as cnt FROM tasks WHERE status = ?",
+                (status,),
+            )
+        else:
+            cursor = await conn.execute("SELECT COUNT(*) as cnt FROM tasks")
+        row = await cursor.fetchone()
+        return row["cnt"] if row else 0
+
+
+# ── Sub-task CRUD ────────────────────────────────────────────────────
+
+async def upsert_sub_tasks(task_id: str, sub_tasks: list[dict]) -> None:
+    """Insert or replace sub-task records for a task.
+
+    Accepts the dict shape from the orchestrator:
+    {id, label, status, agent_role, depends_on: list}
+    """
+    async with _connect() as db:
+        for i, st in enumerate(sub_tasks):
+            depends_on = st.get("depends_on")
+            if isinstance(depends_on, list):
+                depends_on = json.dumps(depends_on)
+
+            await db.execute(
+                "INSERT OR REPLACE INTO sub_tasks "
+                "(id, task_id, label, status, agent_role, depends_on, sort_order) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    st["id"],
+                    task_id,
+                    st.get("label", ""),
+                    st.get("status", "pending"),
+                    st.get("agent_role", "unknown"),
+                    depends_on,
+                    i,
+                ),
+            )
+        await db.commit()
+
+
+async def get_sub_tasks(task_id: str) -> list[dict]:
+    """Fetch all sub-tasks for a task, ordered by sort_order."""
+    async with _connect() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM sub_tasks WHERE task_id = ? ORDER BY sort_order",
+            (task_id,),
+        )
+        result = []
+        for r in rows:
+            d = dict(r)
+            # Parse depends_on back to list
+            if d.get("depends_on"):
+                try:
+                    d["depends_on"] = json.loads(d["depends_on"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            result.append(d)
+        return result
+
+
+# ── Debate CRUD ──────────────────────────────────────────────────────
+
+async def insert_debate_entry(
+    task_id: str, session_id: str, agent_role: str, content: str
+) -> None:
+    """Insert a debate entry (permanent archive — Redis copy is ephemeral)."""
+    async with _connect() as db:
+        await db.execute(
+            "INSERT INTO debate_entries (task_id, session_id, agent_role, content) "
+            "VALUES (?, ?, ?, ?)",
+            (task_id, session_id, agent_role, content),
+        )
+        await db.commit()
+
+
+async def get_debate(task_id: str) -> list[dict]:
+    """Fetch all debate entries for a task, ordered chronologically."""
+    async with _connect() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM debate_entries WHERE task_id = ? ORDER BY id",
+            (task_id,),
+        )
+        return [dict(r) for r in rows]
+
+
+# ── Cost CRUD ────────────────────────────────────────────────────────
+
+async def insert_cost_entry(
+    task_id: str,
+    model: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cost_usd: float = 0.0,
+    phase: str | None = None,
+) -> None:
+    """Insert a per-call cost entry for a task."""
+    async with _connect() as db:
+        await db.execute(
+            "INSERT INTO cost_entries "
+            "(task_id, model, input_tokens, output_tokens, cost_usd, phase) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (task_id, model, input_tokens, output_tokens, cost_usd, phase),
+        )
+        await db.commit()
+
+
+async def get_task_cost(task_id: str) -> list[dict]:
+    """Fetch all cost entries for a task."""
+    async with _connect() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM cost_entries WHERE task_id = ? ORDER BY id",
+            (task_id,),
+        )
+        return [dict(r) for r in rows]
+
+
+async def update_task_cost_totals(task_id: str) -> None:
+    """Roll up cost_entries into the tasks row (total_cost_usd, total_tokens)."""
+    async with _connect() as db:
+        cursor = await db.execute(
+            "SELECT "
+            "  COALESCE(SUM(cost_usd), 0.0) as total_cost, "
+            "  COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens "
+            "FROM cost_entries WHERE task_id = ?",
+            (task_id,),
+        )
+        row = await cursor.fetchone()
+        if row:
+            await db.execute(
+                "UPDATE tasks SET total_cost_usd = ?, total_tokens = ? WHERE id = ?",
+                (row["total_cost"], row["total_tokens"], task_id),
+            )
+            await db.commit()
+
+
+async def get_task_cost_summary(task_id: str) -> dict:
+    """Aggregated cost breakdown by model and by phase.
+
+    Returns: {
+        total_cost_usd, total_tokens,
+        by_model: [{model, input_tokens, output_tokens, cost_usd}],
+        by_phase: [{phase, cost_usd, tokens}]
+    }
+    """
+    async with _connect() as conn:
+        # By model
+        model_rows = await conn.execute_fetchall(
+            "SELECT model, "
+            "  SUM(input_tokens) as input_tokens, "
+            "  SUM(output_tokens) as output_tokens, "
+            "  SUM(cost_usd) as cost_usd "
+            "FROM cost_entries WHERE task_id = ? GROUP BY model",
+            (task_id,),
+        )
+        # By phase
+        phase_rows = await conn.execute_fetchall(
+            "SELECT phase, "
+            "  SUM(cost_usd) as cost_usd, "
+            "  SUM(input_tokens + output_tokens) as tokens "
+            "FROM cost_entries WHERE task_id = ? GROUP BY phase",
+            (task_id,),
+        )
+        # Totals
+        cursor = await conn.execute(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) as total_cost, "
+            "  COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens "
+            "FROM cost_entries WHERE task_id = ?",
+            (task_id,),
+        )
+        totals = await cursor.fetchone()
+
+        return {
+            "total_cost_usd": totals["total_cost"] if totals else 0.0,
+            "total_tokens": totals["total_tokens"] if totals else 0,
+            "by_model": [dict(r) for r in model_rows],
+            "by_phase": [dict(r) for r in phase_rows],
+        }
+
+
+# ── Log CRUD ─────────────────────────────────────────────────────────
+
+async def insert_log_entry(
+    task_id: str, agent_role: str, level: str, message: str
+) -> None:
+    """Insert a log entry (permanent archive — Redis streams are ephemeral)."""
+    async with _connect() as db:
+        await db.execute(
+            "INSERT INTO log_entries (task_id, agent_role, level, message) "
+            "VALUES (?, ?, ?, ?)",
+            (task_id, agent_role, level, message),
+        )
+        await db.commit()
+
+
+async def get_task_logs(
+    task_id: str, limit: int = 200, offset: int = 0
+) -> list[dict]:
+    """Fetch log entries for a task with pagination."""
+    async with _connect() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM log_entries WHERE task_id = ? "
+            "ORDER BY id LIMIT ? OFFSET ?",
+            (task_id, limit, offset),
+        )
+        return [dict(r) for r in rows]
+
+
+async def count_task_logs(task_id: str) -> int:
+    """Count total log entries for a task."""
+    async with _connect() as conn:
+        cursor = await conn.execute(
+            "SELECT COUNT(*) as cnt FROM log_entries WHERE task_id = ?",
+            (task_id,),
+        )
+        row = await cursor.fetchone()
+        return row["cnt"] if row else 0

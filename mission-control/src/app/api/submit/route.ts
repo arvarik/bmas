@@ -20,7 +20,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ task: body.task.trim() }),
-      signal: AbortSignal.timeout(120_000), // tasks can take a while
+      signal: AbortSignal.timeout(5_000), // daemon responds immediately (HTTP 202)
     });
 
     if (!upstream.ok) {
@@ -32,7 +32,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const data: unknown = await upstream.json();
-    return NextResponse.json(data);
+    return NextResponse.json(data, { status: upstream.status });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Unknown upstream error";

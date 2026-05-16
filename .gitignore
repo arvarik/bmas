@@ -42,6 +42,14 @@ dump.rdb
 appendonly.aof
 redis/data/
 
+# ── SQLite (local-dev database) ────────────────────────────────────
+# When running the daemon outside Docker (bare uvicorn), set
+# BMAS_DB_PATH=./.data/bmas.db to store the DB locally.
+.data/
+*.db
+*.db-wal
+*.db-shm
+
 # ── LiteLLM (runtime data) ────────────────────────────────────────
 litellm/data/
 
@@ -70,5 +78,4 @@ coverage/
 .pytest_cache/
 htmlcov/
 
-# ── Internal Design Specs (private, not for distribution) ─────────
-docs/ui-overhaul/
+

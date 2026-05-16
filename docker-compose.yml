@@ -104,6 +104,7 @@ services:
         condition: service_healthy
     volumes:
       - ./bmas.yaml:/etc/bmas/bmas.yaml:ro
+      - daemon-data:/data                    # SQLite database for task history
     environment:
       - BMAS_CONFIG=/etc/bmas/bmas.yaml
       - REDIS_PASSWORD=${REDIS_PASSWORD}
@@ -136,6 +137,8 @@ services:
 # ── Volumes ──────────────────────────────────────────────────────────
 volumes:
   redis-data:
+    driver: local
+  daemon-data:                                # SQLite task history (persists across restarts)
     driver: local
 
 # ── Networks ─────────────────────────────────────────────────────────

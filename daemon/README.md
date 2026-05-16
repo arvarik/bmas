@@ -1,6 +1,6 @@
-# Daemon — Stigmergic Orchestrator
+# Daemon — bMAS Orchestrator
 
-The central orchestration service for Stigmergic. A Python FastAPI application that manages the complete task lifecycle: submission → triage → planning → execution → auditing → consensus.
+The central orchestration service for bMAS. A Python FastAPI application that manages the complete task lifecycle: submission → triage → planning → execution → auditing → consensus.
 
 > Runs as Docker container `bmas-daemon` on the control plane at port 9000.
 
@@ -10,40 +10,60 @@ The central orchestration service for Stigmergic. A Python FastAPI application t
 User / Mission Control
         │
         ▼
-   ┌─────────┐     ┌─────────────┐
-   │ main.py │────▶│ orchestrator │──── dispatches to ────▶ Agent LXCs
-   │ FastAPI │     │   .py       │                         (:8000 each)
-   └─────────┘     └──────┬──────┘
+   ┌─────────┐     ┌──────────────┐
+   │  app.py  │────▶│ orchestrator │──── dispatches to ────▶ Agent LXCs
+   │  FastAPI │     │              │                         (:8000 each)
+   └─────────┘     └──────┬───────┘
                           │
                    ┌──────┴──────┐
                    │             │
-              ┌────▼────┐  ┌────▼────────┐
-              │blackboard│  │triage_router│
-              │   .py    │  │    .py      │
-              └────┬─────┘  └─────┬───────┘
-                   │              │
-              Redis :6379    vLLM :8001
+              ┌────▼────┐  ┌────▼─────┐
+              │blackboard│  │  triage  │
+              └────┬─────┘  └────┬─────┘
+                   │             │
+              Redis :6379   vLLM :8001
 ```
 
-## Modules
+## Project Structure
 
-| File | Purpose |
-|:---|:---|
-| `main.py` | FastAPI entry point. Defines `/submit`, `/state`, `/health` endpoints. Manages lifespan (Redis pre-flight, HTTP client pool). |
-| `orchestrator.py` | Core task lifecycle. Implements standard flow (Plan → Execute → Audit) and complex research flow (dynamic expert personas + parallel debate). Handles Redlock, HITL pause gates, and phase tracking. |
-| `blackboard.py` | Redis client abstraction. Manages all 6 namespaces: public state, private debate, locks, log streams, metrics, and HITL hints. Uses atomic Lua scripts for lock release. |
-| `triage_router.py` | Semantic complexity classifier. Routes tasks to the local Qwen3-1.7B model via vLLM with `guided_choice` constrained decoding. Maps results to LiteLLM model aliases. |
-| `personas.py` | Agent role definitions (Planner, Executor, Auditor) sent as `role_prompt` payloads. Includes dynamic expert persona generation for complex research tasks. |
-| `config.py` | Loads `bmas.yaml` at import time. Builds all derived URLs, agent endpoints, routing table, and triage settings. |
-| `test_daemon.py` | Quick smoke test for the triage router classification. |
+```
+daemon/
+├── src/
+│   ├── app.py                  # FastAPI entry point + lifespan
+│   ├── config.py               # YAML config loader + validation
+│   ├── database.py             # SQLite persistence (aiosqlite)
+│   ├── routes/
+│   │   ├── submit.py           # POST /submit
+│   │   ├── tasks.py            # GET /tasks, /tasks/{id}/*
+│   │   ├── events.py           # SSE endpoints (task + system)
+│   │   └── health.py           # GET /health, /state
+│   ├── core/
+│   │   ├── orchestrator.py     # Task lifecycle + dispatch
+│   │   ├── blackboard.py       # Redis client abstraction
+│   │   └── triage.py           # Semantic complexity classifier
+│   ├── models/
+│   │   └── personas.py         # Agent role definitions
+│   └── monitoring/
+│       └── health_loop.py      # Background health publisher
+└── tests/
+    ├── test_triage_demo.py     # Triage classification smoke test
+    └── test_sse_smoke.py       # SSE streaming smoke test
+```
 
 ## API Endpoints
 
 | Method | Path | Description |
 |:---|:---|:---|
-| `POST` | `/submit` | Submit a task to the swarm. Triggers the full triage → plan → execute → audit pipeline. |
-| `GET` | `/state` | Returns the public blackboard state with live agent health (parallel health probes to all 3 agent LXCs). |
-| `GET` | `/health` | Health check with Redis connectivity verification. Returns `healthy` or `degraded`. |
+| `POST` | `/submit` | Submit a task (HTTP 202). Triggers triage → plan → execute → audit. |
+| `GET` | `/tasks` | List task history with pagination and optional status filter. |
+| `GET` | `/tasks/{id}` | Full task detail including sub-tasks. |
+| `GET` | `/tasks/{id}/cost` | Per-task cost breakdown by model and phase. |
+| `GET` | `/tasks/{id}/logs` | Archived log entries with pagination. |
+| `GET` | `/tasks/{id}/debate` | Debate entries for a task. |
+| `GET` | `/events/{id}` | Task-scoped SSE stream (real-time updates). |
+| `GET` | `/events/system` | System health + task lifecycle SSE stream. |
+| `GET` | `/state` | Public blackboard state with live agent health. |
+| `GET` | `/health` | Dependency health check (Redis + SQLite). |
 
 ## Task Lifecycle
 
@@ -79,7 +99,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up daemon
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-BMAS_CONFIG=../bmas.yaml uvicorn main:app --host 0.0.0.0 --port 9000 --reload
+BMAS_CONFIG=../bmas.yaml PYTHONPATH=src uvicorn app:app --host 0.0.0.0 --port 9000 --reload
 ```
 
 ## Dependencies
@@ -91,3 +111,5 @@ BMAS_CONFIG=../bmas.yaml uvicorn main:app --host 0.0.0.0 --port 9000 --reload
 | `httpx` | Async HTTP client for agent dispatch and LiteLLM calls |
 | `redis[hiredis]` | Async Redis client with C-accelerated parser |
 | `pydantic` | Request/response validation |
+| `aiosqlite` | Async SQLite for task history persistence |
+| `pyyaml` | Configuration file parsing |

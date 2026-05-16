@@ -100,6 +100,10 @@ bmas/
 ├── .env.example       # Secrets template
 ├── docker-compose.yml # Unified control plane
 │
+├── agent/             # Edge node agent API (deployed to LXCs)
+│   ├── api_server.py  #   Hermes ↔ Daemon bridge (:8000)
+│   └── README.md      #   Deployment & config guide
+│
 ├── daemon/            # Python FastAPI orchestrator
 │   ├── main.py        #   API entry point (:9000)
 │   ├── config.py      #   Loads bmas.yaml at startup
@@ -148,6 +152,7 @@ bmas/
 
 | Component | README |
 |:---|:---|
+| Agent | [agent/README.md](agent/README.md) |
 | Daemon | [daemon/README.md](daemon/README.md) |
 | Dashboard | [mission-control/README.md](mission-control/README.md) |
 | LiteLLM | [litellm/README.md](litellm/README.md) |

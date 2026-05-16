@@ -23,6 +23,7 @@ interface BmasNode {
   port: number;
   role: string;
   color?: string;
+  dashboard_port?: number;
   inference?: {
     host: string;
     port: number;
@@ -222,9 +223,21 @@ export const DAEMON_STATE_URL: string =
 export const DAEMON_SUBMIT_URL: string =
   `http://${cp.host}:${cp.ports.daemon}/submit`;
 
-/** Agent host URLs keyed by role */
+/** bMAS Daemon base URL (for building arbitrary daemon API paths) */
+export const DAEMON_BASE_URL: string =
+  `http://${cp.host}:${cp.ports.daemon}`;
+
+/** Agent host URLs keyed by role (bMAS API at :8000) */
 export const AGENT_HOSTS: Record<string, string> = Object.fromEntries(
   (cfg.nodes ?? []).map((n) => [n.role, `http://${n.host}:${n.port}`]),
+);
+
+/** Agent dashboard URLs keyed by role (Hermes Dashboard at :9119) */
+export const AGENT_DASHBOARD_HOSTS: Record<string, string> = Object.fromEntries(
+  (cfg.nodes ?? []).map((n) => [
+    n.role,
+    `http://${n.host}:${n.dashboard_port ?? 9119}`,
+  ]),
 );
 
 /** Redis Stream keys for log tailing (one per agent node) */

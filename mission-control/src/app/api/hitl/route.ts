@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getRedis } from "@/lib/redis";
 
 /** Allowed HITL actions. */
-type HitlAction = "pause" | "resume" | "inject-hint";
+type HitlAction = "pause" | "resume" | "abort" | "inject-hint";
 
 /** POST request body schema. */
 interface HitlPayload {
@@ -78,10 +78,24 @@ export async function POST(request: Request): Promise<NextResponse> {
         });
       }
 
+      case "abort": {
+        if (!body.task_id) {
+          return NextResponse.json(
+            { error: "abort requires 'task_id' field" },
+            { status: 400 },
+          );
+        }
+        const abortKey = `bmas:public:abort:${body.task_id}`;
+        await redis.set(abortKey, "true");
+        // Auto-expire after 5 minutes if daemon never reads it
+        await redis.expire(abortKey, 300);
+        return NextResponse.json({ ok: true, task_id: body.task_id });
+      }
+
       default: {
         return NextResponse.json(
           {
-            error: `Unknown action: '${body.action as string}'. Expected: pause | resume | inject-hint`,
+            error: `Unknown action: '${body.action as string}'. Expected: pause | resume | abort | inject-hint`,
           },
           { status: 400 },
         );
