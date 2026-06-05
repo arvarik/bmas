@@ -143,9 +143,11 @@ bmas/
 
 | Document | Description |
 |:---|:---|
+| [Architecture](docs/architecture/README.md) | System architecture & component deep-dive |
 | [Quick Start](docs/QUICKSTART.md) | Get running in 5 minutes |
 | [Configuration](docs/CONFIGURATION.md) | Full `bmas.yaml` reference |
 | [Node Setup](docs/NODE_SETUP.md) | Provisioning edge nodes |
+| [Design System](docs/design/DESIGN.md) | Mission Control UI specification |
 | [Roadmap](docs/roadmap/README.md) | Future enhancements (by category) |
 
 ### Component READMEs
