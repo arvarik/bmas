@@ -1,0 +1,149 @@
+[🏠 Index](../README.md) | [📂 Proposal Index](README.md) | [⬅️ UI: Agent Trace Inspector](09-ui-agent-trace-inspector.md)
+
+# 10 — Migration, Rollout & Open Questions
+
+> [!ABSTRACT]
+> How to ship the inversion without a big-bang rewrite or a broken dashboard. Phased, feature-flagged, additive-first. Includes the sequencing rationale, risk register, verification checklist for unverified Hermes capabilities, and acceptance criteria.
+
+> [!NOTE] Current state of the system (live, as of 2026-06-07)
+> What's already true on the cluster, so the plan starts from reality:
+> - ✅ **Runs API gateway** enabled + boot-persistent on all 3 agent nodes (`:8642`); `/v1/capabilities` verified. The single hard Phase-1 prerequisite is **cleared**.
+> - ✅ **`:9119` dashboards** restored on all 3 nodes (had been left stopped after the v0.15.1 update).
+> - ✅ **All 3 nodes confirmed identical** — generic shared `SOUL.md`, no profiles, no per-node customization. Role identity is still runtime-injected (`AGENTS.md`), i.e. the orchestrator-worker mapping is still in force.
+> - ⚠️ **Open capability gaps** (design around, not blockers): `jobs_admin` and `memory_write_api` are **not** exposed over the API server ([Q9/Q10](#3-open-questions-verify-before-building)).
+> - ⏳ **Not yet started:** the code work — Phases 0–5 below. No profiles authored, no kernel, no `CoordinationStrategy`, traces still via `hermes -z`.
+
+---
+
+## 1. Sequencing rationale
+
+The order is dictated by one hard dependency and one risk principle:
+
+1. **Traces before visualization.** You cannot render data you don't collect ([06](06-agent-traces.md)). The trace pipeline is also the *cheapest* high-value win: it improves the current system immediately, before any architectural change.
+2. **Substrate before behavior.** The deterministic kernel + board model ([04](04-blackboard-protocol.md)) must exist and be unit-tested before the Control Unit ([05](05-control-unit.md)) drives agents through it.
+
+> [!IMPORTANT] Showcase/novelty constraint: V1 must not foreclose V2
+> The novel contribution lives in **V2 (the stigmergic regime)** and in the showcase demos it enables ([doc 15](15-novelty-and-research-directions.md)) — but V2 is built *separately and later*. Therefore the **[seams checklist](11-extensibility-and-variants.md#6-the-seams-checklist-enforce-in-v1) is a hard merge gate for every V1 PR**, not advice. If a V1 phase hard-codes roles, bakes "Control Unit" into the kernel/board/traces/UI, or makes decay non-pluggable, the novel work becomes a rewrite and the artifact loses its point. Each phase's definition of done includes *"passes the seams checklist."* V1 builds the **hooks**; it does not build V2.
+
+## 2. Phases
+
+### Phase 0 — Foundations (no behavior change yet)
+- [ ] SQLite migration v2 ([07](07-data-model.md)) — additive tables/columns, `SCHEMA_VERSION=2`.
+- [ ] Redis v2 keys + new SSE event names registered (no emitters yet) ([04 §7–8](04-blackboard-protocol.md#7-redis-schema-v2)).
+- [ ] `config.py`: add the `coordination.*` block (`strategy`, `control_unit.*`, `stigmergic.*`) and `pressure.weights` with fail-fast validation ([11 §7](11-extensibility-and-variants.md#7-config-sketch-both-variants-visible)); `strategy` default `legacy_pipeline`. Add a `blackboard_v2` build flag (gates the new substrate independently of which strategy runs).
+- [ ] Establish the `CoordinationStrategy` seam ([11 §2](11-extensibility-and-variants.md#2-the-seam-coordinationstrategy)) and the [seams checklist](11-extensibility-and-variants.md#6-the-seams-checklist-enforce-in-v1) — opaque `author` strings, capability-based kernel auth, pluggable decay — **before** writing strategy logic, or the stigmergic variant becomes a rewrite.
+
+### Phase 1 — Agent traces (ship standalone, high ROI) ⭐
+- [x] **Enable the Hermes Runs API on every node** — ✅ **DONE 2026-06-07.** `API_SERVER_*` set in `.env` + `hermes gateway install --system --run-as-user root`; `hermes-gateway.service` active/enabled on all 3 nodes (`:8642`), `/v1/capabilities` verified ([doc 12 §4](12-hermes-and-node-topology.md#4-enabling-the-runs-api-the-phase-1-unblocker--done-on-all-3-nodes-2026-06-07)). This was the hard prerequisite — traces are now possible.
+- [ ] Confirm the exact `/v1/runs/{id}/events` payload shapes on a live node ([§3 checklist](#3-open-questions-verify-before-building)).
+- [ ] Rewrite `agent/api_server.py` to use the Runs API and stream trace events; add `usage`/`patches`/`trace_count` to `TaskResponse` ([06 §3](06-agent-traces.md#3-rearchitected-agent-server)).
+- [ ] Daemon ingests traces → Redis + SQLite; resurrect the cost path from real `usage` ([06 §5](06-agent-traces.md#5-transport--persistence)). **Capture cost per-task *and* per-model *and* per-node**, not just a total — the [cost/locality-frontier demo](15-novelty-and-research-directions.md#5-concrete-demos--experiments-to-build-ranked-by-wow-per-effort) needs this breakdown.
+- [ ] **(Showcase hook) Energy/telemetry per task** — record per-node power draw over each task window from the existing Beszel telemetry, and store `joules_estimate` alongside cost. Enables the "joules per solved task" metric ([doc 15 §4](15-novelty-and-research-directions.md#4-the-distributed-angle-what-only-physical-distribution-gives-you)). Additive; no behavior change.
+- [ ] Legacy `hermes -z` fallback for nodes without the Runs API ([06 §8](06-agent-traces.md#8-graceful-degradation)).
+- [ ] UI: Logs tab Trace/Raw toggle + trace timeline ([09](09-ui-agent-trace-inspector.md)). **Works on the existing pipeline** — immediate value even before the blackboard inversion.
+
+> [!NOTE]
+> Phase 1 is independently shippable and reversible. Even if the blackboard inversion stalls, the system gains real traces and working cost tracking — strictly better than today.
+
+### Phase 2 — The board substrate (behind `blackboard_v2`)
+- [ ] `daemon/src/models/schemas.py` — JSON Schemas per entry type ([04 §1](04-blackboard-protocol.md#entry-types)).
+- [ ] `daemon/src/core/kernel.py` — deterministic kernel + authorization matrix + CAS + salience. **Unit-test with an in-memory fake** (no LLM, no Redis): feed proposals, assert committed/rejected ([04 §4, §9](04-blackboard-protocol.md#4-the-deterministic-kernel)).
+- [ ] Rewrite `blackboard.py` to the v2 API ([04 §9](04-blackboard-protocol.md#9-blackboard-api-surface-replaces-ad-hoc-methods)); keep old methods until UI cutover.
+- [ ] Emit `board_patch` / `patch_rejected` events.
+- [ ] **(Showcase hook) Event log supports fork-from-event, not just linear replay.** Persist the full patch event-log with stable offsets and a `fork(task_id, at_event_n, mutate_fn)` that re-materializes board state up to event *n*. This is what enables [counterfactual replay](15-novelty-and-research-directions.md#35-causality--replay-enabled-by-event-sourcing) ("suppress agent X's turn, re-run") — design it in now; building the linear scrubber later on top is then trivial.
+
+### Phase 3 — The Control Unit (the V1 `ControlUnitStrategy`)
+- [ ] `daemon/src/core/coordination.py` — the `CoordinationStrategy` interface + `ControlUnitStrategy` ([11 §2](11-extensibility-and-variants.md#2-the-seam-coordinationstrategy)).
+- [ ] `daemon/src/core/control_unit.py` — OODA loop reading the **pressure field**, two-tier DECIDE, consensus scorer ([05](05-control-unit.md)).
+- [ ] **Author + deploy the role profiles** (planner/expert/critic/conflict_resolver/cleaner/decider, `SOUL.md` + toolset-scoped `config.yaml`) + a `universal` profile (+ optional `coordinator`); replicate to all 3 nodes; add the role→(preferred_host, profile) registry ([doc 12 §2.5–3](12-hermes-and-node-topology.md#25-the-agents-on-3-hosts-answer-yes-via-profiles)).
+- [ ] New role personas + authorization (capability) profiles in `personas.py` ([05 §2](05-control-unit.md#2-the-six-role-agent-group)).
+- [ ] **Cost rails in the same PR**: budget ceiling, round/duration caps, concurrency cap ([05 §5](05-control-unit.md#5-cost-governance--safety-rails)).
+- [ ] Dual-write board→legacy `debate_entries` so the old Blackboard tab keeps rendering.
+- [ ] A/B: run `legacy_pipeline` vs `blackboard_v2` on identical tasks; compare quality, latency, cost.
+
+### Phase 4 — Blackboard visualization
+- [ ] Agent-role tokens added to `DESIGN.md` + `design-tokens.ts` + `globals.css` ([08 §8](08-ui-blackboard-visualization.md#8-token--primitive-additions-do-this-first)).
+- [ ] `BlackboardGraph`, `WorkerLane`, `ConsensusMeter`; blackboard tab Graph/Stream toggle ([08](08-ui-blackboard-visualization.md)).
+- [ ] `useTaskStream` handles new events with batching ([09 §8 note](09-ui-agent-trace-inspector.md#8-files)).
+- [ ] Replay scrubber from `board/replay` (linear) — built on the Phase-2 fork-capable event log; the counterfactual-fork UI is a later/optional extension.
+
+### Phase 5 — Advanced & cutover
+- [ ] Private sub-boards + Conflict-Resolver ([05 §4](05-control-unit.md#4-private-sub-boards-conflict-resolution)).
+- [ ] Turn Inspector slide-over; budget gauge on Cost tab ([09](09-ui-agent-trace-inspector.md)).
+- [ ] Flip `coordination.strategy` default to `control_unit`; deprecate legacy `debate_entries` dual-write.
+- [ ] Mission cockpit view + parallel trace lanes + pressure heatmap + firehose ([doc 13](13-ui-showcase-density.md)).
+
+### Phase E (cross-cutting — begin at Phase 1) — Evaluation, A/B & showcase instrumentation
+
+> [!NOTE] This is the spine of the "novel artifact" claim. Without it, the novelty is an assertion; with it, it's a result. Build it incrementally alongside the phases above, not at the end.
+
+- [ ] **Benchmark harness** — reproduce the paper's evaluation surface ([doc 15 §3.4](15-novelty-and-research-directions.md#34-llm-mas-scaling--diversity)): a runner that submits a labeled dataset (start with **GSM8K + MMLU subset**, the paper's beds) through bMAS and scores accuracy. Store runs with full config (strategy, models, rounds) for comparability.
+- [ ] **Metrics capture per run** — accuracy, tokens, **$**, latency, rounds-to-consensus, consensus-reached %, and `joules_estimate` (from the Phase-1 hook). One row per task; one summary per benchmark. This is the table that goes in the writeup.
+- [ ] **A/B harness (regime comparison)** — same dataset, swap only `coordination.strategy`: `legacy_pipeline` vs `control_unit` now, and `stigmergic` later. Emit a side-by-side report. (The *UI* side-by-side demo — two live regimes on one query — is a [doc 13](13-ui-showcase-density.md) surface; this is the data engine behind it.)
+- [ ] **(For the V2 robustness experiment) Failure-injection tooling** — a way to drop/partition a node mid-task and record degradation, so the [kill-a-node resilience demo](15-novelty-and-research-directions.md#4-the-distributed-angle-what-only-physical-distribution-gives-you) is repeatable, not a one-off. The hook is V1 (node-health + graceful degradation in the substrate); the *experiment* needs V2 to be interesting.
+
+### Phase 6 (optional, future) — Pure-stigmergic variant
+- [ ] Implement `StigmergicStrategy` against the same substrate ([11 §4](11-extensibility-and-variants.md#4-the-stigmergic-variant-specified)): roleless `universal` actors, exponential pheromone decay, parallel patch competition, basin-based termination.
+- [ ] Pull-mode self-activation via Hermes crons on the pressure field ([12 §6](12-hermes-and-node-topology.md#6-pull-mode-crons-for-the-stigmergic-future)) — **note ([Q9](#3-open-questions-verify-before-building)): crons are CLI/`config.yaml`-managed, not HTTP-managed** (`jobs_admin: false`), so the daemon provisions them via SSH/CLI, not an API call.
+- [ ] `coordination.strategy: stigmergic` — runs on the *unchanged* kernel/board/traces/UI if the [seams checklist](11-extensibility-and-variants.md#6-the-seams-checklist-enforce-in-v1) was honored.
+
+## 3. Open Questions (verify before building)
+
+> [!WARNING]
+> These assumptions gate real engineering time. Verify each on a live node/cluster and record the answer before the dependent phase starts.
+
+| # | Question | Status | Detail |
+|:--|:--|:--|:--|
+| Q1 | Hermes Runs API exists with `/v1/runs` + `/v1/runs/{id}/events` SSE? | ✅ **Confirmed + LIVE** | Gateway now enabled on all 3 nodes; `/v1/capabilities` returns `run_submission/run_events_sse/run_stop/run_approval_response/tool_progress_events/approval_events = true` ([doc 12 §4](12-hermes-and-node-topology.md#4-enabling-the-runs-api-the-phase-1-unblocker--done-on-all-3-nodes-2026-06-07)) |
+| Q2 | Does run completion return populated `usage`? | ⚠️ **Verify** | Gateway is up — capture a real `GET /v1/runs/{id}` payload from a live run (submit one through `:8642` with the bearer key) |
+| Q3 | Can Hermes reliably emit a **structured JSON-Patch proposal** as final output? | ⚠️ **Verify** | prompt-test; if unreliable, add a daemon-side "patch extractor" step |
+| Q4 | Rely on kernel rejection vs prompt for authorization? | ✅ **Decided** | Rely on the **kernel** (prompt advisory). Confirm rejection UX. |
+| Q5 | Latency/cost of multi-round cyclic execution vs the 3-call pipeline? | ⚠️ **Measure** | A/B; tune `max_rounds` per triage tier |
+| Q6 | Hermes profiles for the role group? | ✅ **Confirmed** | Profiles are fully isolated (own SOUL/config/skills). None exist yet — author + deploy ([doc 12 §2.5](12-hermes-and-node-topology.md#25-the-agents-on-3-hosts-answer-yes-via-profiles)) |
+| Q7 | `POST /v1/runs/{id}/stop` + `/approval` for HITL? | ✅ **Confirmed in source** | Wire stop = abort, approval = inline operator gate ([doc 12 §5.1](12-hermes-and-node-topology.md#51-native-hitl-via-run-approvals)). Test live once gateway is on. |
+| Q8 | Responses API `previous_response_id` for cross-turn agent memory? | ✅ **Confirmed** | Use `session_id={task}:{role}` for correlation ([doc 12 §5.2](12-hermes-and-node-topology.md#52-stateful-turns-via-the-responses-api)) |
+| Q9 | Manage Hermes **crons** over the API server (for V2 pull-mode)? | ❌ **Confirmed NO** | `/v1/capabilities` → `jobs_admin: false`. The cron admin API is not exposed. Create crons via the Hermes **CLI / `config.yaml`** on each node ([doc 12 §6](12-hermes-and-node-topology.md#6-pull-mode-crons-for-the-stigmergic-future)). Affects **V2 only** — no V1 impact. |
+| Q10 | Read/write agent **memory** over the API server (for the UI "minds")? | ❌ **Confirmed NO** | `/v1/capabilities` → `memory_write_api: false` (and `admin_config_rw: false`). Display memory via the `:9119` dashboard / CLI; do not plan an HTTP memory-write path from the daemon. |
+
+## 4. Risk register
+
+| Risk | Likelihood | Impact | Mitigation |
+|:--|:--|:--|:--|
+| Cyclic loop runs up cloud cost | Med | High | Budget ceiling + round/duration caps shipped *with* the loop; cheap-model gating for "should I act?" ([05 §5](05-control-unit.md#5-cost-governance--safety-rails)) |
+| Agents can't emit clean patches (Q3) | Med | High | Daemon-side patch extractor fallback; kernel rejects malformed → visible, recoverable |
+| Trace volume bloats SQLite | Med | Med | Cap/TTL Redis streams; sample/summarize `reasoning`/`token_delta`; retention job ([07 §5](07-data-model.md#5-retention--size-control)) |
+| `useTaskStream` re-render storm | Med | Med | Batch trace events (rAF/debounce) ([09 §8](09-ui-agent-trace-inspector.md#8-files)) |
+| Dashboard breaks during migration | Low | High | Additive schema; dual-write debate→board; new SSE events are additive; everything behind `blackboard_v2` |
+| Concurrency bugs in kernel CAS | Med | High | Deterministic kernel is fully unit-testable without LLM/Redis; property-test concurrent proposals ([04 §9](04-blackboard-protocol.md#9-blackboard-api-surface-replaces-ad-hoc-methods)) |
+| Quality regresses vs pipeline | Low | Med | A/B `legacy_pipeline` flag; keep escape hatch through Phase 5 |
+
+## 5. Backward-compatibility contract
+
+- **SQLite**: additive only (new tables, `ADD COLUMN`). Existing queries untouched.
+- **SSE**: new event *names*; `routes/events.py` forwards any `{event,data}` unchanged ([04 §8](04-blackboard-protocol.md#8-new-sse-event-types-additive)). Legacy `debate`/`phase`/`subtask`/`cost`/`complete` keep firing through Phase 4.
+- **UI**: new components live behind toggles inside existing tabs; the current `DebateList`/`DAGVisualizer`/`TaskLogTerminal` keep working until explicitly replaced.
+- **Config**: new keys validated fail-fast (matching `config.py` style); `legacy_pipeline: true` reproduces today's behavior exactly.
+
+## 6. Definition of done (maps to README §4)
+
+- [ ] An agent reads a peer's board entry and posts a critique **without daemon instruction** (Phase 3).
+- [ ] ≥2 agents contribute concurrently to one task; graph shows interleaving (Phase 3/4).
+- [ ] CU halts on consensus threshold, not a fixed pipeline end; convergence meter reflects it (Phase 3/4).
+- [ ] Opening a running task shows live reasoning + tool calls + token deltas (Phase 1).
+- [ ] Blackboard tab renders a live graph animating as patches land (Phase 4).
+- [ ] Daemon restart mid-task replays the board from the patch log without corruption (Phase 2).
+- [ ] Per-task cost is real and bounded by `budget_ceiling_usd` (Phase 1 + 3).
+
+## 7. Estimated effort (rough, for sequencing — not a commitment)
+
+| Phase | Surface | Relative size |
+|:--|:--|:--|
+| 0 | schema/config scaffolding | S |
+| 1 | agent traces + cost + Logs UI | M |
+| 2 | kernel + board model + tests | L |
+| 3 | control unit + roles + cost rails | L |
+| 4 | blackboard graph + worker lane + tokens | M–L |
+| 5 | private boards, inspector, cutover, advanced | M |
+
+> [!TIP]
+> Ship **Phase 1 first and independently**. It de-risks the Hermes integration (Q1–Q2), delivers immediate operator value (real traces, working cost), and produces the data the later visualization phases need — all without committing to the architectural inversion. If Phase 1 reveals the Runs API isn't viable, you learn it cheaply, before building the kernel and CU.

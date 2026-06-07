@@ -1,6 +1,6 @@
 # Hermes Dashboard API Reference
 
-> **Version**: Hermes Agent v0.13.0 — "The Tenacity Release" (2026.5.7)  
+> **Version**: Hermes Agent **v0.15.1** (2026.5.29) — verified live on `agent-node1` 2026-06-06. (Previously documented against v0.13.0.)  
 > **Primary Source**: [Official Web Dashboard Docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard)  
 > **Secondary Source**: Audited from `hermes_cli/web_server.py` on agent nodes  
 > **Dashboard Port**: `9119` (default) — FastAPI + Uvicorn backend, React 19 SPA frontend  
@@ -664,14 +664,26 @@ curl http://<node_ip>:8642/v1/chat/completions \
 | `GET` | `/health` | Health check (`{"status": "ok"}`). Also at `/v1/health` |
 | `GET` | `/health/detailed` | Extended health: active sessions, running agents, resource usage |
 
-**Runs API** (long-form sessions with SSE progress):
+**Runs API** (long-form sessions with SSE progress) — **the primary bMAS integration point** (see [proposal doc 06](proposals/06-agent-traces.md)):
 
 | Method | Path | Description |
 |:--|:--|:--|
-| `POST` | `/v1/runs` | Create a new agent run, returns `run_id` |
-| `GET` | `/v1/runs/{run_id}` | Poll run state (status, output, usage) |
-| `GET` | `/v1/runs/{run_id}/events` | SSE stream of tool progress, token deltas, lifecycle events |
-| `POST` | `/v1/runs/{run_id}/stop` | Interrupt a running agent turn |
+| `POST` | `/v1/runs` | Create a run, returns `run_id` (HTTP 202). Body: `input` (string) + optional `session_id`, `instructions`, `conversation_history`, `previous_response_id` |
+| `GET` | `/v1/runs/{run_id}` | Poll run state (status, output, usage). `session_id` is surfaced for external correlation |
+| `GET` | `/v1/runs/{run_id}/events` | **SSE** stream of `hermes.tool.progress`, token deltas, approval, and lifecycle events |
+| `POST` | `/v1/runs/{run_id}/stop` | Interrupt a running agent turn (powers HITL abort) |
+| `POST` | `/v1/runs/{run_id}/approval` | **Resolve a pending approval** — the agent blocks on a risky/expensive action until approved (native HITL gate) |
+
+**SSE event types on `/v1/runs/{id}/events`** (from `gateway/platforms/api_server.py`, verified):
+- `hermes.tool.progress` — tool-start visibility (does not pollute persisted assistant text)
+- token/content deltas — `chat.completion.chunk` style, or Responses-style `response.output_text.delta`, `function_call`, `function_call_output`
+- lifecycle — run created / status / completed
+- approval events — emitted when a run awaits operator approval (`approval_events: true` in `/v1/capabilities`)
+
+`/v1/capabilities` advertises: `run_submission`, `run_status`, `run_events_sse`, `run_stop`, `run_approval_response`, `tool_progress_events`, `approval_events`.
+
+> [!WARNING]
+> [Hermes #6358](https://github.com/NousResearch/hermes-agent/issues/6358): the `/v1/runs/{id}/events` SSE endpoint historically omitted CORS headers (fixed in PR #6367, Apr 2026). **Irrelevant to bMAS** — the daemon/agent bridge consumes the stream server-side, never from the browser.
 
 **Jobs API** (scheduled/background work via gateway):
 
@@ -727,3 +739,46 @@ curl http://<node_ip>:8642/v1/chat/completions \
 6. **Dashboard prerequisites**: The dashboard requires `pip install 'hermes-agent[web,pty]'`. The `web` extra provides FastAPI/Uvicorn; the `pty` extra enables the Chat tab's embedded TUI.
 
 7. **Kanban is single-host**: The Kanban board uses a local SQLite database. Cross-node Kanban orchestration isn't supported natively — each node has its own board. For multi-node coordination, use bMAS's own Redis-based orchestration.
+
+---
+
+## Appendix C: Verified Live Cluster State (2026-06-06, updated 2026-06-07)
+
+Inspected directly via SSH from the control plane on **all three agent nodes** (`.103`, `.112`, `.122`). **All three are byte-for-byte identical** at the Hermes level: same v0.15.1, the same generic `SOUL.md` ("Distributed Agent Node" — *not* role-differentiated), no `profiles/`, empty `memories/`, no on-disk `AGENTS.md`, the same curated 24-skill set. The only per-node difference is the `NODE_ID` env var and the `role` assigned in `bmas.yaml` (which the daemon injects per-task as `AGENTS.md`). Use this as the ground truth for integration planning; re-verify after any node rebuild.
+
+### Enabling the API server / Runs API (corrected + done)
+
+`hermes gateway` is the **messaging gateway** (Telegram/Discord/WhatsApp/…) and takes **no** `--host`/`--port` flags. The OpenAI-compatible **API server** (`/v1/chat/completions`, `/v1/responses`, `/v1/runs*`) is a *platform inside the gateway process*, enabled by an env flag — confirmed against `gateway/platforms/api_server.py` and the [official API-server docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server). To enable:
+
+```bash
+# ~/.hermes/.env
+API_SERVER_ENABLED=true
+API_SERVER_HOST=0.0.0.0      # default 127.0.0.1; set 0.0.0.0 for LAN access
+API_SERVER_PORT=8642         # default
+API_SERVER_KEY=<secret>      # required even for local binds (bearer token)
+
+# install as a boot-persistent service (LXC runs as root → --run-as-user root required)
+hermes gateway install --system --force --run-as-user root
+```
+
+### What changed on the cluster as of 2026-06-07
+
+- **Runs API gateway stood up on all 3 nodes** — `hermes-gateway.service` is `active` + `enabled`, listening on `0.0.0.0:8642`. Verified `/v1/capabilities` returns `true` for `run_submission`, `run_status`, `run_events_sse`, `run_stop`, `run_approval_response`, `tool_progress_events`, `approval_events`, `responses_api`, `responses_streaming`, `session_fork`, `skills_api`.
+- **Capability gaps to design around:** `admin_config_rw`, `memory_write_api`, and `jobs_admin` are **`false`** — the config/memory/cron *admin* APIs are not exposed over the API server. Manage crons/memory via the Hermes CLI/`config.yaml`, not HTTP.
+- **`:9119` dashboard restarted on all 3 nodes.** It had been left stopped after the v0.15.1 update (a clean deactivation on 2026-06-05, *not* a crash). The v0.15.1 dashboard change (`HERMES_DASHBOARD_INSECURE` env) only affects the *Docker entrypoint*; the CLI `--insecure` flag in the existing `hermes-dashboard.service` still works, so a plain `systemctl restart` brought it back (200 OK).
+- **Per-node service map (all healthy):** `:8000` bMAS `hermes -z` bridge · `:8642` Runs API · `:9119` dashboard.
+
+| Aspect | Observed | Action needed for full integration |
+|:--|:--|:--|
+| Hermes version | **v0.15.1** (2026.5.29) | none — current |
+| Running services | only the bMAS bridge (`hermes -z`) on `:8000` via `hermes-agent.service` | — |
+| **Gateway / Runs API (`:8642`)** | **NOT running** (`API_SERVER_ENABLED` unset) | ⚠️ **Enable `hermes gateway` per node** to unlock traces — [proposal doc 12 §4](proposals/12-hermes-and-node-topology.md#4-enabling-the-runs-api-the-phase-1-unblocker) |
+| Dashboard (`:9119`) | NOT running | optional — start `hermes dashboard` if the Skills/Memory UI proxies are wanted |
+| Profiles | `~/.hermes/profiles/` **absent** — single default profile | create role profiles (planner/expert/critic/conflict_resolver/cleaner/decider) + `universal` — [doc 12 §2.5](proposals/12-hermes-and-node-topology.md#25-the-agents-on-3-hosts-answer-yes-via-profiles) |
+| `SOUL.md` | one generic "Distributed Agent Node" identity, identical across nodes | move to **per-role SOUL.md** — [doc 12 §3](proposals/12-hermes-and-node-topology.md#3-soulmd-per-role-replace-the-single-generic-soul) |
+| Skills | 24 installed | wire procedural memory into bMAS context |
+| Crons | present (`~/.hermes/cron/`) | reserved for stigmergic pull-mode — [doc 11 §4](proposals/11-extensibility-and-variants.md#4-the-stigmergic-variant-specified) |
+| Model / tools | provider `gemini`/`custom`; `web` + `browser` (camofox) + `compression` configured | scope toolsets per role-profile |
+
+> [!IMPORTANT]
+> The deployed `agent/api_server.py` is still the `hermes -z` one-shot bridge — it discards all intermediate agent output and returns no `usage`. This is the root cause of bMAS having no agent traces and a dead cost path. Replacing it with the Runs API ([doc 06](proposals/06-agent-traces.md)) is the highest-leverage, independently-shippable fix.
