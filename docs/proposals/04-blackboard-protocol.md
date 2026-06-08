@@ -64,6 +64,21 @@ Agent proposes Patch ──► Kernel validates ──► Kernel commits:
 - **Snapshot** is a cache. `bmas:board:{task_id}:entries` (Redis Hash of `entry_id → JSON`). Rebuildable by replaying the log.
 - **Crash recovery**: on restart, if the snapshot is missing/stale, fold the log. This replaces today's brittle "zombie task → failed" recovery for board state.
 
+### 2.1 Fork-from-event (counterfactual replay)
+
+The event log supports not just linear replay but **fork**: create a new board timeline starting from event N, with one or more events added, removed, or modified. This enables [counterfactual analysis](15-novelty-and-research-directions.md#35-causality--replay-enabled-by-event-sourcing) ("what if we suppressed agent X's critique?").
+
+Fork semantics:
+
+- `fork(task_id, at_event_n)` → creates a new `fork_task_id` with its own patch log, initially containing events 1..N copied from the parent. The fork's snapshot is materialized by folding those N events.
+- The parent log is **immutable** — a fork never modifies the original. Forks are independent copies (cheap: events are small JSON; a 4-round task has ~20–40 events).
+- Forked boards get a `forked_from: {task_id, at_event}` metadata field, enabling the UI to show provenance.
+- Mutations after the fork point are written only to the fork's log. The fork is a fully functional board — agents can be re-run against it.
+- A `mutate_fn` (optional) can modify the replayed events before materialization — e.g., dropping all events from a specific author to test "what if this agent never acted?"
+
+> [!NOTE]
+> Forks are a Phase 2 deliverable (the data structure and `replay+fork` test). The *UI* for counterfactual exploration is a later/optional extension ([doc 15](15-novelty-and-research-directions.md)); the linear replay scrubber (Phase 4) is built first and is trivial on top of this.
+
 ## 3. JSON Patch mutations (RFC 6902)
 
 Agents never write entries directly. They return a list of **proposed operations** scoped to allowed paths. The kernel is the only writer.
@@ -165,6 +180,10 @@ return merged.rev
 - **`replace`/`remove` of an existing entry**: CAS on `rev`. On `CONFLICT`, the kernel re-reads, re-checks the op's precondition, and either retries or rejects with `patch_rejected` (reason: stale). Bounded retries (e.g. 3).
 
 This serializes only true contention on the *same* entry, exactly the blackboard concurrency model the external review asked for.
+
+### 5.1 Conflict resolution policy (V1)
+
+When CAS fails after retries, the kernel emits a `patch_rejected` event with `reason: "conflict"` and the stale `rev`. **The losing patch is not silently dropped or auto-queued** — it becomes a visible event in the trace stream and the UI. The `ControlUnitStrategy` then decides whether to re-schedule the rejected agent for another attempt (with the updated board state) in a subsequent round, or to move on. This keeps conflict resolution in the strategy layer (consistent with the [CoordinationStrategy seam](11-extensibility-and-variants.md#2-the-seam-coordinationstrategy)) and avoids baking retry-or-drop policy into the kernel itself. In V2 (stigmergic), the rejected agent simply observes the updated pressure field and self-activates if the region is still high-pressure — no CU arbitration needed.
 
 ## 6. Salience: the pragmatic pheromone
 

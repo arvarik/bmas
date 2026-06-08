@@ -76,6 +76,21 @@ pressure(region) =  unrebutted_critiques(region)        // errors flagged, not f
                   −  reinforcement(region)               // accepted, corroborated entries
 ```
 
+### 3.1 Mapping entry types to pressure terms
+
+The formula above references conceptual terms. This table maps each to concrete board state from [doc 04](04-blackboard-protocol.md):
+
+| Pressure term | Board condition (how the kernel computes it) | Weight key |
+|:--|:--|:--|
+| `unrebutted_critiques` | Count of entries where `type = "critique"` AND `status = "open"` AND **no** entry with `type = "rebuttal"` exists that `refs` the critique's `id` | `critique` |
+| `open_conflicts` | Count of entries where `type = "conflict"` AND `status = "open"` (i.e. the Conflict-Resolver has not posted a resolution) | `conflict` |
+| `low_confidence_findings` | Count of entries where `type = "finding"` AND `status = "open"` AND `confidence < confidence_floor` (default `0.5`, configurable in `pressure.confidence_floor`) | `low_confidence` |
+| `unmet_constraints` | Count of sub-goals in the `objective` entry's body that have **no** `finding` or `plan` entry with a `refs` pointing to the objective — i.e. aspects of the task that no agent has addressed yet | `unmet_constraint` |
+| `reinforcement` | Count of entries in the region with `status = "accepted"` **plus** entries with ≥2 corroborating `refs` from different authors (independent agreement) | `reinforcement` |
+
+> [!NOTE]
+> The weights for each term are configured in `pressure.weights` ([§7](#7-config-sketch-both-variants-visible)). The `confidence_floor` threshold is a separate config key under `pressure` to avoid baking a magic number into the kernel.
+
 - A **region** in V1 is simply an entry and its `refs` neighborhood (a sub-graph). The field is computed by the kernel after each commit (same hook that recomputes salience) and stored in `bmas:board:{task}:pressure` (ZSet: region → pressure).
 - In V1, `ControlUnitStrategy` reads the top-pressure regions to decide which role to activate ("highest pressure is an open conflict → Conflict-Resolver"). This *replaces hand-coded `if open_critiques` heuristics with a uniform signal* — and makes the V1→V2 transition continuous.
 - The UI renders pressure as a **heatmap overlay** on the blackboard graph ([doc 13](13-ui-showcase-density.md)) in both variants — high-pressure regions glow. This is the most visually compelling artifact of the whole system for a showcase.
@@ -161,6 +176,7 @@ coordination:
 
 pressure:                         # shared; consumed by both strategies + UI heatmap
   weights: { critique: 1.0, conflict: 1.2, low_confidence: 0.6, unmet_constraint: 1.0, reinforcement: -0.8 }
+  confidence_floor: 0.5           # findings below this confidence count as low_confidence_findings (§3.1)
 ```
 
 ➡️ Continue to [12 — Hermes & Node Topology](12-hermes-and-node-topology.md).

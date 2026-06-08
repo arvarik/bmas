@@ -70,6 +70,9 @@ Four synchronized regions, all live, all from the existing SSE stream:
 4. **Pressure/Consensus strip** (bottom) — twin sparklines: max pressure falling, consensus rising. Narrates *why* the system is converging.
 5. **Coordinator lane** (optional, atop the Agent Minds rail) — when the [Coordinator narration agent](05-control-unit.md#11-the-coordinator-narration-agent-optional-showcase-flourish) is enabled, a distinct card shows the control unit *thinking about what to think about*: its rationale for the next role selection on ambiguous turns. Visually set apart (it's meta — it reasons about the agents, not the task). Only lights up on escalation turns; muted otherwise.
 
+> [!NOTE] Responsive degradation
+> The cockpit is designed for large monitors (≥1440px). On smaller viewports (laptops, ≤1366px), panels collapse in priority order: **Firehose** hides first (toggle to reveal), then **Agent Minds** collapses to a horizontal strip of status pills above the graph. The **Blackboard graph** and **Pressure/Consensus strip** always remain visible — they are the spatial and temporal anchors. Use the existing DESIGN.md breakpoint tokens (`--bp-md`, `--bp-lg`) for thresholds; do not invent new breakpoints.
+
 Everything cross-links: click a graph node → highlights the agent + scrolls the firehose; click an agent card → opens its [Turn Inspector](09-ui-agent-trace-inspector.md#4-turn-inspector-slide-over); hover a firehose line → flashes the graph node it touched.
 
 ## 4. Density patterns (the toolkit)

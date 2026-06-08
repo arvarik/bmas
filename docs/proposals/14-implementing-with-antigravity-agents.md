@@ -341,7 +341,7 @@ own control. Do NOT fix. If clean, say so explicitly.
 
 ## Phase 4 — Blackboard visualization + trace inspector
 
-> Optional parallelism: Phase 4 touches `mission-control/` only, so Steps 26–29 may run concurrently with Phases 2–3 (different files). If you'd rather stay strictly linear, just run it here. Use the Agent Manager to run parallel conversations side-by-side.
+> Optional parallelism: Phase 4 touches `mission-control/` only, so Steps 26–29 may run concurrently with Phases 2–3 (different files). **However, Phase 4 should not be verified or merged until Phase 1 (traces) and Phase 2 (kernel) are merged** — the UI needs real trace data and board entries to test against. Stubbed/mock data is acceptable during coding; the VERIFY step must use a live task. If you'd rather stay strictly linear, just run it here. Use the Agent Manager to run parallel conversations side-by-side.
 
 ### Step 26 — 🆕 NEW AGENT (`/goal`) — Implement Phase 4
 ```

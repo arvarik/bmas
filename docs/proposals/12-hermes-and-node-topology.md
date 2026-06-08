@@ -76,6 +76,9 @@ The key realization: **an agent LXC does almost no heavy compute.** The actual L
 
 So the profile set is **7**: `planner`, `expert`, `critic`, `conflict_resolver`, `cleaner`, `decider`, and `universal` (V2). The CU itself is **not** in this list — see [§2.1](#21-should-the-control-unit-be-a-profile-mostly-no).
 
+> [!NOTE] Where does expert generation live? (the paper's "AG" function)
+> The paper uses an **agent-generating agent (AG)** that dynamically creates expert personas per query. In our architecture, this function lives in the **daemon/CU scheduler** as a direct LiteLLM call (currently [`orchestrator._complex_research_flow` L369–393](../daemon/src/core/orchestrator.py)), **not** as a Hermes profile. The AG is a control-plane function (it decides *which* experts to spawn), not a knowledge-work agent — the same rationale as [§2.1](#21-should-the-control-unit-be-a-profile-mostly-no). The generated expert identities are injected into the shared `expert` profile via per-task `AGENTS.md`, which is the mechanism that already works today.
+
 > [!NOTE] Toolset isolation per role (a real win)
 > Profiles let you scope tools per role, which the [agent-integration roadmap](../roadmap/agent-integration.md) explicitly wants: give the **expert** profile `web` + `browser` + `code_exec`; give the **critic/decider** read-only/analysis tools; give **cleaner** no external tools. Enforced by each profile's `config.yaml.toolsets`, not by prompt.
 >

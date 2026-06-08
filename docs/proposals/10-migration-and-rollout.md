@@ -62,6 +62,9 @@ The order is dictated by one hard dependency and one risk principle:
 - [ ] A/B: run `legacy_pipeline` vs `blackboard_v2` on identical tasks; compare quality, latency, cost.
 
 ### Phase 4 — Blackboard visualization
+
+> [!NOTE] Parallelism constraint
+> Phase 4 coding may begin in parallel with Phases 2–3 (it touches `mission-control/` only — different files). However, Phase 4 should **not be verified or merged** until Phase 1 (traces) and Phase 2 (kernel) are merged, because the UI components need real trace data and board entries to render against. Stubbed/mock data is acceptable during development, but the PR's "VERIFY" step must run against a live task with the real trace + board pipeline.
 - [ ] Agent-role tokens added to `DESIGN.md` + `design-tokens.ts` + `globals.css` ([08 §8](08-ui-blackboard-visualization.md#8-token--primitive-additions-do-this-first)).
 - [ ] `BlackboardGraph`, `WorkerLane`, `ConsensusMeter`; blackboard tab Graph/Stream toggle ([08](08-ui-blackboard-visualization.md)).
 - [ ] `useTaskStream` handles new events with batching ([09 §8 note](09-ui-agent-trace-inspector.md#8-files)).

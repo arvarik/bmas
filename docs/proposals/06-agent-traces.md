@@ -81,6 +81,42 @@ async def execute_task(req: TaskRequest):
 
 `TaskResponse` gains `patches`, `usage`, and `trace_count`. This single change resurrects the cost path *and* delivers the patch-based mutations from [04](04-blackboard-protocol.md).
 
+### 3.1 Updated `TaskResponse` schema
+
+The current `TaskResponse` ([`api_server.py` L76–84](../agent/api_server.py)) has no `usage` field, which is why the cost path is dead. The Runs API integration replaces it with a richer contract:
+
+```jsonc
+// TaskResponse (v2) — agent → daemon
+{
+  "task_id": "task-a8f2",
+  "turn_id": "turn-7",                    // NEW: stable turn identifier for trace correlation
+  "run_id": "run-hermes-abc123",          // NEW: Hermes run ID (for debugging / cross-referencing)
+  "status": "completed",                   // completed | failed | timeout
+  "result": "…",                           // final output text (backward compat)
+  "patches": [                             // NEW: structured JSON-Patch proposal (doc 04 §3)
+    { "op": "add", "path": "/entries/-", "value": { "type": "finding", "…": "…" } }
+  ],
+  "usage": {                               // NEW: real token/cost data from the Runs API
+    "prompt_tokens": 1842,
+    "completion_tokens": 567,
+    "total_tokens": 2409,
+    "cost_usd": 0.0034,                   // computed by LiteLLM / Hermes; 0.0 for local models
+    "model": "gemini-2.5-flash"            // actual model used (resolved by LiteLLM)
+  },
+  "trace_id": "trace-turn-7",             // NEW: links this response to its trace stream (doc 06 §6)
+  "trace_count": 42,                       // NEW: number of trace events emitted during the turn
+  "node_id": "node-2",
+  "request_id": "a1b2c3",
+  "duration_ms": 3412,
+  "timestamp": "2026-06-06T…Z"
+}
+```
+
+> [!NOTE]
+> - `patches` may be `null` if the agent's output couldn't be parsed as structured JSON-Patch (e.g., the agent returned free-text). In that case the daemon-side patch extractor (Q3 fallback) attempts extraction; if that also fails, the turn produces no board mutations but the trace is still captured.
+> - `usage` may be `null` under the legacy `hermes -z` fallback ([§8](#8-graceful-degradation)). The daemon must handle `null` gracefully — log a warning but don't crash the cost path.
+> - `result` is kept for backward compatibility and for the graceful-degradation path; the kernel reads `patches`, not `result`.
+
 ## 4. The bMAS trace event schema
 
 One normalized shape, regardless of the Hermes event that produced it. This is what the UI renders ([09](09-ui-agent-trace-inspector.md)).
