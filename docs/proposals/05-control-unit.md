@@ -3,7 +3,7 @@
 # 05 — Control Unit, Roles & Cyclic Execution
 
 > [!ABSTRACT]
-> The Control Unit is the referee that replaces the puppeteer. This document specifies the OODA scheduler, the six-role agent group, consensus/termination, private-board conflict resolution, and — critically for a homelab — the cost-governance rails that keep stigmergy from becoming a billing incident.
+> The Control Unit is the referee that replaces the puppeteer. This document specifies the OODA scheduler, the paper role group (5 constant roles + generated experts), consensus/termination, private-board conflict resolution, and — critically for a homelab — the cost-governance rails that keep stigmergy from becoming a billing incident.
 
 ---
 
@@ -66,9 +66,9 @@ The deterministic scheduler is fast but **invisible** — for a showcase artifac
 
 This is the cleanest way to satisfy the showcase goal — see the [profile note in doc 12 §2.1](12-hermes-and-node-topology.md#21-should-the-control-unit-be-a-profile-mostly-no) (it adds an 8th, optional `coordinator` profile) and the [Coordinator lane in doc 13](13-ui-showcase-density.md).
 
-## 2. The six-role agent group
+## 2. The paper role group
 
-Extends today's three static roles. Roles are **logical** — they are personas + an authorization profile ([04 §4](04-blackboard-protocol.md#authorization-matrix-who-may-write-what)), decoupled from physical nodes. Any node can assume any role per turn (the paper's model; the [roadmap](../roadmap/control-unit.md#dynamic-role-assignment-6-role-bmas) goal).
+Extends today's three static roles. The paper has **5 constant roles** (Planner, Decider, Critic, Conflict-Resolver, Cleaner) plus **query-generated Experts**; "six-role" was an earlier shorthand for "the constant role set plus experts." Roles are **logical** — they are personas + a capability profile ([04 §4](04-blackboard-protocol.md#capability-matrix-who-may-write-what)), decoupled from physical nodes. Any node can assume any role per turn (the paper's model; the [roadmap](../roadmap/control-unit.md#dynamic-role-assignment-6-role-bmas) goal).
 
 | Role | Replaces / adds | Reads | Writes | Persona home |
 |:--|:--|:--|:--|:--|
@@ -92,11 +92,13 @@ The Decider produces a **streamed consensus score** so the operator can *watch c
 
 ```python
 async def _decide(self, board, state, round_no) -> Decision:
-    score = self._consensus_score(board)         # see below
+    score = self._consensus_score(board)          # Gate A: salience-weighted, no-open-critique ratio
+    answer_agreed = self._answer_agreement(board) # Gate B: a Decider answer entry, uncritiqued
     await self.bb.set_meta(board.task_id, consensus_score=score, round=round_no)
     await self.bb.emit(board.task_id, "consensus",
-                       {"score": score, "threshold": self.threshold, "phase": board.phase})
-    if score >= self.threshold:
+                       {"score": score, "threshold": self.threshold,
+                        "answer_agreed": answer_agreed, "phase": board.phase})
+    if score >= self.threshold and answer_agreed:   # BOTH gates (see "Consensus score" below)
         return Decision(terminal=True, reason="consensus")
     if round_no >= self.max_rounds:
         return Decision(terminal=True, reason="max_rounds")
@@ -107,8 +109,14 @@ async def _decide(self, board, state, round_no) -> Decision:
 
 **Consensus score** — start simple and deterministic, upgrade later:
 
-1. **v1 (ship first):** ratio of `finding`s that are `accepted` and have no open `critique`, weighted by salience. Cheap, explainable, no extra LLM call.
-2. **v2 (optional):** embedding-similarity across agents' current position entries (cumulative similarity, per the paper). Add behind a flag.
+1. **v1 (ship first):** a **two-gate** check, because "no unresolved objections" is *not* the same as "the agents agree on an answer":
+   - **Gate A — stability:** ratio of `finding`s that are `accepted` and have no open `critique`, weighted by salience. Cheap, explainable, no extra LLM call. This measures *absence of unresolved objection*.
+   - **Gate B — answer agreement:** there exists a single `consensus`/answer entry (posted by the Decider) that the round's active authors do **not** critique. This measures *actual agreement on the answer*, which is what the paper's consensus is about.
+   - Terminate on consensus only when **both** gates pass. Gate A alone can be high while the accepted findings still point at different conclusions — terminating there would declare "consensus" with no agreement, exactly the failure the convergence demo would expose.
+2. **v2 (optional):** replace Gate B with embedding-similarity across agents' current position entries (cumulative similarity `V(aᵢ)=Σ sim(aᵢ,aⱼ)`, per the paper). Add behind a flag.
+
+> [!NOTE] Why this matters
+> The paper's consensus is **answer convergence** (the decider's judgment, or a similarity vote), not "the board has no open critiques." A salience-weighted finding ratio is a good *progress signal* but a poor *termination signal* on its own. Keeping both gates makes the v1 metric a faithful (if cheaper) version of the paper's notion rather than a different one.
 
 Config in `bmas.yaml`:
 
@@ -161,7 +169,7 @@ Today HITL is pause + hints read on resume (`blackboard.py` `push_hint`/`pop_hin
 
 ## 7. Optional future: pure pull with Hermes crons
 
-Documented for completeness; **not the baseline** ([Peer Review §2.1](02-peer-review.md#21-push--pull-suggestion-1--adapt-dont-take-literally)). Hermes supports crons (`/api/cron/jobs`, see [HERMES_API.md](../HERMES_API.md#cron-jobs)). A future variant could:
+Documented for completeness; **not the baseline** ([Peer Review §2.1](02-peer-review.md#21-push--pull-suggestion-1--adapt-dont-take-literally)). Hermes supports crons, but live `features.jobs_admin=false`; V2 should provision cron jobs through CLI/`config.yaml` unless job-admin HTTP writes are explicitly verified (see [HERMES_API.md](../HERMES_API.md#appendix-a-gateway-api-server-port-8642)). A future variant could:
 
 - run a long-lived Hermes process per node with a cron that polls `bmas:board:{task}:meta`/index;
 - let each agent self-activate when its role's trigger condition appears on the board;

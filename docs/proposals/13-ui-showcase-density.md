@@ -105,7 +105,7 @@ The request's core: *show the thought process of each agent and how they work.* 
 | Signal | Source | Where |
 |:--|:--|:--|
 | Live reasoning stream | `trace` type `reasoning` | Agent Mind card (latest), Trace timeline (full) |
-| Current tool + args + result | `hermes.tool.progress` + `tool_result` ([doc 12](12-hermes-and-node-topology.md)) | tool-call card |
+| Current tool + args + result | `tool.started` + `tool.completed` ([doc 06 §2](06-agent-traces.md#2-the-enabler-the-hermes-runs-api)) | tool-call card |
 | Token meter (live) | `token_delta` | Mind card chip, sparkline |
 | What it's about to write | `patch_proposed` | "proposes critique→e-12" chip |
 | What got accepted/rejected | `board_patch` / `patch_rejected` | graph + "Resulted in" footer |

@@ -43,7 +43,7 @@ There is also a hard runtime constraint the external model didn't account for: H
 
 ### 2.2 Per-key optimistic locking (Suggestion 2) — **Adopt**
 
-Correct and necessary. Replace the single global `orchestrator:{task_id}` lock ([Gap G4](01-gap-analysis.md)) with **per-entry optimistic concurrency**: each board entry carries a `version`/`rev`; writes use Redis `WATCH`/`MULTI` (or a Lua CAS) and retry on conflict. This lets multiple agents commit to *different* entries concurrently and serializes only true contention on the *same* entry. Detailed in [04 §5](04-blackboard-protocol.md#5-optimistic-concurrency).
+Correct and necessary. The current lock is task-scoped (`orchestrator:{task_id}`), not truly global across all tasks; the real flaw is that within a task the daemon is the single meaningful writer and the standard flow is sequential ([Gap G4](01-gap-analysis.md)). Replace that per-task, daemon-owned mutation model with **per-entry optimistic concurrency**: each board entry carries a `version`/`rev`; writes use Redis `WATCH`/`MULTI` (or a Lua CAS) and retry on conflict. This lets multiple agents commit to *different* entries concurrently and serializes only true contention on the *same* entry. Detailed in [04 §5](04-blackboard-protocol.md#5-optimistic-concurrency).
 
 ### 2.3 Formalize Control Unit vs Knowledge Sources (Suggestion 3) — **Adopt**
 

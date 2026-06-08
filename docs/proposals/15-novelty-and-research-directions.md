@@ -59,7 +59,7 @@ Most MAS work reports final accuracy. Your live pressure-field heatmap, parallel
 - **The kernel as a contention bottleneck / SPOF:** measure throughput limits; propose sharding the board by pressure-region.
 
 ### 3.3 Information theory & token economy
-- **Information gain per patch:** treat the board as a channel. Measure bits-per-patch, redundancy (what the [cleaner](05-control-unit.md#2-the-six-role-agent-group) removes), and **board entropy over time** (high early → low at consensus). Reframe the paper's token savings information-theoretically.
+- **Information gain per patch:** treat the board as a channel. Measure bits-per-patch, redundancy (what the [cleaner](05-control-unit.md#2-the-paper-role-group) removes), and **board entropy over time** (high early → low at consensus). Reframe the paper's token savings information-theoretically.
 - **Optimal stopping:** the decider is an optimal-stopping problem (stop when expected marginal information < cost). Formalize it.
 
 ### 3.4 LLM-MAS scaling & diversity

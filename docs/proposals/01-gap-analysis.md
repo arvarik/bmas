@@ -17,7 +17,7 @@ bMAS fails this test in three independent ways. Each is sufficient on its own to
 |:--|:--|:--|
 | Agents *read* shared state to decide what to do | Agents receive a prompt string and return a string; they never touch Redis | ❌ |
 | Control is opportunistic / data-driven | Control is a hardcoded `plan → execute → audit` DAG | ❌ |
-| Contributions are concurrent and incremental | One global lock; strictly sequential single task | ❌ |
+| Contributions are concurrent and incremental | Per-task orchestration is sequential; complex tasks have only one fixed expert fan-out | ❌ |
 | Shared state is the coordination medium | Redis is a write-only mirror for the dashboard | ❌ |
 
 ---
@@ -138,9 +138,9 @@ No agent ever *reacts* to another agent's entry. There is exactly one writer per
 
 The blackboard namespaces (`bmas:public:*`, `bmas:private:*`) exist, but they are populated *for display* and torn down (`clear_private`) before anyone but the auditor could act on them.
 
-## 6. Evidence: strictly single-task, single-writer concurrency
+## 6. Evidence: strictly per-task, single-writer concurrency
 
-Each task takes a single global lock and the pipeline is sequential. The architecture doc concedes this directly ("**Single task at a time**", §9.2):
+Each task takes a lock scoped to `orchestrator:{task_id}` and the standard pipeline is sequential. This is not a true process-wide global lock across all task IDs; the important blackboard gap is narrower and more damaging: **within one task**, only the daemon writes meaningful coordination state, and agents do not opportunistically interleave contributions. The architecture doc concedes the resulting limitation directly ("**Single task at a time**", §9.2):
 
 ```132:135:daemon/src/core/orchestrator.py
         # 1. Acquire global lock
@@ -149,7 +149,7 @@ Each task takes a single global lock and the pipeline is sequential. The archite
             return {"error": "Could not acquire lock — another task is running"}
 ```
 
-A blackboard's entire reason for existing is **opportunistic parallelism** — multiple knowledge sources contributing concurrently. The current locking model precludes it by construction.
+A blackboard's entire reason for existing is **opportunistic parallelism** — multiple knowledge sources contributing concurrently to the same evolving problem state. The current standard flow precludes that by construction; the complex flow has a single parallel expert burst, but those experts still return one-shot strings that are only synthesized afterward.
 
 ## 7. The silent observability failure (root cause for the UI work)
 
@@ -189,7 +189,7 @@ The diagnosis is not "rewrite everything." The infrastructure is strong and the 
 | G1 | Control encodes the solution path (fixed DAG) | `orchestrator.py` `_standard_flow` | [05 Control Unit](05-control-unit.md) |
 | G2 | Agents are blind, stateless text functions | `_dispatch_agent`, `api_server._run_hermes` | [03 Target Arch](03-target-architecture.md), [04 PatchBoard](04-blackboard-protocol.md) |
 | G3 | "Debate" is concatenation, not interaction | `post_debate`/`get_debate` | [04 PatchBoard](04-blackboard-protocol.md), [05 Control Unit](05-control-unit.md) |
-| G4 | Redis is a UI mirror; single-task locking | `get_state`, global lock | [04 PatchBoard](04-blackboard-protocol.md) (per-key optimistic locking) |
+| G4 | Redis is a UI mirror; no per-entry concurrent mutation | `get_state`, task-scoped orchestrator lock, sequential standard flow | [04 PatchBoard](04-blackboard-protocol.md) (per-key optimistic locking) |
 | G5 | No agent traces; dead cost path | `_run_hermes`, `TaskResponse` schema | [06 Agent Traces](06-agent-traces.md) |
 
 ➡️ Continue to [02 — Peer Review](02-peer-review.md).

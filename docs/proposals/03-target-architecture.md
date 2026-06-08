@@ -107,7 +107,8 @@ We target the **referee** position because it captures the essential blackboard 
 Contrast with today's payload ([Gap G2](01-gap-analysis.md#3-evidence-agents-are-stateless-text-functions-blind-to-the-board)), which is just `{task_id, description, role_prompt}`:
 
 ```jsonc
-// Daemon → Agent (target). The agent receives the board, not just a prompt.
+// Daemon → Agent (target). The agent receives the board index and a read affordance,
+// not just a prompt.
 {
   "task_id": "task-a8f2",
   "turn_id": "turn-7",
@@ -121,12 +122,23 @@ Contrast with today's payload ([Gap G2](01-gap-analysis.md#3-evidence-agents-are
     {"id": "e-14", "type": "critique", "author": "critic",           "salience": 0.40, "title": "DCF discount rate unjustified"}
   ],
   "open_questions": ["Is the 8% WACC defensible?"],
+  "read_entry_contract": {
+    "mode": "daemon_api",                 // daemon_api | prehydrated | workspace_file
+    "endpoint": "/tasks/task-a8f2/board/entries",
+    "allowed_ids": ["e-12", "e-13", "e-14"]
+  },
   "patch_target_schema": "finding|critique|rebuttal",  // what the kernel will accept this turn
   "budget_remaining_usd": 0.0421
 }
 ```
 
-The agent reads the index, pulls the specific entries it needs (by ID), reasons, and returns **patches** plus a **trace** (see [04](04-blackboard-protocol.md) and [06](06-agent-traces.md)). It can also return `{"action": "decline", "reason": "no new information"}` — a first-class blackboard behavior impossible today.
+The agent reads the index, pulls the specific entries it needs (by ID), reasons, and returns **patches** plus a **trace** (see [04](04-blackboard-protocol.md) and [06](06-agent-traces.md)). The `read_entry_contract` is not optional: Phase 3 must choose one concrete mechanism before claiming agents "read the board":
+
+- **`daemon_api`**: the node calls a daemon endpoint such as `GET /tasks/{task}/board/entries?ids=e-12,e-13`, authenticated for node-to-daemon use.
+- **`prehydrated`**: the daemon includes the full payloads for `allowed_ids` in the turn request. This is simpler but must stay bounded by token/cost limits.
+- **`workspace_file`**: the agent server writes selected entries to a per-turn file in the Hermes workspace and tells the agent where to read them.
+
+It can also return `{"action": "decline", "reason": "no new information"}` — a first-class blackboard behavior impossible today.
 
 ## 5. Component ownership map (files that change)
 

@@ -117,6 +117,10 @@ Per the design contract, add tokens before using them:
 
 ```ts
 // design-tokens.ts — extend AgentRole + AGENT_COLORS (and DESIGN.md §2.5)
+// NOTE: "executor"/"auditor" are LEGACY aliases (the paper has neither — doc 12 §2 / doc 04 §1).
+// They're kept only so existing tasks/colors keep rendering; new roles use the paper-faithful set.
+// Per doc 11 §6 this enum is a *display convenience* — back it with a fallback color generator
+// (doc 13 §7) so roleless/dynamic authors (e.g. a V2 `universal` actor) still render.
 export type AgentRole =
   | "planner" | "executor" | "auditor"
   | "critic" | "conflict_resolver" | "cleaner" | "decider";

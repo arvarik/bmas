@@ -41,12 +41,27 @@ Our own [HERMES_API.md](../HERMES_API.md#appendix-a-gateway-api-server-port-8642
 
 The doc even names this as the integration point: *"The Runs API is the most promising integration point for daemon-to-agent communication."* This replaces the `hermes -z` subprocess.
 
-> [!WARNING] Verify before building
-> Confirm on a live node: `API_SERVER_ENABLED=true`, the exact event schema emitted by `/v1/runs/{id}/events`, and that `usage` is populated on completion. The shapes below are the *target contract*; adjust field names to the runtime's actual output. Tracked in [10 §Open Questions](10-migration-and-rollout.md#open-questions-verify-before-building).
+> [!NOTE] Verified live (2026-06-08) — the real event contract
+> Confirmed on `agent-node1` by submitting a run through `:8642`. `API_SERVER_ENABLED=true` on all 3 nodes and `usage` **is** returned on completion — but only as token counts (no cost; see §3.1). The SSE stream emits these **actual** event names (not the OpenAI-style names earlier docs assumed):
+>
+> | Hermes SSE event | bMAS trace `type` (after `translate()`) |
+> |:--|:--|
+> | `message.delta` (`{delta}`) | `reasoning` (assistant content stream) |
+> | `reasoning.available` (`{text}`) | `reasoning` (thinking text) |
+> | `tool.started` | `tool_call` |
+> | `tool.completed` | `tool_result` |
+> | `approval.request` / `approval.responded` | `approval_request` (doc 12 §5.1) |
+> | `run.completed` (`{output, usage}`) | `final` (carries `usage`) |
+> | `run.failed` / `run.cancelled` | `error` |
+>
+> There is **no** `turn_start` or `token_delta` event from Hermes — synthesize `turn_start` in the agent when the run begins, and derive the live token meter from `message.delta` counts. Full list in [HERMES_API.md Appendix A](../HERMES_API.md#appendix-a-gateway-api-server-port-8642).
 
 ## 3. Rearchitected agent server
 
 `agent/api_server.py` changes from "run subprocess, return string" to "submit run, **stream events to the daemon**, return structured result." Two viable transports — pick per the verification:
+
+> [!WARNING] Profile isolation is not provided by the default `/v1/runs` call
+> Live source inspection shows `POST /v1/runs` accepts `input`, optional `session_id`, `instructions`, `conversation_history`, `previous_response_id`, and `model`, but no per-request `profile`. The sketch below preserves today's role identity through `instructions`; it does **not** by itself select a role-specific SOUL/toolset/memory profile. Phase 3a must provide the verified profile-aware dispatch mechanism from [doc 12 §2.5](12-hermes-and-node-topology.md#25-the-agents-on-3-hosts-answer-yes-via-profiles) before the system can claim profile isolation.
 
 **Option A (preferred): the agent streams trace events to the daemon as it consumes the Hermes SSE.** The daemon exposes a lightweight ingest endpoint (or the agent writes directly to Redis). The agent becomes a *translator* from Hermes events → bMAS trace events.
 
@@ -57,7 +72,7 @@ async def execute_task(req: TaskRequest):
         "model": LITELLM_MODEL,
         "input": req.description,
         "instructions": req.role_prompt,     # persona
-        "metadata": {"board_index": req.context.get("board_index") if req.context else None},
+        "session_id": f"{req.task_id}:{req.role}",
     })
     run_id = run["run_id"]
 
@@ -73,13 +88,13 @@ async def execute_task(req: TaskRequest):
     return TaskResponse(
         task_id=req.task_id, status="completed",
         patches=patches,                       # NEW: structured proposal (doc 04 §3)
-        usage=final.get("usage"),              # NEW: real token/cost data
+        usage=final.get("usage"),              # NEW: real token counts (daemon adds cost_usd; §3.1)
         trace_count=trace_seq,
         node_id=NODE_ID, ...,
     )
 ```
 
-`TaskResponse` gains `patches`, `usage`, and `trace_count`. This single change resurrects the cost path *and* delivers the patch-based mutations from [04](04-blackboard-protocol.md).
+`TaskResponse` gains `patches`, `usage`, and `trace_count`. This delivers real **token counts** (the daemon converts them to dollars — §3.1) *and* the patch-based mutations from [04](04-blackboard-protocol.md).
 
 ### 3.1 Updated `TaskResponse` schema
 
@@ -94,13 +109,13 @@ The current `TaskResponse` ([`api_server.py` L76–84](../agent/api_server.py)) 
   "status": "completed",                   // completed | failed | timeout
   "result": "…",                           // final output text (backward compat)
   "patches": [                             // NEW: structured JSON-Patch proposal (doc 04 §3)
-    { "op": "add", "path": "/entries/-", "value": { "type": "finding", "…": "…" } }
+    { "op": "create", "path": "/entries", "value": { "type": "finding", "…": "…" } }  // kernel mints id (doc 04 §3)
   ],
-  "usage": {                               // NEW: real token/cost data from the Runs API
-    "prompt_tokens": 1842,
-    "completion_tokens": 567,
-    "total_tokens": 2409,
-    "cost_usd": 0.0034,                   // computed by LiteLLM / Hermes; 0.0 for local models
+  "usage": {                               // NEW: token data from the Runs API (verified live)
+    "prompt_tokens": 1842,                  // Hermes `usage.input_tokens`
+    "completion_tokens": 567,               // Hermes `usage.output_tokens`
+    "total_tokens": 2409,                   // Hermes `usage.total_tokens`
+    "cost_usd": 0.0034,                   // ⚠️ NOT from Hermes — computed by the daemon (see note)
     "model": "gemini-2.5-flash"            // actual model used (resolved by LiteLLM)
   },
   "trace_id": "trace-turn-7",             // NEW: links this response to its trace stream (doc 06 §6)
@@ -112,10 +127,18 @@ The current `TaskResponse` ([`api_server.py` L76–84](../agent/api_server.py)) 
 }
 ```
 
+> [!IMPORTANT] Dollar cost is computed by the daemon, not read from Hermes (verified live 2026-06-08)
+> A live `run.completed` returns `usage: {input_tokens, output_tokens, total_tokens}` and **no cost field**; Hermes's own `/api/analytics/*` report `estimated_cost`/`actual_cost` as `0` for the LiteLLM-backed `custom`/`gemini` provider. So **the cost-path fix is two parts, not one**:
+> 1. The agent returns real **token counts** from `usage` (this part Hermes gives us).
+> 2. The **daemon computes `cost_usd`** = `input_tokens × price_in + output_tokens × price_out`, using a per-model price table in `bmas.yaml` (the models are already declared there), **or** by reading LiteLLM's response cost (`x-litellm-response-cost` header / `response_cost` in the LiteLLM usage). Do **not** rely on a `cost_usd` from the Hermes payload — it will be absent/zero, silently re-breaking the Cost tab and the `budget_ceiling_usd` rail ([05 §5](05-control-unit.md#5-cost-governance--safety-rails)).
+>
+> Treat `cost_usd` above as a **daemon-derived** field, set during ingestion, never trusted from the node.
+
 > [!NOTE]
 > - `patches` may be `null` if the agent's output couldn't be parsed as structured JSON-Patch (e.g., the agent returned free-text). In that case the daemon-side patch extractor (Q3 fallback) attempts extraction; if that also fails, the turn produces no board mutations but the trace is still captured.
 > - `usage` may be `null` under the legacy `hermes -z` fallback ([§8](#8-graceful-degradation)). The daemon must handle `null` gracefully — log a warning but don't crash the cost path.
 > - `result` is kept for backward compatibility and for the graceful-degradation path; the kernel reads `patches`, not `result`.
+> - **Context cost is non-trivial even for tiny tasks:** a live "17+25" run consumed ~16k input tokens (full system prompt + skills + memory loaded per run). This is why the [board *index*, not the full board](03-target-architecture.md#4-what-each-turns-agent-payload-looks-like-target), must be sent each turn, and why per-turn budget accounting matters from round one.
 
 ## 4. The bMAS trace event schema
 
@@ -161,7 +184,7 @@ Agent ──(SSE translate)──► Redis Stream  bmas:traces:{task}:{turn}   (
 
 - **Live**: traces ride the *existing* `bmas:events:{task_id}` channel as `event: trace`, so `routes/events.py` needs no structural change ([04 §8](04-blackboard-protocol.md#8-new-sse-event-types-additive)).
 - **Durable**: batch-insert to SQLite `agent_traces` on `final` (and periodically for long turns), mirroring the existing dual-write discipline. `reasoning`/`token_delta` spam can be sampled or summarized before archival to control DB growth.
-- **Cost**: on `final`, the daemon inserts a real `cost_entry` from `usage` — fixing the dead path — and updates `budget_spent` for the CU's budget ceiling ([05 §5](05-control-unit.md#5-cost-governance--safety-rails)).
+- **Cost**: on `final`, the daemon inserts a real `cost_entry` — token counts from `usage`, **dollar cost computed daemon-side** (price table or LiteLLM response cost; see §3.1) — fixing the dead path and updating `budget_spent` for the CU's budget ceiling ([05 §5](05-control-unit.md#5-cost-governance--safety-rails)).
 
 ## 6. Correlation: traces ↔ board ↔ turns
 

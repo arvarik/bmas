@@ -52,18 +52,21 @@ CREATE TABLE IF NOT EXISTS board_patches (
     task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     turn_id       TEXT,
     seq           INTEGER NOT NULL,                -- ordering within task
-    role          TEXT NOT NULL,
+    author        TEXT NOT NULL,                   -- opaque actor id (role/profile/expert)
+    capabilities  TEXT,                            -- JSON array/profile used for authorization
     op            TEXT NOT NULL,                   -- JSON: the RFC 6902 op as committed
     entry_id      TEXT,                            -- affected entry
     accepted      INTEGER NOT NULL DEFAULT 1,      -- 0 = rejected (with reason)
     reason        TEXT,                            -- rejection reason if accepted=0
+    redis_stream_id TEXT,                           -- live-stream id if appended
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_board_patches_task ON board_patches(task_id, seq);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_board_patches_task_seq ON board_patches(task_id, seq);
 ```
 
 > [!NOTE]
-> `board_patches` stores **both** accepted and rejected ops. Rejections are valuable debugging data and feed the UI's rejection overlay ([08](08-ui-blackboard-visualization.md)). Replaying only `accepted=1` rows in `seq` order reconstructs `board_entries` exactly.
+> `board_patches` stores **both** accepted and rejected ops. Rejections are valuable debugging data and feed the UI's rejection overlay ([08](08-ui-blackboard-visualization.md)). Replaying only `accepted=1` rows in `seq` order reconstructs `board_entries` exactly. This table is the durable source of truth for replay/fork; unlike legacy logs, inserts here are not best-effort.
 
 ### 1.3 `agent_traces` — durable agent activity
 
@@ -77,6 +80,7 @@ CREATE TABLE IF NOT EXISTS agent_traces (
     node          TEXT,
     type          TEXT NOT NULL,                   -- turn_start|reasoning|tool_call|tool_result|token_delta|patch_proposed|final|error
     data          TEXT,                            -- JSON, type-specific
+    model         TEXT,
     tokens_in     INTEGER DEFAULT 0,
     tokens_out    INTEGER DEFAULT 0,
     cost_usd      REAL DEFAULT 0.0,
@@ -94,11 +98,13 @@ CREATE TABLE IF NOT EXISTS turns (
     round_no      INTEGER NOT NULL,
     role          TEXT NOT NULL,
     node          TEXT,
+    model         TEXT,
     status        TEXT NOT NULL DEFAULT 'running', -- running|completed|declined|failed
     consensus_after REAL,                          -- consensus score after this turn
     started_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     completed_at  TEXT,
-    cost_usd      REAL DEFAULT 0.0
+    cost_usd      REAL DEFAULT 0.0,
+    joules_estimate REAL DEFAULT 0.0
 );
 CREATE INDEX IF NOT EXISTS idx_turns_task ON turns(task_id, round_no);
 ```
@@ -110,7 +116,22 @@ ALTER TABLE tasks ADD COLUMN rounds_used      INTEGER DEFAULT 0;
 ALTER TABLE tasks ADD COLUMN consensus_score  REAL;
 ALTER TABLE tasks ADD COLUMN terminated_by    TEXT;     -- consensus|max_rounds|budget|abort|error
 ALTER TABLE tasks ADD COLUMN phase            TEXT;     -- Discovery|Debate|Convergence|Verified_Complete
+ALTER TABLE tasks ADD COLUMN joules_estimate  REAL DEFAULT 0.0;
 ```
+
+### 1.6 `cost_entries` column additions
+
+The legacy `cost_entries` table is kept, but Phase 1 needs enough dimensionality for the cost/locality demos:
+
+```sql
+ALTER TABLE cost_entries ADD COLUMN node_id        TEXT;
+ALTER TABLE cost_entries ADD COLUMN turn_id        TEXT;
+ALTER TABLE cost_entries ADD COLUMN provider       TEXT;
+ALTER TABLE cost_entries ADD COLUMN price_source   TEXT;  -- bmas.yaml|litellm|manual
+ALTER TABLE cost_entries ADD COLUMN joules_estimate REAL DEFAULT 0.0;
+```
+
+Hermes returns token counts only. The daemon computes `cost_usd` from model pricing config or LiteLLM response-cost metadata and records the source here.
 
 > [!IMPORTANT]
 > SQLite `ALTER TABLE … ADD COLUMN` is safe and non-locking for these defaults. Keep `debate_entries`, `sub_tasks`, `cost_entries`, and `log_entries` intact — the migration is purely additive so the current dashboard keeps working through the transition.
@@ -135,7 +156,7 @@ Add to `database.py`, following the existing ephemeral-connection pattern (`_con
 # Board
 async def upsert_board_entry(entry: dict) -> None
 async def get_board_entries(task_id: str) -> list[dict]
-async def insert_board_patch(task_id, turn_id, seq, role, op, entry_id, accepted, reason) -> None
+async def insert_board_patch(task_id, turn_id, seq, author, capabilities, op, entry_id, accepted, reason, redis_stream_id=None) -> None
 async def get_board_patches(task_id: str) -> list[dict]   # ordered replay
 
 # Traces
@@ -145,7 +166,7 @@ async def get_task_traces(task_id: str, limit: int, offset: int) -> list[dict]
 
 # Turns
 async def create_turn(turn: dict) -> None
-async def complete_turn(turn_id: str, status: str, consensus_after: float, cost_usd: float) -> None
+async def complete_turn(turn_id: str, status: str, consensus_after: float, cost_usd: float, joules_estimate: float = 0.0) -> None
 async def get_turns(task_id: str) -> list[dict]
 ```
 

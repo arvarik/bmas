@@ -48,6 +48,9 @@ The board is a set of **entries**. An entry is the unit agents read and react to
 > [!NOTE]
 > `refs` is what turns the relay race into a graph. A `critique` with `refs: ["e-12"]` is a *typed edge* from the critique to finding `e-12`. The live blackboard graph ([08](08-ui-blackboard-visualization.md)) renders entries as nodes and `refs` as edges — no separate graph model needed.
 
+> [!NOTE] "Executor" here is a back-compat alias for the paper's finding-producer
+> Han & Zhang have **no "executor" or "auditor" role** — findings come from *experts* and the constant roles ([doc 12 §2](12-hermes-and-node-topology.md#2-agents-personas-and-nodes--clearing-up-the-count) explains the renaming). "Executor / Expert" above is retained only because the current `personas.py` and `AGENT_COLORS` ship an `executor` identity; it denotes "an agent that posts `finding`/`rebuttal` entries." Because the kernel authorizes by **capability**, not role name ([doc 11 §6](11-extensibility-and-variants.md#6-the-seams-checklist-enforce-in-v1)), this is purely a label — `executor` and the paper-faithful `expert` resolve to the same `can_create: [finding, rebuttal]` capability profile. New code should prefer `expert`.
+
 ## 2. The board as an event log
 
 > [!IMPORTANT]
@@ -64,7 +67,17 @@ Agent proposes Patch ──► Kernel validates ──► Kernel commits:
 - **Snapshot** is a cache. `bmas:board:{task_id}:entries` (Redis Hash of `entry_id → JSON`). Rebuildable by replaying the log.
 - **Crash recovery**: on restart, if the snapshot is missing/stale, fold the log. This replaces today's brittle "zombie task → failed" recovery for board state.
 
-### 2.1 Fork-from-event (counterfactual replay)
+### 2.1 Durability and ordering contract
+
+Unlike legacy daemon logs, board patches are not "best effort" archival data. The durable patch log is the source of truth for replay, fork, and crash recovery, so Phase 2 must implement and test this contract:
+
+- Every committed or rejected op receives a task-local monotonic `seq` from the kernel before it is emitted.
+- SQLite `board_patches(task_id, seq)` is the durable recovery source. Redis Streams/Pub/Sub are the live transport and cache.
+- A commit is not considered complete until the SQLite row and Redis live state agree on the same `seq`. If Redis succeeds but SQLite fails, the kernel must retry or mark the task degraded before emitting success; it must not silently continue with an unreplayable board.
+- On restart, rebuild Redis snapshots from SQLite `board_patches` first, then reconcile or discard stale Redis stream entries whose `seq` is not present durably.
+- Property tests must cover interrupted writes and replay determinism: folding accepted rows ordered by `seq` reconstructs exactly the same `board_entries`.
+
+### 2.2 Fork-from-event (counterfactual replay)
 
 The event log supports not just linear replay but **fork**: create a new board timeline starting from event N, with one or more events added, removed, or modified. This enables [counterfactual analysis](15-novelty-and-research-directions.md#35-causality--replay-enabled-by-event-sourcing) ("what if we suppressed agent X's critique?").
 
@@ -83,27 +96,36 @@ Fork semantics:
 
 Agents never write entries directly. They return a list of **proposed operations** scoped to allowed paths. The kernel is the only writer.
 
+> [!IMPORTANT] The canonical document model (read this before the example)
+> The board document the kernel applies patches against is **`{"entries": { "<id>": <entry>, … }}`** — an **object keyed by entry id**, mirroring the Redis `bmas:board:{task}:entries` Hash ([§7](#7-redis-schema-v2)). This matters because **a single JSON document cannot be both an array and an object**, so we do *not* use RFC 6902's array-append `"/entries/-"`. Instead:
+>
+> - **Creating an entry** uses a dedicated `"op": "create"` (a small, explicit extension to RFC 6902) whose `path` is `"/entries"` and whose `value` is the new entry body. The kernel mints the `id` and rewrites it to an internal `add` at `"/entries/<new-id>"`. Agents never choose ids.
+> - **Mutating an existing entry** uses standard RFC 6902 `replace`/`remove` against `"/entries/<id>/<field>"`.
+>
+> The kernel validates every op against this model; an `add` to `"/entries/-"` (array semantics) is rejected. This keeps the patch dialect internally consistent and applyable by a standard library after the `create`→`add` normalization step.
+
 ```jsonc
 // Agent → Daemon: proposed mutations for this turn
 {
   "turn_id": "turn-7",
-  "role": "critic",
+  "author": "critic",
+  "capabilities": ["critique_writer"],
   "patches": [
-    { "op": "add", "path": "/entries/-", "value": {
+    { "op": "create", "path": "/entries", "value": {   // kernel mints the id (§4 normalize)
         "type": "critique",
         "title": "DCF discount rate unjustified",
         "body": "The 8% WACC ignores NVDA's beta of ~1.7…",
         "refs": ["e-12"],
         "confidence": 0.66
     }},
-    { "op": "replace", "path": "/entries/e-12/status", "value": "open" }  // may be rejected (see §4)
+    { "op": "replace", "path": "/entries/e-12/status", "value": "open" }  // standard RFC 6902; may be rejected (see §4)
   ],
   "trace_id": "trace-turn-7",   // links to the agent trace (doc 06)
   "action": "contribute"        // or "decline"
 }
 ```
 
-The agent supplies *intent*; the kernel assigns `id`, `rev`, `author`, `salience`, and timestamps. Agents may not set those fields — attempts are stripped.
+The agent supplies *intent*; the kernel assigns `id`, `rev`, `author`, `salience`, and timestamps. Agents may not set those fields — attempts are stripped. The kernel `_normalize` step turns each `create` into an internal `add` at the minted `/entries/<id>` path before applying, so the committed patch log stores valid RFC 6902 against the object model (important for clean replay).
 
 ## 4. The deterministic kernel
 
@@ -124,8 +146,8 @@ class BoardKernel:
         committed = []
         for op in proposal["patches"]:
             try:
-                entry_op = self._normalize(op, author=proposal["role"])
-                self._authorize(proposal["role"], entry_op)      # role can write this type/path?
+                entry_op = self._normalize(op, author=proposal["author"])
+                self._authorize(proposal["capabilities"], entry_op)  # can this actor write this type/path?
                 self._validate_schema(entry_op)                  # JSON Schema per entry type
                 applied = await self._commit_cas(task_id, entry_op)  # optimistic concurrency (§5)
                 committed.append(applied)
@@ -145,22 +167,24 @@ When an agent proposes a malformed `finding` (missing `body`), writes to a path 
 - gives the UI a visible signal ("Critic's malformed patch rejected") — a debugging goldmine;
 - can be fed back to the agent next turn as a correction ("your last patch was rejected because …").
 
-### Authorization matrix (who may write what)
+### Capability matrix (who may write what)
 
-| Role | May `add` | May `replace` status of | May never |
+The kernel authorizes by **capability profile**, not by hardcoded role names. V1 maps roles to these capability profiles in the strategy layer; V2 can map a roleless actor to a broader profile without changing the kernel.
+
+| Capability profile | Typical V1 role | May `add` | May `replace` status of | May never |
 |:--|:--|:--|:--|
-| Planner | `plan` | own `plan` | `consensus` |
-| Executor / Expert | `finding`, `rebuttal` | own entries | others' entries, `consensus` |
-| Critic | `critique` | — | `finding` bodies |
-| Conflict-Resolver | `conflict` | `conflict` resolution | `finding` bodies |
-| Cleaner | — | `status` → `superseded`/`retracted` (low salience only) | entry bodies, `consensus` |
-| Control Unit / Decider | `objective`, `directive`, `consensus` | phase, thresholds | — |
+| `plan_writer` | Planner | `plan` | own `plan` | `consensus` |
+| `finding_writer` | Expert / legacy Executor | `finding`, `rebuttal` | own entries | others' entries, `consensus` |
+| `critique_writer` | Critic | `critique` | — | `finding` bodies |
+| `conflict_mediator` | Conflict-Resolver | `conflict` | `conflict` resolution | `finding` bodies |
+| `board_maintenance` | Cleaner | — | `status` → `superseded`/`retracted` (low salience only) | entry bodies, `consensus` |
+| `decision_writer` | Decider / CU strategy | `objective`, `directive`, `consensus` | phase, thresholds | — |
 
-This matrix is the structural enforcement of the paper's role separation. Today the persona text *asks* agents to behave ("You are the ONLY agent allowed to write to the Public results namespace" in `personas.py`) but nothing enforces it. The kernel enforces it.
+This matrix is the structural enforcement of the paper's role separation. Today the persona text *asks* agents to behave ("You are the ONLY agent allowed to write to the Public results namespace" in `personas.py`) but nothing enforces it. The kernel enforces capabilities; the `ControlUnitStrategy` decides which role/profile receives which capabilities for a turn.
 
 ## 5. Optimistic concurrency
 
-To allow concurrent writers ([Gap G4](01-gap-analysis.md#6-evidence-strictly-single-task-single-writer-concurrency)) without a global lock, mutations to an *existing* entry use compare-and-swap on `rev`:
+To allow concurrent writers ([Gap G4](01-gap-analysis.md#6-evidence-strictly-per-task-single-writer-concurrency)) without serializing all board mutation through the daemon's fixed flow, mutations to an *existing* entry use compare-and-swap on `rev`:
 
 ```lua
 -- commit_cas.lua  (atomic): only apply if rev matches
@@ -176,7 +200,7 @@ redis.call("HSET", KEYS[1], ARGV[1], cjson.encode(merged))
 return merged.rev
 ```
 
-- **`add` of a new entry**: never conflicts (kernel assigns a fresh id). Concurrent findings from different agents both land.
+- **`create` of a new entry** (§3): never conflicts (kernel mints a fresh id). Concurrent findings from different agents both land.
 - **`replace`/`remove` of an existing entry**: CAS on `rev`. On `CONFLICT`, the kernel re-reads, re-checks the op's precondition, and either retries or rejects with `patch_rejected` (reason: stale). Bounded retries (e.g. 3).
 
 This serializes only true contention on the *same* entry, exactly the blackboard concurrency model the external review asked for.
@@ -196,7 +220,7 @@ salience(e) = w_c · confidence(e)
             - w_p · penalty(e)            // critiques against e that are unrebutted
 ```
 
-Default weights `w_c=0.4, w_r=0.2, w_x=0.3, w_p=0.3` (configurable in `bmas.yaml`). Salience drives:
+Default weights `w_c=0.4, w_r=0.2, w_x=0.3, w_p=0.3` (configurable in `bmas.yaml`). **Clamp the result to `[0, 1]`** (`salience = max(0, min(1, …))`): the raw expression ranges roughly `[−0.3, 0.9]` with these weights, but every consumer (UI opacity `0.6→1.0`, the salience ZSet, the board index) assumes a normalized `0..1` score. The clamp is part of the kernel's recompute, not an afterthought. Salience drives:
 
 - **Control Unit prioritization** — orient toward high-salience conflicts/critiques.
 - **Cleaner pruning** — entries below `salience_floor` for N rounds get `status: superseded`.
@@ -256,5 +280,8 @@ class Blackboard:
 
 > [!IMPORTANT]
 > Keep the kernel free of LLM calls and Redis-version-specific surprises. It must be unit-testable with an in-memory fake: feed proposals, assert committed/rejected. This is what makes the "deterministic" claim real — and it is the test suite that lets you trust concurrent agents.
+
+> [!WARNING] Serialize the derived-field recompute
+> Individual entry commits use per-entry CAS (§5), but `_recompute_salience` **and** the pressure recompute ([§6.1](#61-salience-vs-pressure-the-v2-seam)) are **whole-board read-modify-write passes**. With the CU dispatching agents concurrently (the whole point of moving beyond the daemon's sequential per-task writer model), two `kernel.apply` calls finishing at once would race that global recompute. Make the recompute its own serialized critical section — a short per-task lock (`bmas:board:{task}:salience-lock`) or a single-consumer recompute queue keyed by `task_id` — or formulate salience/pressure as commutative per-entry deltas. This is the one place the "deterministic kernel" needs explicit concurrency control beyond CAS; call it out in the Phase-2 tests (property-test: N concurrent commits → deterministic final salience).
 
 ➡️ Continue to [05 — Control Unit & Roles](05-control-unit.md).

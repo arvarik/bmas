@@ -77,7 +77,8 @@ You implement docs/proposals/. It is a spec, not a suggestion.
    | Phase | Branch | PR | Status | Merged |
    Headers only, no rows yet. Each implementer step will append its row after opening a PR.
 5. Verify and report: `gh auth status`; that you can `ssh root@192.168.4.103 'hostname'`; and that
-   `curl -s -H "Authorization: Bearer $(ssh root@192.168.4.103 'grep ^API_SERVER_KEY ~/.hermes/.env | cut -d= -f2')" http://192.168.4.103:8642/v1/capabilities` returns run_submission=true.
+   `curl -s -H "Authorization: Bearer $(ssh root@192.168.4.103 'grep ^API_SERVER_KEY ~/.hermes/.env | cut -d= -f2')" http://192.168.4.103:8642/v1/capabilities`
+   returns `features.run_submission=true` (the booleans are nested under `features`, not top-level).
 6. Print: whether branch protection on main requires green CI + 1 approval. If you cannot set it via gh,
    tell me the exact clicks to do it in GitHub settings.
 
@@ -95,11 +96,13 @@ Do not start any phase. Stop after reporting.
 Implement Phase 0 of docs/proposals/10-migration-and-rollout.md autonomously on branch
 feat/bb-phase-0 (off feat/true-blackboard). Plan first — create an implementation plan artifact and
 wait for my approval before writing code. Then implement:
-(a) the coordination.* config block (strategy/control_unit.*/stigmergic.*) + pressure.weights with
-fail-fast validation per doc 11 §7, strategy default legacy_pipeline; (b) the blackboard_v2 build flag;
-(c) scaffold the CoordinationStrategy seam + wire the seams checklist (doc 11 §6) as a guard.
+(a) SQLite migration v2 from doc 07 (`SCHEMA_VERSION=2`, additive tables/columns, including trace/turn/board
+tables needed by Phase 1); (b) the coordination.* config block (strategy/control_unit.*/stigmergic.*) +
+pressure.weights with fail-fast validation per doc 11 §7, strategy default legacy_pipeline; (c) the
+blackboard_v2 build flag; (d) model pricing config so daemon-side `cost_usd` can be computed from Hermes token
+counts; (e) scaffold the CoordinationStrategy seam + wire the seams checklist (doc 11 §6) as a guard.
 No behavior change. Add/extend tests for the config validation; run tests + type-check + lint.
-Open a PR with gh into feat/true-blackboard, linking doc 10 Phase 0 and doc 11 §2/§6, and PRINT the PR number.
+Open a PR with gh into feat/true-blackboard, linking doc 10 Phase 0, doc 07, and doc 11 §2/§6, and PRINT the PR number.
 Update docs/proposals/MIGRATION_STATUS.md with this phase's row.
 Escalate if the existing config style makes fail-fast validation ambiguous. Do not review your own PR.
 ```
@@ -132,7 +135,8 @@ instead of hermes -z, capturing doc 06's trace schema; keep hermes -z as the doc
 (doc 06 §8); ingest traces → Redis + SQLite (doc 07); capture cost per-task/per-model/per-node + the
 joules_estimate hook (doc 10 Phase 1). Ships behind a flag; must NOT require the board rewrite.
 VERIFY LIVE: ssh to 192.168.4.103, submit a ci-verify-* task through :8642 with the bearer key, and paste
-the real SSE events + the populated usage payload (this also closes Q2) into the PR. Add tests for the event
+the real SSE events + the populated usage payload (this also closes Q2) into the PR. Remember
+`/v1/capabilities` booleans are under `features.*`, and `usage` contains tokens only, not cost. Add tests for the event
 parsing; run them. Open a PR with gh into feat/true-blackboard linking doc 06/07, and PRINT the PR number.
 Update docs/proposals/MIGRATION_STATUS.md with this phase's row.
 Do not review your own PR. Escalate per the rule if the live payload shape differs from doc 06.
@@ -239,10 +243,12 @@ Per docs/proposals/12-hermes-and-node-topology.md §2.5–3, on branch feat/bb-p
 implementation plan artifact and wait for my approval before writing code. Then author the profile set
 (planner, expert, critic, conflict_resolver, cleaner, decider, universal). Each = SOUL.md (role identity) +
 config.yaml (toolset scoping per doc 12). Experts share ONE expert profile (domain via per-task AGENTS.md).
-The CU scheduler is NOT a profile (doc 12 §2.1). Commit to agent/profiles/; add the role→(preferred_host,
-profile) registry to bmas.yaml/config.py (home + any-host fallback). DEPLOY + VERIFY LIVE: replicate
-profiles to all 3 nodes and confirm each is selectable via the gateway (paste `hermes profile list` and a
-profile-scoped /v1/models from each node). Open a PR with gh into feat/true-blackboard linking doc 12, and
+The CU scheduler is NOT a profile (doc 12 §2.1). Commit to agent/profiles/. Then choose and verify the
+profile-aware dispatch mechanism from doc 12: per-profile gateways/ports, a local `hermes --profile` bridge,
+or a newly verified upstream selector. Add the role→(preferred_host, profile, dispatch_endpoint) registry to
+bmas.yaml/config.py (home + any-host fallback). DEPLOY + VERIFY LIVE: replicate profiles to all 3 nodes and
+confirm each role can actually execute through the chosen dispatch path. Paste `hermes profile list` and the
+profile-scoped run/model evidence from each node. Open a PR with gh into feat/true-blackboard linking doc 12, and
 PRINT the PR number. Update docs/proposals/MIGRATION_STATUS.md. Escalate before overwriting any existing
 node config that isn't profile-related. Do not review your own PR.
 ```
@@ -252,15 +258,17 @@ node config that isn't profile-related. Do not review your own PR.
 You are an INDEPENDENT reviewer; you did not write this. Review PR <PR#> against doc 12 §2.5–3.
 `gh pr diff <PR#>`, read ONLY diff + spec. Also check out the branch and run any tests yourself. Blocking
 checklist: 7 profiles present with correct toolset scoping, experts share ONE profile, CU is NOT a profile,
-registry has home + fallback. Do NOT fix. If clean, say so explicitly.
+registry has home + fallback + dispatch_endpoint, and profile-aware dispatch is verified rather than assumed.
+Do NOT fix. If clean, say so explicitly.
 ```
 
 ### Step 17 — 🆕 NEW AGENT — Independent live verification of profiles
 ```
 You are an INDEPENDENT verifier. SSH to each of 192.168.4.103/.112/.122 and confirm every profile from PR
-<PR#> is installed and selectable through the gateway (paste `hermes profile list` + a profile-scoped
-/v1/models per node). Post pass/fail on PR <PR#> with raw output. Make no config changes beyond what the PR
-intends. Do not edit code.
+<PR#> is installed and can execute through the chosen profile-aware dispatch mechanism. Paste `hermes profile
+list` plus a profile-scoped run/model proof per node. Do not accept a default-profile `/v1/runs` call as
+profile verification unless the PR explicitly implements per-profile gateways/ports for that call. Post pass/fail
+on PR <PR#> with raw output. Make no config changes beyond what the PR intends. Do not edit code.
 ```
 
 ### Step 18 — 🧑 YOU

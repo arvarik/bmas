@@ -21,14 +21,14 @@ The diagnosis is correct: **bMAS today is a supervisor pipeline wearing blackboa
 | 02 | [Peer Review](02-peer-review.md) | Point-by-point critique of the external model's suggestions — what to adopt, what to reject, what to adapt — plus our own additions. |
 | 03 | [Target Architecture](03-target-architecture.md) | The true-blackboard target: Control Unit + Knowledge Sources + workspace, the OODA execution loop, and the push/pull spectrum. |
 | 04 | [Blackboard Protocol (PatchBoard)](04-blackboard-protocol.md) | The core reliability fix: JSON-Patch mutations, the deterministic kernel, entry schema, Redis v2 key layout, optimistic concurrency, and salience/decay. |
-| 05 | [Control Unit & Roles](05-control-unit.md) | The cyclic scheduler, the 6-role agent group (Planner/Decider/Critic/Conflict-Resolver/Cleaner/Experts), consensus, and cost governance. |
+| 05 | [Control Unit & Roles](05-control-unit.md) | The cyclic scheduler, the paper role group (Planner/Decider/Critic/Conflict-Resolver/Cleaner + generated Experts), consensus, and cost governance. |
 | 06 | [Agent Traces](06-agent-traces.md) | **Prerequisite for all visualization.** Replacing `hermes -z` with the Hermes Runs API, the trace event schema, ingestion, and persistence. |
 | 07 | [Data Model](07-data-model.md) | SQLite migrations and the unified Redis schema for board entries, patches, traces, and runs. |
 | 08 | [UI — Blackboard Visualization](08-ui-blackboard-visualization.md) | The live blackboard graph and worker activity view, built from existing primitives and design tokens. |
 | 09 | [UI — Agent Trace Inspector](09-ui-agent-trace-inspector.md) | The per-agent trace timeline, tool-call cards, and how traces wire into existing tabs. |
 | 10 | [Migration & Rollout](10-migration-and-rollout.md) | Phased plan, feature flags, backward compatibility, risks, and the verification checklist. |
 | 11 | [Extensibility & Variants](11-extensibility-and-variants.md) | The `CoordinationStrategy` seam that lets V1 (paper) and a future **pure-stigmergic V2** (no roles, no control unit, pressure + decay) share one engine. |
-| 12 | [Hermes & Node Topology](12-hermes-and-node-topology.md) | Verified live cluster state, **6 agents on 3 hosts via profiles**, per-role SOUL.md, enabling the Runs API, and leveraging the full Hermes API. |
+| 12 | [Hermes & Node Topology](12-hermes-and-node-topology.md) | Verified live cluster state, **paper agents on 3 hosts via profiles**, per-role SOUL.md, enabling the Runs API, and leveraging the full Hermes API. |
 | 13 | [UI Showcase Density](13-ui-showcase-density.md) | The information-dense "command center" UI philosophy for demoing the system — legible maximalism, the Mission view, and agent "minds". |
 | 14 | [Implementation Runbook (Exact Prompts)](14-implementing-with-antigravity-agents.md) | **The literal build log.** 37 numbered steps, each tagged 🆕 new-agent / ♻️ resume / 🧑 you — every prompt to paste, in order. Hard **actor≠critic** separation (implementer vs reviewer/verifier are different conversations), GitHub + live-node gates. You only merge + handle escalations. |
 | 15 | [Novelty & Research Directions](15-novelty-and-research-directions.md) | **Why it matters.** What's genuinely novel (distribution, the dual-regime pressure substrate, legible emergence), academic deep dives, the distributed-only contributions, and ranked showcase demos/experiments. |
@@ -39,7 +39,7 @@ The diagnosis is correct: **bMAS today is a supervisor pipeline wearing blackboa
 2. **Determinism at the boundary.** LLMs propose; a deterministic kernel disposes. Free-form text never mutates shared state directly — it arrives as validated patches.
 3. **Every state change is an event.** The board is an event log first and a snapshot second. This single decision powers replay, the live graph, and trace correlation for free.
 4. **Observability is a feature, not an afterthought.** Traces must be fixed *before* the visualization work, because you cannot visualize data you are not collecting.
-5. **Build V1, architect for V2.** V1 implements the paper (Control Unit + 6 roles). The substrate is built behind a `CoordinationStrategy` seam so a future **pure-stigmergic** variant (no roles, no control unit, emergent consensus via pressure + decay) drops in without a rewrite. See [doc 11](11-extensibility-and-variants.md).
+5. **Build V1, architect for V2.** V1 implements the paper (Control Unit + 5 constant roles + generated Experts). The substrate is built behind a `CoordinationStrategy` seam so a future **pure-stigmergic** variant (no roles, no control unit, emergent consensus via pressure + decay) drops in without a rewrite. See [doc 11](11-extensibility-and-variants.md).
 6. **Tokens are sacred; density is not minimalism.** All UI composes from the `ui/` primitives and tokens in [DESIGN.md](../design/DESIGN.md). But because this is a **showcase artifact**, the visualization surfaces favor *legible maximalism* — surface as much agent thought and board state as possible at once. See [doc 13](13-ui-showcase-density.md).
 
 > [!NOTE] Grounded in the live cluster

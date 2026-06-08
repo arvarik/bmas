@@ -664,23 +664,40 @@ curl http://<node_ip>:8642/v1/chat/completions \
 | `GET` | `/health` | Health check (`{"status": "ok"}`). Also at `/v1/health` |
 | `GET` | `/health/detailed` | Extended health: active sessions, running agents, resource usage |
 
+> [!IMPORTANT] Profile selection is process-scoped, not per-run
+> Live source inspection of `gateway/platforms/api_server.py` (2026-06-08) shows `POST /v1/runs` accepts `input`, optional `session_id`, `instructions`, `conversation_history`, `previous_response_id`, and `model`. It does **not** accept a per-request `profile` field. A gateway process is scoped to the active Hermes profile (`HERMES_HOME` / `hermes --profile`), so bMAS cannot assume one `:8642` gateway multiplexes all profiles. To run role-specific profiles through the Runs API, either run one gateway per profile/port, use a bMAS bridge that invokes `hermes --profile`, or verify and implement an upstream profile-selection mechanism before building dispatch around it.
+
 **Runs API** (long-form sessions with SSE progress) — **the primary bMAS integration point** (see [proposal doc 06](proposals/06-agent-traces.md)):
 
 | Method | Path | Description |
 |:--|:--|:--|
-| `POST` | `/v1/runs` | Create a run, returns `run_id` (HTTP 202). Body: `input` (string) + optional `session_id`, `instructions`, `conversation_history`, `previous_response_id` |
+| `POST` | `/v1/runs` | Create a run, returns `run_id` (HTTP 202). Body: `input` (string) + optional `session_id`, `instructions`, `conversation_history`, `previous_response_id`, `model`. **No per-request `profile` field verified.** |
 | `GET` | `/v1/runs/{run_id}` | Poll run state (status, output, usage). `session_id` is surfaced for external correlation |
-| `GET` | `/v1/runs/{run_id}/events` | **SSE** stream of `hermes.tool.progress`, token deltas, approval, and lifecycle events |
+| `GET` | `/v1/runs/{run_id}/events` | **SSE** stream of `message.delta`, `reasoning.available`, `tool.started`/`tool.completed`, `approval.*`, and `run.*` lifecycle events (full list below) |
 | `POST` | `/v1/runs/{run_id}/stop` | Interrupt a running agent turn (powers HITL abort) |
 | `POST` | `/v1/runs/{run_id}/approval` | **Resolve a pending approval** — the agent blocks on a risky/expensive action until approved (native HITL gate) |
 
-**SSE event types on `/v1/runs/{id}/events`** (from `gateway/platforms/api_server.py`, verified):
-- `hermes.tool.progress` — tool-start visibility (does not pollute persisted assistant text)
-- token/content deltas — `chat.completion.chunk` style, or Responses-style `response.output_text.delta`, `function_call`, `function_call_output`
-- lifecycle — run created / status / completed
-- approval events — emitted when a run awaits operator approval (`approval_events: true` in `/v1/capabilities`)
+**SSE event types on `/v1/runs/{id}/events`** — the **actual** event names, captured live from a run on `agent-node1` (2026-06-08) and cross-checked against `gateway/platforms/api_server.py`:
 
-`/v1/capabilities` advertises: `run_submission`, `run_status`, `run_events_sse`, `run_stop`, `run_approval_response`, `tool_progress_events`, `approval_events`.
+| Event | Payload fields | Meaning |
+|:--|:--|:--|
+| `message.delta` | `delta` (text chunk) | streamed assistant content (token/content delta) |
+| `reasoning.available` | `text` | model reasoning/thinking text |
+| `tool.started` | tool name + args | a tool call began |
+| `tool.completed` | tool name + result | a tool call finished |
+| `approval.request` | the pending action | run is awaiting operator approval |
+| `approval.responded` | approve/deny | an approval was resolved |
+| `run.completed` | `output`, `usage` | terminal success (carries final `usage`) |
+| `run.failed` | error | terminal failure |
+| `run.cancelled` | — | terminal stop (via `/stop`) |
+
+> [!WARNING]
+> Earlier revisions of this doc listed OpenAI-style names (`hermes.tool.progress`, `chat.completion.chunk`, `response.output_text.delta`, `function_call`, `function_call_output`). **Those are not what the Runs-API SSE emits.** The list above is the verified contract; the daemon/agent `translate()` step ([proposal doc 06 §3](proposals/06-agent-traces.md#3-rearchitected-agent-server)) must map these names.
+
+> [!IMPORTANT] `usage` carries tokens but **not cost** (verified live)
+> A live `run.completed` returns `usage: {input_tokens, output_tokens, total_tokens}` and **no `cost_usd`** for the LiteLLM-backed `custom`/`gemini` provider. (The agent's own `/api/analytics/*` `estimated_cost`/`actual_cost` also read `0`.) **Dollar cost must be computed by the bMAS daemon** from token counts × a per-model price table (or read from LiteLLM's response cost), **not** taken from the Hermes `usage` payload. Also note even a trivial prompt ("17+25") consumed **~16k input tokens** because the full system prompt + skills + memory are loaded each run — relevant to the cost model and to the "pass the index, not the whole board" hygiene.
+
+`/v1/capabilities` advertises these booleans under the nested `features` object (verified live 2026-06-08): `features.run_submission`, `features.run_status`, `features.run_events_sse`, `features.run_stop`, `features.run_approval_response`, `features.tool_progress_events`, `features.approval_events`, `features.responses_api`, `features.responses_streaming`, `features.session_fork`, `features.skills_api` = **true**; `features.admin_config_rw`, `features.jobs_admin`, `features.memory_write_api`, `features.cors`, `features.audio_api`, `features.realtime_voice` = **false**. Do not probe these as top-level fields.
 
 > [!WARNING]
 > [Hermes #6358](https://github.com/NousResearch/hermes-agent/issues/6358): the `/v1/runs/{id}/events` SSE endpoint historically omitted CORS headers (fixed in PR #6367, Apr 2026). **Irrelevant to bMAS** — the daemon/agent bridge consumes the stream server-side, never from the browser.
@@ -698,6 +715,9 @@ curl http://<node_ip>:8642/v1/chat/completions \
 | `POST` | `/api/jobs/{job_id}/resume` | Resume a paused job |
 | `POST` | `/api/jobs/{job_id}/run` | Trigger immediate execution |
 
+> [!WARNING] Jobs admin is not advertised as supported
+> Live `GET /api/jobs` returns `200 {"jobs": []}` on all three nodes, but `/v1/capabilities` reports `features.jobs_admin=false`. Treat listing as available for diagnostics, but do **not** build V2 cron provisioning around `POST/PATCH/DELETE /api/jobs` until those admin operations are explicitly live-tested. The conservative path remains CLI/config-managed crons over SSH.
+
 **`GET /v1/capabilities`** — Response:
 ```json
 {
@@ -708,10 +728,22 @@ curl http://<node_ip>:8642/v1/chat/completions \
   "features": {
     "chat_completions": true,
     "responses_api": true,
+    "responses_streaming": true,
     "run_submission": true,
     "run_status": true,
     "run_events_sse": true,
-    "run_stop": true
+    "run_stop": true,
+    "run_approval_response": true,
+    "tool_progress_events": true,
+    "approval_events": true,
+    "session_fork": true,
+    "skills_api": true,
+    "admin_config_rw": false,
+    "jobs_admin": false,
+    "memory_write_api": false,
+    "cors": false,
+    "audio_api": false,
+    "realtime_voice": false
   }
 }
 ```
@@ -763,21 +795,26 @@ hermes gateway install --system --force --run-as-user root
 
 ### What changed on the cluster as of 2026-06-07
 
-- **Runs API gateway stood up on all 3 nodes** — `hermes-gateway.service` is `active` + `enabled`, listening on `0.0.0.0:8642`. Verified `/v1/capabilities` returns `true` for `run_submission`, `run_status`, `run_events_sse`, `run_stop`, `run_approval_response`, `tool_progress_events`, `approval_events`, `responses_api`, `responses_streaming`, `session_fork`, `skills_api`.
-- **Capability gaps to design around:** `admin_config_rw`, `memory_write_api`, and `jobs_admin` are **`false`** — the config/memory/cron *admin* APIs are not exposed over the API server. Manage crons/memory via the Hermes CLI/`config.yaml`, not HTTP.
+- **Runs API gateway stood up on all 3 nodes** — `hermes-gateway.service` is `active` + `enabled`, listening on `0.0.0.0:8642`. Verified `/v1/capabilities` returns `true` under `features.*` for `run_submission`, `run_status`, `run_events_sse`, `run_stop`, `run_approval_response`, `tool_progress_events`, `approval_events`, `responses_api`, `responses_streaming`, `session_fork`, `skills_api`.
+- **Capability gaps to design around:** `features.admin_config_rw`, `features.memory_write_api`, and `features.jobs_admin` are **`false`** — config/memory write and cron admin operations are not advertised as supported over the API server. `GET /api/jobs` currently lists jobs, but create/update/delete must not be assumed without live verification. Manage crons/memory via the Hermes CLI/`config.yaml` unless those admin operations are proven.
+- **Profile dispatch caveat:** `POST /v1/runs` is served by the current gateway profile and has no verified per-request `profile` parameter. Role-profile dispatch therefore requires one gateway per profile/port, a local bridge that invokes `hermes --profile`, or another explicitly verified mechanism.
 - **`:9119` dashboard restarted on all 3 nodes.** It had been left stopped after the v0.15.1 update (a clean deactivation on 2026-06-05, *not* a crash). The v0.15.1 dashboard change (`HERMES_DASHBOARD_INSECURE` env) only affects the *Docker entrypoint*; the CLI `--insecure` flag in the existing `hermes-dashboard.service` still works, so a plain `systemctl restart` brought it back (200 OK).
 - **Per-node service map (all healthy):** `:8000` bMAS `hermes -z` bridge · `:8642` Runs API · `:9119` dashboard.
 
-| Aspect | Observed | Action needed for full integration |
+> [!NOTE] Re-verified live 2026-06-08
+> SSH to all three nodes (`agent-node1/2/3` = `.103/.112/.122`) confirms the gateway and dashboard are **running and boot-persistent**, matching the prose above. The table below reflects this corrected state (a prior revision of this table incorrectly listed `:8642`/`:9119` as "NOT running").
+
+| Aspect | Observed (verified 2026-06-08) | Action needed for full integration |
 |:--|:--|:--|
-| Hermes version | **v0.15.1** (2026.5.29) | none — current |
-| Running services | only the bMAS bridge (`hermes -z`) on `:8000` via `hermes-agent.service` | — |
-| **Gateway / Runs API (`:8642`)** | **NOT running** (`API_SERVER_ENABLED` unset) | ⚠️ **Enable `hermes gateway` per node** to unlock traces — [proposal doc 12 §4](proposals/12-hermes-and-node-topology.md#4-enabling-the-runs-api-the-phase-1-unblocker) |
-| Dashboard (`:9119`) | NOT running | optional — start `hermes dashboard` if the Skills/Memory UI proxies are wanted |
-| Profiles | `~/.hermes/profiles/` **absent** — single default profile | create role profiles (planner/expert/critic/conflict_resolver/cleaner/decider) + `universal` — [doc 12 §2.5](proposals/12-hermes-and-node-topology.md#25-the-agents-on-3-hosts-answer-yes-via-profiles) |
+| Hermes version | **v0.15.1** (2026.5.29) on all 3 nodes (389 commits behind upstream) | none required for V1; `hermes update` is optional |
+| **Gateway / Runs API (`:8642`)** | ✅ **active + enabled**, listening `0.0.0.0:8642`, `API_SERVER_ENABLED=true` on all 3 nodes | done — Phase-1 prerequisite cleared |
+| **bMAS bridge (`:8000`)** | ✅ active (`hermes -z` one-shot) via `hermes-agent.service` | replace with Runs-API agent ([doc 06](proposals/06-agent-traces.md)) |
+| **Dashboard (`:9119`)** | ✅ active on all 3 nodes | none — Skills/Memory UI proxies usable |
+| `usage.cost_usd` | ❌ **not returned** by `/v1/runs` (tokens only); provider analytics show cost `0` | compute dollars daemon-side ([doc 06 §3.1](proposals/06-agent-traces.md#31-updated-taskresponse-schema)) |
+| Profiles | `~/.hermes/profiles/` **absent** on all 3 nodes — single default profile; `/v1/runs` has no verified per-request profile selector | create role profiles, then choose a verified dispatch mechanism (per-profile gateways/ports or a local `hermes --profile` bridge) — [doc 12 §2.5](proposals/12-hermes-and-node-topology.md#25-the-agents-on-3-hosts-answer-yes-via-profiles) |
 | `SOUL.md` | one generic "Distributed Agent Node" identity, identical across nodes | move to **per-role SOUL.md** — [doc 12 §3](proposals/12-hermes-and-node-topology.md#3-soulmd-per-role-replace-the-single-generic-soul) |
 | Skills | 24 installed | wire procedural memory into bMAS context |
-| Crons | present (`~/.hermes/cron/`) | reserved for stigmergic pull-mode — [doc 11 §4](proposals/11-extensibility-and-variants.md#4-the-stigmergic-variant-specified) |
+| Crons | `features.jobs_admin: false`; `GET /api/jobs` lists jobs, but admin writes are unverified | reserved for stigmergic pull-mode; provision via CLI/`config.yaml` unless job admin is live-tested — [doc 11 §4](proposals/11-extensibility-and-variants.md#4-the-stigmergic-variant-specified) |
 | Model / tools | provider `gemini`/`custom`; `web` + `browser` (camofox) + `compression` configured | scope toolsets per role-profile |
 
 > [!IMPORTANT]

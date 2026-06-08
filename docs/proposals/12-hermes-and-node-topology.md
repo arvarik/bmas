@@ -3,7 +3,7 @@
 # 12 — Hermes Integration & Node Topology
 
 > [!ABSTRACT]
-> bMAS runs on Hermes, but currently uses ~5% of what Hermes offers. This document (a) records the **verified live state** of the cluster, (b) answers the **"6 agents on 3 hosts via profiles"** question, (c) specifies a **per-role SOUL.md** identity model, and (d) maps every relevant Hermes feature onto a concrete bMAS need so the system becomes full-featured rather than a thin `hermes -z` wrapper.
+> bMAS runs on Hermes, but currently uses ~5% of what Hermes offers. This document (a) records the **verified live state** of the cluster, (b) answers the **"paper agents on 3 hosts via profiles"** question, (c) specifies a **per-role SOUL.md** identity model, and (d) maps every relevant Hermes feature onto a concrete bMAS need so the system becomes full-featured rather than a thin `hermes -z` wrapper.
 
 ---
 
@@ -54,9 +54,18 @@ Hermes **profiles** implement the persona library cleanly. From the [official do
 
 A profile is selected per invocation/gateway with `hermes --profile <name>`. So a single host can present **multiple distinct agent identities**.
 
+> [!WARNING] Runs API profile selection is not per request (verified live 2026-06-08)
+> The current `/v1/runs` handler accepts `input`, `instructions`, `conversation_history`, `previous_response_id`, `session_id`, and `model`; it has **no verified `profile` field**. The gateway process is scoped to its active Hermes profile. Therefore the design cannot assume one `:8642` gateway multiplexes every role profile on a host. V1 must choose and verify one of these dispatch mechanisms before profile-dependent work starts:
+>
+> - **Per-profile gateways:** run one gateway per profile on distinct ports, e.g. `planner:8642`, `critic:8643`, with the role registry targeting `(host, gateway_port)`.
+> - **Profile-aware bMAS bridge:** keep a local node service that calls `hermes --profile <role> ...` or an equivalent profile-scoped API internally, while still translating Runs events when available.
+> - **Upstream profile selector:** only if a future Hermes version exposes and verifies a per-request profile selector.
+>
+> Until this is resolved, role identity can still be injected through `instructions`/per-turn `AGENTS.md`, but that does **not** provide profile-scoped SOUL, memory, or toolset isolation.
+
 ### Recommended mapping: replicate all profiles to every node, assign a "home" per role
 
-The key realization: **an agent LXC does almost no heavy compute.** The actual LLM inference is remote (every agent routes through LiteLLM at `:4000` → edge/cloud models). The Hermes process on the node only runs the agent runtime + tool calls. So **profile placement is not a capacity-balancing problem** — a single host can run several concurrent profile-scoped runs comfortably. That changes the recommendation:
+The key realization: **an agent LXC does almost no heavy compute.** The actual LLM inference is remote (every agent routes through LiteLLM at `:4000` → edge/cloud models). The Hermes process on the node only runs the agent runtime + tool calls. So **profile placement is not primarily a capacity-balancing problem** — once a profile-aware dispatch mechanism exists, a single host can run several role-profile turns comfortably. That changes the recommendation:
 
 ```
    profile library (identical on every node — profiles are just files):
@@ -66,12 +75,12 @@ The key realization: **an agent LXC does almost no heavy compute.** The actual L
    │ home: planner, cleaner│ │ home: decider     │ │ home: conflict_res│
    │ + any role on demand  │ │ + any role        │ │ + any role        │
    └───────────────────────┘ └───────────────────┘ └───────────────────┘
-        gateway :8642 multiplexes every profile on each host
+        dispatch target must be profile-aware (per-profile gateway/port or bridge)
 ```
 
 - **Install the full profile set on all 3 nodes.** Profiles are just `SOUL.md` + `config.yaml` + `skills/` directories — cheap to replicate (deploy like `api_server.py`). This directly realizes the paper's **"any node can assume any role"**: the dispatcher can pick whichever host is least busy and target the right `profile`.
-- **This is what makes the parallel "discovery" / "debate" phases fast.** When the loop wants 3 experts at once, it runs `profile=expert` on node-1, node-2, *and* node-3 simultaneously — true parallelism, one per host. Co-locating roles on a single host (the old even-split sketch) would have serialized them.
-- **Assign a "home" node per singleton role** *only for skill/memory locality* — the decider's learned skills accumulate on node-2, the conflict-resolver's on node-3, etc. The `role → (preferred_host, profile)` registry encodes the home but allows fallback to any host. This keeps each role's procedural memory (`skills/`, `MEMORY.md`) coherent over time.
+- **This is what makes the parallel "discovery" / "debate" phases fast.** When the loop wants 3 experts at once, it targets the `expert` profile on node-1, node-2, *and* node-3 simultaneously through the verified profile-aware dispatch mechanism — true parallelism, one per host. Co-locating roles on a single host (the old even-split sketch) would have serialized them.
+- **Assign a "home" node per singleton role** *only for skill/memory locality* — the decider's learned skills accumulate on node-2, the conflict-resolver's on node-3, etc. The `role → (preferred_host, profile, dispatch_endpoint)` registry encodes the home but allows fallback to any host. This keeps each role's procedural memory (`skills/`, `MEMORY.md`) coherent over time.
 - **Experts share one `expert` profile, not three.** Experts are generated per task (domain, specialty). Give them a single neutral `expert` profile (full toolset) and inject the domain identity via the per-task `AGENTS.md` — the runtime-injection mechanism that *already works today*. No need for `expert_security`, `expert_perf`, … profiles.
 
 So the profile set is **7**: `planner`, `expert`, `critic`, `conflict_resolver`, `cleaner`, `decider`, and `universal` (V2). The CU itself is **not** in this list — see [§2.1](#21-should-the-control-unit-be-a-profile-mostly-no).
@@ -133,16 +142,20 @@ hermes gateway install --system --force --run-as-user root   # answer "y" to bot
 
 This writes `/etc/systemd/system/hermes-gateway.service` (Hermes-generated, not hand-written), enables it, and starts it. The gateway process now hosts the API server **alongside** the existing bMAS `:8000` bridge and the `:9119` dashboard — three independent services per node.
 
-**Verified live result** (`curl -H "Authorization: Bearer $KEY" http://<node>:8642/v1/capabilities`) — every flag bMAS depends on is `true`:
+**Verified live result** (`curl -H "Authorization: Bearer $KEY" http://<node>:8642/v1/capabilities`, re-confirmed 2026-06-08 on all 3 nodes) — every capability *flag* bMAS depends on is `true` under the nested `features` object:
 
 ```
 run_submission ✓  run_status ✓  run_events_sse ✓  run_stop ✓  run_approval_response ✓
 tool_progress_events ✓  approval_events ✓  responses_api ✓  responses_streaming ✓
-session_fork ✓  skills_api ✓     # but: admin_config_rw ✗  memory_write_api ✗  jobs_admin ✗
+session_fork ✓  skills_api ✓     # but: admin_config_rw ✗  memory_write_api ✗  jobs_admin ✗  cors ✗
 ```
 
-> [!NOTE] Two capability gaps to design around
-> `jobs_admin: false` and `memory_write_api: false` mean the **cron and memory-write admin endpoints are not exposed over the API server**. The [V2 pull-mode crons](#6-pull-mode-crons-for-the-stigmergic-future) must therefore be created via the Hermes **CLI/`config.yaml`** on each node (or by enabling those APIs), not via an HTTP call from the daemon. Plan accordingly — it does not block V1.
+> [!WARNING] Capability flags confirm *endpoints exist* — not *payload shape*. Two things were checked separately by submitting a real run (do not skip these when building Phase 1):
+> 1. **Event names.** The SSE stream emits `message.delta`, `reasoning.available`, `tool.started`, `tool.completed`, `approval.request`/`approval.responded`, `run.completed`/`run.failed`/`run.cancelled` — **not** the OpenAI-style names (`hermes.tool.progress`, `chat.completion.chunk`, …) that early drafts assumed. The `translate()` map is in [doc 06 §2](06-agent-traces.md#2-the-enabler-the-hermes-runs-api).
+> 2. **`usage` has tokens but no cost.** `run.completed.usage` = `{input_tokens, output_tokens, total_tokens}` only. Dollar cost is computed daemon-side ([doc 06 §3.1](06-agent-traces.md#31-updated-taskresponse-schema)). This closes Q2 (usage is populated) while sharpening it (cost is not).
+
+> [!NOTE] Capability gaps to design around
+> `features.jobs_admin: false` and `features.memory_write_api: false` mean cron admin writes and memory writes are not advertised as supported over the API server. `GET /api/jobs` currently lists jobs, but create/update/delete must not be assumed until live-tested. The [V2 pull-mode crons](#6-pull-mode-crons-for-the-stigmergic-future) must therefore be created via the Hermes **CLI/`config.yaml`** on each node (or by enabling and verifying those APIs), not via an unverified HTTP call from the daemon. Plan accordingly — it does not block V1.
 
 > [!WARNING] CORS bug — irrelevant to bMAS
 > A known Hermes bug omitted CORS headers on `/v1/runs/{id}/events`. **This does not affect bMAS** because the daemon consumes the SSE stream server-side, never from the browser (we leave `API_SERVER_CORS_ORIGINS` unset). v0.15.1 is recent enough regardless.
@@ -153,14 +166,14 @@ The system should use these, mapped to specific docs:
 
 | Hermes feature | Endpoint / file | bMAS use | Doc |
 |:--|:--|:--|:--|
-| **Runs API** | `POST /v1/runs`, `GET /v1/runs/{id}/events` (SSE) | dispatch + **live traces** (reasoning, `hermes.tool.progress`, token deltas) | [06](06-agent-traces.md) |
+| **Runs API** | `POST /v1/runs`, `GET /v1/runs/{id}/events` (SSE) | dispatch + **live traces** (`message.delta`, `reasoning.available`, `tool.started`/`tool.completed`) | [06](06-agent-traces.md) |
 | **Run stop** | `POST /v1/runs/{id}/stop` | HITL abort mid-turn (replaces `proc.kill()`) | [05 §6](05-control-unit.md#6-hitl-during-the-loop) |
 | **Run approval** | `POST /v1/runs/{id}/approval` | **native HITL gate**: agent pauses on a risky action, operator approves in Mission Control | new ([§5.1](#51-native-hitl-via-run-approvals)) |
 | **Responses API** | `POST /v1/responses` (stateful, `previous_response_id`/`conversation_history`) | give an agent **memory across rounds** of the same task without re-stuffing the board each turn | [06](06-agent-traces.md), [§5.2](#52-stateful-turns-via-the-responses-api) |
-| **Profiles** | `/api/profiles`, `--profile` | the **role personas** (5 constant + experts + `universal`) on 3 hosts | [§2.5](#25-the-agents-on-3-hosts-answer-yes-via-profiles) |
+| **Profiles** | `/api/profiles`, `--profile`; profile-scoped gateway/bridge TBD | the **role personas** (5 constant + experts + `universal`) on 3 hosts | [§2.5](#25-the-agents-on-3-hosts-answer-yes-via-profiles) |
 | **Skills** | `/api/skills` | shared procedural memory; show which skills shaped a task | [agent-integration roadmap](../roadmap/agent-integration.md) |
 | **Memory** | `/api/memory` (MEMORY.md/USER.md) | display each agent's learned state in the UI; debug stale behavior | [13](13-ui-showcase-density.md) |
-| **Crons** | `/api/cron/jobs` | **pull-mode self-activation** for the stigmergic variant | [11 §4](11-extensibility-and-variants.md#4-the-stigmergic-variant-specified) |
+| **Crons** | CLI/`config.yaml` for writes; `GET /api/jobs` only verified for listing | **pull-mode self-activation** for the stigmergic variant | [11 §4](11-extensibility-and-variants.md#4-the-stigmergic-variant-specified) |
 | **Analytics** | `/api/analytics/usage`, `/models` | per-node token/cost truth alongside bMAS task cost | [09 §5](09-ui-agent-trace-inspector.md#5-cost-integration) |
 | **Sessions** | `/api/sessions/search` | search what each agent did, in/out of bMAS tasks | [13](13-ui-showcase-density.md) |
 | **Toolsets** | `/api/tools/toolsets` | show per-role capabilities; verify isolation | [13](13-ui-showcase-density.md) |
@@ -176,7 +189,7 @@ A multi-round blackboard task makes the *same* agent act several times. Re-sendi
 
 ## 6. Pull-mode crons for the stigmergic future
 
-For V2 ([doc 11](11-extensibility-and-variants.md)), each node runs a Hermes cron that polls `bmas:board:{task}:pressure` and self-activates when a region exceeds the node's activation threshold. The daemon creates these via `POST /api/cron/jobs` at task genesis and tears them down on termination. **Not built in V1** — but the profile/gateway groundwork here is exactly what makes it a config flip later.
+For V2 ([doc 11](11-extensibility-and-variants.md)), each node runs a Hermes cron that polls `bmas:board:{task}:pressure` and self-activates when a region exceeds the node's activation threshold. Because `features.jobs_admin=false`, the daemon should **not** assume it can create these via `POST /api/jobs`/`POST /api/cron/jobs`. Provision them through SSH + Hermes CLI/`config.yaml`, or first live-test and document a supported job-admin API. **Not built in V1** — but the pressure field and profile-aware dispatch groundwork here are exactly what make it a config flip later.
 
 ## 7. Action items for the cluster (concrete)
 
@@ -184,7 +197,8 @@ For V2 ([doc 11](11-extensibility-and-variants.md)), each node runs a Hermes cro
 - [x] **Enable the Runs API on all 3 nodes** — `API_SERVER_*` in `.env` + `hermes gateway install --system --run-as-user root`. Done & boot-persistent 2026-06-07 ([§4](#4-enabling-the-runs-api-the-phase-1-unblocker--done-on-all-3-nodes-2026-06-07)).
 - [x] **Restart the `:9119` dashboard on all 3 nodes** (it had been left stopped after the v0.15.1 update; the CLI `--insecure` flag still works).
 - [ ] Author the profile set (`planner`, `expert`, `critic`, `conflict_resolver`, `cleaner`, `decider`, `universal`) — `SOUL.md` + `config.yaml` toolset scoping; commit to `agent/profiles/` and **replicate to all 3 nodes**. (The CU scheduler is *not* a profile — [§2.1](#21-should-the-control-unit-be-a-profile-mostly-no).)
-- [ ] Add a `role → (preferred_host, profile)` registry to `bmas.yaml` / `config.py` with home assignments + any-host fallback; teach dispatch to pass `profile` and load-balance experts one-per-host.
+- [ ] Choose and verify the profile-aware dispatch mechanism: per-profile gateways/ports, a local `hermes --profile` bridge, or a future verified per-request selector. Record the exact command/API shape in this doc before Phase 3b.
+- [ ] Add a `role → (preferred_host, profile, dispatch_endpoint)` registry to `bmas.yaml` / `config.py` with home assignments + any-host fallback; teach dispatch to target the verified endpoint and load-balance experts one-per-host.
 - [ ] Keep the `hermes -z` bridge as the documented fallback ([06 §8](06-agent-traces.md#8-graceful-degradation)).
 
 ➡️ Continue to [13 — UI Showcase Density](13-ui-showcase-density.md).

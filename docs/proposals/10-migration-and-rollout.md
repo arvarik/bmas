@@ -7,9 +7,11 @@
 
 > [!NOTE] Current state of the system (live, as of 2026-06-07)
 > What's already true on the cluster, so the plan starts from reality:
-> - ✅ **Runs API gateway** enabled + boot-persistent on all 3 agent nodes (`:8642`); `/v1/capabilities` verified. The single hard Phase-1 prerequisite is **cleared**.
-> - ✅ **`:9119` dashboards** restored on all 3 nodes (had been left stopped after the v0.15.1 update).
+> - ✅ **Runs API gateway** enabled + boot-persistent on all 3 agent nodes (`:8642`); `/v1/capabilities.features.*` verified, and a **live run was submitted (2026-06-08)** to confirm the actual SSE event names and `usage` shape. The single hard Phase-1 prerequisite is **cleared**.
+> - ⚠️ **Cost caveat (found via the live run):** `usage` returns token counts but **no dollar cost** — the daemon must compute `cost_usd` itself ([Q2](#3-open-questions-verify-before-building), [doc 06 §3.1](06-agent-traces.md#31-updated-taskresponse-schema)).
+> - ✅ **`:9119` dashboards** active on all 3 nodes.
 > - ✅ **All 3 nodes confirmed identical** — generic shared `SOUL.md`, no profiles, no per-node customization. Role identity is still runtime-injected (`AGENTS.md`), i.e. the orchestrator-worker mapping is still in force.
+> - ⚠️ **Profile dispatch caveat:** Hermes profiles are real, but live `/v1/runs` has **no verified per-request `profile` selector**. A gateway is profile-scoped. Phase 3 must choose and verify per-profile gateways/ports, a local `hermes --profile` bridge, or another supported dispatch mechanism before role-profile isolation can be claimed.
 > - ⚠️ **Open capability gaps** (design around, not blockers): `jobs_admin` and `memory_write_api` are **not** exposed over the API server ([Q9/Q10](#3-open-questions-verify-before-building)).
 > - ⏳ **Not yet started:** the code work — Phases 0–5 below. No profiles authored, no kernel, no `CoordinationStrategy`, traces still via `hermes -z`.
 
@@ -28,16 +30,17 @@ The order is dictated by one hard dependency and one risk principle:
 ## 2. Phases
 
 ### Phase 0 — Foundations (no behavior change yet)
-- [ ] SQLite migration v2 ([07](07-data-model.md)) — additive tables/columns, `SCHEMA_VERSION=2`.
+- [ ] SQLite migration v2 ([07](07-data-model.md)) — additive tables/columns, `SCHEMA_VERSION=2`. This must land before Phase 1 persists traces into `agent_traces`.
 - [ ] Redis v2 keys + new SSE event names registered (no emitters yet) ([04 §7–8](04-blackboard-protocol.md#7-redis-schema-v2)).
 - [ ] `config.py`: add the `coordination.*` block (`strategy`, `control_unit.*`, `stigmergic.*`) and `pressure.weights` with fail-fast validation ([11 §7](11-extensibility-and-variants.md#7-config-sketch-both-variants-visible)); `strategy` default `legacy_pipeline`. Add a `blackboard_v2` build flag (gates the new substrate independently of which strategy runs).
+- [ ] Add model pricing config (input/output token price per model alias, plus optional LiteLLM-cost source) so Phase 1 can compute `cost_usd` from Hermes token counts. The live Runs API returns no dollar cost.
 - [ ] Establish the `CoordinationStrategy` seam ([11 §2](11-extensibility-and-variants.md#2-the-seam-coordinationstrategy)) and the [seams checklist](11-extensibility-and-variants.md#6-the-seams-checklist-enforce-in-v1) — opaque `author` strings, capability-based kernel auth, pluggable decay — **before** writing strategy logic, or the stigmergic variant becomes a rewrite.
 
 ### Phase 1 — Agent traces (ship standalone, high ROI) ⭐
-- [x] **Enable the Hermes Runs API on every node** — ✅ **DONE 2026-06-07.** `API_SERVER_*` set in `.env` + `hermes gateway install --system --run-as-user root`; `hermes-gateway.service` active/enabled on all 3 nodes (`:8642`), `/v1/capabilities` verified ([doc 12 §4](12-hermes-and-node-topology.md#4-enabling-the-runs-api-the-phase-1-unblocker--done-on-all-3-nodes-2026-06-07)). This was the hard prerequisite — traces are now possible.
-- [ ] Confirm the exact `/v1/runs/{id}/events` payload shapes on a live node ([§3 checklist](#3-open-questions-verify-before-building)).
+- [x] **Enable the Hermes Runs API on every node** — ✅ **DONE 2026-06-07.** `API_SERVER_*` set in `.env` + `hermes gateway install --system --run-as-user root`; `hermes-gateway.service` active/enabled on all 3 nodes (`:8642`), `/v1/capabilities.features.*` verified ([doc 12 §4](12-hermes-and-node-topology.md#4-enabling-the-runs-api-the-phase-1-unblocker--done-on-all-3-nodes-2026-06-07)). This was the hard prerequisite — traces are now possible.
+- [x] Confirm the exact `/v1/runs/{id}/events` and terminal `/v1/runs/{id}` payload shapes on a live node ([§3 checklist](#3-open-questions-verify-before-building)). Keep the captured payload as a parser fixture when implementing Phase 1.
 - [ ] Rewrite `agent/api_server.py` to use the Runs API and stream trace events; add `usage`/`patches`/`trace_count` to `TaskResponse` ([06 §3](06-agent-traces.md#3-rearchitected-agent-server)).
-- [ ] Daemon ingests traces → Redis + SQLite; resurrect the cost path from real `usage` ([06 §5](06-agent-traces.md#5-transport--persistence)). **Capture cost per-task *and* per-model *and* per-node**, not just a total — the [cost/locality-frontier demo](15-novelty-and-research-directions.md#5-concrete-demos--experiments-to-build-ranked-by-wow-per-effort) needs this breakdown.
+- [ ] Daemon ingests traces → Redis + SQLite; resurrect the cost path using token counts from `usage` **with `cost_usd` computed daemon-side** (price table or LiteLLM cost — Hermes returns no cost; [06 §3.1](06-agent-traces.md#31-updated-taskresponse-schema)). **Capture cost per-task *and* per-model *and* per-node**, not just a total — the [cost/locality-frontier demo](15-novelty-and-research-directions.md#5-concrete-demos--experiments-to-build-ranked-by-wow-per-effort) needs this breakdown.
 - [ ] **(Showcase hook) Energy/telemetry per task** — record per-node power draw over each task window from the existing Beszel telemetry, and store `joules_estimate` alongside cost. Enables the "joules per solved task" metric ([doc 15 §4](15-novelty-and-research-directions.md#4-the-distributed-angle-what-only-physical-distribution-gives-you)). Additive; no behavior change.
 - [ ] Legacy `hermes -z` fallback for nodes without the Runs API ([06 §8](06-agent-traces.md#8-graceful-degradation)).
 - [ ] UI: Logs tab Trace/Raw toggle + trace timeline ([09](09-ui-agent-trace-inspector.md)). **Works on the existing pipeline** — immediate value even before the blackboard inversion.
@@ -50,13 +53,15 @@ The order is dictated by one hard dependency and one risk principle:
 - [ ] `daemon/src/core/kernel.py` — deterministic kernel + authorization matrix + CAS + salience. **Unit-test with an in-memory fake** (no LLM, no Redis): feed proposals, assert committed/rejected ([04 §4, §9](04-blackboard-protocol.md#4-the-deterministic-kernel)).
 - [ ] Rewrite `blackboard.py` to the v2 API ([04 §9](04-blackboard-protocol.md#9-blackboard-api-surface-replaces-ad-hoc-methods)); keep old methods until UI cutover.
 - [ ] Emit `board_patch` / `patch_rejected` events.
+- [ ] Define the event-log durability contract: task-local monotonic `seq`, write ordering between Redis Stream and SQLite, and explicit recovery behavior if one write succeeds and the other fails. `board_patches` is the durable source of truth, so these writes cannot be casual best-effort like legacy logs.
 - [ ] **(Showcase hook) Event log supports fork-from-event, not just linear replay.** Persist the full patch event-log with stable offsets and a `fork(task_id, at_event_n, mutate_fn)` that re-materializes board state up to event *n*. This is what enables [counterfactual replay](15-novelty-and-research-directions.md#35-causality--replay-enabled-by-event-sourcing) ("suppress agent X's turn, re-run") — design it in now; building the linear scrubber later on top is then trivial.
 
 ### Phase 3 — The Control Unit (the V1 `ControlUnitStrategy`)
 - [ ] `daemon/src/core/coordination.py` — the `CoordinationStrategy` interface + `ControlUnitStrategy` ([11 §2](11-extensibility-and-variants.md#2-the-seam-coordinationstrategy)).
 - [ ] `daemon/src/core/control_unit.py` — OODA loop reading the **pressure field**, two-tier DECIDE, consensus scorer ([05](05-control-unit.md)).
-- [ ] **Author + deploy the role profiles** (planner/expert/critic/conflict_resolver/cleaner/decider, `SOUL.md` + toolset-scoped `config.yaml`) + a `universal` profile (+ optional `coordinator`); replicate to all 3 nodes; add the role→(preferred_host, profile) registry ([doc 12 §2.5–3](12-hermes-and-node-topology.md#25-the-agents-on-3-hosts-answer-yes-via-profiles)).
-- [ ] New role personas + authorization (capability) profiles in `personas.py` ([05 §2](05-control-unit.md#2-the-six-role-agent-group)).
+- [ ] **Author + deploy the role profiles** (planner/expert/critic/conflict_resolver/cleaner/decider, `SOUL.md` + toolset-scoped `config.yaml`) + a `universal` profile (+ optional `coordinator`); replicate to all 3 nodes; add the role→(preferred_host, profile, dispatch_endpoint) registry ([doc 12 §2.5–3](12-hermes-and-node-topology.md#25-the-agents-on-3-hosts-answer-yes-via-profiles)).
+- [ ] **Verify profile-aware dispatch before relying on profiles.** Live `/v1/runs` has no per-request `profile` field. Pick per-profile gateways/ports, a local `hermes --profile` bridge, or another verified mechanism and record the exact request/command shape in doc 12.
+- [ ] New role personas + authorization (capability) profiles in `personas.py` ([05 §2](05-control-unit.md#2-the-paper-role-group)).
 - [ ] **Cost rails in the same PR**: budget ceiling, round/duration caps, concurrency cap ([05 §5](05-control-unit.md#5-cost-governance--safety-rails)).
 - [ ] Dual-write board→legacy `debate_entries` so the old Blackboard tab keeps rendering.
 - [ ] A/B: run `legacy_pipeline` vs `blackboard_v2` on identical tasks; compare quality, latency, cost.
@@ -67,12 +72,13 @@ The order is dictated by one hard dependency and one risk principle:
 > Phase 4 coding may begin in parallel with Phases 2–3 (it touches `mission-control/` only — different files). However, Phase 4 should **not be verified or merged** until Phase 1 (traces) and Phase 2 (kernel) are merged, because the UI components need real trace data and board entries to render against. Stubbed/mock data is acceptable during development, but the PR's "VERIFY" step must run against a live task with the real trace + board pipeline.
 - [ ] Agent-role tokens added to `DESIGN.md` + `design-tokens.ts` + `globals.css` ([08 §8](08-ui-blackboard-visualization.md#8-token--primitive-additions-do-this-first)).
 - [ ] `BlackboardGraph`, `WorkerLane`, `ConsensusMeter`; blackboard tab Graph/Stream toggle ([08](08-ui-blackboard-visualization.md)).
+- [ ] Turn Inspector slide-over and graph/worker-card cross-links ([09](09-ui-agent-trace-inspector.md)).
 - [ ] `useTaskStream` handles new events with batching ([09 §8 note](09-ui-agent-trace-inspector.md#8-files)).
 - [ ] Replay scrubber from `board/replay` (linear) — built on the Phase-2 fork-capable event log; the counterfactual-fork UI is a later/optional extension.
 
 ### Phase 5 — Advanced & cutover
 - [ ] Private sub-boards + Conflict-Resolver ([05 §4](05-control-unit.md#4-private-sub-boards-conflict-resolution)).
-- [ ] Turn Inspector slide-over; budget gauge on Cost tab ([09](09-ui-agent-trace-inspector.md)).
+- [ ] Budget gauge on Cost tab ([09](09-ui-agent-trace-inspector.md)).
 - [ ] Flip `coordination.strategy` default to `control_unit`; deprecate legacy `debate_entries` dual-write.
 - [ ] Mission cockpit view + parallel trace lanes + pressure heatmap + firehose ([doc 13](13-ui-showcase-density.md)).
 
@@ -87,7 +93,7 @@ The order is dictated by one hard dependency and one risk principle:
 
 ### Phase 6 (optional, future) — Pure-stigmergic variant
 - [ ] Implement `StigmergicStrategy` against the same substrate ([11 §4](11-extensibility-and-variants.md#4-the-stigmergic-variant-specified)): roleless `universal` actors, exponential pheromone decay, parallel patch competition, basin-based termination.
-- [ ] Pull-mode self-activation via Hermes crons on the pressure field ([12 §6](12-hermes-and-node-topology.md#6-pull-mode-crons-for-the-stigmergic-future)) — **note ([Q9](#3-open-questions-verify-before-building)): crons are CLI/`config.yaml`-managed, not HTTP-managed** (`jobs_admin: false`), so the daemon provisions them via SSH/CLI, not an API call.
+- [ ] Pull-mode self-activation via Hermes crons on the pressure field ([12 §6](12-hermes-and-node-topology.md#6-pull-mode-crons-for-the-stigmergic-future)) — **note ([Q9](#3-open-questions-verify-before-building)): crons are CLI/`config.yaml`-managed, not HTTP-managed** (`features.jobs_admin=false`), so the daemon provisions them via SSH/CLI, not an API call.
 - [ ] `coordination.strategy: stigmergic` — runs on the *unchanged* kernel/board/traces/UI if the [seams checklist](11-extensibility-and-variants.md#6-the-seams-checklist-enforce-in-v1) was honored.
 
 ## 3. Open Questions (verify before building)
@@ -97,16 +103,17 @@ The order is dictated by one hard dependency and one risk principle:
 
 | # | Question | Status | Detail |
 |:--|:--|:--|:--|
-| Q1 | Hermes Runs API exists with `/v1/runs` + `/v1/runs/{id}/events` SSE? | ✅ **Confirmed + LIVE** | Gateway now enabled on all 3 nodes; `/v1/capabilities` returns `run_submission/run_events_sse/run_stop/run_approval_response/tool_progress_events/approval_events = true` ([doc 12 §4](12-hermes-and-node-topology.md#4-enabling-the-runs-api-the-phase-1-unblocker--done-on-all-3-nodes-2026-06-07)) |
-| Q2 | Does run completion return populated `usage`? | ⚠️ **Verify** | Gateway is up — capture a real `GET /v1/runs/{id}` payload from a live run (submit one through `:8642` with the bearer key) |
-| Q3 | Can Hermes reliably emit a **structured JSON-Patch proposal** as final output? | ⚠️ **Verify** | prompt-test; if unreliable, add a daemon-side "patch extractor" step |
+| Q1 | Hermes Runs API exists with `/v1/runs` + `/v1/runs/{id}/events` SSE? | ✅ **Confirmed + LIVE (run submitted 2026-06-08)** | Gateway enabled on all 3 nodes. `/v1/capabilities` booleans live under `features.*`. **Real SSE event names**: `message.delta`, `reasoning.available`, `tool.started`/`tool.completed`, `approval.request`/`responded`, `run.completed`/`failed`/`cancelled` — *not* the OpenAI-style names early drafts assumed ([doc 06 §2](06-agent-traces.md#2-the-enabler-the-hermes-runs-api)) |
+| Q2 | Does run completion return populated `usage` / cost? | ✅/⚠️ **Confirmed live, with a caveat** | `usage` returns **token counts** (`input/output/total_tokens`) — but **no cost field** (provider `custom`/`gemini`). **Daemon must compute `cost_usd`** from tokens × price (or LiteLLM cost), not read it from Hermes ([doc 06 §3.1](06-agent-traces.md#31-updated-taskresponse-schema)) |
+| Q3 | Can Hermes reliably emit a **structured JSON-Patch proposal** as final output? | ⚠️ **Hard Phase-2 gate** | Prompt-test against the live Runs API before the CU uses patches. If unreliable, implement one explicit fallback: daemon-side extraction + kernel validation + retry-with-rejection-feedback. Do not enter Phase 3 assuming clean patches without evidence. |
 | Q4 | Rely on kernel rejection vs prompt for authorization? | ✅ **Decided** | Rely on the **kernel** (prompt advisory). Confirm rejection UX. |
-| Q5 | Latency/cost of multi-round cyclic execution vs the 3-call pipeline? | ⚠️ **Measure** | A/B; tune `max_rounds` per triage tier |
-| Q6 | Hermes profiles for the role group? | ✅ **Confirmed** | Profiles are fully isolated (own SOUL/config/skills). None exist yet — author + deploy ([doc 12 §2.5](12-hermes-and-node-topology.md#25-the-agents-on-3-hosts-answer-yes-via-profiles)) |
+| Q5 | Latency/cost of multi-round cyclic execution vs the 3-call pipeline? | ⚠️ **Measure** | A/B; tune `max_rounds` per triage tier. **Also raise the timeouts:** today's `httpx.AsyncClient(timeout=120)` ([`orchestrator.py`](../daemon/src/core/orchestrator.py)) and `TASK_TIMEOUT_SECONDS=120` ([`agent/api_server.py`](../agent/api_server.py)) bound a *single* call; a 4-round loop with concurrent agents and board reads will exceed that. Switch the agent to a **long-lived SSE consume** of `/v1/runs/{id}/events` (no fixed per-turn wall-clock) and make the daemon's turn timeout a per-turn, not per-task, budget. |
+| Q6 | Hermes profiles for the role group? | ✅/⚠️ **Profiles confirmed; dispatch unresolved** | Profiles are fully isolated (own SOUL/config/skills), but none exist yet and live `/v1/runs` has no per-request `profile` selector. Author profiles, then verify a profile-aware dispatch path before relying on them ([doc 12 §2.5](12-hermes-and-node-topology.md#25-the-agents-on-3-hosts-answer-yes-via-profiles)). |
 | Q7 | `POST /v1/runs/{id}/stop` + `/approval` for HITL? | ✅ **Confirmed in source** | Wire stop = abort, approval = inline operator gate ([doc 12 §5.1](12-hermes-and-node-topology.md#51-native-hitl-via-run-approvals)). Test live once gateway is on. |
 | Q8 | Responses API `previous_response_id` for cross-turn agent memory? | ✅ **Confirmed** | Use `session_id={task}:{role}` for correlation ([doc 12 §5.2](12-hermes-and-node-topology.md#52-stateful-turns-via-the-responses-api)) |
-| Q9 | Manage Hermes **crons** over the API server (for V2 pull-mode)? | ❌ **Confirmed NO** | `/v1/capabilities` → `jobs_admin: false`. The cron admin API is not exposed. Create crons via the Hermes **CLI / `config.yaml`** on each node ([doc 12 §6](12-hermes-and-node-topology.md#6-pull-mode-crons-for-the-stigmergic-future)). Affects **V2 only** — no V1 impact. |
-| Q10 | Read/write agent **memory** over the API server (for the UI "minds")? | ❌ **Confirmed NO** | `/v1/capabilities` → `memory_write_api: false` (and `admin_config_rw: false`). Display memory via the `:9119` dashboard / CLI; do not plan an HTTP memory-write path from the daemon. |
+| Q9 | Manage Hermes **crons** over the API server (for V2 pull-mode)? | ❌/⚠️ **Do not assume HTTP writes** | `/v1/capabilities.features.jobs_admin=false`. `GET /api/jobs` lists jobs, but create/update/delete are not advertised as supported and must be live-tested before use. Conservative path: create crons via Hermes **CLI / `config.yaml`** on each node ([doc 12 §6](12-hermes-and-node-topology.md#6-pull-mode-crons-for-the-stigmergic-future)). Affects **V2 only** — no V1 impact. |
+| Q10 | Read/write agent **memory** over the API server (for the UI "minds")? | ❌ **Confirmed NO** | `/v1/capabilities.features.memory_write_api=false` (and `features.admin_config_rw=false`). Display memory via the `:9119` dashboard / CLI; do not plan an HTTP memory-write path from the daemon. |
+| Q11 | How do agents pull board entries by ID? | ⚠️ **Specify before Phase 3** | The target payload sends `board_index`, but the actual read affordance is not yet defined. Choose a daemon endpoint/tool, prehydrated selected entries, or a per-turn workspace file. This is the concrete contract that makes "agents read the blackboard" true. |
 
 ## 4. Risk register
 
@@ -118,6 +125,7 @@ The order is dictated by one hard dependency and one risk principle:
 | `useTaskStream` re-render storm | Med | Med | Batch trace events (rAF/debounce) ([09 §8](09-ui-agent-trace-inspector.md#8-files)) |
 | Dashboard breaks during migration | Low | High | Additive schema; dual-write debate→board; new SSE events are additive; everything behind `blackboard_v2` |
 | Concurrency bugs in kernel CAS | Med | High | Deterministic kernel is fully unit-testable without LLM/Redis; property-test concurrent proposals ([04 §9](04-blackboard-protocol.md#9-blackboard-api-surface-replaces-ad-hoc-methods)) |
+| Profile dispatch assumption is wrong | Med | High | Verify profile-aware dispatch in Phase 3 before depending on SOUL/toolset isolation; fall back to `instructions` identity only if profile isolation is explicitly deferred |
 | Quality regresses vs pipeline | Low | Med | A/B `legacy_pipeline` flag; keep escape hatch through Phase 5 |
 
 ## 5. Backward-compatibility contract
