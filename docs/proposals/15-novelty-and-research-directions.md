@@ -1,4 +1,4 @@
-[🏠 Index](../README.md) | [📂 Proposal Index](README.md) | [⬅️ Implementing with Cursor Agents](14-implementing-with-cursor-agents.md) | [🧬 Extensibility & Variants](11-extensibility-and-variants.md)
+[🏠 Index](../README.md) | [📂 Proposal Index](README.md) | [⬅️ Implementing with Antigravity Agents](14-implementing-with-antigravity-agents.md) | [🧬 Extensibility & Variants](11-extensibility-and-variants.md)
 
 # 15 — Novelty, Research Directions & the Distributed Angle
 

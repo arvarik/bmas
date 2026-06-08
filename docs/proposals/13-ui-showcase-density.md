@@ -1,4 +1,4 @@
-[🏠 Index](../README.md) | [📂 Proposal Index](README.md) | [⬅️ Hermes & Node Topology](12-hermes-and-node-topology.md) | [➡️ Implementing with Cursor Agents](14-implementing-with-cursor-agents.md) | [🎨 Design System](../design/DESIGN.md)
+[🏠 Index](../README.md) | [📂 Proposal Index](README.md) | [⬅️ Hermes & Node Topology](12-hermes-and-node-topology.md) | [➡️ Implementing with Antigravity Agents](14-implementing-with-antigravity-agents.md) | [🎨 Design System](../design/DESIGN.md)
 
 # 13 — UI Philosophy for a Showcase: Information-Dense, Still Intuitive
 
@@ -136,4 +136,4 @@ Token additions: a **heat ramp** (low→high pressure) expressed via existing st
 > [!TIP] The demo script this enables
 > Submit a task → the graph seeds an objective node → expert/planner Mind cards light up and stream reasoning → findings pop onto the graph → a critique draws a red edge, the region glows with pressure → the firehose shows it all interleaving → consensus sparkline climbs → green bloom → scrub back to replay the whole emergence. That is the artifact worth showing.
 
-➡️ Continue to [14 — Implementing with Cursor Agents](14-implementing-with-cursor-agents.md).
+➡️ Continue to [14 — Implementing with Antigravity Agents](14-implementing-with-antigravity-agents.md).
