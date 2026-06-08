@@ -11,8 +11,8 @@
 
 Each step is tagged:
 
-- **🆕 NEW AGENT** — open a brand-new Antigravity agent conversation (via the Agent Manager or `Ctrl/Cmd+Shift+I`) and paste the prompt. Do **not** reuse a previous conversation.
-- **♻️ RESUME Step N** — go back to the existing conversation from Step N and paste the follow-up (only used to fix that conversation's own PR).
+- **🆕 NEW AGENT** — open a brand-new Antigravity agent conversation (via the Agent Manager or `Ctrl/Cmd+Shift+I`) and paste the prompt. Do **not** reuse a previous conversation. For implementation steps (the heavy lifts), use Antigravity's **`/goal`** slash command instead of a plain prompt — this tells the agent to be extra thorough and not stop until the goal is fully achieved.
+- **♻️ RESUME Step N** — go back to the existing conversation from Step N and paste the follow-up (only used to fix that conversation's own PR). **Always paste the reviewer's specific findings** into your resume message so the implementer has full context without re-fetching.
 - **🧑 YOU** — a human action (merge a PR, decide go/no-go). No prompt.
 
 **Why new conversations each time:** the rule file you create in Step 0 is placed in `.agents/rules/` and is loaded automatically into *every* new Antigravity agent conversation, so a fresh conversation always boots with the full spec + invariants. Fresh context avoids drift and self-review bias. **The reviewer is always a different conversation than the implementer** — that is the whole safety mechanism.
@@ -20,6 +20,8 @@ Each step is tagged:
 **Placeholders:** replace `<PR#>` with the PR number the implementer step created (it prints it). Replace nothing else.
 
 **Pace:** run one phase at a time, top to bottom. (Optional parallelism is called out where safe.) You can use the Agent Manager to monitor multiple conversations side-by-side when parallelism is available.
+
+**Splitting large phases:** if an implementation agent signals it is running into complexity or context-window limits (most likely on Phases 2, 3b, or 5), split the phase into sub-branches (e.g., `feat/bb-phase-2a`, `feat/bb-phase-2b`) and run each as a separate implement → review → merge cycle, merging into the phase branch. Then open a single PR from the phase branch into `feat/true-blackboard`.
 
 ---
 
@@ -64,15 +66,19 @@ You implement docs/proposals/. It is a spec, not a suggestion.
 ## Working style
 - Stay strictly within the current phase's scope. One phase = one branch = one PR.
 - Update the phase checklist in doc 10 as items land.
+- Update docs/proposals/MIGRATION_STATUS.md with the phase, PR number, and status after opening a PR.
 - Live verification uses a dedicated test namespace (task_id prefix ci-verify-*) and read-only probes;
   never mutate production state or reconfigure a node without escalation.
 
 2. Add a GitHub Actions CI workflow that, on every PR, runs the daemon test suite + type-check + lint,
    and builds Mission Control. If tooling is missing, infer it from the repo and wire it up.
 3. Create the integration branch feat/true-blackboard off main and push it.
-4. Verify and report: `gh auth status`; that you can `ssh root@192.168.4.103 'hostname'`; and that
+4. Create docs/proposals/MIGRATION_STATUS.md with a tracking table:
+   | Phase | Branch | PR | Status | Merged |
+   Headers only, no rows yet. Each implementer step will append its row after opening a PR.
+5. Verify and report: `gh auth status`; that you can `ssh root@192.168.4.103 'hostname'`; and that
    `curl -s -H "Authorization: Bearer $(ssh root@192.168.4.103 'grep ^API_SERVER_KEY ~/.hermes/.env | cut -d= -f2')" http://192.168.4.103:8642/v1/capabilities` returns run_submission=true.
-5. Print: whether branch protection on main requires green CI + 1 approval. If you cannot set it via gh,
+6. Print: whether branch protection on main requires green CI + 1 approval. If you cannot set it via gh,
    tell me the exact clicks to do it in GitHub settings.
 
 Do not start any phase. Stop after reporting.
@@ -84,15 +90,17 @@ Do not start any phase. Stop after reporting.
 
 ## Phase 0 — Foundations (config + flags + seam scaffolding)
 
-### Step 1 — 🆕 NEW AGENT — Implement Phase 0
+### Step 1 — 🆕 NEW AGENT (`/goal`) — Implement Phase 0
 ```
 Implement Phase 0 of docs/proposals/10-migration-and-rollout.md autonomously on branch
-feat/bb-phase-0 (off feat/true-blackboard). Plan first (Planning mode), then implement:
+feat/bb-phase-0 (off feat/true-blackboard). Plan first — create an implementation plan artifact and
+wait for my approval before writing code. Then implement:
 (a) the coordination.* config block (strategy/control_unit.*/stigmergic.*) + pressure.weights with
 fail-fast validation per doc 11 §7, strategy default legacy_pipeline; (b) the blackboard_v2 build flag;
 (c) scaffold the CoordinationStrategy seam + wire the seams checklist (doc 11 §6) as a guard.
 No behavior change. Add/extend tests for the config validation; run tests + type-check + lint.
 Open a PR with gh into feat/true-blackboard, linking doc 10 Phase 0 and doc 11 §2/§6, and PRINT the PR number.
+Update docs/proposals/MIGRATION_STATUS.md with this phase's row.
 Escalate if the existing config style makes fail-fast validation ambiguous. Do not review your own PR.
 ```
 
@@ -101,22 +109,24 @@ Escalate if the existing config style makes fail-fast validation ambiguous. Do n
 You are an INDEPENDENT reviewer; you did not write this code. Review PR <PR#> against
 docs/proposals/10-migration-and-rollout.md (Phase 0) and the seams checklist in
 docs/proposals/11-extensibility-and-variants.md §6. Run `gh pr diff <PR#>` and read ONLY the diff + the
-spec; ignore the PR's self-description. Post a PR review as a blocking checklist covering: any spec
+spec; ignore the PR's self-description. Also check out the branch and run the test suite yourself — confirm
+the output matches what the implementer claims. Post a PR review as a blocking checklist covering: any spec
 deviation, any unimplemented definition-of-done item, any hard-coding the seam forbids, any "done" claim
 not backed by pasted test output, and missing/weak tests. Do NOT fix anything. If clean, say so explicitly.
 ```
 
 ### Step 3 — 🧑 YOU
-Read the reviewer's checklist + Bugbot. **If findings:** **♻️ RESUME Step 1** and paste: `Address the review findings on PR <PR#> and CI; push fixes; do not open a new PR.` Repeat Step 2 if the changes are substantial. **If clean + CI green:** merge PR `<PR#>`.
+Read the reviewer's checklist + Bugbot. **If findings:** **♻️ RESUME Step 1** and paste: `Address the review findings on PR <PR#> and CI. The reviewer flagged: [paste the reviewer's specific findings here]. Push fixes; do not open a new PR.` Repeat Step 2 if the changes are substantial. **If clean + CI green:** merge PR `<PR#>`.
 
 ---
 
 ## Phase 1 — Agent traces over the live Runs API ⭐
 
-### Step 4 — 🆕 NEW AGENT — Implement Phase 1
+### Step 4 — 🆕 NEW AGENT (`/goal`) — Implement Phase 1
 ```
 Implement Phase 1 (agent traces) per docs/proposals/06-agent-traces.md on branch feat/bb-phase-1.
-The Runs API gateway is ALREADY live on all 3 nodes (:8642; key in ~/.hermes/.env). Plan first, then:
+The Runs API gateway is ALREADY live on all 3 nodes (:8642; key in ~/.hermes/.env). Plan first — create an
+implementation plan artifact and wait for my approval before writing code. Then:
 rewrite agent/api_server.py to drive a run via POST /v1/runs + consume GET /v1/runs/{id}/events (SSE)
 instead of hermes -z, capturing doc 06's trace schema; keep hermes -z as the documented fallback
 (doc 06 §8); ingest traces → Redis + SQLite (doc 07); capture cost per-task/per-model/per-node + the
@@ -124,6 +134,7 @@ joules_estimate hook (doc 10 Phase 1). Ships behind a flag; must NOT require the
 VERIFY LIVE: ssh to 192.168.4.103, submit a ci-verify-* task through :8642 with the bearer key, and paste
 the real SSE events + the populated usage payload (this also closes Q2) into the PR. Add tests for the event
 parsing; run them. Open a PR with gh into feat/true-blackboard linking doc 06/07, and PRINT the PR number.
+Update docs/proposals/MIGRATION_STATUS.md with this phase's row.
 Do not review your own PR. Escalate per the rule if the live payload shape differs from doc 06.
 ```
 
@@ -131,9 +142,11 @@ Do not review your own PR. Escalate per the rule if the live payload shape diffe
 ```
 You are an INDEPENDENT reviewer; you did not write this code. Review PR <PR#> against
 docs/proposals/06-agent-traces.md + 07-data-model.md and the seams checklist (doc 11 §6). Run
-`gh pr diff <PR#>` and read ONLY the diff + spec; ignore the PR's self-description. Blocking checklist:
-spec deviations, missing definition-of-done items, broken legacy path / missing flag, any "done" claim not
-backed by the pasted live SSE + usage output, weak tests. Do NOT fix anything. If clean, say so explicitly.
+`gh pr diff <PR#>` and read ONLY the diff + spec; ignore the PR's self-description. Also check out the
+branch and run the test suite yourself — confirm the output matches what the implementer claims. Blocking
+checklist: spec deviations, missing definition-of-done items, broken legacy path / missing flag, any "done"
+claim not backed by the pasted live SSE + usage output, weak tests. Do NOT fix anything. If clean, say so
+explicitly.
 ```
 
 ### Step 6 — 🆕 NEW AGENT — Independent live verification
@@ -145,56 +158,64 @@ raw command + output. Use only the ci-verify-* namespace; make no config changes
 ```
 
 ### Step 7 — 🧑 YOU
-**If findings:** **♻️ RESUME Step 4** → `Address the review + verifier findings on PR <PR#> and CI; push fixes; no new PR.` Re-run Steps 5–6 if needed. **If clean + CI green:** merge `<PR#>`.
+**If findings:** **♻️ RESUME Step 4** → `Address the review + verifier findings on PR <PR#> and CI. The reviewer flagged: [paste findings]. The verifier flagged: [paste findings]. Push fixes; no new PR.` Re-run Steps 5–6 if needed. **If clean + CI green:** merge `<PR#>`.
 
 ---
 
 ## Phase E — Evaluation / A-B harness (start now; may overlap later phases)
 
-### Step 8 — 🆕 NEW AGENT — Implement Phase E
+### Step 8 — 🆕 NEW AGENT (`/goal`) — Implement Phase E
 ```
-Implement docs/proposals/10-migration-and-rollout.md "Phase E" on branch feat/bb-eval. Plan first, then build:
+Implement docs/proposals/10-migration-and-rollout.md "Phase E" on branch feat/bb-eval. Plan first — create
+an implementation plan artifact and wait for my approval before writing code. Then build:
 the benchmark runner (GSM8K + an MMLU subset) that submits through bMAS and scores accuracy; per-run metrics
 capture (accuracy/$/tokens/latency/rounds/consensus%/joules_estimate); the A/B harness that swaps ONLY
 coordination.strategy and emits a side-by-side report; and failure-injection tooling (hook) for the
 kill-a-node experiment. Add tests for the scorer; run them. Open a PR with gh into feat/true-blackboard
-linking doc 10 Phase E + doc 15, and PRINT the PR number. Do not review your own PR.
+linking doc 10 Phase E + doc 15, and PRINT the PR number. Update docs/proposals/MIGRATION_STATUS.md.
+Do not review your own PR.
 ```
 
 ### Step 9 — 🆕 NEW AGENT — Independent review of Phase E
 ```
 You are an INDEPENDENT reviewer; you did not write this code. Review PR <PR#> against
 docs/proposals/10-migration-and-rollout.md "Phase E" and doc 15. `gh pr diff <PR#>`, read ONLY diff + spec.
-Blocking checklist: does the scorer actually score correctly (check the tests), are all metrics captured,
-does the A/B harness change ONLY the strategy. Do NOT fix anything. If clean, say so explicitly.
+Also check out the branch and run the test suite yourself — confirm the output matches what the implementer
+claims. Blocking checklist: does the scorer actually score correctly (check the tests), are all metrics
+captured, does the A/B harness change ONLY the strategy. Do NOT fix anything. If clean, say so explicitly.
 ```
 
 ### Step 10 — 🧑 YOU
-**If findings:** **♻️ RESUME Step 8** → `Address findings on PR <PR#> and CI; push fixes; no new PR.` **If clean + CI green:** merge `<PR#>`.
+**If findings:** **♻️ RESUME Step 8** → `Address findings on PR <PR#> and CI. The reviewer flagged: [paste findings]. Push fixes; no new PR.` **If clean + CI green:** merge `<PR#>`.
 
 ---
 
 ## Phase 2 — PatchBoard kernel + fork-capable event log
 
-### Step 11 — 🆕 NEW AGENT — Implement Phase 2
+### Step 11 — 🆕 NEW AGENT (`/goal`) — Implement Phase 2
 ```
 Implement Phase 2 behind blackboard_v2 per docs/proposals/04-blackboard-protocol.md + 07-data-model.md on
-branch feat/bb-phase-2. Plan first. Build the deterministic kernel (JSON-Patch RFC 6902 validation, entry
-schema, optimistic concurrency rev+CAS, salience/decay, Redis v2 layout, event emission on every commit).
-The kernel is pure/deterministic and MUST NOT hard-code roles or "control unit" (doc 11 §6). The event log
-MUST support fork-from-event, not just linear replay. Heavy unit tests: patch validation, concurrent CAS
-(property-test), event emission, and a replay+fork test that re-materializes board state to event N. Run the
-suite and paste the output in the PR. Open a PR with gh into feat/true-blackboard linking doc 04/07/11 §6,
-and PRINT the PR number. Escalate before changing the Redis deployment topology. Do not review your own PR.
+branch feat/bb-phase-2. Plan first — create an implementation plan artifact and wait for my approval before
+writing code. This is a large phase; if you hit context-window limits, escalate and we will split into
+sub-branches. Build the deterministic kernel (JSON-Patch RFC 6902 validation, entry schema, optimistic
+concurrency rev+CAS, salience/decay, Redis v2 layout, event emission on every commit). The kernel is
+pure/deterministic and MUST NOT hard-code roles or "control unit" (doc 11 §6). The event log MUST support
+fork-from-event, not just linear replay. Heavy unit tests: patch validation, concurrent CAS (property-test),
+event emission, and a replay+fork test that re-materializes board state to event N. Run the suite and paste
+the output in the PR. Open a PR with gh into feat/true-blackboard linking doc 04/07/11 §6, and PRINT the PR
+number. Update docs/proposals/MIGRATION_STATUS.md. Escalate before changing the Redis deployment topology.
+Do not review your own PR.
 ```
 
 ### Step 12 — 🆕 NEW AGENT — Independent review of Phase 2
 ```
 You are an INDEPENDENT reviewer; you did not write this code. Review PR <PR#> against
 docs/proposals/04-blackboard-protocol.md + 07-data-model.md and the seams checklist (doc 11 §6).
-`gh pr diff <PR#>`, read ONLY diff + spec. Blocking checklist: determinism boundary intact, NO hard-coded
-roles/"control unit" in the kernel, fork-from-event implemented (not just linear replay), CAS + concurrency
-tested, "done" claims backed by pasted test output. Do NOT fix anything. If clean, say so explicitly.
+`gh pr diff <PR#>`, read ONLY diff + spec. Also check out the branch and run the test suite yourself —
+confirm the output matches what the implementer claims. Blocking checklist: determinism boundary intact, NO
+hard-coded roles/"control unit" in the kernel, fork-from-event implemented (not just linear replay), CAS +
+concurrency tested, "done" claims backed by pasted test output. Do NOT fix anything. If clean, say so
+explicitly.
 ```
 
 ### Step 13 — 🆕 NEW AGENT — Independent verification (replay/fork)
@@ -206,31 +227,32 @@ Do not edit the code.
 ```
 
 ### Step 14 — 🧑 YOU
-**If findings:** **♻️ RESUME Step 11** → `Address review + verifier findings on PR <PR#> and CI; push fixes; no new PR.` Re-run 12–13 if needed. **If clean + CI green:** merge `<PR#>`.
+**If findings:** **♻️ RESUME Step 11** → `Address review + verifier findings on PR <PR#> and CI. The reviewer flagged: [paste findings]. The verifier flagged: [paste findings]. Push fixes; no new PR.` Re-run 12–13 if needed. **If clean + CI green:** merge `<PR#>`.
 
 ---
 
 ## Phase 3a — Author + deploy the Hermes profiles
 
-### Step 15 — 🆕 NEW AGENT — Implement + deploy profiles
+### Step 15 — 🆕 NEW AGENT (`/goal`) — Implement + deploy profiles
 ```
-Per docs/proposals/12-hermes-and-node-topology.md §2.5–3, on branch feat/bb-phase-3a: author the profile set
+Per docs/proposals/12-hermes-and-node-topology.md §2.5–3, on branch feat/bb-phase-3a: plan first — create an
+implementation plan artifact and wait for my approval before writing code. Then author the profile set
 (planner, expert, critic, conflict_resolver, cleaner, decider, universal). Each = SOUL.md (role identity) +
 config.yaml (toolset scoping per doc 12). Experts share ONE expert profile (domain via per-task AGENTS.md).
 The CU scheduler is NOT a profile (doc 12 §2.1). Commit to agent/profiles/; add the role→(preferred_host,
 profile) registry to bmas.yaml/config.py (home + any-host fallback). DEPLOY + VERIFY LIVE: replicate
 profiles to all 3 nodes and confirm each is selectable via the gateway (paste `hermes profile list` and a
 profile-scoped /v1/models from each node). Open a PR with gh into feat/true-blackboard linking doc 12, and
-PRINT the PR number. Escalate before overwriting any existing node config that isn't profile-related.
-Do not review your own PR.
+PRINT the PR number. Update docs/proposals/MIGRATION_STATUS.md. Escalate before overwriting any existing
+node config that isn't profile-related. Do not review your own PR.
 ```
 
 ### Step 16 — 🆕 NEW AGENT — Independent review of Phase 3a
 ```
 You are an INDEPENDENT reviewer; you did not write this. Review PR <PR#> against doc 12 §2.5–3.
-`gh pr diff <PR#>`, read ONLY diff + spec. Blocking checklist: 7 profiles present with correct toolset
-scoping, experts share ONE profile, CU is NOT a profile, registry has home + fallback. Do NOT fix. If clean,
-say so explicitly.
+`gh pr diff <PR#>`, read ONLY diff + spec. Also check out the branch and run any tests yourself. Blocking
+checklist: 7 profiles present with correct toolset scoping, experts share ONE profile, CU is NOT a profile,
+registry has home + fallback. Do NOT fix. If clean, say so explicitly.
 ```
 
 ### Step 17 — 🆕 NEW AGENT — Independent live verification of profiles
@@ -242,16 +264,18 @@ intends. Do not edit code.
 ```
 
 ### Step 18 — 🧑 YOU
-**If findings:** **♻️ RESUME Step 15** → `Address findings on PR <PR#>; push fixes; no new PR.` Re-run 16–17 if needed. **If clean + CI green:** merge `<PR#>`.
+**If findings:** **♻️ RESUME Step 15** → `Address findings on PR <PR#>. The reviewer flagged: [paste findings]. The verifier flagged: [paste findings]. Push fixes; no new PR.` Re-run 16–17 if needed. **If clean + CI green:** merge `<PR#>`.
 
 ---
 
 ## Phase 3b — Control Unit / CoordinationStrategy
 
-### Step 19 — 🆕 NEW AGENT — Implement Phase 3b
+### Step 19 — 🆕 NEW AGENT (`/goal`) — Implement Phase 3b
 ```
 Implement Phase 3 (V1 ControlUnitStrategy) per docs/proposals/05-control-unit.md + doc 11 §2 on branch
-feat/bb-phase-3b. Plan first. Create daemon/src/core/coordination.py (CoordinationStrategy interface +
+feat/bb-phase-3b. Plan first — create an implementation plan artifact and wait for my approval before
+writing code. This is a large phase; if you hit context-window limits, escalate and we will split into
+sub-branches. Create daemon/src/core/coordination.py (CoordinationStrategy interface +
 ControlUnitStrategy) and control_unit.py (OODA loop that READS THE PRESSURE FIELD, two-tier DECIDE,
 consensus scorer). The deterministic scheduler stays in the daemon; only the Decider + rare LLM-escalation
 are model calls. Add role personas + capability profiles in personas.py. Dispatch via the Phase-3a registry,
@@ -259,16 +283,18 @@ load-balancing experts one-per-host. Cost rails in the SAME PR (budget ceiling, 
 caps, doc 05 §5). Tests for the scheduler against an in-memory board (no LLM); run them. VERIFY LIVE
 end-to-end: run a ci-verify-* task and paste evidence that one agent critiques ANOTHER's finding unprompted
 and the CU halts on consensus (not a fixed pipeline). control_unit only behind the flag; legacy default.
-Open a PR with gh into feat/true-blackboard linking doc 05/11 §2, and PRINT the PR number. Do not review
-your own PR.
+Open a PR with gh into feat/true-blackboard linking doc 05/11 §2, and PRINT the PR number. Update
+docs/proposals/MIGRATION_STATUS.md. Do not review your own PR.
 ```
 
 ### Step 20 — 🆕 NEW AGENT — Independent review of Phase 3b
 ```
 You are an INDEPENDENT reviewer; you did not write this. Review PR <PR#> against doc 05 + doc 11 §2 and the
-seams checklist (doc 11 §6). `gh pr diff <PR#>`, read ONLY diff + spec. Blocking checklist: scheduler is
-deterministic + in the daemon, reads the pressure field (not ad-hoc ifs), NO hard-coded "Control Unit" in
-kernel/board, cost rails present, legacy stays default. Do NOT fix. If clean, say so explicitly.
+seams checklist (doc 11 §6). `gh pr diff <PR#>`, read ONLY diff + spec. Also check out the branch and run
+the test suite yourself — confirm the output matches what the implementer claims. Blocking checklist:
+scheduler is deterministic + in the daemon, reads the pressure field (not ad-hoc ifs), NO hard-coded
+"Control Unit" in kernel/board, cost rails present, legacy stays default. Do NOT fix. If clean, say so
+explicitly.
 ```
 
 ### Step 21 — 🆕 NEW AGENT — Independent live verification of Phase 3b
@@ -280,7 +306,7 @@ with raw evidence (the trace/board excerpt). Use only the ci-verify-* namespace.
 ```
 
 ### Step 22 — 🧑 YOU
-**If findings:** **♻️ RESUME Step 19** → `Address findings on PR <PR#> and CI; push fixes; no new PR.` Re-run 20–21 if needed. **If clean + CI green:** merge `<PR#>`.
+**If findings:** **♻️ RESUME Step 19** → `Address findings on PR <PR#> and CI. The reviewer flagged: [paste findings]. The verifier flagged: [paste findings]. Push fixes; no new PR.` Re-run 20–21 if needed. **If clean + CI green:** merge `<PR#>`.
 
 ---
 
@@ -288,26 +314,28 @@ with raw evidence (the trace/board excerpt). Use only the ci-verify-* namespace.
 
 > Skip unless you want the OODA loop visible in the showcase.
 
-### Step 23 — 🆕 NEW AGENT — Implement Phase 3c
+### Step 23 — 🆕 NEW AGENT (`/goal`) — Implement Phase 3c
 ```
-Optional, per docs/proposals/05-control-unit.md §1.1, branch feat/bb-phase-3c. Route the CU's ESCALATION
-path through a thin coordinator profile (capture rationale + chosen roles as a normal trace), gated by
+Optional, per docs/proposals/05-control-unit.md §1.1, branch feat/bb-phase-3c. Plan first — create an
+implementation plan artifact and wait for my approval before writing code. Route the CU's ESCALATION path
+through a thin coordinator profile (capture rationale + chosen roles as a normal trace), gated by
 coordination.control_unit.coordinator_narration (default false). HARD CONSTRAINTS: off the critical path
 (deterministic fallback on timeout/error), escalation-turns only, never owns control. Render a Coordinator
 lane (doc 13). Test the fallback path explicitly (a coordinator stall must NOT block the loop); run tests.
-Open a PR with gh into feat/true-blackboard linking doc 05 §1.1 + doc 13, and PRINT the PR number. Do not
-review your own PR.
+Open a PR with gh into feat/true-blackboard linking doc 05 §1.1 + doc 13, and PRINT the PR number. Update
+docs/proposals/MIGRATION_STATUS.md. Do not review your own PR.
 ```
 
 ### Step 24 — 🆕 NEW AGENT — Independent review of Phase 3c
 ```
 You are an INDEPENDENT reviewer; you did not write this. Review PR <PR#> against doc 05 §1.1. `gh pr diff
-<PR#>`, read ONLY diff + spec. Blocking checklist: default false, off the critical path with a tested
-deterministic fallback, escalation-turns only, does NOT own control. Do NOT fix. If clean, say so explicitly.
+<PR#>`, read ONLY diff + spec. Also check out the branch and run the test suite yourself. Blocking checklist:
+default false, off the critical path with a tested deterministic fallback, escalation-turns only, does NOT
+own control. Do NOT fix. If clean, say so explicitly.
 ```
 
 ### Step 25 — 🧑 YOU
-**If findings:** **♻️ RESUME Step 23** → `Address findings on PR <PR#>; push fixes; no new PR.` **If clean + CI green:** merge `<PR#>`.
+**If findings:** **♻️ RESUME Step 23** → `Address findings on PR <PR#>. The reviewer flagged: [paste findings]. Push fixes; no new PR.` **If clean + CI green:** merge `<PR#>`.
 
 ---
 
@@ -315,23 +343,26 @@ deterministic fallback, escalation-turns only, does NOT own control. Do NOT fix.
 
 > Optional parallelism: Phase 4 touches `mission-control/` only, so Steps 26–29 may run concurrently with Phases 2–3 (different files). If you'd rather stay strictly linear, just run it here. Use the Agent Manager to run parallel conversations side-by-side.
 
-### Step 26 — 🆕 NEW AGENT — Implement Phase 4
+### Step 26 — 🆕 NEW AGENT (`/goal`) — Implement Phase 4
 ```
 Implement Phase 4 per docs/proposals/08-ui-blackboard-visualization.md + 09-ui-agent-trace-inspector.md in
-doc 13's showcase philosophy, branch feat/bb-phase-4. Plan first. Build BlackboardGraph (React Flow),
-WorkerLane, ConsensusMeter, the trace timeline + turn inspector, and the linear replay scrubber on the
-Phase-2 fork-capable log. Compose ONLY from existing ui/ primitives + DESIGN.md tokens (zero hardcoded
-values); add agent-role tokens first. Use existing SSE plumbing with batching. VERIFY: build passes, and run
-against a live task so the graph animates as patches land — attach a screenshot/recording to the PR. Open a
-PR with gh into feat/true-blackboard linking doc 08/09/13, and PRINT the PR number. Do not review your own PR.
+doc 13's showcase philosophy, branch feat/bb-phase-4. Plan first — create an implementation plan artifact
+and wait for my approval before writing code. Build BlackboardGraph (React Flow), WorkerLane, ConsensusMeter,
+the trace timeline + turn inspector, and the linear replay scrubber on the Phase-2 fork-capable log. Compose
+ONLY from existing ui/ primitives + DESIGN.md tokens (zero hardcoded values); add agent-role tokens first.
+Use existing SSE plumbing with batching. VERIFY: build passes, and run against a live task so the graph
+animates as patches land — attach a screenshot/recording to the PR. Open a PR with gh into
+feat/true-blackboard linking doc 08/09/13, and PRINT the PR number. Update docs/proposals/MIGRATION_STATUS.md.
+Do not review your own PR.
 ```
 
 ### Step 27 — 🆕 NEW AGENT — Independent review of Phase 4
 ```
 You are an INDEPENDENT reviewer; you did not write this. Review PR <PR#> against doc 08/09/13 and DESIGN.md.
-`gh pr diff <PR#>`, read ONLY diff + spec. Blocking checklist: composes only from ui/ primitives + tokens
-(NO hardcoded colors/spacing), uses existing SSE plumbing, agent-identity colors honored, build passes,
-animation evidence attached. Do NOT fix. If clean, say so explicitly.
+`gh pr diff <PR#>`, read ONLY diff + spec. Also check out the branch and build Mission Control yourself.
+Blocking checklist: composes only from ui/ primitives + tokens (NO hardcoded colors/spacing), uses existing
+SSE plumbing, agent-identity colors honored, build passes, animation evidence attached. Do NOT fix. If clean,
+say so explicitly.
 ```
 
 ### Step 28 — 🆕 NEW AGENT — Independent verification of Phase 4
@@ -342,29 +373,32 @@ Post pass/fail on PR <PR#> with a screenshot/recording. Do not edit code.
 ```
 
 ### Step 29 — 🧑 YOU
-**If findings:** **♻️ RESUME Step 26** → `Address findings on PR <PR#> and CI; push fixes; no new PR.` Re-run 27–28 if needed. **If clean + CI green:** merge `<PR#>`.
+**If findings:** **♻️ RESUME Step 26** → `Address findings on PR <PR#> and CI. The reviewer flagged: [paste findings]. The verifier flagged: [paste findings]. Push fixes; no new PR.` Re-run 27–28 if needed. **If clean + CI green:** merge `<PR#>`.
 
 ---
 
 ## Phase 5 — Advanced features + cutover
 
-### Step 30 — 🆕 NEW AGENT — Implement Phase 5
+### Step 30 — 🆕 NEW AGENT (`/goal`) — Implement Phase 5
 ```
-Implement Phase 5 per docs/proposals/10-migration-and-rollout.md on branch feat/bb-phase-5: native HITL via
-run approvals (doc 12 §5.1), stateful turns via the Responses API (doc 12 §5.2), private sub-boards +
+Implement Phase 5 per docs/proposals/10-migration-and-rollout.md on branch feat/bb-phase-5. Plan first —
+create an implementation plan artifact and wait for my approval before writing code. This is a large phase;
+if you hit context-window limits, escalate and we will split into sub-branches. Then implement: native HITL
+via run approvals (doc 12 §5.1), stateful turns via the Responses API (doc 12 §5.2), private sub-boards +
 Conflict-Resolver (doc 05 §4), and the Mission cockpit (doc 13). Do the CUTOVER (flip coordination.strategy
 default to control_unit) ONLY after doc 10 §6 + README §4 all pass AND the Phase-E benchmark shows
 control_unit ≥ legacy on the eval set — run that A/B and paste the numbers in the PR. Keep legacy as a
 selectable fallback strategy. Open a PR with gh into feat/true-blackboard linking doc 10 §5–6 + doc 12 §5,
-and PRINT the PR number. Do not review your own PR.
+and PRINT the PR number. Update docs/proposals/MIGRATION_STATUS.md. Do not review your own PR.
 ```
 
 ### Step 31 — 🆕 NEW AGENT — Independent review of Phase 5
 ```
 You are an INDEPENDENT reviewer; you did not write this. Review PR <PR#> against doc 10 §5–6 + doc 12 §5.
-`gh pr diff <PR#>`, read ONLY diff + spec. Blocking checklist: legacy still selectable after cutover, HITL
-approval + Responses API wired per doc 12, the A/B benchmark numbers are pasted AND show control_unit ≥
-legacy, backward-compat contract updated. Do NOT fix. If clean, say so explicitly.
+`gh pr diff <PR#>`, read ONLY diff + spec. Also check out the branch and run the test suite yourself —
+confirm the output matches what the implementer claims. Blocking checklist: legacy still selectable after
+cutover, HITL approval + Responses API wired per doc 12, the A/B benchmark numbers are pasted AND show
+control_unit ≥ legacy, backward-compat contract updated. Do NOT fix. If clean, say so explicitly.
 ```
 
 ### Step 32 — 🆕 NEW AGENT — Independent live verification of cutover
@@ -376,7 +410,7 @@ Do not edit code.
 ```
 
 ### Step 33 — 🧑 YOU
-**If findings:** **♻️ RESUME Step 30** → `Address findings on PR <PR#> and CI; push fixes; no new PR.` Re-run 31–32 if needed. **If clean + CI green + benchmark gate met:** merge `<PR#>`, then merge `feat/true-blackboard` → `main`. **V1 is shipped.**
+**If findings:** **♻️ RESUME Step 30** → `Address findings on PR <PR#> and CI. The reviewer flagged: [paste findings]. The verifier flagged: [paste findings]. Push fixes; no new PR.` Re-run 31–32 if needed. **If clean + CI green + benchmark gate met:** merge `<PR#>`, then merge `feat/true-blackboard` → `main`. **V1 is shipped.**
 
 ---
 
@@ -384,23 +418,26 @@ Do not edit code.
 
 > Only after V1 is stable. This is where the novelty lives ([doc 15](15-novelty-and-research-directions.md)).
 
-### Step 34 — 🆕 NEW AGENT — Implement V2
+### Step 34 — 🆕 NEW AGENT (`/goal`) — Implement V2
 ```
 Implement the StigmergicStrategy against the UNCHANGED substrate per docs/proposals/11-extensibility-and-
-variants.md §4 on branch feat/bb-v2-stigmergic: roleless universal actors, exponential pheromone decay,
+variants.md §4 on branch feat/bb-v2-stigmergic. Plan first — create an implementation plan artifact and wait
+for my approval before writing code. Then implement: roleless universal actors, exponential pheromone decay,
 parallel patch competition, basin-based termination, and pull-mode self-activation via Hermes crons on the
 pressure field (doc 12 §6; crons are CLI-managed per Q9, provision via SSH/CLI not HTTP). It MUST run on the
 same kernel/board/traces/UI with coordination.strategy: stigmergic. If it does NOT, the seams checklist
 (doc 11 §6) was violated earlier — find and fix the seam, do not special-case. Tests for decay + termination.
-Open a PR with gh linking doc 11 §4 + doc 15, and PRINT the PR number. Do not review your own PR.
+Open a PR with gh linking doc 11 §4 + doc 15, and PRINT the PR number. Update
+docs/proposals/MIGRATION_STATUS.md. Do not review your own PR.
 ```
 
 ### Step 35 — 🆕 NEW AGENT — Independent review of V2
 ```
 You are an INDEPENDENT reviewer; you did not write this. Review PR <PR#> against doc 11 §4 + the seams
-checklist §6. `gh pr diff <PR#>`, read ONLY diff + spec. Blocking checklist: NO changes to the kernel/board/
-traces/UI were needed (if they were, a seam was violated — flag it), decay + basin termination implemented,
-runs purely on coordination.strategy=stigmergic. Do NOT fix. If clean, say so explicitly.
+checklist §6. `gh pr diff <PR#>`, read ONLY diff + spec. Also check out the branch and run the test suite
+yourself. Blocking checklist: NO changes to the kernel/board/traces/UI were needed (if they were, a seam was
+violated — flag it), decay + basin termination implemented, runs purely on coordination.strategy=stigmergic.
+Do NOT fix. If clean, say so explicitly.
 ```
 
 ### Step 36 — 🆕 NEW AGENT — Run the novelty experiments
@@ -412,7 +449,7 @@ a results summary on PR <PR#>. Use only the ci-verify-* namespace. Do not edit c
 ```
 
 ### Step 37 — 🧑 YOU
-**If findings:** **♻️ RESUME Step 34** → `Address findings on PR <PR#> and CI; push fixes; no new PR.` **If clean + CI green:** merge. You now have the novel artifact + measured results for the showcase.
+**If findings:** **♻️ RESUME Step 34** → `Address findings on PR <PR#> and CI. The reviewer flagged: [paste findings]. Push fixes; no new PR.` **If clean + CI green:** merge. You now have the novel artifact + measured results for the showcase.
 
 ---
 
