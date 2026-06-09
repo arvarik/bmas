@@ -18,7 +18,7 @@ bMAS fails this test in three independent ways. Each is sufficient on its own to
 | Agents *read* shared state to decide what to do | Agents receive a prompt string and return a string; they never touch Redis | ❌ |
 | Control is opportunistic / data-driven | Control is a hardcoded `plan → execute → audit` DAG | ❌ |
 | Contributions are concurrent and incremental | Per-task orchestration is sequential; complex tasks have only one fixed expert fan-out | ❌ |
-| Shared state is the coordination medium | Redis is a write-only mirror for the dashboard | ❌ |
+| Shared state is the coordination medium | Redis is daemon-side plumbing (locks, abort flags, one debate read-back into the auditor prompt) plus a UI event bus; no *agent* ever reads or writes it | ❌ |
 
 ---
 
@@ -118,9 +118,9 @@ What the architecture calls a "debate" is a list that each agent appends to once
 
 No agent ever *reacts* to another agent's entry. There is exactly one writer per phase and exactly one reader at the end. That is a relay race, not a debate.
 
-## 5. Evidence: Redis is a UI mirror, not a blackboard
+## 5. Evidence: Redis is daemon plumbing, not a blackboard
 
-`Blackboard.get_state()` is read by the dashboard, but nothing in the agent path reads it. Critically, the `agents` field is **hardcoded to dead values** — the board has no live notion of who is doing what:
+To be precise about who touches Redis today (precision matters — a reviewer will check): the **orchestrator** reads it (locks, `get_debate` for the auditor prompt, the `abort` flag), and the dashboard reads it only at the edges (the `/state` route and the HITL route; live data reaches the UI via SSE and history via SQLite). The party that *never* touches Redis is **an agent** — there is no Redis client anywhere in `agent/`. So Redis functions as the daemon's private bookkeeping plus an event bus, not as a workspace any knowledge source observes. Two details sharpen the point. First, `Blackboard.get_state()`'s `agents` field is **hardcoded to dead values** — the board has no live notion of who is doing what:
 
 ```86:96:daemon/src/core/blackboard.py
         return {
@@ -136,7 +136,7 @@ No agent ever *reacts* to another agent's entry. There is exactly one writer per
         }
 ```
 
-The blackboard namespaces (`bmas:public:*`, `bmas:private:*`) exist, but they are populated *for display* and torn down (`clear_private`) before anyone but the auditor could act on them.
+Second, the blackboard namespaces (`bmas:public:*`, `bmas:private:*`) exist, but the private debate list is consumed exactly once — serialized into the auditor's prompt — and then torn down (`clear_private`) before any other agent could act on it. (Related dead wiring, confirmed against the code: the dashboard's pause/hint HITL writes `bmas:public:state.pause` and `bmas:public:hints:{task}`, but the orchestrator never reads either — only `abort` is consumed. And `track_cost`'s `bmas:metrics:*` keys are never written because the method is never called.)
 
 ## 6. Evidence: strictly per-task, single-writer concurrency
 
@@ -189,7 +189,7 @@ The diagnosis is not "rewrite everything." The infrastructure is strong and the 
 | G1 | Control encodes the solution path (fixed DAG) | `orchestrator.py` `_standard_flow` | [05 Control Unit](05-control-unit.md) |
 | G2 | Agents are blind, stateless text functions | `_dispatch_agent`, `api_server._run_hermes` | [03 Target Arch](03-target-architecture.md), [04 PatchBoard](04-blackboard-protocol.md) |
 | G3 | "Debate" is concatenation, not interaction | `post_debate`/`get_debate` | [04 PatchBoard](04-blackboard-protocol.md), [05 Control Unit](05-control-unit.md) |
-| G4 | Redis is a UI mirror; no per-entry concurrent mutation | `get_state`, task-scoped orchestrator lock, sequential standard flow | [04 PatchBoard](04-blackboard-protocol.md) (per-key optimistic locking) |
+| G4 | Redis is daemon plumbing agents never touch; no per-entry concurrent mutation | `get_state`, task-scoped orchestrator lock, sequential standard flow | [04 PatchBoard](04-blackboard-protocol.md) (per-key optimistic locking) |
 | G5 | No agent traces; dead cost path | `_run_hermes`, `TaskResponse` schema | [06 Agent Traces](06-agent-traces.md) |
 
 ➡️ Continue to [02 — Peer Review](02-peer-review.md).

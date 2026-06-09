@@ -15,6 +15,8 @@ Be precise about this when you present — credibility comes from *not* overclai
 |:--|:--|:--|
 | Blackboard architecture | Prior art (1985) | Hayes-Roth; Nii |
 | Blackboard for **LLM** MAS (LbMAS): control unit + roles + consensus | Prior art (2025) | [Han & Zhang](https://arxiv.org/abs/2507.01701) |
+| Blackboard LLM-MAS where agents **volunteer** based on board content (pull-flavored) | Prior art (2025) | [Salemi et al.](https://arxiv.org/abs/2510.01285) |
+| **Schema-grounded JSON-Patch mutation through a deterministic kernel ("PatchBoard")** | **Prior art (2026)** | [Zhang, Shi & Wang, arXiv:2605.29313](https://arxiv.org/abs/2605.29313) — independently the same design *and the same name* as [doc 04](04-blackboard-protocol.md); we cite it and import its validated lessons |
 | **A *physically distributed* blackboard LLM-MAS on heterogeneous edge hardware** | **Contribution** | this project |
 | **A pressure-field substrate that runs *both* a control-unit and a roleless-stigmergic regime unchanged** | **Contribution** | this project ([doc 11](11-extensibility-and-variants.md)) |
 | **Cost/locality-aware coordination** ($0 local edge vs. cloud, routed by triage) on a blackboard | **Contribution** | this project |
@@ -110,6 +112,7 @@ V2 and most experiments are built *later/separately*, but several of the demos a
 ## 6. Caveats (so the showcase stays honest)
 
 - The base algorithm is the paper's; lead with *distribution + the dual-regime substrate + legibility*, not "we invented the blackboard."
+- **The validated-patch substrate is published prior art.** [PatchBoard (Zhang, Shi & Wang 2026, arXiv:2605.29313)](https://arxiv.org/abs/2605.29313) independently published the JSON-Patch + deterministic-kernel + write-contracts design under the same name we use in [doc 04](04-blackboard-protocol.md). Cite it everywhere the substrate is described; we keep the name as an **attributed reference**, not a claim. The contribution is what runs *on* the substrate (distribution, the dual-regime pressure field, legible emergence) — never the substrate itself. Their results are also the strongest external evidence the substrate works: 84.6% vs 30.8% (LangGraph) on 630 matched ALFWorld episodes at the lowest tokens-per-success, and **zero** committed-state contamination from invalid/unauthorized patches under fault injection.
 - The stigmergic-robustness result is a **hypothesis** until measured — present it as the experiment you designed the system to run, not a proven fact.
 - N=3 nodes is small; frame distributed claims as a *testbed/existence proof*, with scaling as future work.
 

@@ -87,6 +87,9 @@ Do not start any phase. Stop after reporting.
 
 **🧑 YOU:** confirm CI runs, branch protection is on (green CI + 1 approval required to merge `main`), and Bugbot is enabled on the repo. Then proceed.
 
+> [!NOTE] Branch-protection reality check (one GitHub identity)
+> If every agent conversation pushes and reviews through the **same** GitHub account, GitHub will not count the reviewer agent's review as the required approval — an author cannot approve their own PR, and a same-account review is indistinguishable from the author's. Two valid resolutions: (a) provision a **second bot identity** (separate token) that the reviewer/verifier steps use, or (b) accept that the "1 approval" gate is satisfied by **you** at merge time — the reviewer agent's blocking checklist is the substance; your approval click is the formality. Pick one in Step 0 and stick to it. Do **not** let an agent "fix" a blocked merge by weakening branch protection (the rule file's escalation clause covers this).
+
 ---
 
 ## Phase 0 — Foundations (config + flags + seam scaffolding)

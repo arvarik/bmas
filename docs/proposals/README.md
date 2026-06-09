@@ -11,7 +11,7 @@
 
 ## 1. The one-paragraph verdict
 
-The diagnosis is correct: **bMAS today is a supervisor pipeline wearing blackboard vocabulary.** The daemon is a puppeteer that runs a fixed `triage → plan → execute → audit` sequence, dispatches one blocking HTTP call per role, and uses Redis as a *write-only mirror for the UI* rather than a coordination medium. Agents never read the board, the "debate" is sequential string concatenation, and intermediate agent reasoning is discarded at the edge. The fix is **not** to delete the orchestrator (the bMAS paper keeps a Control Unit) — it is to **invert the data flow**: agents read and write a structured, schema-validated blackboard; a thin LLM Control Unit acts as a *referee* that schedules opportunistically and detects convergence; and every mutation becomes an observable, replayable event that powers the UI.
+The diagnosis is correct: **bMAS today is a supervisor pipeline wearing blackboard vocabulary.** The daemon is a puppeteer that runs a fixed `triage → plan → execute → audit` sequence, dispatches one blocking HTTP call per role, and uses Redis as *daemon-side bookkeeping and a UI event bus* rather than a coordination medium — no agent ever reads or writes it. Agents never read the board, the "debate" is sequential string concatenation, and intermediate agent reasoning is discarded at the edge. The fix is **not** to delete the orchestrator (the bMAS paper keeps a Control Unit) — it is to **invert the data flow**: agents read and write a structured, schema-validated blackboard; a thin LLM Control Unit acts as a *referee* that schedules opportunistically and detects convergence; and every mutation becomes an observable, replayable event that powers the UI.
 
 ## 2. Reading order
 

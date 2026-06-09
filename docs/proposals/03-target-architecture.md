@@ -114,6 +114,7 @@ Contrast with today's payload ([Gap G2](01-gap-analysis.md#3-evidence-agents-are
   "turn_id": "turn-7",
   "role": "critic",
   "role_prompt": "<persona for this role>",
+  "model": "gemini-2.5-flash",           // triage-selected — must reach the run request (05 §8, 06 §3)
   "objective": "Evaluate NVIDIA as a 2026 long position",
   "phase": "Debate",
   "board_index": [                       // table of contents, not full payloads
@@ -123,8 +124,10 @@ Contrast with today's payload ([Gap G2](01-gap-analysis.md#3-evidence-agents-are
   ],
   "open_questions": ["Is the 8% WACC defensible?"],
   "read_entry_contract": {
-    "mode": "daemon_api",                 // daemon_api | prehydrated | workspace_file
-    "endpoint": "/tasks/task-a8f2/board/entries",
+    "mode": "prehydrated",                // prehydrated (default) | daemon_api | workspace_file
+    "view_budget_tokens": 4000,           // bounded view — see the decision note below
+    "entries": { "e-12": {"…full payload…": "…"}, "e-13": {"…": "…"}, "e-14": {"…": "…"} },
+    "overflow_endpoint": "/tasks/task-a8f2/board/entries",  // pull-by-id escape hatch (bearer-auth)
     "allowed_ids": ["e-12", "e-13", "e-14"]
   },
   "patch_target_schema": "finding|critique|rebuttal",  // what the kernel will accept this turn
@@ -132,13 +135,18 @@ Contrast with today's payload ([Gap G2](01-gap-analysis.md#3-evidence-agents-are
 }
 ```
 
-The agent reads the index, pulls the specific entries it needs (by ID), reasons, and returns **patches** plus a **trace** (see [04](04-blackboard-protocol.md) and [06](06-agent-traces.md)). The `read_entry_contract` is not optional: Phase 3 must choose one concrete mechanism before claiming agents "read the board":
+The agent reads the index, pulls the specific entries it needs (by ID), reasons, and returns **patches** plus a **trace** (see [04](04-blackboard-protocol.md) and [06](06-agent-traces.md)). The `read_entry_contract` is not optional — it is the concrete mechanism that makes "agents read the board" true:
 
-- **`daemon_api`**: the node calls a daemon endpoint such as `GET /tasks/{task}/board/entries?ids=e-12,e-13`, authenticated for node-to-daemon use.
-- **`prehydrated`**: the daemon includes the full payloads for `allowed_ids` in the turn request. This is simpler but must stay bounded by token/cost limits.
-- **`workspace_file`**: the agent server writes selected entries to a per-turn file in the Hermes workspace and tells the agent where to read them.
+- **`prehydrated` (the default)**: the daemon materializes the view — the index plus full payloads for `allowed_ids` — directly in the turn request, under an explicit **view budget**.
+- **`daemon_api` (the escape hatch)**: for boards that outgrow the budget, the node calls `GET /tasks/{task}/board/entries?ids=e-12,e-13` to pull specific entries by ID mid-turn.
+- **`workspace_file`**: a delivery variant of `prehydrated` — the agent server writes the selected entries to a per-turn file in the Hermes workspace and tells the agent where to read them. Useful when the agent consumes the board via file tools rather than prompt context.
 
-It can also return `{"action": "decline", "reason": "no new information"}` — a first-class blackboard behavior impossible today.
+> [!IMPORTANT] Decision: default to `prehydrated` bounded views, sized by `coordination.view_budget_tokens`
+> This is no longer an open choice ([Q11 — resolved](10-migration-and-rollout.md#3-open-questions-verify-before-building)). [PatchBoard (2026)](https://arxiv.org/abs/2605.29313) measured that kernel-materialized **bounded views** were one of the two largest contributors to success in ablation, and that the *smallest* tested context budget had the best success-per-token profile — more board state did not help and cost more. So the daemon owns view construction: it selects entries by salience/pressure under `coordination.view_budget_tokens` (default 4000; per-role overrides allowed), includes full bodies for the selected ids, and compresses anything beyond the budget into index lines (id + type + title + salience) that the agent can pull via `daemon_api` if it truly needs them. This also keeps the per-turn cost floor predictable ([05 §5](05-control-unit.md#5-cost-governance--safety-rails)).
+>
+> **Authentication (specified, not hand-waved):** every node↔daemon HTTP surface — the board-read endpoint above and the trace-ingest endpoint ([06 §5](06-agent-traces.md#5-transport--persistence)) — is authenticated with a shared bearer secret, `BMAS_NODE_KEY`, set in `.env` on the control plane and on each node, presented by `agent/api_server.py` as `Authorization: Bearer …` and validated by the daemon on every request. This mirrors the existing `API_SERVER_KEY` pattern already used for the Hermes gateway ([doc 12 §4](12-hermes-and-node-topology.md#4-enabling-the-runs-api-the-phase-1-unblocker--done-on-all-3-nodes-2026-06-07)). The daemon fails fast at startup if the key is unset (matching `config.py`'s existing validation style). Nodes never receive Redis credentials — the daemon is the only Redis client ([06 §5](06-agent-traces.md#5-transport--persistence)).
+
+It can also return `{"action": "decline", "reason": "no new information"}` — a first-class blackboard behavior impossible today (but note: decline-gating belongs in the daemon, not in a dispatched run — [05 §5](05-control-unit.md#5-cost-governance--safety-rails)).
 
 ## 5. Component ownership map (files that change)
 

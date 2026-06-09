@@ -63,13 +63,13 @@ The doc even names this as the integration point: *"The Runs API is the most pro
 > [!WARNING] Profile isolation is not provided by the default `/v1/runs` call
 > Live source inspection shows `POST /v1/runs` accepts `input`, optional `session_id`, `instructions`, `conversation_history`, `previous_response_id`, and `model`, but no per-request `profile`. The sketch below preserves today's role identity through `instructions`; it does **not** by itself select a role-specific SOUL/toolset/memory profile. Phase 3a must provide the verified profile-aware dispatch mechanism from [doc 12 §2.5](12-hermes-and-node-topology.md#25-the-agents-on-3-hosts-answer-yes-via-profiles) before the system can claim profile isolation.
 
-**Option A (preferred): the agent streams trace events to the daemon as it consumes the Hermes SSE.** The daemon exposes a lightweight ingest endpoint (or the agent writes directly to Redis). The agent becomes a *translator* from Hermes events → bMAS trace events.
+**Option A (preferred): the agent streams trace events to the daemon as it consumes the Hermes SSE.** The daemon exposes a lightweight, batched ingest endpoint — `POST /ingest/traces/{task_id}/{turn_id}` — authenticated with the shared node bearer secret (`BMAS_NODE_KEY`, [03 §4](03-target-architecture.md#4-what-each-turns-agent-payload-looks-like-target)). Nodes must **not** write to Redis directly: that would punch a second writer through the daemon/kernel boundary the whole design establishes, hand Redis credentials and topology to every node, and bypass the single ingest point where the daemon stamps ordering, computes `cost_usd` ([§3.1](#31-updated-taskresponse-schema)), and re-emits SSE. The agent is a *translator* from Hermes events → bMAS trace events; the daemon remains the only Redis writer.
 
 ```python
 # agent/api_server.py  (sketch, /execute rewritten)
 async def execute_task(req: TaskRequest):
     run = await hermes.post("/v1/runs", json={
-        "model": LITELLM_MODEL,
+        "model": req.model or LITELLM_MODEL,  # daemon passes the triage-selected model (05 §8); env is the fallback
         "input": req.description,
         "instructions": req.role_prompt,     # persona
         "session_id": f"{req.task_id}:{req.role}",
@@ -80,7 +80,7 @@ async def execute_task(req: TaskRequest):
     async for ev in hermes.stream(f"/v1/runs/{run_id}/events"):   # SSE
         bmas_ev = translate(ev, req.task_id, req.turn_id, seq=trace_seq)
         trace_seq += 1
-        await emit_trace(req, bmas_ev)        # → daemon ingest or Redis (see §5)
+        await emit_trace(req, bmas_ev)        # → daemon ingest endpoint (bearer-auth; §5)
         if bmas_ev["type"] == "final":
             patches = extract_patches(bmas_ev)  # agent returns JSON-Patch proposal
 
@@ -176,7 +176,10 @@ One normalized shape, regardless of the Hermes event that produced it. This is w
 Trace volume can be high (token deltas). Keep it off the hot snapshot path:
 
 ```
-Agent ──(SSE translate)──► Redis Stream  bmas:traces:{task}:{turn}   (capped, TTL 24h)
+Agent ──(translate + batch)──► Daemon ingest  POST /ingest/traces/{task}/{turn}  (BMAS_NODE_KEY bearer)
+                                  │
+                                  ▼
+                          Redis Stream  bmas:traces:{task}:{turn}   (capped, TTL 24h; daemon is sole writer)
                                   │
                                   ├─► Pub/Sub  bmas:events:{task}  event:"trace"  → SSE → UI (live)
                                   └─► batched flush ──► SQLite agent_traces (durable, doc 07)
@@ -198,7 +201,7 @@ This correlation is the backbone of the worker-activity visualization ([08 §4](
 
 ## 7. Daemon-side changes
 
-- `orchestrator._dispatch_agent` → `control_unit._act`: still POSTs to the node, but now (a) sends the **board index** in `context`, (b) receives `patches` + `usage`, (c) forwards `patches` to the kernel, (d) records cost.
+- `orchestrator._dispatch_agent` → `control_unit._act`: still POSTs to the node, but now (a) sends the **bounded board view** (index + prehydrated entries under `view_budget_tokens`, [03 §4](03-target-architecture.md#4-what-each-turns-agent-payload-looks-like-target)) plus the **triage-selected `model`**, (b) receives `patches` + `usage`, (c) forwards `patches` to the kernel, (d) records cost.
 - Subscribe to / ingest the node's trace stream and re-emit as `trace` events.
 - On HITL abort, call the node's `POST /v1/runs/{id}/stop` instead of killing a subprocess.
 

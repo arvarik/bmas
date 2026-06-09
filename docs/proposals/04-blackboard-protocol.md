@@ -5,6 +5,9 @@
 > [!ABSTRACT]
 > This is the flagship document. It specifies how shared state is structured, how agents mutate it safely (JSON Patch through a deterministic kernel), how the board is event-sourced for replay and live visualization, how concurrent writers are reconciled, and how salience replaces ad-hoc pheromones. Everything here is additive to the existing dual-write model in `database.py` and `blackboard.py`.
 
+> [!NOTE] Naming & prior art (read before presenting this design as ours)
+> "PatchBoard" is also the name of a **published 2026 architecture** — [Zhang, Shi & Wang, *PatchBoard: Schema-Grounded State Mutation for Reliable and Auditable LLM Multi-Agent Collaboration*, arXiv:2605.29313](https://arxiv.org/abs/2605.29313) — which independently specifies the same core design: validated JSON-Patch mutations, a deterministic kernel as sole writer, role-scoped write contracts, transactional commits, and replayable logs. We keep the name **as an attributed reference** ([doc 02 §2.4](02-peer-review.md#24-patchboard--json-patch--deterministic-kernel-suggestion-4--adopt-as-the-flagship) records the decision; [doc 15 §1/§6](15-novelty-and-research-directions.md#1-honest-framing-prior-art-vs-contribution) records the novelty implications). Their results are strong empirical validation of this document's bet, and three of their validated mechanisms are imported below: `test`-op stale-view preconditions ([§3.1](#31-test-ops-explicit-stale-view-preconditions)), the kernel-computed board state hash that powers livelock detection ([§4](#4-the-deterministic-kernel), [doc 05 §5](05-control-unit.md#5-cost-governance--safety-rails)), and budgeted board views ([doc 03 §4](03-target-architecture.md#4-what-each-turns-agent-payload-looks-like-target)).
+
 ---
 
 ## 1. Board entries: typed, addressable, versioned
@@ -47,6 +50,9 @@ The board is a set of **entries**. An entry is the unit agents read and react to
 
 > [!NOTE]
 > `refs` is what turns the relay race into a graph. A `critique` with `refs: ["e-12"]` is a *typed edge* from the critique to finding `e-12`. The live blackboard graph ([08](08-ui-blackboard-visualization.md)) renders entries as nodes and `refs` as edges — no separate graph model needed.
+
+> [!NOTE] Fixed schema now; generated schema as a known upgrade path
+> This fixed, debate-shaped entry-type set is the right V1 call: it matches the paper's roles, and a stable schema is what makes the capability matrix ([§4](#capability-matrix-who-may-write-what)) and the UI node types ([08](08-ui-blackboard-visualization.md)) tractable. But record the trade-off: [PatchBoard (2026)](https://arxiv.org/abs/2605.29313) measured that **Architect-generated, task-specific schemas outperform fixed schemas** in both success and cost on their benchmark. If bMAS later targets task families that don't decompose into findings/critiques (e.g., embodied or stateful-environment tasks), a per-task schema generator — validated against a hand-written meta-schema, exactly like their Architect — is the documented extension. It slots in at genesis time and changes nothing in the kernel, which already validates against whatever schema set it is given.
 
 > [!NOTE] "Executor" here is a back-compat alias for the paper's finding-producer
 > Han & Zhang have **no "executor" or "auditor" role** — findings come from *experts* and the constant roles ([doc 12 §2](12-hermes-and-node-topology.md#2-agents-personas-and-nodes--clearing-up-the-count) explains the renaming). "Executor / Expert" above is retained only because the current `personas.py` and `AGENT_COLORS` ship an `executor` identity; it denotes "an agent that posts `finding`/`rebuttal` entries." Because the kernel authorizes by **capability**, not role name ([doc 11 §6](11-extensibility-and-variants.md#6-the-seams-checklist-enforce-in-v1)), this is purely a label — `executor` and the paper-faithful `expert` resolve to the same `can_create: [finding, rebuttal]` capability profile. New code should prefer `expert`.
@@ -127,6 +133,23 @@ Agents never write entries directly. They return a list of **proposed operations
 
 The agent supplies *intent*; the kernel assigns `id`, `rev`, `author`, `salience`, and timestamps. Agents may not set those fields — attempts are stripped. The kernel `_normalize` step turns each `create` into an internal `add` at the minted `/entries/<id>` path before applying, so the committed patch log stores valid RFC 6902 against the object model (important for clean replay).
 
+### 3.1 `test` ops: explicit stale-view preconditions
+
+Agents may include standard RFC 6902 **`test`** operations in a proposal to assert the board state they reasoned against:
+
+```jsonc
+{ "op": "test", "path": "/entries/e-12/status", "value": "open" },     // "I critique e-12 *as open*"
+{ "op": "replace", "path": "/entries/e-14/status", "value": "superseded" }
+```
+
+Semantics, enforced by the kernel:
+
+- A failed `test` rejects the **entire proposal group it guards** (the ops that follow it, up to the next `test`), with reason `precondition_failed` — emitted as a normal `patch_rejected` event.
+- `test` complements the implicit rev-CAS ([§5](#5-optimistic-concurrency)): CAS protects atomicity of a mutation *on the entry being mutated*; `test` lets an agent guard a mutation on entry X against the state of a *different* entry Y ("only supersede my finding if the critique against it is still open"). Without it, cross-entry preconditions would be unexpressible.
+- `test` ops are logged in `board_patches` like any other op (accepted or as the rejection cause), so replay and the UI can show *why* a proposal died.
+
+This is the same mechanism [PatchBoard (2026)](https://arxiv.org/abs/2605.29313) ships ("test operations to express stale-view preconditions") and costs the kernel one extra branch in the validation step ([§4](#4-the-deterministic-kernel)).
+
 ## 4. The deterministic kernel
 
 `daemon/src/core/kernel.py` (new) is the **only** component that mutates the board. It is pure, synchronous-in-spirit, and fully testable without an LLM.
@@ -156,8 +179,13 @@ class BoardKernel:
                 await self._emit(task_id, "patch_rejected", {"op": op, "reason": str(e)})
                 # rejection is itself an observable event — surfaced in the UI
         await self._recompute_salience(task_id)
+        await self._update_board_hash(task_id)   # rolling state hash (see below)
         return committed
 ```
+
+### The board state hash (livelock support)
+
+After every `apply`, the kernel computes a **deterministic hash of the entries snapshot** (stable serialization: entries sorted by id, volatile fields like `salience`/`updated_at` excluded) and appends it to a short rolling window (last ~8 hashes) in `bmas:board:{task}:meta`. The kernel does **not** act on it — what to do about a stalled board is strategy-layer policy ([doc 05 §5](05-control-unit.md#5-cost-governance--safety-rails)) — but the hash must be computed *here*, deterministically, so that any `CoordinationStrategy` (and the UI) can detect no-op rounds and short oscillation cycles (`A→B→A`) with pure hash comparison, no LLM call. [PatchBoard (2026)](https://arxiv.org/abs/2605.29313) uses exactly this signal ("repeated state hashes") in the circuit policy that halted 96% of injected livelocks.
 
 ### Rejection is a feature
 
@@ -172,7 +200,7 @@ When an agent proposes a malformed `finding` (missing `body`), writes to a path 
 The kernel authorizes by **capability profile**, not by hardcoded role names. V1 maps roles to these capability profiles in the strategy layer; V2 can map a roleless actor to a broader profile without changing the kernel.
 
 | Capability profile | Typical V1 role | May `add` | May `replace` status of | May never |
-|:--|:--|:--|:--|
+|:--|:--|:--|:--|:--|
 | `plan_writer` | Planner | `plan` | own `plan` | `consensus` |
 | `finding_writer` | Expert / legacy Executor | `finding`, `rebuttal` | own entries | others' entries, `consensus` |
 | `critique_writer` | Critic | `critique` | — | `finding` bodies |
@@ -201,13 +229,15 @@ return merged.rev
 ```
 
 - **`create` of a new entry** (§3): never conflicts (kernel mints a fresh id). Concurrent findings from different agents both land.
-- **`replace`/`remove` of an existing entry**: CAS on `rev`. On `CONFLICT`, the kernel re-reads, re-checks the op's precondition, and either retries or rejects with `patch_rejected` (reason: stale). Bounded retries (e.g. 3).
+- **`replace`/`remove` of an existing entry**: CAS on `rev`. On `CONFLICT` the kernel re-reads the current entry and applies one rule, designed to prevent **lost updates** — blindly retrying against the new `rev` would silently overwrite the concurrent change, which is the exact failure CAS exists to stop:
+  - **Retry (bounded, e.g. 3)** only when the concurrent commit is *disjoint from this op's target*: the specific field(s) this op touches are byte-identical between the expected and current revision, **and** every `test` precondition in the proposal ([§3.1](#31-test-ops-explicit-stale-view-preconditions)) still passes against the current state. Under those conditions, re-applying at the new `rev` cannot clobber anything.
+  - **Reject otherwise** with `patch_rejected` (`reason: "conflict"`, carrying the current `rev` and the list of fields that changed underneath the agent), handing the decision to the strategy layer (§5.1). **The kernel never auto-merges** — semantic reconciliation of competing edits is an agent/strategy concern, not a kernel concern.
 
 This serializes only true contention on the *same* entry, exactly the blackboard concurrency model the external review asked for.
 
 ### 5.1 Conflict resolution policy (V1)
 
-When CAS fails after retries, the kernel emits a `patch_rejected` event with `reason: "conflict"` and the stale `rev`. **The losing patch is not silently dropped or auto-queued** — it becomes a visible event in the trace stream and the UI. The `ControlUnitStrategy` then decides whether to re-schedule the rejected agent for another attempt (with the updated board state) in a subsequent round, or to move on. This keeps conflict resolution in the strategy layer (consistent with the [CoordinationStrategy seam](11-extensibility-and-variants.md#2-the-seam-coordinationstrategy)) and avoids baking retry-or-drop policy into the kernel itself. In V2 (stigmergic), the rejected agent simply observes the updated pressure field and self-activates if the region is still high-pressure — no CU arbitration needed.
+When CAS rejects (no safe retry per §5), the kernel emits a `patch_rejected` event with `reason: "conflict"` and the stale `rev`. **The losing patch is not silently dropped or auto-queued** — it becomes a visible event in the trace stream and the UI. The `ControlUnitStrategy` then decides whether to re-schedule the rejected agent for another attempt (with the updated board state) in a subsequent round, or to move on. This keeps conflict resolution in the strategy layer (consistent with the [CoordinationStrategy seam](11-extensibility-and-variants.md#2-the-seam-coordinationstrategy)) and avoids baking retry-or-drop policy into the kernel itself. In V2 (stigmergic), the rejected agent simply observes the updated pressure field and self-activates if the region is still high-pressure — no CU arbitration needed.
 
 ## 6. Salience: the pragmatic pheromone
 
@@ -282,6 +312,6 @@ class Blackboard:
 > Keep the kernel free of LLM calls and Redis-version-specific surprises. It must be unit-testable with an in-memory fake: feed proposals, assert committed/rejected. This is what makes the "deterministic" claim real — and it is the test suite that lets you trust concurrent agents.
 
 > [!WARNING] Serialize the derived-field recompute
-> Individual entry commits use per-entry CAS (§5), but `_recompute_salience` **and** the pressure recompute ([§6.1](#61-salience-vs-pressure-the-v2-seam)) are **whole-board read-modify-write passes**. With the CU dispatching agents concurrently (the whole point of moving beyond the daemon's sequential per-task writer model), two `kernel.apply` calls finishing at once would race that global recompute. Make the recompute its own serialized critical section — a short per-task lock (`bmas:board:{task}:salience-lock`) or a single-consumer recompute queue keyed by `task_id` — or formulate salience/pressure as commutative per-entry deltas. This is the one place the "deterministic kernel" needs explicit concurrency control beyond CAS; call it out in the Phase-2 tests (property-test: N concurrent commits → deterministic final salience).
+> Individual entry commits use per-entry CAS (§5), but `_recompute_salience`, the pressure recompute ([§6.1](#61-salience-vs-pressure-the-v2-seam)), **and** the board-hash update ([§4](#the-board-state-hash-livelock-support)) are **whole-board read-modify-write passes**. With the CU dispatching agents concurrently (the whole point of moving beyond the daemon's sequential per-task writer model), two `kernel.apply` calls finishing at once would race that global recompute. Make the recompute its own serialized critical section — a short per-task lock (`bmas:board:{task}:salience-lock`) or a single-consumer recompute queue keyed by `task_id` — or formulate salience/pressure as commutative per-entry deltas. This is the one place the "deterministic kernel" needs explicit concurrency control beyond CAS; call it out in the Phase-2 tests (property-test: N concurrent commits → deterministic final salience).
 
 ➡️ Continue to [05 — Control Unit & Roles](05-control-unit.md).

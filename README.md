@@ -105,12 +105,16 @@ bmas/
 │   └── README.md      #   Deployment & config guide
 │
 ├── daemon/            # Python FastAPI orchestrator
-│   ├── main.py        #   API entry point (:9000)
-│   ├── config.py      #   Loads bmas.yaml at startup
-│   ├── orchestrator.py#   Task lifecycle & agent dispatch
-│   ├── blackboard.py  #   Redis state management
-│   ├── triage_router.py#  Complexity classification
-│   └── personas.py    #   Agent role definitions
+│   └── src/
+│       ├── app.py     #   API entry point (:9000)
+│       ├── config.py  #   Loads bmas.yaml at startup
+│       ├── database.py#   SQLite persistence (dual-write)
+│       ├── core/
+│       │   ├── orchestrator.py # Task lifecycle & agent dispatch
+│       │   ├── blackboard.py   # Redis state management
+│       │   └── triage.py       # Complexity classification
+│       └── models/
+│           └── personas.py     # Agent role definitions
 │
 ├── mission-control/   # Next.js dashboard (:9321)
 │   ├── src/lib/       #   Config loader & Redis client

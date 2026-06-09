@@ -91,7 +91,7 @@ The formula above references conceptual terms. This table maps each to concrete 
 > [!NOTE]
 > The weights for each term are configured in `pressure.weights` ([§7](#7-config-sketch-both-variants-visible)). The `confidence_floor` threshold is a separate config key under `pressure` to avoid baking a magic number into the kernel.
 
-- A **region** in V1 is simply an entry and its `refs` neighborhood (a sub-graph). The field is computed by the kernel after each commit (same hook that recomputes salience) and stored in `bmas:board:{task}:pressure` (ZSet: region → pressure).
+- A **region** in V1 is an entry and its `refs` neighborhood. Concretely: the ZSet `bmas:board:{task}:pressure` is **keyed by entry id**, and `pressure(e)` is computed over the sub-graph within `refs`-distance ≤ 1 of `e` — the entry itself, what it cites, and what cites it. Regions overlap by design (a hot critique raises both its own pressure and that of the finding it targets); "top-pressure regions" means the top-N ZSet members after skipping ids already inside a higher-scoring member's neighborhood. The field is computed by the kernel after each commit (same hook that recomputes salience).
 - In V1, `ControlUnitStrategy` reads the top-pressure regions to decide which role to activate ("highest pressure is an open conflict → Conflict-Resolver"). This *replaces hand-coded `if open_critiques` heuristics with a uniform signal* — and makes the V1→V2 transition continuous.
 - The UI renders pressure as a **heatmap overlay** on the blackboard graph ([doc 13](13-ui-showcase-density.md)) in both variants — high-pressure regions glow. This is the most visually compelling artifact of the whole system for a showcase.
 
@@ -161,11 +161,17 @@ Build these into V1 even though V1 doesn't need all of them, or V2 becomes a rew
 ```yaml
 coordination:
   strategy: control_unit          # control_unit | stigmergic | legacy_pipeline
+  view_budget_tokens: 4000        # bounded per-turn board view, both variants (doc 03 §4)
 
-  control_unit:                   # V1
+  control_unit:                   # V1 — this is the complete key set (kept in sync with doc 05 §3)
     consensus_threshold: 0.8
     max_rounds: 4
+    max_duration_s: 1800
     budget_ceiling_usd: 0.50
+    consensus_mode: ratio         # ratio | similarity (doc 05 §3)
+    max_concurrent_activations: 3 # burst-spend cap (doc 05 §5)
+    stall_rounds: 2               # livelock circuit-breaker (doc 05 §5)
+    coordinator_narration: false  # optional showcase flourish (doc 05 §1.1)
 
   stigmergic:                     # V2 (parsed but inert until strategy=stigmergic)
     activation_threshold: 0.15    # agents act on regions above this pressure

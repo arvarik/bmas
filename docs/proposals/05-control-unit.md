@@ -118,15 +118,21 @@ async def _decide(self, board, state, round_no) -> Decision:
 > [!NOTE] Why this matters
 > The paper's consensus is **answer convergence** (the decider's judgment, or a similarity vote), not "the board has no open critiques." A salience-weighted finding ratio is a good *progress signal* but a poor *termination signal* on its own. Keeping both gates makes the v1 metric a faithful (if cheaper) version of the paper's notion rather than a different one.
 
-Config in `bmas.yaml`:
+Config in `bmas.yaml` — nested under `coordination.*`, the **single** config shape shared with [doc 11 §7](11-extensibility-and-variants.md#7-config-sketch-both-variants-visible) and validated fail-fast in Phase 0 ([doc 10](10-migration-and-rollout.md#2-phases)). This is the complete V1 key set:
 
 ```yaml
-control_unit:
-  consensus_threshold: 0.8     # 0..1
-  max_rounds: 4                # paper's recommended default
-  max_duration_s: 1800         # long-horizon cap
-  budget_ceiling_usd: 0.50     # per-task hard cap (see §5)
-  consensus_mode: ratio        # ratio | similarity
+coordination:
+  strategy: control_unit            # control_unit | stigmergic | legacy_pipeline
+  view_budget_tokens: 4000          # per-turn bounded board view (doc 03 §4)
+  control_unit:
+    consensus_threshold: 0.8        # 0..1
+    max_rounds: 4                   # paper's recommended default
+    max_duration_s: 1800            # long-horizon cap
+    budget_ceiling_usd: 0.50        # per-task hard cap (§5 — sanity-check vs the per-turn context floor)
+    consensus_mode: ratio           # ratio | similarity
+    max_concurrent_activations: 3   # concurrency cap (§5); default = node count
+    stall_rounds: 2                 # livelock circuit-breaker (§5)
+    coordinator_narration: false    # §1.1 — optional showcase flourish
 ```
 
 ## 4. Private sub-boards (conflict resolution)
@@ -152,8 +158,10 @@ The CU is the cost governor. Without this, the inversion is a financial hazard. 
 
 - **Budget ceiling** (`budget_ceiling_usd`): the CU tracks `budget_spent` from the trace cost events ([06](06-agent-traces.md)) and terminates when exceeded. Surfaced live in the task header (the cost ticker already exists in `TopBar.tsx`).
 - **Round cap** (`max_rounds`) and **duration cap** (`max_duration_s`): hard stops independent of consensus.
-- **Decline is free**: an agent returning `{"action": "decline"}` costs ~one cheap call; the CU should prefer cheap models for "should I even act?" gating where possible (triage-style).
-- **Concurrency cap**: max KS activated per turn (default = node count) to bound burst spend.
+- **Livelock circuit-breaker** (`stall_rounds`): the caps above bound *spend*, not *progress* — without this rail, agents can commit valid patches that oscillate or no-op for the full `max_rounds`. Detect stalls deterministically from the kernel's rolling **board state hash** ([04 §4](04-blackboard-protocol.md#the-board-state-hash-livelock-support)): if the hash is unchanged for `stall_rounds` consecutive rounds, or a short hash cycle repeats (`A→B→A`), or the same actor's proposals are rejected `stall_rounds` consecutive times — halt with `terminated_by: stalled` (or force one Decider escalation first, then halt). Pure hash/log arithmetic, no LLM call. [PatchBoard (2026)](https://arxiv.org/abs/2605.29313) showed this class of deterministic circuit policy halts **96%** of injected no-op/oscillation cycles, vs 12% for a plain blackboard.
+- **Decline is *not* free on Hermes — gate in the daemon.** A live run measured a **~16k-token input floor per Hermes run** (system prompt + skills + memory are loaded on every run — [06 §3.1 note](06-agent-traces.md#31-updated-taskresponse-schema)). Dispatching an agent just so it can return `{"action": "decline"}` therefore costs real money regardless of model tier. "Should this role even act?" gating must happen **daemon-side**: first deterministically (the pressure-field rows in the DECIDE table), and only if still ambiguous via a cheap *bare LiteLLM* call — never by dispatching a Hermes run. `decline` remains a valid agent response (an activated agent may legitimately find nothing to add), but it is the fallback, not the gating mechanism.
+- **Do the budget arithmetic before trusting the defaults.** At the ~16k-token context floor, a cloud model at ~$1.25/M input tokens costs ≈$0.02 per activation *before any output tokens*; 4 rounds × 3 concurrent agents ≈ $0.24 of pure context. The default `budget_ceiling_usd: 0.50` is workable only if (a) agents receive the board **index**, not the full board ([03 §4](03-target-architecture.md#4-what-each-turns-agent-payload-looks-like-target)), and (b) repeat activations of the same agent use the Responses API (`previous_response_id`, [doc 12 §5.2](12-hermes-and-node-topology.md#52-stateful-turns-via-the-responses-api)) instead of re-stuffing context. Treat both as **cost rails**, not optimizations; revisit the ceiling per model mix.
+- **Concurrency cap** (`max_concurrent_activations`): max KS activated per turn (default = node count) to bound burst spend.
 - **Abort still works**: the existing `_check_abort` / `bmas:public:abort:{task}` HITL path is preserved and checked each loop iteration.
 
 > [!WARNING]
@@ -161,7 +169,7 @@ The CU is the cost governor. Without this, the inversion is a financial hazard. 
 
 ## 6. HITL during the loop
 
-Today HITL is pause + hints read on resume (`blackboard.py` `push_hint`/`pop_hints`). In the cyclic model, HITL becomes richer and more natural:
+Be precise about the baseline: today only **abort** is wired end-to-end (`_check_abort` polls `bmas:public:abort:{task}`). Pause and hints are **UI-side stubs** — the dashboard writes `bmas:public:state.pause` and `bmas:public:hints:{task}`, and `blackboard.py` ships `set_pause`/`is_paused`/`push_hint`/`pop_hints`, but the orchestrator never calls any of them; the flags are written and ignored. The cyclic model is where pause/hints become *real* for the first time, and richer:
 
 - **Hint = a `directive` entry.** Operator hints are written as `directive` board entries by the CU on the operator's behalf, so agents see them as first-class board state next turn.
 - **Pause** halts the loop between turns (clean boundary), not mid-dispatch.
@@ -183,7 +191,7 @@ This is genuinely closer to "pure stigmergy" but adds operational weight (persis
 |:--|:--|
 | `_standard_flow` (plan→exec→audit) | CU loop with deterministic role selection; SIMPLE/LIGHT tasks may converge in 1 round (cheap parity with today) |
 | `_complex_research_flow` (3 experts in parallel + synth) | CU loop seeded with Experts in Discovery, Critic in Debate, Decider in Convergence |
-| Triage routing | Unchanged. Triage still picks the model tier; it can also seed `max_rounds` (SIMPLE→1, COMPLEX→4). |
+| Triage routing | **Made real, not preserved.** Today triage's model choice is recorded as task metadata (`model_used` in SQLite) but **never reaches the agent** — each node runs its fixed `LITELLM_MODEL` env. The new dispatch path must actually pass the triage-selected model into the run request (the Runs API accepts `model`; [doc 06 §3](06-agent-traces.md#3-rearchitected-agent-server)), making triage routing effective for the first time. Triage can also seed `max_rounds` (SIMPLE→1, COMPLEX→4). |
 
 > [!NOTE]
 > Keep a `legacy_pipeline: true` escape hatch in config during migration so the old `_standard_flow` can run side-by-side for A/B comparison and rollback ([10](10-migration-and-rollout.md)).

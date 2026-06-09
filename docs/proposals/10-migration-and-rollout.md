@@ -32,7 +32,7 @@ The order is dictated by one hard dependency and one risk principle:
 ### Phase 0 — Foundations (no behavior change yet)
 - [ ] SQLite migration v2 ([07](07-data-model.md)) — additive tables/columns, `SCHEMA_VERSION=2`. This must land before Phase 1 persists traces into `agent_traces`.
 - [ ] Redis v2 keys + new SSE event names registered (no emitters yet) ([04 §7–8](04-blackboard-protocol.md#7-redis-schema-v2)).
-- [ ] `config.py`: add the `coordination.*` block (`strategy`, `control_unit.*`, `stigmergic.*`) and `pressure.weights` with fail-fast validation ([11 §7](11-extensibility-and-variants.md#7-config-sketch-both-variants-visible)); `strategy` default `legacy_pipeline`. Add a `blackboard_v2` build flag (gates the new substrate independently of which strategy runs).
+- [ ] `config.py`: add the `coordination.*` block (`strategy`, `view_budget_tokens`, `control_unit.*` — the complete key set in [05 §3](05-control-unit.md#3-consensus--termination) — and `stigmergic.*`) and `pressure.weights` with fail-fast validation ([11 §7](11-extensibility-and-variants.md#7-config-sketch-both-variants-visible)); `strategy` default `legacy_pipeline`. Add a `blackboard_v2` build flag (gates the new substrate independently of which strategy runs). Add the **`BMAS_NODE_KEY`** shared bearer secret for all node↔daemon surfaces ([03 §4](03-target-architecture.md#4-what-each-turns-agent-payload-looks-like-target)) — fail-fast if unset.
 - [ ] Add model pricing config (input/output token price per model alias, plus optional LiteLLM-cost source) so Phase 1 can compute `cost_usd` from Hermes token counts. The live Runs API returns no dollar cost.
 - [ ] Establish the `CoordinationStrategy` seam ([11 §2](11-extensibility-and-variants.md#2-the-seam-coordinationstrategy)) and the [seams checklist](11-extensibility-and-variants.md#6-the-seams-checklist-enforce-in-v1) — opaque `author` strings, capability-based kernel auth, pluggable decay — **before** writing strategy logic, or the stigmergic variant becomes a rewrite.
 
@@ -50,7 +50,8 @@ The order is dictated by one hard dependency and one risk principle:
 
 ### Phase 2 — The board substrate (behind `blackboard_v2`)
 - [ ] `daemon/src/models/schemas.py` — JSON Schemas per entry type ([04 §1](04-blackboard-protocol.md#entry-types)).
-- [ ] `daemon/src/core/kernel.py` — deterministic kernel + authorization matrix + CAS + salience. **Unit-test with an in-memory fake** (no LLM, no Redis): feed proposals, assert committed/rejected ([04 §4, §9](04-blackboard-protocol.md#4-the-deterministic-kernel)).
+- [ ] `daemon/src/core/kernel.py` — deterministic kernel + authorization matrix + CAS (with the lost-update-safe retry rule, [04 §5](04-blackboard-protocol.md#5-optimistic-concurrency)) + `test`-op preconditions ([04 §3.1](04-blackboard-protocol.md#31-test-ops-explicit-stale-view-preconditions)) + salience. **Unit-test with an in-memory fake** (no LLM, no Redis): feed proposals, assert committed/rejected ([04 §4, §9](04-blackboard-protocol.md#4-the-deterministic-kernel)).
+- [ ] Kernel computes + stores the rolling **board state hash** after each commit ([04 §4](04-blackboard-protocol.md#the-board-state-hash-livelock-support)) — the deterministic signal the livelock circuit-breaker ([05 §5](05-control-unit.md#5-cost-governance--safety-rails)) and the UI consume.
 - [ ] Rewrite `blackboard.py` to the v2 API ([04 §9](04-blackboard-protocol.md#9-blackboard-api-surface-replaces-ad-hoc-methods)); keep old methods until UI cutover.
 - [ ] Emit `board_patch` / `patch_rejected` events.
 - [ ] Define the event-log durability contract: task-local monotonic `seq`, write ordering between Redis Stream and SQLite, and explicit recovery behavior if one write succeeds and the other fails. `board_patches` is the durable source of truth, so these writes cannot be casual best-effort like legacy logs.
@@ -62,7 +63,7 @@ The order is dictated by one hard dependency and one risk principle:
 - [ ] **Author + deploy the role profiles** (planner/expert/critic/conflict_resolver/cleaner/decider, `SOUL.md` + toolset-scoped `config.yaml`) + a `universal` profile (+ optional `coordinator`); replicate to all 3 nodes; add the role→(preferred_host, profile, dispatch_endpoint) registry ([doc 12 §2.5–3](12-hermes-and-node-topology.md#25-the-agents-on-3-hosts-answer-yes-via-profiles)).
 - [ ] **Verify profile-aware dispatch before relying on profiles.** Live `/v1/runs` has no per-request `profile` field. Pick per-profile gateways/ports, a local `hermes --profile` bridge, or another verified mechanism and record the exact request/command shape in doc 12.
 - [ ] New role personas + authorization (capability) profiles in `personas.py` ([05 §2](05-control-unit.md#2-the-paper-role-group)).
-- [ ] **Cost rails in the same PR**: budget ceiling, round/duration caps, concurrency cap ([05 §5](05-control-unit.md#5-cost-governance--safety-rails)).
+- [ ] **Cost + progress rails in the same PR**: budget ceiling, round/duration caps, concurrency cap, **and the livelock circuit-breaker** (`stall_rounds` on board-hash/no-op/rejection streaks) ([05 §5](05-control-unit.md#5-cost-governance--safety-rails)). Daemon-side decline-gating (deterministic → cheap LiteLLM; never a Hermes run) ships here too.
 - [ ] Dual-write board→legacy `debate_entries` so the old Blackboard tab keeps rendering.
 - [ ] A/B: run `legacy_pipeline` vs `blackboard_v2` on identical tasks; compare quality, latency, cost.
 
@@ -113,13 +114,14 @@ The order is dictated by one hard dependency and one risk principle:
 | Q8 | Responses API `previous_response_id` for cross-turn agent memory? | ✅ **Confirmed** | Use `session_id={task}:{role}` for correlation ([doc 12 §5.2](12-hermes-and-node-topology.md#52-stateful-turns-via-the-responses-api)) |
 | Q9 | Manage Hermes **crons** over the API server (for V2 pull-mode)? | ❌/⚠️ **Do not assume HTTP writes** | `/v1/capabilities.features.jobs_admin=false`. `GET /api/jobs` lists jobs, but create/update/delete are not advertised as supported and must be live-tested before use. Conservative path: create crons via Hermes **CLI / `config.yaml`** on each node ([doc 12 §6](12-hermes-and-node-topology.md#6-pull-mode-crons-for-the-stigmergic-future)). Affects **V2 only** — no V1 impact. |
 | Q10 | Read/write agent **memory** over the API server (for the UI "minds")? | ❌ **Confirmed NO** | `/v1/capabilities.features.memory_write_api=false` (and `features.admin_config_rw=false`). Display memory via the `:9119` dashboard / CLI; do not plan an HTTP memory-write path from the daemon. |
-| Q11 | How do agents pull board entries by ID? | ⚠️ **Specify before Phase 3** | The target payload sends `board_index`, but the actual read affordance is not yet defined. Choose a daemon endpoint/tool, prehydrated selected entries, or a per-turn workspace file. This is the concrete contract that makes "agents read the blackboard" true. |
+| Q11 | How do agents pull board entries by ID? | ✅ **Decided** | Default: **`prehydrated` bounded views** under `coordination.view_budget_tokens` (daemon materializes index + selected full payloads; smallest-budget-wins evidence from [PatchBoard 2026](https://arxiv.org/abs/2605.29313)), with `daemon_api` pull-by-ID as the large-board escape hatch. All node↔daemon surfaces (board read, trace ingest) authenticated via the shared `BMAS_NODE_KEY` bearer secret. Full contract in [doc 03 §4](03-target-architecture.md#4-what-each-turns-agent-payload-looks-like-target). |
 
 ## 4. Risk register
 
 | Risk | Likelihood | Impact | Mitigation |
 |:--|:--|:--|:--|
-| Cyclic loop runs up cloud cost | Med | High | Budget ceiling + round/duration caps shipped *with* the loop; cheap-model gating for "should I act?" ([05 §5](05-control-unit.md#5-cost-governance--safety-rails)) |
+| Cyclic loop runs up cloud cost | Med | High | Budget ceiling + round/duration caps shipped *with* the loop; **daemon-side** decline gating (the ~16k-token Hermes context floor makes dispatched declines expensive); bounded board views ([05 §5](05-control-unit.md#5-cost-governance--safety-rails)) |
+| Accepted-but-no-progress livelock (rounds spin below the caps) | Med | Med | Deterministic circuit-breaker on board-hash repeats / hash cycles / rejection streaks (`stall_rounds`, [05 §5](05-control-unit.md#5-cost-governance--safety-rails)); kernel emits the hash ([04 §4](04-blackboard-protocol.md#the-board-state-hash-livelock-support)) |
 | Agents can't emit clean patches (Q3) | Med | High | Daemon-side patch extractor fallback; kernel rejects malformed → visible, recoverable |
 | Trace volume bloats SQLite | Med | Med | Cap/TTL Redis streams; sample/summarize `reasoning`/`token_delta`; retention job ([07 §5](07-data-model.md#5-retention--size-control)) |
 | `useTaskStream` re-render storm | Med | Med | Batch trace events (rAF/debounce) ([09 §8](09-ui-agent-trace-inspector.md#8-files)) |
