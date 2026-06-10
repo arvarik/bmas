@@ -288,7 +288,7 @@ class BoardGateway:
         next_seq = await self._store.get_next_seq(task_id)
         entry_id = f"e-{next_seq}"
 
-        return BoardEntry(
+        entry = BoardEntry(
             id=entry_id,
             task_id=task_id,
             type=entry_type,
@@ -305,6 +305,10 @@ class BoardGateway:
             created_at=now,
             updated_at=now,
         )
+        # Stash seq for _commit so it doesn't have to parse the id string.
+        # This decouples the event seq from the entry-id naming convention.
+        entry._gateway_seq = next_seq  # type: ignore[attr-defined]
+        return entry
 
     def _validate_envelope(self, entry: BoardEntry) -> None:
         """Validate the entry envelope (cheap checks, doc 04 §4).
@@ -341,7 +345,8 @@ class BoardGateway:
         """Validate refs: unknown ids are dropped with a warning, not rejected.
 
         Per doc 04 §1: agents misremembering an id should not lose their
-        contribution.
+        contribution.  Dropped refs are logged but do NOT emit
+        EVENT_ENTRY_REJECTED (that event is for actual rejections).
         """
         if not entry.refs:
             return
@@ -357,12 +362,6 @@ class BoardGateway:
                     entry.id,
                     ref_id,
                 )
-                # Emit a warning event (not a rejection)
-                await self._emit(task_id, EVENT_ENTRY_REJECTED, {
-                    "entry_id": entry.id,
-                    "warning": f"Unknown ref '{ref_id}' dropped",
-                    "actor": entry.author,
-                })
 
         entry.refs = valid_refs
 
@@ -391,10 +390,10 @@ class BoardGateway:
     ) -> None:
         """Commit an entry: append event to log + update snapshot.
 
-        The seq was already assigned in _normalize.  We use the entry's
-        id-derived seq for the event.
+        Uses the seq stashed by _normalize (entry._gateway_seq) so that
+        the event seq is decoupled from the entry-id naming convention.
         """
-        seq = int(entry.id.split("-")[1])  # e-14 → 14
+        seq: int = getattr(entry, "_gateway_seq", 0)
 
         event = make_event(
             task_id=task_id,
