@@ -4,4 +4,4 @@ Tracking table for the true-blackboard migration. Each phase appends a row after
 
 | Phase | Branch | PR | Status | Merged |
 |-------|--------|----|--------|--------|
-| 0 — Foundations | `feat/bb-phase-0` | [#1](https://github.com/arvarik/bmas/pull/1) | Open | ⬜ |
+| 0 — Foundations | `feat/bb-phase-0` | [#1](https://github.com/arvarik/bmas/pull/1) | Merged | ✅ |
