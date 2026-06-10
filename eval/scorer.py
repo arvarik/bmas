@@ -188,6 +188,11 @@ def _normalize_number(s: str) -> str:
     """Normalize a numeric string for comparison.
 
     Strips commas, leading/trailing whitespace, and trailing .0 for integers.
+
+    NOTE: The float() round-trip loses precision for integers > 2^53
+    (e.g. 9007199254740993 becomes 9007199254740992).  GSM8K answers are
+    small enough that this is safe, but if this scorer is extended to
+    datasets with very large numeric answers, switch to decimal.Decimal.
     """
     s = s.strip().replace(",", "")
     # Try to normalize as float then back

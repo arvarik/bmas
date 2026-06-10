@@ -105,6 +105,8 @@ class TestGSM8KScorer:
         expected, response = gsm8k_no_answer_responses[1]
         extracted, correct, method = score_gsm8k(expected, response)
         assert correct is False
+        assert extracted is None
+        assert method == "no_answer"
 
     def test_empty_response(self, gsm8k_no_answer_responses):
         expected, response = gsm8k_no_answer_responses[2]

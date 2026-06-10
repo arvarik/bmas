@@ -1,10 +1,11 @@
 """Benchmark dataset loaders — GSM8K + MMLU subset.
 
-Two modes:
-  1. Fixture mode (default): loads small bundled fixtures from eval/fixtures/
-     for deterministic CI and offline testing.
-  2. Download mode (--download): fetches full datasets from HuggingFace via
-     plain HTTP for real evaluation runs.
+Currently supports fixture mode only:
+  - Fixture mode (default): loads small bundled fixtures from eval/fixtures/
+    for deterministic CI and offline testing.
+
+Download mode (full datasets from HuggingFace via plain HTTP) is planned
+but not yet implemented — see download_dataset() stub below.
 
 See docs/proposals/10-migration-and-rollout.md Phase E bullet 1
 and docs/proposals/15-novelty-and-research-directions.md §3.4.
@@ -159,3 +160,22 @@ def _extract_gsm8k_ground_truth(answer_text: str) -> str:
     if numbers:
         return numbers[-1].replace(",", "")
     return answer_text.strip()
+
+
+def download_dataset(name: str, cache_dir: str | None = None) -> Path:
+    """Download a full dataset from HuggingFace for real evaluation runs.
+
+    NOT YET IMPLEMENTED. Currently only bundled fixtures are supported.
+    When implemented, this will:
+      - Fetch the full GSM8K test split (1,319 items) or MMLU (285 items
+        across the 5 target subjects) via plain HTTP from HuggingFace
+      - Cache to cache_dir (default: eval/fixtures/.cache/)
+      - Return the path to the cached JSONL file
+
+    Raises:
+        NotImplementedError: Always, until download support is added.
+    """
+    raise NotImplementedError(
+        f"Dataset download for '{name}' is not yet implemented. "
+        "Use the bundled fixtures in eval/fixtures/ for now."
+    )
