@@ -755,3 +755,169 @@ async def count_task_logs(task_id: str) -> int:
         )
         row = await cursor.fetchone()
         return row["cnt"] if row else 0
+
+
+# ── Agent Traces CRUD (Phase 1, doc 07 §3) ───────────────────────────
+
+async def insert_agent_traces(rows: list[dict]) -> None:
+    """Batch-insert agent trace events into agent_traces table.
+
+    Each row must contain: task_id, turn_id, seq, role, type, data.
+    Optional: node, model, tokens_in, tokens_out, cost_usd.
+    """
+    if not rows:
+        return
+    async with _connect() as db:
+        for row in rows:
+            data_json = row.get("data")
+            if isinstance(data_json, dict):
+                data_json = json.dumps(data_json)
+            await db.execute(
+                "INSERT INTO agent_traces "
+                "(task_id, turn_id, seq, role, node, type, data, model, "
+                "tokens_in, tokens_out, cost_usd) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row["task_id"],
+                    row["turn_id"],
+                    row["seq"],
+                    row["role"],
+                    row.get("node"),
+                    row["type"],
+                    data_json,
+                    row.get("model"),
+                    row.get("tokens_in", 0),
+                    row.get("tokens_out", 0),
+                    row.get("cost_usd", 0.0),
+                ),
+            )
+        await db.commit()
+
+
+async def get_turn_traces(task_id: str, turn_id: str) -> list[dict]:
+    """Fetch all trace events for a specific turn, ordered by seq."""
+    async with _connect() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM agent_traces WHERE task_id = ? AND turn_id = ? "
+            "ORDER BY seq",
+            (task_id, turn_id),
+        )
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("data"):
+                try:
+                    d["data"] = json.loads(d["data"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            result.append(d)
+        return result
+
+
+async def get_task_traces(
+    task_id: str, limit: int = 200, offset: int = 0
+) -> list[dict]:
+    """Fetch trace events for a task (paginated), ordered by turn_id + seq."""
+    async with _connect() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM agent_traces WHERE task_id = ? "
+            "ORDER BY turn_id, seq LIMIT ? OFFSET ?",
+            (task_id, limit, offset),
+        )
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("data"):
+                try:
+                    d["data"] = json.loads(d["data"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            result.append(d)
+        return result
+
+
+# ── Turns CRUD (Phase 1, doc 07 §3) ──────────────────────────────────
+
+async def create_turn(turn: dict) -> None:
+    """Create a new turn record (one row per KS activation)."""
+    async with _connect() as db:
+        await db.execute(
+            "INSERT INTO turns "
+            "(id, task_id, round_no, role, node, model, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                turn["id"],
+                turn["task_id"],
+                turn.get("round_no", 1),
+                turn["role"],
+                turn.get("node"),
+                turn.get("model"),
+                turn.get("status", "running"),
+            ),
+        )
+        await db.commit()
+
+
+async def complete_turn(
+    turn_id: str,
+    status: str,
+    entries_added: int,
+    cost_usd: float,
+    joules_estimate: float = 0.0,
+) -> None:
+    """Mark a turn as completed/failed/declined with cost info."""
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE turns SET "
+            "status = ?, entries_added = ?, cost_usd = ?, "
+            "joules_estimate = ?, "
+            "completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+            "WHERE id = ?",
+            (status, entries_added, cost_usd, joules_estimate, turn_id),
+        )
+        await db.commit()
+
+
+async def get_turns(task_id: str) -> list[dict]:
+    """Fetch all turns for a task, ordered by round_no."""
+    async with _connect() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM turns WHERE task_id = ? ORDER BY round_no, started_at",
+            (task_id,),
+        )
+        return [dict(r) for r in rows]
+
+
+# ── Extended Cost Entry (Phase 1, doc 07 §1.8) ───────────────────────
+
+async def insert_cost_entry_v2(
+    task_id: str,
+    model: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cost_usd: float = 0.0,
+    phase: str | None = None,
+    node_id: str | None = None,
+    turn_id: str | None = None,
+    provider: str | None = None,
+    price_source: str | None = None,
+    joules_estimate: float = 0.0,
+) -> None:
+    """Insert a per-call cost entry with Phase 1 extended columns.
+
+    Uses the v2 columns added by Phase 0 migration (node_id, turn_id,
+    provider, price_source, joules_estimate).
+    """
+    async with _connect() as db:
+        await db.execute(
+            "INSERT INTO cost_entries "
+            "(task_id, model, input_tokens, output_tokens, cost_usd, phase, "
+            "node_id, turn_id, provider, price_source, joules_estimate) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_id, model, input_tokens, output_tokens, cost_usd, phase,
+                node_id, turn_id, provider, price_source, joules_estimate,
+            ),
+        )
+        await db.commit()
+
