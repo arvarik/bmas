@@ -479,20 +479,47 @@ Task: {user_task}"""
     ) -> dict:
         """Send a task to a Hermes Agent node via its REST API.
 
-        Payload matches the TaskRequest schema from Phase 2 §2.2 Step 5
-        (api_server.py): task_id, description, role_prompt, context, timeout.
+        Payload matches the TaskRequest schema from Phase 1: task_id,
+        description, role_prompt, context, timeout, turn_id, model, role.
+
+        Phase 1 additions:
+        - Sends turn_id, model, and role for trace correlation
+        - Reads v2 response fields: usage, trace_count, entries, artifacts
+        - Computes cost_usd DAEMON-SIDE from MODEL_PRICING (doc 06 §3.1)
+        - Creates turn records for trace tracking
 
         Retries up to 3 times with exponential backoff to handle Hermes
         cold-start delays (Gotcha #2 — first call after restart takes 5-15s).
         """
+        from config import MODEL_PRICING
+
         url = AGENT_ENDPOINTS[role]
+        turn_id = f"turn-{str(uuid.uuid4())[:8]}"
+
         payload = {
             "task_id": task_id,
             "description": description,
             "role_prompt": persona,
+            # Phase 1 additions
+            "turn_id": turn_id,
+            "role": role,
         }
         if context:
             payload["context"] = context
+
+        # Create turn record (best-effort)
+        try:
+            await db.create_turn({
+                "id": turn_id,
+                "task_id": task_id,
+                "round_no": 1,
+                "role": role,
+                "node": url,
+                "model": None,  # Set from response
+                "status": "running",
+            })
+        except Exception as e:
+            logger.warning(f"Turn create failed for {task_id}/{turn_id}: {e}")
 
         for attempt in range(3):
             try:
@@ -502,31 +529,86 @@ Task: {user_task}"""
                 response.raise_for_status()
                 response_data = response.json()
 
-                # Opportunistic cost capture — Hermes agents may include usage metadata
+                # ── Phase 1: v2 cost computation (daemon-side) ──────────
                 usage = response_data.get("usage")
-                if usage:
+                model_used = "unknown"
+                cost_usd = 0.0
+
+                if usage and isinstance(usage, dict):
+                    model_used = usage.get("model", response_data.get("model", "unknown"))
+                    prompt_tokens = usage.get("prompt_tokens", 0)
+                    completion_tokens = usage.get("completion_tokens", 0)
+
+                    # Compute cost from MODEL_PRICING (daemon-side)
+                    pricing = MODEL_PRICING.get(model_used, {})
+                    if pricing:
+                        cost_usd = (
+                            prompt_tokens * float(pricing.get("input_cost_per_token", 0))
+                            + completion_tokens * float(pricing.get("output_cost_per_token", 0))
+                        )
+                        cost_usd = round(cost_usd, 8)
+                        price_source = str(pricing.get("source", "bmas.yaml"))
+                    else:
+                        price_source = "missing"
+                        if model_used != "unknown":
+                            logger.warning(
+                                f"No pricing for model '{model_used}' — cost_usd=0.0"
+                            )
+
+                    # Insert v2 cost entry with extended columns
                     try:
-                        await db.insert_cost_entry(
+                        await db.insert_cost_entry_v2(
                             task_id=task_id,
-                            model=response_data.get("model", "unknown"),
-                            input_tokens=usage.get("prompt_tokens", 0),
-                            output_tokens=usage.get("completion_tokens", 0),
-                            cost_usd=usage.get("cost", 0.0),
+                            model=model_used,
+                            input_tokens=prompt_tokens,
+                            output_tokens=completion_tokens,
+                            cost_usd=cost_usd,
                             phase=None,
+                            node_id=response_data.get("node_id"),
+                            turn_id=response_data.get("turn_id", turn_id),
+                            provider=None,
+                            price_source=price_source,
+                            joules_estimate=0.0,  # Beszel stub
                         )
                     except Exception:
                         pass  # Cost tracking is best-effort
 
                     try:
                         await self.bb.publish_event(task_id, "cost", {
-                            "model": response_data.get("model", "unknown"),
-                            "input_tokens": usage.get("prompt_tokens", 0),
-                            "output_tokens": usage.get("completion_tokens", 0),
-                            "cost_usd": usage.get("cost", 0.0),
-                            "phase": None,
+                            "model": model_used,
+                            "input_tokens": prompt_tokens,
+                            "output_tokens": completion_tokens,
+                            "cost_usd": cost_usd,
+                            "node_id": response_data.get("node_id"),
+                            "turn_id": response_data.get("turn_id", turn_id),
+                            "price_source": price_source,
                         })
                     except Exception:
                         pass
+
+                elif usage is None:
+                    # Legacy hermes -z fallback — usage unknown
+                    logger.debug(
+                        f"No usage in response for {task_id}/{role} "
+                        f"(likely hermes -z fallback)"
+                    )
+
+                # Complete the turn record
+                trace_count = response_data.get("trace_count", 0)
+                try:
+                    turn_status = (
+                        "completed" if response_data.get("status") == "completed"
+                        else "failed"
+                    )
+                    await db.complete_turn(
+                        turn_id=turn_id,
+                        status=turn_status,
+                        entries_added=len(response_data.get("entries") or []),
+                        cost_usd=cost_usd,
+                        joules_estimate=0.0,
+                    )
+                except Exception as e:
+                    logger.warning(f"Turn complete failed for {turn_id}: {e}")
 
                 return response_data
             except Exception as e:
@@ -537,6 +619,13 @@ Task: {user_task}"""
                     await asyncio.sleep(delay)
                     continue
                 await self._safe_log(role, f"ERROR after 3 attempts: {e}", task_id=task_id)
+
+                # Complete turn as failed
+                try:
+                    await db.complete_turn(turn_id, "failed", 0, 0.0)
+                except Exception:
+                    pass
+
                 return {"task_id": task_id, "status": "failed", "result": str(e)}
 
     async def close(self):
