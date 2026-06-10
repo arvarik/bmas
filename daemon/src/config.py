@@ -136,6 +136,12 @@ _ok("REDIS_PASSWORD is set")
 LITELLM_KEY = _require_env("LITELLM_MASTER_KEY", "Master key for LiteLLM proxy authentication")
 _ok("LITELLM_MASTER_KEY is set")
 
+BMAS_NODE_KEY = _require_env(
+    "BMAS_NODE_KEY",
+    "Shared bearer secret for node↔daemon auth (doc 03 §4). Generate with: openssl rand -hex 32",
+)
+_ok("BMAS_NODE_KEY is set")
+
 # ── Derived URLs ─────────────────────────────────────────────────────
 
 REDIS_URL = f"redis://:{REDIS_PASSWORD}@{CP_HOST}:{CP_PORTS['redis']}/0"
@@ -246,6 +252,188 @@ for tier in ["simple", "light", "medium", "complex"]:
         MODEL_ROUTING[tier] = target
         _ok(f"  {tier:>8} → {target}")
 
+# ── Model Pricing (Phase 0 — daemon-side cost_usd, doc 06 §3.1) ─────
+
+print("", file=sys.stderr)
+print("  Checking model pricing...", file=sys.stderr)
+
+MODEL_PRICING: dict[str, dict[str, float | str]] = {}
+for _model_alias, _model_cfg in _models.items():
+    _pricing = _model_cfg.get("pricing", {})
+    if _pricing:
+        try:
+            _in_cost = float(_pricing.get("input_cost_per_token", 0.0))
+            _out_cost = float(_pricing.get("output_cost_per_token", 0.0))
+        except (ValueError, TypeError):
+            _fatal(
+                f"Invalid pricing for model '{_model_alias}'",
+                "pricing.input_cost_per_token and pricing.output_cost_per_token must be numbers.",
+            )
+        MODEL_PRICING[_model_alias] = {
+            "input_cost_per_token": _in_cost,
+            "output_cost_per_token": _out_cost,
+            "source": str(_pricing.get("source", "bmas.yaml")),
+        }
+        _ok(f"  {_model_alias}: in=${_in_cost:.2e}/tok, out=${_out_cost:.2e}/tok")
+    else:
+        _warn(f"  {_model_alias}: no pricing — cost_usd will be 0.0 until pricing is set")
+
+# ── Coordination (Blackboard Migration, doc 05 §3, doc 10 Phase 0) ───
+
+print("", file=sys.stderr)
+print("  Validating coordination config...", file=sys.stderr)
+
+_coordination = _cfg.get("coordination", {})
+
+_VALID_VARIANTS = {"traditional", "patchboard", "stigmergic", "legacy_pipeline"}
+COORDINATION_VARIANT: str = _coordination.get("variant", "legacy_pipeline")
+if COORDINATION_VARIANT not in _VALID_VARIANTS:
+    _fatal(
+        f"Invalid coordination.variant: '{COORDINATION_VARIANT}'",
+        f"Must be one of: {', '.join(sorted(_VALID_VARIANTS))}.",
+    )
+
+BLACKBOARD_V2: bool = bool(_coordination.get("blackboard_v2", False))
+
+VIEW_BUDGET_TOKENS: int = int(_coordination.get("view_budget_tokens", 12000))
+if VIEW_BUDGET_TOKENS <= 0:
+    _fatal(
+        f"coordination.view_budget_tokens must be > 0, got {VIEW_BUDGET_TOKENS}",
+    )
+
+_VALID_ROUND_EXECUTION = {"concurrent", "sequential"}
+ROUND_EXECUTION: str = _coordination.get("round_execution", "concurrent")
+if ROUND_EXECUTION not in _VALID_ROUND_EXECUTION:
+    _fatal(
+        f"Invalid coordination.round_execution: '{ROUND_EXECUTION}'",
+        f"Must be one of: {', '.join(sorted(_VALID_ROUND_EXECUTION))}.",
+    )
+
+# Traditional variant sub-config (doc 05 §3)
+_trad = _coordination.get("traditional", {})
+
+
+def _trad_int(key: str, default: int, min_val: int = 1) -> int:
+    val = int(_trad.get(key, default))
+    if val < min_val:
+        _fatal(
+            f"coordination.traditional.{key} must be >= {min_val}, got {val}",
+        )
+    return val
+
+
+def _trad_float(key: str, default: float, min_val: float = 0.0) -> float:
+    val = float(_trad.get(key, default))
+    if val <= min_val:
+        _fatal(
+            f"coordination.traditional.{key} must be > {min_val}, got {val}",
+        )
+    return val
+
+
+_VALID_CU_MODES = {"llm", "heuristic_first"}
+_VALID_SOLE_SIMILARITY = {"auto", "exact", "embedding", "judge"}
+
+_trad_cu_mode = str(_trad.get("cu_mode", "llm"))
+if _trad_cu_mode not in _VALID_CU_MODES:
+    _fatal(
+        f"Invalid coordination.traditional.cu_mode: '{_trad_cu_mode}'",
+        f"Must be one of: {', '.join(sorted(_VALID_CU_MODES))}.",
+    )
+
+_trad_sole_sim = str(_trad.get("sole_similarity", "auto"))
+if _trad_sole_sim not in _VALID_SOLE_SIMILARITY:
+    _fatal(
+        f"Invalid coordination.traditional.sole_similarity: '{_trad_sole_sim}'",
+        f"Must be one of: {', '.join(sorted(_VALID_SOLE_SIMILARITY))}.",
+    )
+
+# Validate experts_per_tier shape
+_experts_raw = _trad.get("experts_per_tier", {"simple": 0, "light": 1, "medium": 2, "complex": 3})
+if not isinstance(_experts_raw, dict):
+    _fatal(
+        "coordination.traditional.experts_per_tier must be a mapping",
+        'Expected: { simple: 0, light: 1, medium: 2, complex: 3 }',
+    )
+for _tier_key in ("simple", "light", "medium", "complex"):
+    if _tier_key not in _experts_raw:
+        _fatal(
+            f"coordination.traditional.experts_per_tier missing key: '{_tier_key}'",
+            'Required keys: simple, light, medium, complex',
+        )
+    try:
+        int(_experts_raw[_tier_key])
+    except (ValueError, TypeError):
+        _fatal(
+            f"coordination.traditional.experts_per_tier.{_tier_key} must be an integer",
+        )
+
+TRADITIONAL_CONFIG: dict[str, object] = {
+    "max_rounds": _trad_int("max_rounds", 4),
+    "max_duration_s": _trad_int("max_duration_s", 1800),
+    "budget_ceiling_usd": _trad_float("budget_ceiling_usd", 0.50),
+    "max_concurrent_activations": _trad_int("max_concurrent_activations", 3),
+    "experts_per_tier": {k: int(v) for k, v in _experts_raw.items()},
+    "cleaner_entry_threshold": _trad_int("cleaner_entry_threshold", 12),
+    "stall_rounds": _trad_int("stall_rounds", 2),
+    "cu_mode": _trad_cu_mode,
+    "coordinator_narration": bool(_trad.get("coordinator_narration", False)),
+    "sole_similarity": _trad_sole_sim,
+}
+
+_ok(f"Coordination: variant={COORDINATION_VARIANT}, bb_v2={BLACKBOARD_V2}, round_exec={ROUND_EXECUTION}")
+
+# ── Storage (Files & Artifacts, doc 17 §2) ───────────────────────────
+
+print("", file=sys.stderr)
+print("  Validating storage config...", file=sys.stderr)
+
+_storage = _cfg.get("storage", {})
+STORAGE_ENABLED: bool = bool(_storage.get("enabled", False))
+
+_VALID_PDF_EXTRACTION = {"pymupdf", "pypdf", "off"}
+
+STORAGE_CONFIG: dict[str, object] = {
+    "enabled": STORAGE_ENABLED,
+    "user_media_dir": str(_storage.get("user_media_dir", "/opt/bmas-data/uploads")),
+    "artifacts_dir": str(_storage.get("artifacts_dir", "/opt/output")),
+    "max_upload_mb": int(_storage.get("max_upload_mb", 50)),
+    "max_task_output_mb": int(_storage.get("max_task_output_mb", 500)),
+    "allowed_upload_types": list(_storage.get("allowed_upload_types",
+                                              ["pdf", "txt", "md", "csv", "json", "png", "jpg", "docx"])),
+    "pdf_extraction": str(_storage.get("pdf_extraction", "pymupdf")),
+    "extraction_max_chars": int(_storage.get("extraction_max_chars", 60000)),
+}
+
+if str(STORAGE_CONFIG["pdf_extraction"]) not in _VALID_PDF_EXTRACTION:
+    _fatal(
+        f"Invalid storage.pdf_extraction: '{STORAGE_CONFIG['pdf_extraction']}'",
+        f"Must be one of: {', '.join(sorted(_VALID_PDF_EXTRACTION))}.",
+    )
+
+if STORAGE_ENABLED:
+    # Startup directory-writability checks (doc 17 §2)
+    for _dir_key in ("user_media_dir", "artifacts_dir"):
+        _dir_path = str(STORAGE_CONFIG[_dir_key])
+        if not os.path.isdir(_dir_path):
+            try:
+                os.makedirs(_dir_path, exist_ok=True)
+                _ok(f"Created storage directory: {_dir_path}")
+            except OSError as e:
+                _fatal(
+                    f"Cannot create storage.{_dir_key} directory: {_dir_path}",
+                    f"Error: {e}. Create the directory manually or check permissions.",
+                )
+        if not os.access(_dir_path, os.W_OK):
+            _fatal(
+                f"storage.{_dir_key} is not writable: {_dir_path}",
+                "Check permissions or reconfigure the path.",
+            )
+        _ok(f"storage.{_dir_key}: {_dir_path} (writable)")
+    _ok(f"Storage: enabled (upload_cap={STORAGE_CONFIG['max_upload_mb']}MB, output_cap={STORAGE_CONFIG['max_task_output_mb']}MB)")
+else:
+    _ok("Storage: disabled (no file/artifact support until enabled)")
+
 # ── Monitoring ───────────────────────────────────────────────────────
 
 _monitoring = _cfg.get("monitoring", {})
@@ -277,6 +465,9 @@ print(f"  LiteLLM:  {CP_HOST}:{CP_PORTS['litellm']}", file=sys.stderr)
 print(f"  Triage:   {'enabled' if TRIAGE_ENABLED else 'disabled'} ({TRIAGE_MODEL})", file=sys.stderr)
 print(f"  Agents:   {', '.join(AGENT_ENDPOINTS.keys()) or 'none'}", file=sys.stderr)
 print(f"  Routing:  {' | '.join(f'{k}→{v}' for k, v in MODEL_ROUTING.items())}", file=sys.stderr)
+print(f"  Variant:  {COORDINATION_VARIANT} (bb_v2={'on' if BLACKBOARD_V2 else 'off'})", file=sys.stderr)
+print(f"  Storage:  {'enabled' if STORAGE_ENABLED else 'disabled'}", file=sys.stderr)
+print(f"  Pricing:  {len(MODEL_PRICING)}/{len(_models)} models configured", file=sys.stderr)
 if _optional_features:
     print(f"  Optional: {', '.join(_optional_features)}", file=sys.stderr)
 print("", file=sys.stderr)

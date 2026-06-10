@@ -23,7 +23,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 # ── Schema DDL ───────────────────────────────────────────────────────
@@ -118,6 +118,136 @@ CREATE TABLE IF NOT EXISTS schema_version (
 """
 
 
+# ── Migration v2 DDL (doc 07 — additive tables/columns) ─────────────
+
+MIGRATION_V2_DDL = """
+-- ── board_entries — durable board snapshot (doc 07 §1.1) ─────────
+CREATE TABLE IF NOT EXISTS board_entries (
+    id            TEXT PRIMARY KEY,
+    task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    type          TEXT NOT NULL,
+    author        TEXT NOT NULL,
+    author_node   TEXT,
+    title         TEXT,
+    body          TEXT,
+    refs          TEXT,
+    confidence    REAL,
+    status        TEXT NOT NULL DEFAULT 'open',
+    salience      REAL DEFAULT 0.0,
+    round         INTEGER,
+    space         TEXT NOT NULL DEFAULT 'public',
+    created_by_turn TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_board_entries_task ON board_entries(task_id);
+CREATE INDEX IF NOT EXISTS idx_board_entries_salience ON board_entries(task_id, salience DESC);
+
+-- ── board_events — append-only event log (doc 07 §1.2) ──────────
+CREATE TABLE IF NOT EXISTS board_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    seq           INTEGER NOT NULL,
+    round         INTEGER,
+    turn_id       TEXT,
+    actor         TEXT NOT NULL,
+    event_type    TEXT NOT NULL,
+    entry_id      TEXT,
+    payload       TEXT NOT NULL,
+    redis_stream_id TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_board_events_task ON board_events(task_id, seq);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_board_events_task_seq ON board_events(task_id, seq);
+
+-- ── agent_traces — durable agent activity (doc 07 §1.3) ─────────
+CREATE TABLE IF NOT EXISTS agent_traces (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    turn_id       TEXT NOT NULL,
+    seq           INTEGER NOT NULL,
+    role          TEXT NOT NULL,
+    node          TEXT,
+    type          TEXT NOT NULL,
+    data          TEXT,
+    model         TEXT,
+    tokens_in     INTEGER DEFAULT 0,
+    tokens_out    INTEGER DEFAULT 0,
+    cost_usd      REAL DEFAULT 0.0,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_agent_traces_task ON agent_traces(task_id, turn_id, seq);
+
+-- ── turns — one row per KS activation (doc 07 §1.4) ─────────────
+CREATE TABLE IF NOT EXISTS turns (
+    id            TEXT PRIMARY KEY,
+    task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    round_no      INTEGER NOT NULL,
+    role          TEXT NOT NULL,
+    node          TEXT,
+    model         TEXT,
+    status        TEXT NOT NULL DEFAULT 'running',
+    entries_added INTEGER DEFAULT 0,
+    started_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    completed_at  TEXT,
+    cost_usd      REAL DEFAULT 0.0,
+    joules_estimate REAL DEFAULT 0.0
+);
+CREATE INDEX IF NOT EXISTS idx_turns_task ON turns(task_id, round_no);
+
+-- ── task_files — uploaded inputs (doc 07 §1.5, doc 17 §3) ───────
+CREATE TABLE IF NOT EXISTS task_files (
+    id            TEXT PRIMARY KEY,
+    task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    name          TEXT NOT NULL,
+    mime          TEXT NOT NULL,
+    bytes         INTEGER NOT NULL,
+    sha256        TEXT NOT NULL,
+    stored_path   TEXT NOT NULL,
+    extracted_chars INTEGER DEFAULT 0,
+    summary_entry TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_task_files_task ON task_files(task_id);
+
+-- ── artifacts — agent-created outputs (doc 07 §1.6, doc 17 §6) ──
+CREATE TABLE IF NOT EXISTS artifacts (
+    id            TEXT PRIMARY KEY,
+    task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    turn_id       TEXT,
+    author        TEXT,
+    rel_path      TEXT NOT NULL,
+    stored_path   TEXT NOT NULL,
+    mime          TEXT,
+    bytes         INTEGER NOT NULL,
+    sha256        TEXT NOT NULL,
+    version       INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts(task_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_artifacts_task_path_v ON artifacts(task_id, rel_path, version);
+"""
+
+# Column additions are ALTER TABLE statements that must run one at a time
+MIGRATION_V2_ALTER_TASKS = [
+    "ALTER TABLE tasks ADD COLUMN variant          TEXT DEFAULT 'legacy_pipeline'",
+    "ALTER TABLE tasks ADD COLUMN rounds_used      INTEGER DEFAULT 0",
+    "ALTER TABLE tasks ADD COLUMN terminated_by    TEXT",
+    "ALTER TABLE tasks ADD COLUMN answer_source    TEXT",
+    "ALTER TABLE tasks ADD COLUMN phase            TEXT",
+    "ALTER TABLE tasks ADD COLUMN output_dir       TEXT",
+    "ALTER TABLE tasks ADD COLUMN joules_estimate  REAL DEFAULT 0.0",
+]
+
+MIGRATION_V2_ALTER_COST_ENTRIES = [
+    "ALTER TABLE cost_entries ADD COLUMN node_id        TEXT",
+    "ALTER TABLE cost_entries ADD COLUMN turn_id        TEXT",
+    "ALTER TABLE cost_entries ADD COLUMN provider       TEXT",
+    "ALTER TABLE cost_entries ADD COLUMN price_source   TEXT",
+    "ALTER TABLE cost_entries ADD COLUMN joules_estimate REAL DEFAULT 0.0",
+]
+
+
 # ── Connection Infrastructure ────────────────────────────────────────
 
 @asynccontextmanager
@@ -153,6 +283,54 @@ async def check_sqlite_health() -> bool:
 
 
 # ── Schema Management ────────────────────────────────────────────────
+
+async def _migrate_to_v2(db: aiosqlite.Connection) -> None:
+    """Migration v1 → v2: additive tables/columns (doc 07).
+
+    Creates 6 new tables (board_entries, board_events, agent_traces,
+    turns, task_files, artifacts) and adds columns to tasks and
+    cost_entries. All additive — no destructive changes.
+    """
+    # New tables + indexes
+    await db.executescript(MIGRATION_V2_DDL)
+    # executescript commits; restore row_factory
+    db.row_factory = aiosqlite.Row
+
+    # ALTER TABLE statements — one at a time, each idempotent via
+    # column-existence check (SQLite has no IF NOT EXISTS for ADD COLUMN)
+    for stmt in MIGRATION_V2_ALTER_TASKS:
+        col_name = stmt.split("ADD COLUMN")[1].strip().split()[0]
+        cursor = await db.execute("PRAGMA table_info(tasks)")
+        existing = [row[1] for row in await cursor.fetchall()]
+        if col_name not in existing:
+            await db.execute(stmt)
+
+    for stmt in MIGRATION_V2_ALTER_COST_ENTRIES:
+        col_name = stmt.split("ADD COLUMN")[1].strip().split()[0]
+        cursor = await db.execute("PRAGMA table_info(cost_entries)")
+        existing = [row[1] for row in await cursor.fetchall()]
+        if col_name not in existing:
+            await db.execute(stmt)
+
+    await db.commit()
+    logger.info("Migration v2 applied: 6 new tables, 12 new columns")
+
+
+async def _migrate(db: aiosqlite.Connection, version: int) -> None:
+    """Dispatch to the migration function for the given version."""
+    migrations = {
+        2: _migrate_to_v2,
+    }
+    fn = migrations.get(version)
+    if fn is None:
+        raise RuntimeError(f"No migration defined for version {version}")
+    await fn(db)
+    await db.execute(
+        "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
+        (version,),
+    )
+    await db.commit()
+
 
 async def init_db() -> None:
     """Initialize SQLite database: validate infrastructure, create schema,
@@ -192,15 +370,22 @@ async def init_db() -> None:
             current_version = row["v"] if row and row["v"] is not None else 0
 
             if current_version < SCHEMA_VERSION:
-                # Run migrations sequentially (currently none — v1 is the first)
-                # Future: for v in range(current_version + 1, SCHEMA_VERSION + 1):
-                #             await _migrate(db, v)
+                # Fresh installs: SCHEMA_DDL already establishes v1.
+                # Record that, then run only the v2+ migrations.
                 if current_version == 0:
                     await db.execute(
                         "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
-                        (SCHEMA_VERSION,)
+                        (1,),
                     )
-                await db.commit()
+                    await db.commit()
+                    current_version = 1
+                    logger.info("Schema v1 initialized from DDL")
+
+                # Run migrations sequentially from current to target
+                for v in range(current_version + 1, SCHEMA_VERSION + 1):
+                    await _migrate(db, v)
+                    logger.info(f"Applied migration to version {v}")
+
                 logger.info(f"Schema initialized at version {SCHEMA_VERSION}")
             else:
                 logger.info(f"Schema version {current_version} — up to date")
