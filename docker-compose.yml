@@ -105,10 +105,13 @@ services:
     volumes:
       - ./bmas.yaml:/etc/bmas/bmas.yaml:ro
       - daemon-data:/data                    # SQLite database for task history
+      - ${BMAS_UPLOADS:-/opt/bmas-data/uploads}:/data/uploads    # File uploads (storage.user_media_dir)
+      - ${BMAS_OUTPUT:-/opt/output}:/data/output                 # Artifacts (storage.artifacts_dir)
     environment:
       - BMAS_CONFIG=/etc/bmas/bmas.yaml
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      - BMAS_NODE_KEY=${BMAS_NODE_KEY:-}
     ports:
       - "${DAEMON_PORT:-9000}:9000"
     networks:
