@@ -163,6 +163,14 @@ coordination:
     cu_mode: llm                    # llm | heuristic_first
     coordinator_narration: false
     sole_similarity: auto           # auto | exact | embedding | judge
+  board:
+    max_entry_chars: 8000           # Max body length; larger content → artifacts (doc 17 §6)
+    max_title_len: 200              # Max title length for indexing
+    salience_weights:               # doc 04 §7 — deterministic importance signal
+      confidence: 0.4
+      recency: 0.2
+      refs_in: 0.3
+      penalty: 0.3
 
 # ── Storage (Files & Artifacts) ───────────────────────────────────
 # File upload and artifact storage. See docs/proposals/17-files-and-artifacts.md §2.
