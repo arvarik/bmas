@@ -3,7 +3,7 @@
 # 13 — UI Philosophy for a Showcase: Information-Dense, Still Intuitive
 
 > [!ABSTRACT]
-> This project is an **artifact to demonstrate a novel system**. The governing UI goal is therefore not minimalism — it is **legible maximalism**: surface as much of the blackboard's state and every agent's thought process as possible, simultaneously, while keeping it scannable and snappy. This document amends the design philosophy for the visualization surfaces, defines the density patterns to use, and names the observability tools to draw inspiration from. It **supersedes the "quiet, clarity-over-density" framing** in docs [08](08-ui-blackboard-visualization.md) and [09](09-ui-agent-trace-inspector.md) for those surfaces — but it does **not** relax the token system.
+> This project is an **artifact to demonstrate a novel system**. The governing UI goal is therefore not minimalism — it is **legible maximalism**: surface as much of the blackboard's state and every agent's thought process as possible, simultaneously, while keeping it scannable and snappy. This document amends the design philosophy for the visualization surfaces, defines the density patterns to use, and names the observability tools to draw inspiration from. It **supersedes the "quiet, clarity-over-density" framing** in docs [08](08-ui-blackboard-visualization.md) and [09](09-ui-agent-trace-inspector.md) for those surfaces — but it does **not** relax the token system. Everything here is specified for the **traditional variant**; variant-specific surfaces (PatchBoard's blueprint inspector, the stigmergic pressure heatmap) plug in through the panel registry ([08 §2.1](08-ui-blackboard-visualization.md#21-the-variant-selector-and-the-panel-registry)) without changing this layout.
 
 ---
 
@@ -46,46 +46,60 @@ The throughline: **a graph/overview for spatial understanding + a synchronized t
 Add a new top-level **Mission view** for a running task (route `/task/[taskId]/mission`, or make it the default tab for live tasks) — a dense, single-screen cockpit that shows the whole system at once. This is the screenshot you show people.
 
 ```
-┌ TopBar: task · phase pill · consensus ▓▓▓▓░ 0.62 · $0.041/$0.50 · ⏱ 2m13s · round 3/4 ─────────────┐
+┌ TopBar: task · variant chip · phase pill · convergence ▓▓▓▓░ 0.62 · $0.041/$0.50 · ⏱ 2m13s · R3/12 ──┐
 ├──────────────────────────────┬───────────────────────────────┬─────────────────────────────────────┤
 │  BLACKBOARD GRAPH (center)    │  AGENT MINDS (right rail)      │  GLOBAL FIREHOSE (far right, optional)│
 │  ┌──────────────────────────┐ │  ┌───────────────────────────┐ │  live, interleaved trace lines from   │
-│  │ force/dag graph of entries│ │  │ ● Critic   node-1  ▸search │ │  ALL agents, color-coded by author,   │
-│  │ + pressure HEATMAP glow   │ │  │   "DCF rate seems low…"    │ │  auto-scroll, filterable:             │
-│  │ + live patch animations   │ │  │   642 tok · $0.001         │ │  19:14:02 critic    reasoning …       │
-│  │ + consensus convergence   │ │  ├───────────────────────────┤ │  19:14:02 expert.v  tool web_search   │
-│  │                           │ │  │ ● Expert  node-2  ▸reason  │ │  19:14:03 expert.v  result 3 hits     │
-│  └──────────────────────────┘ │  │   live token shimmer…      │ │  19:14:06 critic    patch→e-12        │
-│  [timeline scrubber ◀━━━●━━▶] │  │ ○ Cleaner idle             │ │  …                                    │
+│  │ dag/graph of entries      │ │  │ ● Critic   node-1  ▸search │ │  ALL agents, color-coded by author,   │
+│  │ + salience → size/opacity │ │  │   "DCF rate seems low…"    │ │  auto-scroll, filterable:             │
+│  │ + live entry animations   │ │  │   642 tok · $0.001         │ │  19:14:02 critic    reasoning …       │
+│  │ + attachment/artifact     │ │  ├───────────────────────────┤ │  19:14:02 expert.v  tool web_search   │
+│  │   nodes (📎 / 📄)         │ │  │ ● Expert  node-2  ▸reason  │ │  19:14:03 expert.v  result 3 hits     │
+│  │ + variant overlays slot   │ │  │   live token shimmer…      │ │  19:14:06 critic    entry→e-12        │
+│  └──────────────────────────┘ │  │ ○ Cleaner idle             │ │  …                                    │
+│  [timeline scrubber ◀━━━●━━▶] │  └───────────────────────────┘ │                                       │
 ├──────────────────────────────┴───────────────────────────────┴─────────────────────────────────────┤
-│  PRESSURE / CONSENSUS STRIP: sparkline of max-pressure ↓ and consensus ↑ over rounds                  │
+│  CONVERGENCE STRIP: sparklines — open critiques ↓ · convergence signal ↑ · spend ↑ over rounds       │
 └────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Four synchronized regions, all live, all from the existing SSE stream:
 
-1. **Blackboard graph** (center) — entries as nodes, `refs` as edges, **pressure heatmap** overlay ([doc 11 §3](11-extensibility-and-variants.md#3-the-pressure-field-generalizes-salience)), patches animating in. The spatial anchor.
-2. **Agent Minds** (right rail) — one live card per agent showing its *current thought* (latest `reasoning` line streaming), current tool, token meter, cost. This is the "thought process of each agent" the request asks for. Idle agents shown muted (state-awareness).
+1. **Blackboard graph** (center) — entries as nodes, `refs` as edges, salience encoded as size/opacity ([08 §3](08-ui-blackboard-visualization.md#3-the-blackboard-graph)), attachments and artifacts as first-class nodes ([17 §8](17-files-and-artifacts.md#8-ui-surfaces)), entries animating in. The spatial anchor. The graph exposes an **overlay slot** for variant adapters — the stigmergic pressure heatmap ([doc 16 §6](16-variant-stigmergic.md#6-ui-extensibility)) and PatchBoard's region-activity glow ([doc 11 §7](11-variant-patchboard.md#7-ui-extensibility)) mount here without touching the core graph.
+2. **Agent Minds** (right rail) — one live card per agent showing its *current thought* (latest `reasoning` line streaming), current tool, token meter, cost. This is the "thought process of each agent" the request asks for. The roster comes from genesis data (constant roles + this task's generated experts, [05 §2](05-control-unit.md#2-the-agent-group)); idle agents shown muted (state-awareness).
 3. **Global Firehose** (optional far rail / toggle) — every trace event from every agent, interleaved and color-coded — the "I can see everything happening" wow factor. Filter by author/type. Borrowed from APM live tails.
-4. **Pressure/Consensus strip** (bottom) — twin sparklines: max pressure falling, consensus rising. Narrates *why* the system is converging.
-5. **Coordinator lane** (optional, atop the Agent Minds rail) — when the [Coordinator narration agent](05-control-unit.md#11-the-coordinator-narration-agent-optional-showcase-flourish) is enabled, a distinct card shows the control unit *thinking about what to think about*: its rationale for the next role selection on ambiguous turns. Visually set apart (it's meta — it reasons about the agents, not the task). Only lights up on escalation turns; muted otherwise.
+4. **Convergence strip** (bottom) — sparklines over rounds: open critiques falling, the convergence signal rising ([05 §3](05-control-unit.md#3-consensus--termination)), spend climbing toward the budget ceiling. Narrates *why* the system is converging (and what it costs).
+5. **Coordinator lane** (optional, atop the Agent Minds rail) — when [coordinator narration](05-control-unit.md#12-the-coordinator-narration-lane-optional-showcase-flourish) is enabled, a distinct card shows the Control Unit *thinking about what to think about*: its selection rationale each round. Visually set apart (it's meta — it reasons about the agents, not the task).
 
 > [!NOTE] Responsive degradation
-> The cockpit is designed for large monitors (≥1440px). On smaller viewports (laptops, ≤1366px), panels collapse in priority order: **Firehose** hides first (toggle to reveal), then **Agent Minds** collapses to a horizontal strip of status pills above the graph. The **Blackboard graph** and **Pressure/Consensus strip** always remain visible — they are the spatial and temporal anchors. Use the existing DESIGN.md breakpoint tokens (`--bp-md`, `--bp-lg`) for thresholds; do not invent new breakpoints.
+> The cockpit is designed for large monitors (≥1440px). On smaller viewports (laptops, ≤1366px), panels collapse in priority order: **Firehose** hides first (toggle to reveal), then **Agent Minds** collapses to a horizontal strip of status pills above the graph. The **Blackboard graph** and **Convergence strip** always remain visible — they are the spatial and temporal anchors. Use the existing DESIGN.md breakpoint tokens (`--bp-md`, `--bp-lg`) for thresholds; do not invent new breakpoints.
 
 Everything cross-links: click a graph node → highlights the agent + scrolls the firehose; click an agent card → opens its [Turn Inspector](09-ui-agent-trace-inspector.md#4-turn-inspector-slide-over); hover a firehose line → flashes the graph node it touched.
+
+### 3.1 Variants in the cockpit
+
+The Mission layout is the **shared shell**. Variant adapters ([08 §2.1](08-ui-blackboard-visualization.md#21-the-variant-selector-and-the-panel-registry)) contribute, per variant:
+
+| Region | Traditional (V1) | PatchBoard (doc 11) | Stigmergic (doc 16) |
+|:--|:--|:--|:--|
+| Graph + overlay slot | salience encoding | state-tree view + region locks | pressure heatmap glow |
+| Agent Minds roster | constant roles + AG experts | Architect + dynamic workers (spawn/retire animations) | flat universal workers |
+| Extra panels | — | blueprint inspector, transaction log | pressure/decay strip |
+| Convergence strip | critiques ↓ / signal ↑ | blueprint completion % | max-pressure ↓ |
+
+The shell renders whatever the active adapter registers; it never branches on variant ids itself.
 
 ## 4. Density patterns (the toolkit)
 
 Use these to pack signal without clutter:
 
 - **Per-span chips everywhere.** Every node, card, and trace line carries compact chips: tokens (`↑1.2k`), cost (`$0.001`), latency (`3.4s`), status dot, confidence bar. `--text-xs`, `tabular-nums`. Information at a glance, no drill-down required.
-- **Encode importance, don't hide it.** Salience → node size/opacity; pressure → heat glow; recency → subtle fade. The eye finds the hotspots without the UI removing anything.
+- **Encode importance, don't hide it.** Salience → node size/opacity; recency → subtle fade; conflict → amber pulse. The eye finds the hotspots without the UI removing anything.
 - **Progressive disclosure, not omission.** Tool-call cards collapse to one line but are always present; "Show more" on long reasoning; the firehose can collapse to a height-N strip. Detail is one interaction away, never deleted.
 - **Synchronized multi-view.** Graph ⇄ minds ⇄ firehose ⇄ timeline all driven by one selection/hover state (a small Zustand slice). Selecting in one highlights in all — the LangSmith/Phoenix pattern.
 - **Swimlanes for parallelism.** When ≥2 agents act concurrently, the trace timeline ([doc 09](09-ui-agent-trace-inspector.md)) renders **parallel lanes** (one row per agent), so concurrency is *visible* — the core blackboard claim, made literal. Borrowed from AgentOps/Perfetto.
-- **Replay scrubber.** Because the board is event-sourced ([doc 04 §2](04-blackboard-protocol.md#2-the-board-as-an-event-log)), the whole mission can be scrubbed start→finish. Indispensable for a demo: "let me replay how the agents reached consensus."
-- **Motion as narration.** Patch lands → node fades in; critique posted → dashed red edge draws; conflict → amber pulse; consensus reached → single green bloom. Motion explains the system to a first-time viewer. All gated by `prefers-reduced-motion`.
+- **Replay scrubber.** Because the board is an event log ([doc 04 §5](04-blackboard-protocol.md#5-the-board-as-an-event-log)), the whole mission can be scrubbed start→finish. Indispensable for a demo: "let me replay how the agents reached the answer" — including the Cleaner's removals un-happening as you scrub backward.
+- **Motion as narration.** Entry lands → node fades in; critique posted → dashed red edge draws; conflict → amber pulse; solution accepted → single green bloom; artifact synced → 📄 node pops in. Motion explains the system to a first-time viewer. All gated by `prefers-reduced-motion`.
 
 ## 5. Keeping it snappy (density without jank)
 
@@ -107,8 +121,9 @@ The request's core: *show the thought process of each agent and how they work.* 
 | Live reasoning stream | `trace` type `reasoning` | Agent Mind card (latest), Trace timeline (full) |
 | Current tool + args + result | `tool.started` + `tool.completed` ([doc 06 §2](06-agent-traces.md#2-the-enabler-the-hermes-runs-api)) | tool-call card |
 | Token meter (live) | `token_delta` | Mind card chip, sparkline |
-| What it's about to write | `patch_proposed` | "proposes critique→e-12" chip |
-| What got accepted/rejected | `board_patch` / `patch_rejected` | graph + "Resulted in" footer |
+| What it's about to write | `entries_posted` trace event | "posted critique→e-12" chip |
+| What got accepted/rejected | `board_entry` / `entry_rejected` ([04 §9](04-blackboard-protocol.md#9-new-sse-event-types-additive)) | graph + "Resulted in" footer |
+| Files it produced | `artifact_created` ([17 §6](17-files-and-artifacts.md#6-artifacts-agent-created-files)) | 📄 chip → artifact browser |
 | Its identity & boundaries | profile `SOUL.md` ([doc 12 §3](12-hermes-and-node-topology.md#3-soulmd-per-role-replace-the-single-generic-soul)) | hover/expand on the Mind card |
 | Its learned skills & memory | `/api/skills`, `/api/memory` ([doc 12 §5](12-hermes-and-node-topology.md#5-hermes-feature--bmas-need-leverage-the-whole-api)) | agent detail / Infra page |
 | Pending approval | `approval_request` ([doc 12 §5.1](12-hermes-and-node-topology.md#51-native-hitl-via-run-approvals)) | inline Approve/Deny in the Mind card |
@@ -119,14 +134,14 @@ This is only possible because [doc 06](06-agent-traces.md) fixes trace collectio
 
 | Component | Built from | Note |
 |:--|:--|:--|
-| `MissionView` | layout + the four regions | new default for live tasks |
+| `MissionView` | layout + the four regions | new default for live tasks; renders adapter panels (§3.1) |
 | `AgentMindCard` | `MetricCard` + live reasoning + chips | the "thought process" surface |
 | `GlobalFirehose` | virtualized list + filter bar | color by author |
-| `PressureHeatmap` | overlay on `BlackboardGraph` | uses pressure ZSet ([11 §3](11-extensibility-and-variants.md#3-the-pressure-field-generalizes-salience)) |
-| `ConsensusPressureStrip` | Recharts sparklines | twin trend |
+| `ConvergenceStrip` | Recharts sparklines | critiques ↓ / signal ↑ / spend ↑ |
 | `ParallelTraceLanes` | extends `AgentTrace` ([09](09-ui-agent-trace-inspector.md)) | swimlanes |
+| `GraphOverlaySlot` | mount point on `BlackboardGraph` | where variant overlays render (doc 11 §7, doc 16 §6) |
 
-Token additions: a **heat ramp** (low→high pressure) expressed via existing status hues (blue→amber→red, reusing `--status-*`); a neutral **author-color generator** (deterministic hue from author string) so roleless/dynamic authors render without a fixed enum ([doc 11 §6](11-extensibility-and-variants.md#6-the-seams-checklist-enforce-in-v1)). Add both to `DESIGN.md` + `design-tokens.ts` before use.
+Token additions: a **heat ramp** (low→high intensity) expressed via existing status hues (blue→amber→red, reusing `--status-*`) — added now because salience encoding uses the low end and the stigmergic overlay will reuse the full ramp; and a deterministic **author-color generator** (stable hue from a hash of the author string) so dynamic authors — `expert.<slug>`, PatchBoard `worker.<id>`, stigmergic `universal-<n>` — render without a fixed enum (seam rule 3, [03 §6](03-target-architecture.md#6-the-variant-seam-one-engine-three-coordination-paradigms)). Add both to `DESIGN.md` + `design-tokens.ts` before use.
 
 ## 8. State matrix (showcase surfaces)
 
@@ -137,6 +152,6 @@ Token additions: a **heat ramp** (low→high pressure) expressed via existing st
 | GlobalFirehose | "No activity yet" | shimmer rows | virtualized live tail | "Stream dropped" banner + retry | filter-empty = "No events match filter" |
 
 > [!TIP] The demo script this enables
-> Submit a task → the graph seeds an objective node → expert/planner Mind cards light up and stream reasoning → findings pop onto the graph → a critique draws a red edge, the region glows with pressure → the firehose shows it all interleaving → consensus sparkline climbs → green bloom → scrub back to replay the whole emergence. That is the artifact worth showing.
+> Submit a task (attach a PDF — its 📎 node appears at genesis) → the graph seeds an objective node → expert/planner Mind cards light up and stream reasoning → findings pop onto the graph → a critique draws a red edge → the Cleaner visibly tidies a stale branch → the firehose shows it all interleaving → the convergence sparkline climbs → the Decider posts a solution, green bloom → artifacts appear in the browser → scrub back to replay the whole exchange. That is the artifact worth showing.
 
 ➡️ Continue to [14 — Implementing with Antigravity Agents](14-implementing-with-antigravity-agents.md).

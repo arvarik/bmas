@@ -172,6 +172,16 @@ This is the finding that most directly blocks the user's visualization goals, an
 > [!IMPORTANT]
 > **You cannot visualize data you are not collecting.** Document [06 — Agent Traces](06-agent-traces.md) is therefore a hard prerequisite for the UI documents [08](08-ui-blackboard-visualization.md) and [09](09-ui-agent-trace-inspector.md). Fixing the trace pipeline is sequenced *first* in the [migration plan](10-migration-and-rollout.md).
 
+## 7.5 The missing file pipeline (input and output)
+
+A chat-class system accepts files and produces files. bMAS today does neither, and the absence is structural, not a missing endpoint:
+
+1. **No input path.** `POST /submit` accepts only `{task: str}` (`routes/submit.py`, `TaskSubmission`) — there is no upload route in `daemon/src/routes/`, no proxy in `mission-control/src/app/api/`, and no `storage.*` keys in `config.py`/`bmas.example.yaml`. A user cannot hand the system a PDF at all.
+2. **No output path.** Agents run Hermes in a per-task scratch directory that is discarded after the turn. If a task is "build me a codebase", the files the agent writes die on the node — nothing syncs them back to the control plane, nothing records them, and the operator never sees them. There is no `artifacts` table and no configured output directory (e.g. `/opt/output/{task}/`).
+3. **No board representation.** Even if files existed, the board has no `attachment`/`artifact` entry types, so agents could not cite them and the UI could not show them.
+
+This is fixed end-to-end in [17 — Files & Artifacts](17-files-and-artifacts.md): `storage.user_media_dir` / `storage.artifacts_dir` config on the brain node, PDF extraction, attachment entries at genesis, node-side staging, and post-turn artifact sync.
+
 ## 8. What is genuinely good (and must be preserved)
 
 The diagnosis is not "rewrite everything." The infrastructure is strong and the inversion can reuse most of it:
@@ -182,14 +192,15 @@ The diagnosis is not "rewrite everything." The infrastructure is strong and the 
 - **React Flow is already wired** (`DAGVisualizer.tsx`) — the live blackboard graph is an evolution of an existing component, not a greenfield dependency.
 - **LiteLLM + triage** cost-routing is orthogonal to the blackboard inversion and stays as-is.
 
-## 9. Summary table — the five gaps and where they are fixed
+## 9. Summary table — the six gaps and where they are fixed
 
 | # | Gap | Primary evidence | Fixed in |
 |:--|:--|:--|:--|
 | G1 | Control encodes the solution path (fixed DAG) | `orchestrator.py` `_standard_flow` | [05 Control Unit](05-control-unit.md) |
-| G2 | Agents are blind, stateless text functions | `_dispatch_agent`, `api_server._run_hermes` | [03 Target Arch](03-target-architecture.md), [04 PatchBoard](04-blackboard-protocol.md) |
-| G3 | "Debate" is concatenation, not interaction | `post_debate`/`get_debate` | [04 PatchBoard](04-blackboard-protocol.md), [05 Control Unit](05-control-unit.md) |
-| G4 | Redis is daemon plumbing agents never touch; no per-entry concurrent mutation | `get_state`, task-scoped orchestrator lock, sequential standard flow | [04 PatchBoard](04-blackboard-protocol.md) (per-key optimistic locking) |
+| G2 | Agents are blind, stateless text functions | `_dispatch_agent`, `api_server._run_hermes` | [03 Target Arch](03-target-architecture.md), [04 Blackboard Protocol](04-blackboard-protocol.md) |
+| G3 | "Debate" is concatenation, not interaction | `post_debate`/`get_debate` | [04 Blackboard Protocol](04-blackboard-protocol.md), [05 Control Unit](05-control-unit.md) |
+| G4 | Redis is daemon plumbing agents never touch; board state is not shared coordination state | `get_state`, task-scoped orchestrator lock, sequential standard flow | [04 Blackboard Protocol](04-blackboard-protocol.md) (event-sourced board behind a single-writer gateway) |
 | G5 | No agent traces; dead cost path | `_run_hermes`, `TaskResponse` schema | [06 Agent Traces](06-agent-traces.md) |
+| G6 | No file input or artifact output pipeline | no upload route, no `storage.*` config, discarded node workspaces | [17 Files & Artifacts](17-files-and-artifacts.md) |
 
 ➡️ Continue to [02 — Peer Review](02-peer-review.md).

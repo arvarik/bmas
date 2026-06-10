@@ -814,7 +814,7 @@ hermes gateway install --system --force --run-as-user root
 | Profiles | `~/.hermes/profiles/` **absent** on all 3 nodes — single default profile; `/v1/runs` has no verified per-request profile selector | create role profiles, then choose a verified dispatch mechanism (per-profile gateways/ports or a local `hermes --profile` bridge) — [doc 12 §2.5](proposals/12-hermes-and-node-topology.md#25-the-agents-on-3-hosts-answer-yes-via-profiles) |
 | `SOUL.md` | one generic "Distributed Agent Node" identity, identical across nodes | move to **per-role SOUL.md** — [doc 12 §3](proposals/12-hermes-and-node-topology.md#3-soulmd-per-role-replace-the-single-generic-soul) |
 | Skills | 24 installed | wire procedural memory into bMAS context |
-| Crons | `features.jobs_admin: false`; `GET /api/jobs` lists jobs, but admin writes are unverified | reserved for stigmergic pull-mode; provision via CLI/`config.yaml` unless job admin is live-tested — [doc 11 §4](proposals/11-extensibility-and-variants.md#4-the-stigmergic-variant-specified) |
+| Crons | `features.jobs_admin: false`; `GET /api/jobs` lists jobs, but admin writes are unverified | reserved for stigmergic pull-mode; provision via CLI/`config.yaml` unless job admin is live-tested — [doc 16 §4](proposals/16-variant-stigmergic.md#4-pull-mode-activation) |
 | Model / tools | provider `gemini`/`custom`; `web` + `browser` (camofox) + `compression` configured | scope toolsets per role-profile |
 
 > [!IMPORTANT]

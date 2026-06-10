@@ -1,4 +1,4 @@
-[🏠 Index](../README.md) | [📂 Proposal Index](README.md) | [⬅️ Extensibility & Variants](11-extensibility-and-variants.md) | [➡️ Next: UI Showcase Density](13-ui-showcase-density.md) | [📡 Hermes API](../HERMES_API.md)
+[🏠 Index](../README.md) | [📂 Proposal Index](README.md) | [⬅️ Variant: PatchBoard](11-variant-patchboard.md) | [➡️ Next: UI Showcase Density](13-ui-showcase-density.md) | [📡 Hermes API](../HERMES_API.md)
 
 # 12 — Hermes Integration & Node Topology
 
@@ -14,7 +14,7 @@ Pulled directly from **all three agent nodes** (`.103`, `.112`, `.122`) — the 
 | Fact | Finding | Implication |
 |:--|:--|:--|
 | Hermes version | **v0.15.1** (2026.5.29) | [HERMES_API.md](../HERMES_API.md) documented v0.13.0 — **stale**, now refreshed |
-| Listening ports | Now `:8000` (bMAS `hermes -z` bridge) **+ `:8642` Runs API + `:9119` dashboard** | All three healthy as of 2026-06-07 — the Runs API gateway was stood up and the dashboard restarted ([§4](#4-enabling-the-runs-api-the-phase-1-unblocker--done-on-all-3-nodes-2026-06-07)). Originally only `:8000` was up. |
+| Listening ports | Now `:8000` (bMAS `hermes -z` bridge) **+ `:8642` Runs API + `:9119` dashboard** | All three healthy as of 2026-06-07 — the Runs API gateway was stood up and the dashboard restarted ([§4](#4-enabling-the-runs-api-the-phase-1-unblocker---done-on-all-3-nodes-2026-06-07)). Originally only `:8000` was up. |
 | Deployed bridge | the `hermes -z` one-shot version | The [trace gap](06-agent-traces.md#1-the-root-cause-precisely) is live in production, not just in the repo |
 | Profiles | `~/.hermes/profiles/` **does not exist** | Single default profile per node. No role isolation today |
 | SOUL.md | one generic `~/.hermes/SOUL.md` ("Distributed Agent Node") | **Identical, role-agnostic identity** on every node. Roles exist only as per-task `AGENTS.md` |
@@ -23,7 +23,7 @@ Pulled directly from **all three agent nodes** (`.103`, `.112`, `.122`) — the 
 | Model | provider `custom`/`gemini`; browser `camofox`; compression `auto` | Tooling (web/browser) is configured and available |
 
 > [!IMPORTANT] Update — the Phase-1 unblocker is cleared
-> The Hermes gateway was originally **not enabled** (only `:8000` was up), which made traces impossible regardless of daemon code. As of **2026-06-07 this is fixed**: the Runs API gateway is now installed as a boot-persistent system service on all three nodes ([§4](#4-enabling-the-runs-api-the-phase-1-unblocker--done-on-all-3-nodes-2026-06-07)), and the `:9119` dashboard (which had been left stopped after the v0.15.1 update) was restarted. Phase 1 can now proceed against a real Runs API.
+> The Hermes gateway was originally **not enabled** (only `:8000` was up), which made traces impossible regardless of daemon code. As of **2026-06-07 this is fixed**: the Runs API gateway is now installed as a boot-persistent system service on all three nodes ([§4](#4-enabling-the-runs-api-the-phase-1-unblocker---done-on-all-3-nodes-2026-06-07)), and the `:9119` dashboard (which had been left stopped after the v0.15.1 update) was restarted. Phase 1 can now proceed against a real Runs API.
 
 ## 2. Agents, personas, and nodes — clearing up the count
 
@@ -91,7 +91,7 @@ So the profile set is **7**: `planner`, `expert`, `critic`, `conflict_resolver`,
 > [!NOTE] Toolset isolation per role (a real win)
 > Profiles let you scope tools per role, which the [agent-integration roadmap](../roadmap/agent-integration.md) explicitly wants: give the **expert** profile `web` + `browser` + `code_exec`; give the **critic/decider** read-only/analysis tools; give **cleaner** no external tools. Enforced by each profile's `config.yaml.toolsets`, not by prompt.
 >
-> For the **stigmergic V2** ([doc 11](11-extensibility-and-variants.md)), the `universal` profile carries the full toolset and a roleless SOUL. V2 runs N copies of `universal`; V1 ignores it.
+> For the **stigmergic variant** ([doc 16](16-variant-stigmergic.md)), the `universal` profile carries the full toolset and a roleless SOUL. That variant runs N copies of `universal`; V1 ignores it. The **PatchBoard variant** ([doc 11](11-variant-patchboard.md)) similarly reuses this machinery: its Architect maps onto a dedicated profile and its dynamic workers onto a neutral `worker` profile with per-task `AGENTS.md` injection — same pattern as `expert`.
 
 ### 2.1 Should the Control Unit be a profile? (mostly: no)
 
@@ -99,13 +99,13 @@ Split the Control Unit into its two sub-functions, because they live in differen
 
 | CU sub-function | What it is | Where it belongs | Profile? |
 |:--|:--|:--|:--|
-| **Scheduler / OODA loop** | Deterministic-first control: who acts next, when to stop, cost gating, consensus *mechanics* ([05](05-control-unit.md)) | **Daemon (Python)** — it's orchestration, not knowledge work, and most of it isn't even an LLM call | **No.** It is the `ControlUnitStrategy`, not a Hermes agent. |
-| **The Decider** | An LLM that reads the board and renders the *consensus / sufficiency judgment* | A **Hermes profile** — it's a genuine reasoning agent that reads the board, exactly like the other roles | **Yes** — it's the `decider` profile in the set above. |
+| **The CU loop** | The per-round machinery: deterministic guards (budget/rounds/stall), the selection LLM call, dispatch, SolE mechanics ([05](05-control-unit.md)) | **Daemon (Python)** — it's orchestration, not knowledge work; the selection call is a bare LiteLLM call, never a Hermes run ([05 §7](05-control-unit.md#7-what-runs-where-control-plane-vs-nodes)) | **No.** It is the `TraditionalVariant` in the daemon, not a Hermes agent. |
+| **The Decider** | An LLM that reads the board and renders the *sufficiency judgment* (posts the `solution` entry) | A **Hermes profile** — it's a genuine reasoning agent that reads the board, exactly like the other roles | **Yes** — it's the `decider` profile in the set above. |
 
-Rationale: making the *scheduler* a Hermes profile would be an architectural mistake — you'd be sending the system's control plane out over the network to a node, losing the deterministic, observable, fail-fast properties that the whole [target architecture](03-target-architecture.md) depends on. The scheduler stays in the daemon where it can be unit-tested and where the [kernel](04-blackboard-protocol.md) lives. Only the *judgment* calls (Decider) and the occasional **LLM escalation** (the rare "the heuristics are ambiguous, ask a model which region is hottest" call) are LLM work.
+Rationale: making the *CU loop* a Hermes profile would be an architectural mistake — you'd be sending the system's control plane out over the network to a node, losing the deterministic, observable, fail-fast properties that the whole [target architecture](03-target-architecture.md) depends on. The loop stays in the daemon where it can be unit-tested and where the [Board Gateway](04-blackboard-protocol.md#4-the-board-gateway) lives. Only the *judgment* turns (Decider) are full Hermes runs; the CU's per-round selection is a bare LiteLLM call on the control plane.
 
 > [!TIP] Optional showcase flourish — the `coordinator` profile (8th profile)
-> If you want the scheduler's LLM-escalation calls to appear as a visible actor in the [trace UI](09-ui-agent-trace-inspector.md) (a "Coordinator" lane narrating *why* it picked the next agent), route those specific calls through a thin `coordinator` profile instead of a bare LiteLLM call. This is now spec'd in full — including the hard constraints (off the critical path, escalation-only, flag-gated, not the scheduler) — in **[doc 05 §1.1](05-control-unit.md#11-the-coordinator-narration-agent-optional-showcase-flourish)**. It adds an optional 8th profile to the set in [§2](#2-agents-personas-and-nodes--clearing-up-the-count); replicate it like the others.
+> If you want the CU's selection rationale to appear as a visible actor in the [trace UI](09-ui-agent-trace-inspector.md) (a "Coordinator" lane narrating *why* it picked the next agent), route richer narration through a thin `coordinator` profile instead of a bare LiteLLM call. This is now spec'd in full — including the hard constraints (off the critical path, flag-gated, not the scheduler) — in **[doc 05 §1.2](05-control-unit.md#12-the-coordinator-narration-lane-optional-showcase-flourish)**. It adds an optional 8th profile to the set in [§2](#2-agents-personas-and-nodes--clearing-up-the-count); replicate it like the others.
 
 ## 3. SOUL.md per role (replace the single generic soul)
 
@@ -114,7 +114,7 @@ Today every node has the same generic SOUL ([§1](#1-verified-live-state-inspect
 | Layer | File | Scope | Example content |
 |:--|:--|:--|:--|
 | Identity (durable) | profile `SOUL.md` | who this agent *is* | "You are **the Critic**. Your purpose is to find errors, weak evidence, and hallucinations. You are adversarial but fair. You never propose solutions — only critiques." |
-| Operation (per task) | per-turn `AGENTS.md` | what to do *now* | objective, phase, board index, the patch schema the kernel will accept this turn ([03 §4](03-target-architecture.md#4-what-each-turns-agent-payload-looks-like-target)) |
+| Operation (per task) | per-turn `AGENTS.md` | what to do *now* | objective, phase, the serialized board, attached files, and the entry-envelope contract the gateway will accept this turn ([03 §4](03-target-architecture.md#4-what-each-turns-agent-payload-looks-like-target), [04 §3](04-blackboard-protocol.md#3-the-agent-response-contract)) |
 | Capability | profile `config.yaml` | what tools/model | toolsets, model affinity ([§2.5](#25-the-agents-on-3-hosts-answer-yes-via-profiles)) |
 
 Keep the existing generic SOUL as the base for a `universal` profile (V2). Author the 6 role SOULs in-repo (e.g. `agent/profiles/{role}/SOUL.md`) and deploy them.
@@ -173,7 +173,7 @@ The system should use these, mapped to specific docs:
 | **Profiles** | `/api/profiles`, `--profile`; profile-scoped gateway/bridge TBD | the **role personas** (5 constant + experts + `universal`) on 3 hosts | [§2.5](#25-the-agents-on-3-hosts-answer-yes-via-profiles) |
 | **Skills** | `/api/skills` | shared procedural memory; show which skills shaped a task | [agent-integration roadmap](../roadmap/agent-integration.md) |
 | **Memory** | `/api/memory` (MEMORY.md/USER.md) | display each agent's learned state in the UI; debug stale behavior | [13](13-ui-showcase-density.md) |
-| **Crons** | CLI/`config.yaml` for writes; `GET /api/jobs` only verified for listing | **pull-mode self-activation** for the stigmergic variant | [11 §4](11-extensibility-and-variants.md#4-the-stigmergic-variant-specified) |
+| **Crons** | CLI/`config.yaml` for writes; `GET /api/jobs` only verified for listing | **pull-mode self-activation** for the stigmergic variant | [16 §4](16-variant-stigmergic.md#4-pull-mode-activation) |
 | **Analytics** | `/api/analytics/usage`, `/models` | per-node token/cost truth alongside bMAS task cost | [09 §5](09-ui-agent-trace-inspector.md#5-cost-integration) |
 | **Sessions** | `/api/sessions/search` | search what each agent did, in/out of bMAS tasks | [13](13-ui-showcase-density.md) |
 | **Toolsets** | `/api/tools/toolsets` | show per-role capabilities; verify isolation | [13](13-ui-showcase-density.md) |
@@ -189,12 +189,12 @@ A multi-round blackboard task makes the *same* agent act several times. Re-sendi
 
 ## 6. Pull-mode crons for the stigmergic future
 
-For V2 ([doc 11](11-extensibility-and-variants.md)), each node runs a Hermes cron that polls `bmas:board:{task}:pressure` and self-activates when a region exceeds the node's activation threshold. Because `features.jobs_admin=false`, the daemon should **not** assume it can create these via `POST /api/jobs`/`POST /api/cron/jobs`. Provision them through SSH + Hermes CLI/`config.yaml`, or first live-test and document a supported job-admin API. **Not built in V1** — but the pressure field and profile-aware dispatch groundwork here are exactly what make it a config flip later.
+For the stigmergic variant ([doc 16](16-variant-stigmergic.md)), each node runs a Hermes cron that polls `bmas:board:{task}:pressure` and self-activates when a region exceeds the node's activation threshold. Because `features.jobs_admin=false`, the daemon should **not** assume it can create these via `POST /api/jobs`/`POST /api/cron/jobs`. Provision them through SSH + Hermes CLI/`config.yaml`, or first live-test and document a supported job-admin API. **Not built in V1** — but the pressure field and profile-aware dispatch groundwork here are exactly what make it a config flip later.
 
 ## 7. Action items for the cluster (concrete)
 
 - [x] Bump [HERMES_API.md](../HERMES_API.md) to v0.15.1 and keep it synced to the live version.
-- [x] **Enable the Runs API on all 3 nodes** — `API_SERVER_*` in `.env` + `hermes gateway install --system --run-as-user root`. Done & boot-persistent 2026-06-07 ([§4](#4-enabling-the-runs-api-the-phase-1-unblocker--done-on-all-3-nodes-2026-06-07)).
+- [x] **Enable the Runs API on all 3 nodes** — `API_SERVER_*` in `.env` + `hermes gateway install --system --run-as-user root`. Done & boot-persistent 2026-06-07 ([§4](#4-enabling-the-runs-api-the-phase-1-unblocker---done-on-all-3-nodes-2026-06-07)).
 - [x] **Restart the `:9119` dashboard on all 3 nodes** (it had been left stopped after the v0.15.1 update; the CLI `--insecure` flag still works).
 - [ ] Author the profile set (`planner`, `expert`, `critic`, `conflict_resolver`, `cleaner`, `decider`, `universal`) — `SOUL.md` + `config.yaml` toolset scoping; commit to `agent/profiles/` and **replicate to all 3 nodes**. (The CU scheduler is *not* a profile — [§2.1](#21-should-the-control-unit-be-a-profile-mostly-no).)
 - [ ] Choose and verify the profile-aware dispatch mechanism: per-profile gateways/ports, a local `hermes --profile` bridge, or a future verified per-request selector. Record the exact command/API shape in this doc before Phase 3b.
