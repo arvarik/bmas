@@ -275,13 +275,29 @@ class TestTraceIngestion:
         traces = []
         assert len(traces) == 0
 
-    def test_trace_types_coverage(self):
-        """All expected trace types are valid."""
-        valid_types = {"turn_start", "reasoning", "tool_call", "tool_result",
-                       "approval_request", "final", "error"}
-        for t in valid_types:
+    def test_trace_types_phase1(self):
+        """Phase 1 emits these 7 trace types."""
+        phase1_types = {"turn_start", "reasoning", "tool_call", "tool_result",
+                        "approval_request", "final", "error"}
+        for t in phase1_types:
             trace = {
                 "task_id": "task-x", "turn_id": "turn-x", "seq": 0,
                 "role": "agent", "type": t, "data": {},
             }
-            assert trace["type"] in valid_types
+            assert trace["type"] in phase1_types
+
+    def test_trace_types_reserved_for_phase2(self):
+        """token_delta and entries_posted are reserved for Phase 2+.
+
+        These types require blackboard entry posting (Phase 2) and
+        streaming token accounting (Phase 3). Not emitted in Phase 1.
+        """
+        future_types = {"token_delta", "entries_posted"}
+        phase1_types = {"turn_start", "reasoning", "tool_call", "tool_result",
+                        "approval_request", "final", "error"}
+        # No overlap — future types are distinct
+        assert future_types.isdisjoint(phase1_types)
+        # All 9 known types are accounted for
+        all_known = phase1_types | future_types
+        assert len(all_known) == 9
+

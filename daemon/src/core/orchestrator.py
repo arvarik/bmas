@@ -252,7 +252,8 @@ class Orchestrator:
         await self._publish_task_state(task_id, user_task[:80], "running", sub_tasks)
 
         plan = await self._dispatch_agent(
-            "planner", task_id, user_task, DEFAULT_PERSONAS["planner"]
+            "planner", task_id, user_task, DEFAULT_PERSONAS["planner"],
+            model=triage.litellm_model,
         )
         # Dual-write debate: Redis (ephemeral) + SQLite (permanent)
         await self.bb.post_debate(session_id, "planner", plan.get("result", ""))
@@ -278,7 +279,8 @@ class Orchestrator:
 
         exec_result = await self._dispatch_agent(
             "executor", task_id, plan.get("result", user_task),
-            DEFAULT_PERSONAS["executor"]
+            DEFAULT_PERSONAS["executor"],
+            model=triage.litellm_model,
         )
         # Dual-write debate
         await self.bb.post_debate(session_id, "executor", exec_result.get("result", ""))
@@ -307,7 +309,8 @@ class Orchestrator:
         audit = await self._dispatch_agent(
             "auditor", task_id,
             f"Review this debate and produce consensus:\n\n{audit_context}",
-            DEFAULT_PERSONAS["auditor"]
+            DEFAULT_PERSONAS["auditor"],
+            model=triage.litellm_model,
         )
         sub_tasks[3]["status"] = "completed"
 
@@ -401,7 +404,10 @@ Task: {user_task}"""
                 expert["domain"], expert["expertise"], user_task
             )
             tasks.append(
-                self._dispatch_agent(role, task_id, user_task, persona)
+                self._dispatch_agent(
+                    role, task_id, user_task, persona,
+                    model=MODEL_ROUTING.get(Complexity.COMPLEX, "gemini-pro"),
+                )
             )
 
         results = await asyncio.gather(*tasks)
@@ -432,7 +438,8 @@ Task: {user_task}"""
         synthesis = await self._dispatch_agent(
             "auditor", task_id,
             f"Synthesize these expert perspectives into a unified analysis:\n\n{json.dumps(debate, indent=2)}",
-            DEFAULT_PERSONAS["auditor"]
+            DEFAULT_PERSONAS["auditor"],
+            model=MODEL_ROUTING.get(Complexity.COMPLEX, "gemini-pro"),
         )
 
         result_data = {
@@ -476,6 +483,7 @@ Task: {user_task}"""
     async def _dispatch_agent(
         self, role: str, task_id: str, description: str, persona: str,
         context: dict | None = None,
+        model: str | None = None,
     ) -> dict:
         """Send a task to a Hermes Agent node via its REST API.
 
@@ -486,6 +494,8 @@ Task: {user_task}"""
         - Sends turn_id, model, and role for trace correlation
         - Reads v2 response fields: usage, trace_count, entries, artifacts
         - Computes cost_usd DAEMON-SIDE from MODEL_PRICING (doc 06 §3.1)
+          ONLY when trace_count == 0 (fallback path). When traces are
+          present, the ingest endpoint is the sole cost authority (B2 fix).
         - Creates turn records for trace tracking
 
         Retries up to 3 times with exponential backoff to handle Hermes
@@ -500,9 +510,10 @@ Task: {user_task}"""
             "task_id": task_id,
             "description": description,
             "role_prompt": persona,
-            # Phase 1 additions
+            # Phase 1 additions (B1 fix: model is now sent)
             "turn_id": turn_id,
             "role": role,
+            "model": model,
         }
         if context:
             payload["context"] = context
@@ -515,7 +526,7 @@ Task: {user_task}"""
                 "round_no": 1,
                 "role": role,
                 "node": url,
-                "model": None,  # Set from response
+                "model": model,
                 "status": "running",
             })
         except Exception as e:
@@ -530,12 +541,18 @@ Task: {user_task}"""
                 response_data = response.json()
 
                 # ── Phase 1: v2 cost computation (daemon-side) ──────────
+                #
+                # B2 fix: The ingest endpoint is the sole cost authority
+                # when traces are present (trace_count > 0). Only record
+                # cost HERE for the fallback path (trace_count == 0) where
+                # no traces reach the ingest endpoint.
                 usage = response_data.get("usage")
+                trace_count = response_data.get("trace_count", 0)
                 model_used = "unknown"
                 cost_usd = 0.0
 
                 if usage and isinstance(usage, dict):
-                    model_used = usage.get("model", response_data.get("model", "unknown"))
+                    model_used = usage.get("model", response_data.get("model", model or "unknown"))
                     prompt_tokens = usage.get("prompt_tokens", 0)
                     completion_tokens = usage.get("completion_tokens", 0)
 
@@ -555,36 +572,45 @@ Task: {user_task}"""
                                 f"No pricing for model '{model_used}' — cost_usd=0.0"
                             )
 
-                    # Insert v2 cost entry with extended columns
-                    try:
-                        await db.insert_cost_entry_v2(
-                            task_id=task_id,
-                            model=model_used,
-                            input_tokens=prompt_tokens,
-                            output_tokens=completion_tokens,
-                            cost_usd=cost_usd,
-                            phase=None,
-                            node_id=response_data.get("node_id"),
-                            turn_id=response_data.get("turn_id", turn_id),
-                            provider=None,
-                            price_source=price_source,
-                            joules_estimate=0.0,  # Beszel stub
-                        )
-                    except Exception:
-                        pass  # Cost tracking is best-effort
+                    # B2 fix: Only insert cost entry when no traces flowed
+                    # through the ingest endpoint (fallback path). When
+                    # trace_count > 0, the ingest endpoint already recorded
+                    # cost from the final trace's usage.
+                    if trace_count == 0:
+                        try:
+                            await db.insert_cost_entry_v2(
+                                task_id=task_id,
+                                model=model_used,
+                                input_tokens=prompt_tokens,
+                                output_tokens=completion_tokens,
+                                cost_usd=cost_usd,
+                                phase=None,
+                                node_id=response_data.get("node_id"),
+                                turn_id=response_data.get("turn_id", turn_id),
+                                provider=None,
+                                price_source=price_source,
+                                joules_estimate=0.0,  # Beszel stub
+                            )
+                        except Exception:
+                            pass  # Cost tracking is best-effort
 
-                    try:
-                        await self.bb.publish_event(task_id, "cost", {
-                            "model": model_used,
-                            "input_tokens": prompt_tokens,
-                            "output_tokens": completion_tokens,
-                            "cost_usd": cost_usd,
-                            "node_id": response_data.get("node_id"),
-                            "turn_id": response_data.get("turn_id", turn_id),
-                            "price_source": price_source,
-                        })
-                    except Exception:
-                        pass
+                        try:
+                            await self.bb.publish_event(task_id, "cost", {
+                                "model": model_used,
+                                "input_tokens": prompt_tokens,
+                                "output_tokens": completion_tokens,
+                                "cost_usd": cost_usd,
+                                "node_id": response_data.get("node_id"),
+                                "turn_id": response_data.get("turn_id", turn_id),
+                                "price_source": price_source,
+                            })
+                        except Exception:
+                            pass
+                    else:
+                        logger.debug(
+                            f"Skipping cost insert for {task_id}/{turn_id} — "
+                            f"trace_count={trace_count}, ingest endpoint owns cost"
+                        )
 
                 elif usage is None:
                     # Legacy hermes -z fallback — usage unknown
@@ -594,12 +620,17 @@ Task: {user_task}"""
                     )
 
                 # Complete the turn record
-                trace_count = response_data.get("trace_count", 0)
+                # B3 fix: map declined to 'declined', not 'failed'.
+                # Declined is a first-class blackboard behavior (doc 03 §4).
                 try:
-                    turn_status = (
-                        "completed" if response_data.get("status") == "completed"
-                        else "failed"
-                    )
+                    agent_status = response_data.get("status", "")
+                    if agent_status == "completed":
+                        turn_status = "completed"
+                    elif agent_status == "declined":
+                        turn_status = "declined"
+                    else:
+                        turn_status = "failed"
+
                     await db.complete_turn(
                         turn_id=turn_id,
                         status=turn_status,
