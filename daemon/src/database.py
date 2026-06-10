@@ -921,3 +921,154 @@ async def insert_cost_entry_v2(
         )
         await db.commit()
 
+
+# ── Board CRUD (Phase 2, doc 07 §3) ─────────────────────────────────
+
+async def upsert_board_entry(entry: dict) -> None:
+    """Insert or update a board entry in the durable snapshot.
+
+    Uses INSERT OR REPLACE so that re-folding from events produces
+    the same result as incremental updates.
+    """
+    refs = entry.get("refs", [])
+    if isinstance(refs, list):
+        refs = json.dumps(refs)
+    async with _connect() as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO board_entries "
+            "(id, task_id, type, author, author_node, title, body, refs, "
+            "confidence, status, salience, round, space, created_by_turn, "
+            "created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                entry["id"],
+                entry["task_id"],
+                entry["type"],
+                entry["author"],
+                entry.get("author_node"),
+                entry.get("title"),
+                entry.get("body"),
+                refs,
+                entry.get("confidence", 0.5),
+                entry.get("status", "open"),
+                entry.get("salience", 0.0),
+                entry.get("round", 0),
+                entry.get("space", "public"),
+                entry.get("created_by_turn"),
+                entry.get("created_at", ""),
+                entry.get("updated_at", ""),
+            ),
+        )
+        await db.commit()
+
+
+async def get_board_entries(task_id: str) -> list[dict]:
+    """Fetch all board entries for a task, ordered by id."""
+    async with _connect() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM board_entries WHERE task_id = ? ORDER BY id",
+            (task_id,),
+        )
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("refs"):
+                try:
+                    d["refs"] = json.loads(d["refs"])
+                except (json.JSONDecodeError, TypeError):
+                    d["refs"] = []
+            else:
+                d["refs"] = []
+            result.append(d)
+        return result
+
+
+async def insert_board_event(
+    task_id: str,
+    seq: int,
+    round_no: int | None,
+    turn_id: str | None,
+    actor: str,
+    event_type: str,
+    entry_id: str | None,
+    payload: dict | str,
+    redis_stream_id: str | None = None,
+) -> None:
+    """Insert a board event into the durable event log.
+
+    This is the SQLite-first write (doc 04 §5.1 durability contract).
+    The caller must handle Redis separately.
+    """
+    payload_str = payload if isinstance(payload, str) else json.dumps(payload)
+    async with _connect() as db:
+        await db.execute(
+            "INSERT INTO board_events "
+            "(task_id, seq, round, turn_id, actor, event_type, "
+            "entry_id, payload, redis_stream_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_id, seq, round_no, turn_id, actor,
+                event_type, entry_id, payload_str, redis_stream_id,
+            ),
+        )
+        await db.commit()
+
+
+async def get_board_events(
+    task_id: str, until_seq: int | None = None
+) -> list[dict]:
+    """Fetch board events for a task, ordered by seq (replay).
+
+    If until_seq is provided, returns events up to and including that seq.
+    """
+    async with _connect() as db:
+        if until_seq is not None:
+            rows = await db.execute_fetchall(
+                "SELECT * FROM board_events "
+                "WHERE task_id = ? AND seq <= ? ORDER BY seq",
+                (task_id, until_seq),
+            )
+        else:
+            rows = await db.execute_fetchall(
+                "SELECT * FROM board_events "
+                "WHERE task_id = ? ORDER BY seq",
+                (task_id,),
+            )
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("payload"):
+                try:
+                    d["payload"] = json.loads(d["payload"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            result.append(d)
+        return result
+
+
+async def update_board_entry_status(
+    task_id: str, entry_id: str, status: str
+) -> None:
+    """Update the status of a board entry."""
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE board_entries SET status = ?, "
+            "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+            "WHERE id = ? AND task_id = ?",
+            (status, entry_id, task_id),
+        )
+        await db.commit()
+
+
+async def update_board_entry_salience(
+    task_id: str, entry_id: str, salience: float
+) -> None:
+    """Update the salience score of a board entry."""
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE board_entries SET salience = ?, "
+            "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+            "WHERE id = ? AND task_id = ?",
+            (salience, entry_id, task_id),
+        )
+        await db.commit()

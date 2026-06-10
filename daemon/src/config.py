@@ -381,7 +381,27 @@ TRADITIONAL_CONFIG: dict[str, object] = {
     "sole_similarity": _trad_sole_sim,
 }
 
+# ── Board Config (Phase 2, doc 04 §4, §7) ────────────────────────────
+
+_board = _coordination.get("board", {})
+
+MAX_ENTRY_CHARS: int = int(_board.get("max_entry_chars", 8000))
+if MAX_ENTRY_CHARS <= 0:
+    _fatal(f"coordination.board.max_entry_chars must be > 0, got {MAX_ENTRY_CHARS}")
+
+MAX_TITLE_LEN: int = int(_board.get("max_title_len", 200))
+if MAX_TITLE_LEN <= 0:
+    _fatal(f"coordination.board.max_title_len must be > 0, got {MAX_TITLE_LEN}")
+
+# Salience weights (doc 04 §7)
+_sal_weights = _board.get("salience_weights", {})
+SALIENCE_W_C: float = float(_sal_weights.get("confidence", 0.4))
+SALIENCE_W_R: float = float(_sal_weights.get("recency", 0.2))
+SALIENCE_W_X: float = float(_sal_weights.get("refs_in", 0.3))
+SALIENCE_W_P: float = float(_sal_weights.get("penalty", 0.3))
+
 _ok(f"Coordination: variant={COORDINATION_VARIANT}, bb_v2={BLACKBOARD_V2}, round_exec={ROUND_EXECUTION}")
+_ok(f"Board: max_entry={MAX_ENTRY_CHARS}, max_title={MAX_TITLE_LEN}, salience_w=[{SALIENCE_W_C},{SALIENCE_W_R},{SALIENCE_W_X},{SALIENCE_W_P}]")
 
 # ── Storage (Files & Artifacts, doc 17 §2) ───────────────────────────
 
