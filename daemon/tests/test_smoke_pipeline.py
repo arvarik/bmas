@@ -7,6 +7,10 @@ using FastAPI TestClient against a temp filesystem + SQLite DB.
 Covers: upload, validation, extraction, artifact ingest, versioning,
 auth, path traversal, downloads, PDF extraction, and filesystem
 verification.  Runs in ~0.3s — fast enough for CI.
+
+Key design: uses monkeypatch to override module-level constants in
+routes.files and routes.artifacts INSTEAD of reloading modules, to
+avoid poisoning shared state for other test modules.
 """
 
 from __future__ import annotations
@@ -14,8 +18,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
-import shutil
-import tempfile
 
 import pytest
 from fastapi import FastAPI
@@ -42,56 +44,80 @@ async def _create_task(tid: str, title: str, brief: str):
 # ── Fixtures ─────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
-def pipeline_env(tmp_path_factory):
-    """Set up temp dirs, DB, config overrides, and FastAPI test client.
-
-    Module-scoped so the DB and filesystem are shared across all smoke
-    tests in this file (faster than per-test setup).
-    """
+def pipeline_dirs(tmp_path_factory):
+    """Create temp directories for the pipeline."""
     tmp = tmp_path_factory.mktemp("smoke")
     uploads = str(tmp / "uploads")
     output = str(tmp / "output")
     db_path = str(tmp / "smoke.db")
     os.makedirs(uploads)
     os.makedirs(output)
+    return {"uploads": uploads, "output": output, "db_path": db_path}
 
-    # Patch the fake config injected by conftest.py
-    import config
-    orig = {}
-    overrides = {
-        "STORAGE_ENABLED": True,
-        "STORAGE_USER_MEDIA_DIR": uploads,
-        "STORAGE_ARTIFACTS_DIR": output,
-        "STORAGE_MAX_UPLOAD_MB": 50,
-        "STORAGE_MAX_TASK_OUTPUT_MB": 500,
-        "STORAGE_ALLOWED_TYPES": {"pdf", "txt", "md", "csv", "json", "png", "jpg", "docx"},
-        "STORAGE_PDF_EXTRACTION": "pymupdf",
-        "STORAGE_EXTRACTION_MAX_CHARS": 60000,
-        "BMAS_NODE_KEY": "smoke-test-key-12345",
-    }
-    for k, v in overrides.items():
-        orig[k] = getattr(config, k, None)
-        setattr(config, k, v)
+
+@pytest.fixture(scope="module")
+def pipeline_env(pipeline_dirs):
+    """Set up DB, patch route modules, and build the FastAPI test client.
+
+    Module-scoped so the DB and filesystem are shared across all smoke
+    tests in this file (faster than per-test setup).
+
+    Uses monkeypatch-style patching of route module constants rather
+    than importlib.reload() to avoid poisoning shared state.
+    """
+    uploads = pipeline_dirs["uploads"]
+    output = pipeline_dirs["output"]
+    db_path = pipeline_dirs["db_path"]
+    node_key = "smoke-test-key-12345"
 
     # Init DB + seed a task
     import database as db
+    orig_db_path = db.DB_PATH
     db.DB_PATH = db_path
     asyncio.run(_init_test_db(db_path))
 
     task_id = "task-smoke-001"
     asyncio.run(_create_task(task_id, "Smoke Test Task", "Pipeline verification"))
 
-    # Build app — must import AFTER config is patched
-    # Force reimport of route modules to pick up new config values
-    import importlib
-    import routes.files
-    import routes.artifacts
-    importlib.reload(routes.files)
-    importlib.reload(routes.artifacts)
+    # Patch route module-level constants (no reload needed)
+    import routes.files as rf
+    import routes.artifacts as ra
+
+    rf_orig = {
+        "STORAGE_ENABLED": rf.STORAGE_ENABLED,
+        "STORAGE_USER_MEDIA_DIR": rf.STORAGE_USER_MEDIA_DIR,
+        "STORAGE_MAX_UPLOAD_MB": rf.STORAGE_MAX_UPLOAD_MB,
+        "_MAX_UPLOAD_BYTES": rf._MAX_UPLOAD_BYTES,
+        "STORAGE_ALLOWED_TYPES": rf.STORAGE_ALLOWED_TYPES,
+        "STORAGE_PDF_EXTRACTION": rf.STORAGE_PDF_EXTRACTION,
+        "STORAGE_EXTRACTION_MAX_CHARS": rf.STORAGE_EXTRACTION_MAX_CHARS,
+        "BMAS_NODE_KEY": rf.BMAS_NODE_KEY,
+    }
+    rf.STORAGE_ENABLED = True
+    rf.STORAGE_USER_MEDIA_DIR = uploads
+    rf.STORAGE_MAX_UPLOAD_MB = 50
+    rf._MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+    rf.STORAGE_ALLOWED_TYPES = {"pdf", "txt", "md", "csv", "json", "png", "jpg", "docx"}
+    rf.STORAGE_PDF_EXTRACTION = "pymupdf"
+    rf.STORAGE_EXTRACTION_MAX_CHARS = 60000
+    rf.BMAS_NODE_KEY = node_key
+
+    ra_orig = {
+        "STORAGE_ENABLED": ra.STORAGE_ENABLED,
+        "STORAGE_ARTIFACTS_DIR": ra.STORAGE_ARTIFACTS_DIR,
+        "STORAGE_MAX_TASK_OUTPUT_MB": ra.STORAGE_MAX_TASK_OUTPUT_MB,
+        "_MAX_TASK_OUTPUT_BYTES": ra._MAX_TASK_OUTPUT_BYTES,
+        "BMAS_NODE_KEY": ra.BMAS_NODE_KEY,
+    }
+    ra.STORAGE_ENABLED = True
+    ra.STORAGE_ARTIFACTS_DIR = output
+    ra.STORAGE_MAX_TASK_OUTPUT_MB = 500
+    ra._MAX_TASK_OUTPUT_BYTES = 500 * 1024 * 1024
+    ra.BMAS_NODE_KEY = node_key
 
     app = FastAPI()
-    app.include_router(routes.files.router)
-    app.include_router(routes.artifacts.router)
+    app.include_router(rf.router)
+    app.include_router(ra.router)
     client = TestClient(app)
 
     yield {
@@ -99,18 +125,15 @@ def pipeline_env(tmp_path_factory):
         "task_id": task_id,
         "uploads": uploads,
         "output": output,
-        "node_key": "smoke-test-key-12345",
+        "node_key": node_key,
     }
 
-    # Restore config + reload route modules so later test modules
-    # pick up the original (conftest-injected) config values.
-    for k, v in orig.items():
-        setattr(config, k, v)
-    import importlib as _il
-    import routes.files as _rf
-    import routes.artifacts as _ra
-    _il.reload(_rf)
-    _il.reload(_ra)
+    # Restore everything
+    for k, v in rf_orig.items():
+        setattr(rf, k, v)
+    for k, v in ra_orig.items():
+        setattr(ra, k, v)
+    db.DB_PATH = orig_db_path
 
 
 @pytest.fixture
@@ -149,7 +172,6 @@ class TestUploadPipeline:
         assert d["sha256"] == expected_sha
         assert d["extracted_chars"] > 0
         assert d["filename"] == "smoke-test.txt"
-        # Store for later tests
         self.__class__._txt_file_id = d["file_id"]
         self.__class__._txt_content = content
 

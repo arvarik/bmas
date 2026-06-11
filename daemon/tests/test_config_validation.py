@@ -32,6 +32,9 @@ def _run_config_probe(yaml_override: dict | None = None,
 
     Returns the CompletedProcess.  If yaml_override is given, a temp YAML
     file is written with the base config merged with the override.
+
+    Storage dirs are automatically overridden to a temp directory so tests
+    don't require /data/uploads to exist (which needs root).
     """
     # Load base config
     with open(BMAS_YAML) as f:
@@ -39,6 +42,16 @@ def _run_config_probe(yaml_override: dict | None = None,
 
     if yaml_override:
         _deep_merge(base, yaml_override)
+
+    # Ensure storage dirs point somewhere writable — unless the test is
+    # explicitly testing storage validation with its own dirs.
+    storage = base.setdefault("storage", {})
+    if storage.get("enabled", False):
+        _tmpdir = tempfile.mkdtemp(prefix="bmas-cfg-test-")
+        if storage.get("user_media_dir", "").startswith("/data"):
+            storage["user_media_dir"] = os.path.join(_tmpdir, "uploads")
+        if storage.get("artifacts_dir", "").startswith("/data"):
+            storage["artifacts_dir"] = os.path.join(_tmpdir, "output")
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
         yaml.dump(base, tmp)
@@ -180,6 +193,14 @@ class TestCoordinationConfig:
             "simple": 0, "light": 1, "medium": 2
             # "complex" deliberately missing
         }
+        # Override storage dirs to avoid /data permission errors
+        storage = base.setdefault("storage", {})
+        if storage.get("enabled", False):
+            _td = tempfile.mkdtemp(prefix="bmas-cfg-test-")
+            if storage.get("user_media_dir", "").startswith("/data"):
+                storage["user_media_dir"] = os.path.join(_td, "uploads")
+            if storage.get("artifacts_dir", "").startswith("/data"):
+                storage["artifacts_dir"] = os.path.join(_td, "output")
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             yaml.dump(base, tmp)
             tmp_path = tmp.name
@@ -222,9 +243,10 @@ class TestCoordinationConfig:
 class TestStorageConfig:
 
     def test_storage_disabled_by_default(self):
-        """Storage defaults to disabled."""
+        """Storage disabled → STORAGE_ENABLED is False."""
         r = _run_config_probe(
-            probe_expr="print(config.STORAGE_ENABLED)"
+            yaml_override={"storage": {"enabled": False}},
+            probe_expr="print(config.STORAGE_ENABLED)",
         )
         assert r.returncode == 0
         assert "False" in r.stdout

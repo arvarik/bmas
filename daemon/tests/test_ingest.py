@@ -18,14 +18,14 @@ as a module before importing ingest.
 import json
 import os
 import sys
-import types
 import pytest
 from unittest.mock import MagicMock
 
-# ── Create a mock config module so ingest.py can import ────────────────
-# This avoids the import-time sys.exit() from the real config.py.
+# ── Extend the conftest fake config module ──────────────────────────
+# conftest.py injects a comprehensive fake config into sys.modules.
+# We just need to add the fields that ingest.py specifically needs.
 
-_mock_config = types.ModuleType("config")
+import config as _mock_config  # already the fake from conftest.py
 _mock_config.BMAS_NODE_KEY = "test-node-key-abc123"
 _mock_config.MODEL_PRICING = {
     "gemini-pro": {
@@ -39,7 +39,6 @@ _mock_config.MODEL_PRICING = {
         "source": "bmas.yaml",
     },
 }
-sys.modules["config"] = _mock_config
 
 # Now safe to add daemon/src to path and import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
