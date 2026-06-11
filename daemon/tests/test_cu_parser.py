@@ -6,8 +6,6 @@ No LLM calls — tests the parser and fallback table against canned inputs.
 
 from datetime import datetime, timezone
 
-import pytest
-
 from core.entry import BoardEntry
 from core.variants.traditional import (
     parse_cu_output,

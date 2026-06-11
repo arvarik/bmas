@@ -16,10 +16,6 @@ import httpx
 from typing import Any
 
 from datetime import datetime, timezone
-from typing import Any, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from core.variants.traditional import StepResult
 
 from core.blackboard import Blackboard
 from core.triage import TriageRouter, TriageResult, Complexity, MODEL_ROUTING  # Phase 4 §4.4
@@ -27,7 +23,7 @@ from models.personas import DEFAULT_PERSONAS, generate_expert_persona
 from config import (
     AGENT_ENDPOINTS, LITELLM_URL, LITELLM_KEY, TRIAGE_URL,
     COORDINATION_VARIANT, TRADITIONAL_CONFIG, ROLE_REGISTRY,
-    MODEL_ROUTING as CONFIG_MODEL_ROUTING, BLACKBOARD_V2,
+    MODEL_ROUTING as CONFIG_MODEL_ROUTING,
 )
 import database as db
 

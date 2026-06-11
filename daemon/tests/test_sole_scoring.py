@@ -4,8 +4,6 @@
 No LLM — tests the voting algorithm against canned answer sets.
 """
 
-import pytest
-
 from core.variants.traditional import (
     sole_majority_vote,
     _normalize_answer,

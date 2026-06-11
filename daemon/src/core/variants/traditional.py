@@ -20,11 +20,9 @@ import asyncio
 import hashlib
 import json
 import logging
-import random
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -697,8 +695,6 @@ class TraditionalVariant:
 
         query = task["query"]
         board_text = self._serialize_board_for_cu(snapshot)
-
-        from models.personas import SOLE_SYSTEM_PROMPT
 
         # Collect one answer per agent identity (bare LiteLLM calls)
         answers: list[tuple[str, str]] = []
