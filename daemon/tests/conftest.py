@@ -53,6 +53,25 @@ _fake_config.STORAGE_CONFIG = {
     "extraction_max_chars": 60000,
 }
 
+# Phase 3b: Traditional variant config values (needed by orchestrator imports)
+_fake_config.COORDINATION_VARIANT = "legacy_pipeline"
+_fake_config.BLACKBOARD_V2 = False
+_fake_config.TRADITIONAL_CONFIG = {
+    "max_rounds": 4,
+    "max_duration_s": 1800,
+    "budget_ceiling_usd": 0.50,
+    "max_concurrent_activations": 3,
+    "experts_per_tier": {"simple": 0, "light": 1, "medium": 2, "complex": 3},
+    "cleaner_entry_threshold": 12,
+    "stall_rounds": 2,
+    "cu_mode": "llm",
+    "coordinator_narration": False,
+    "sole_similarity": "auto",
+}
+_fake_config.ROLE_REGISTRY = {}
+_fake_config.MODEL_ROUTING = {"simple": "local", "light": "test-light", "medium": "test-medium", "complex": "test-pro"}
+_fake_config.MODEL_POOLS = {}
+
 # Inject BEFORE any real import can trigger sys.exit
 sys.modules["config"] = _fake_config
 

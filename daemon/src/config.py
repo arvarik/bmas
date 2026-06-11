@@ -278,6 +278,20 @@ for _model_alias, _model_cfg in _models.items():
     else:
         _warn(f"  {_model_alias}: no pricing — cost_usd will be 0.0 until pricing is set")
 
+# ── Model Pools (Phase 3b — model-pool diversity, doc 05 §2.1) ──────
+# Optional: map each complexity tier to a list of model aliases for
+# round-robin diversity across generated experts.
+# Falls back to [routing.<tier>] when not configured (single-model pool).
+
+_pools_raw = _models.get("pools", {})
+MODEL_POOLS: dict[str, list[str]] = {}
+if isinstance(_pools_raw, dict):
+    for _pool_tier, _pool_list in _pools_raw.items():
+        if isinstance(_pool_list, list) and _pool_list:
+            MODEL_POOLS[_pool_tier] = [str(m) for m in _pool_list]
+if MODEL_POOLS:
+    _ok(f"Model pools: {', '.join(f'{k}={len(v)}' for k, v in MODEL_POOLS.items())}")
+
 # ── Coordination (Blackboard Migration, doc 05 §3, doc 10 Phase 0) ───
 
 print("", file=sys.stderr)
