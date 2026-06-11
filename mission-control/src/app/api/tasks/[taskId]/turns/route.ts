@@ -22,6 +22,10 @@ export async function GET(
       cache: "no-store",
     });
 
+    if (upstream.status === 404) {
+      return NextResponse.json({ turns: [] });
+    }
+
     if (!upstream.ok) {
       const detail = await upstream.text().catch(() => "");
       return NextResponse.json(

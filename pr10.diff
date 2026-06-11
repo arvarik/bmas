@@ -1,0 +1,3205 @@
+diff --git a/docs/proposals/MIGRATION_STATUS.md b/docs/proposals/MIGRATION_STATUS.md
+index a6f59a3..d25b33c 100644
+--- a/docs/proposals/MIGRATION_STATUS.md
++++ b/docs/proposals/MIGRATION_STATUS.md
+@@ -15,4 +15,5 @@ Tracking table for the true-blackboard migration. Each phase appends a row after
+ | **Consolidation → main** | `feat/true-blackboard` | [#6](https://github.com/arvarik/bmas/pull/6) | Merged → `main` | ✅ |
+ | 3a — Hermes Profiles | `feat/bb-phase-3a` | [#7](https://github.com/arvarik/bmas/pull/7) | Merged → `main` | ✅ |
+ | 3b — Traditional Variant | `feat/bb-phase-3b` | [#8](https://github.com/arvarik/bmas/pull/8) | Merged → `main` | ✅ |
+-| 3c — Coordinator Narration | `feat/bb-phase-3c` | [#9](https://github.com/arvarik/bmas/pull/9) | Open | ⏳ |
++| 3c — Coordinator Narration | `feat/bb-phase-3c` | [#9](https://github.com/arvarik/bmas/pull/9) | Merged → `main` | ✅ |
++| **4 — Blackboard Visualization** | `feat/bb-phase-4` | [#10](https://github.com/arvarik/bmas/pull/10) | Open | ⏳ |
+diff --git a/mission-control/package-lock.json b/mission-control/package-lock.json
+index 900a08f..087fed9 100644
+--- a/mission-control/package-lock.json
++++ b/mission-control/package-lock.json
+@@ -8,6 +8,7 @@
+       "name": "mission-control",
+       "version": "0.1.0",
+       "dependencies": {
++        "@tanstack/react-virtual": "^3.14.2",
+         "@xterm/addon-fit": "^0.11.0",
+         "@xterm/xterm": "^6.0.0",
+         "@xyflow/react": "^12.10.2",
+@@ -1550,6 +1551,31 @@
+         "tailwindcss": "4.3.0"
+       }
+     },
++    "node_modules/@tanstack/react-virtual": {
++      "version": "3.14.2",
++      "resolved": "https://registry.npmjs.org/@tanstack/react-virtual/-/react-virtual-3.14.2.tgz",
++      "integrity": "sha512-IpWnmCLvuymRfeeLNVXIzNEYBFLpd3drVIS91sqV78VTZFyldlChkOocZRCPp1B+Wnk09bcLNme8WaMU/9/9bQ==",
++      "dependencies": {
++        "@tanstack/virtual-core": "3.17.0"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/tannerlinsley"
++      },
++      "peerDependencies": {
++        "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0",
++        "react-dom": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0"
++      }
++    },
++    "node_modules/@tanstack/virtual-core": {
++      "version": "3.17.0",
++      "resolved": "https://registry.npmjs.org/@tanstack/virtual-core/-/virtual-core-3.17.0.tgz",
++      "integrity": "sha512-gOxY/hFkPh/XQYhnThBHzkbkX3Ed+z/iushyz+R+JAr213aXxUDgQoTgTdrDpBSRsjFM73P/KfUyWmaF9WHMkQ==",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/tannerlinsley"
++      }
++    },
+     "node_modules/@tybys/wasm-util": {
+       "version": "0.10.2",
+       "resolved": "https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.2.tgz",
+diff --git a/mission-control/package.json b/mission-control/package.json
+index f88dd83..b1a3a57 100644
+--- a/mission-control/package.json
++++ b/mission-control/package.json
+@@ -9,6 +9,7 @@
+     "lint": "eslint"
+   },
+   "dependencies": {
++    "@tanstack/react-virtual": "^3.14.2",
+     "@xterm/addon-fit": "^0.11.0",
+     "@xterm/xterm": "^6.0.0",
+     "@xyflow/react": "^12.10.2",
+diff --git a/mission-control/src/app/LandingPageClient.tsx b/mission-control/src/app/LandingPageClient.tsx
+index ee6f62e..dd93ba8 100644
+--- a/mission-control/src/app/LandingPageClient.tsx
++++ b/mission-control/src/app/LandingPageClient.tsx
+@@ -21,6 +21,7 @@ import { useSystemStream } from "@/hooks/useSystemStream";
+ import { usePendingTask } from "@/contexts/PendingTaskContext";
+ import { useToast } from "@/hooks/useToast";
+ import { ArrowUp, Zap, DollarSign, BarChart3, Paperclip } from "lucide-react";
++import { VariantSelect } from "@/components/features/VariantSelect";
+ 
+ // ── Example tasks ─────────────────────────────────────────────────────
+ 
+@@ -93,6 +94,7 @@ function formatRelativeTime(iso: string): string {
+ 
+ export function LandingPageClient({ projectName }: { projectName: string }) {
+   const [task, setTask] = useState("");
++  const [variant, setVariant] = useState("traditional");
+   const [submitting, setSubmitting] = useState(false);
+   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+   const textareaRef = useRef<HTMLTextAreaElement>(null);
+@@ -135,7 +137,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
+       const res = await fetch("/api/submit", {
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+-        body: JSON.stringify({ task: input }),
++        body: JSON.stringify({ task: input, variant }),
+       });
+ 
+       if (!res.ok) {
+@@ -181,7 +183,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
+     } finally {
+       setSubmitting(false);
+     }
+-  }, [task, submitting, attachedFiles, setPending, router, toast]);
++  }, [task, variant, submitting, attachedFiles, setPending, router, toast]);
+ 
+   // ── Example pill click ────────────────────────────────────────────
+   const handleExampleClick = useCallback((prompt: string) => {
+@@ -291,8 +293,11 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
+           )}
+         </div>
+ 
+-        {/* ── Shortcut Hint ─────────────────────────────────────── */}
+-        <div className="landing__shortcut-hint">⌘ + Enter to submit</div>
++        {/* ── Shortcut Hint + Variant ─────────────────────────────── */}
++        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "var(--space-3)" }}>
++          <VariantSelect value={variant} onChange={setVariant} />
++          <span className="landing__shortcut-hint">⌘ + Enter to submit</span>
++        </div>
+ 
+         {/* ── Example Pills ─────────────────────────────────────── */}
+         <div className="landing__example-pills">
+diff --git a/mission-control/src/app/api/capabilities/route.ts b/mission-control/src/app/api/capabilities/route.ts
+new file mode 100644
+index 0000000..419164e
+--- /dev/null
++++ b/mission-control/src/app/api/capabilities/route.ts
+@@ -0,0 +1,71 @@
++import { NextResponse } from "next/server";
++import { DAEMON_BASE_URL } from "@/lib/config";
++
++/**
++ * GET /api/capabilities
++ *
++ * Returns the list of coordination variants supported by the daemon.
++ * Until the daemon ships its own /capabilities endpoint (Phase 6),
++ * this proxy builds a static response from the daemon's /config/active.
++ *
++ * Shape (doc 07 §4):
++ * {
++ *   variants: [
++ *     { id, label, available, reason? }
++ *   ]
++ * }
++ */
++
++interface ConfigActiveResponse {
++  variant: string;
++  blackboard_v2: boolean;
++}
++
++interface VariantDescriptor {
++  id: string;
++  label: string;
++  available: boolean;
++  reason?: string;
++}
++
++const KNOWN_VARIANTS: Omit<VariantDescriptor, "available" | "reason">[] = [
++  { id: "traditional", label: "Blackboard (bMAS)" },
++  { id: "patchboard", label: "PatchBoard" },
++  { id: "stigmergic", label: "Stigmergic" },
++];
++
++export async function GET(): Promise<NextResponse> {
++  try {
++    const upstream = await fetch(`${DAEMON_BASE_URL}/config/active`, {
++      signal: AbortSignal.timeout(3_000),
++      cache: "no-store",
++    });
++
++    let activeVariant = "traditional";
++    if (upstream.ok) {
++      const data = (await upstream.json()) as ConfigActiveResponse;
++      activeVariant = data.variant ?? "traditional";
++    }
++
++    const variants: VariantDescriptor[] = KNOWN_VARIANTS.map((v) => ({
++      ...v,
++      available: v.id === activeVariant,
++      ...(v.id !== activeVariant ? { reason: "planned" } : {}),
++    }));
++
++    return NextResponse.json({ variants }, {
++      headers: { "Cache-Control": "public, max-age=60" },
++    });
++  } catch {
++    // Daemon unreachable — return static default
++    const variants: VariantDescriptor[] = KNOWN_VARIANTS.map((v) => ({
++      ...v,
++      available: v.id === "traditional",
++      ...(v.id !== "traditional" ? { reason: "planned" } : {}),
++    }));
++
++    return NextResponse.json({ variants }, {
++      headers: { "Cache-Control": "public, max-age=30" },
++    });
++  }
++}
+diff --git a/mission-control/src/app/api/submit/route.ts b/mission-control/src/app/api/submit/route.ts
+index a97a540..a50639b 100644
+--- a/mission-control/src/app/api/submit/route.ts
++++ b/mission-control/src/app/api/submit/route.ts
+@@ -3,6 +3,7 @@ import { DAEMON_SUBMIT_URL } from "@/lib/config";
+ 
+ interface SubmitPayload {
+   task: string;
++  variant?: string;
+ }
+ 
+ export async function POST(request: Request): Promise<NextResponse> {
+@@ -19,7 +20,10 @@ export async function POST(request: Request): Promise<NextResponse> {
+     const upstream = await fetch(DAEMON_SUBMIT_URL, {
+       method: "POST",
+       headers: { "Content-Type": "application/json" },
+-      body: JSON.stringify({ task: body.task.trim() }),
++      body: JSON.stringify({
++        task: body.task.trim(),
++        ...(body.variant ? { variant: body.variant } : {}),
++      }),
+       signal: AbortSignal.timeout(5_000), // daemon responds immediately (HTTP 202)
+     });
+ 
+diff --git a/mission-control/src/app/api/tasks/[taskId]/board/route.ts b/mission-control/src/app/api/tasks/[taskId]/board/route.ts
+new file mode 100644
+index 0000000..c14da05
+--- /dev/null
++++ b/mission-control/src/app/api/tasks/[taskId]/board/route.ts
+@@ -0,0 +1,43 @@
++import { NextResponse } from "next/server";
++import { DAEMON_BASE_URL } from "@/lib/config";
++
++/**
++ * GET /api/tasks/[taskId]/board
++ *
++ * Proxies to daemon's GET /tasks/{taskId}/debate to fetch board entries.
++ * Uses the existing /debate endpoint which returns all board entries.
++ */
++export async function GET(
++  _request: Request,
++  { params }: { params: Promise<{ taskId: string }> },
++): Promise<NextResponse> {
++  const { taskId } = await params;
++
++  if (!taskId || !/^task-[\da-f]+$/i.test(taskId)) {
++    return NextResponse.json({ error: "Invalid task ID" }, { status: 400 });
++  }
++
++  try {
++    const upstream = await fetch(`${DAEMON_BASE_URL}/tasks/${taskId}/debate`, {
++      signal: AbortSignal.timeout(5_000),
++      cache: "no-store",
++    });
++
++    if (!upstream.ok) {
++      const detail = await upstream.text().catch(() => "");
++      return NextResponse.json(
++        { error: `Daemon returned ${upstream.status}`, detail },
++        { status: upstream.status },
++      );
++    }
++
++    const data: unknown = await upstream.json();
++    return NextResponse.json(data);
++  } catch (err) {
++    const message = err instanceof Error ? err.message : "Unknown error";
++    return NextResponse.json(
++      { error: "Failed to fetch board entries", detail: message },
++      { status: 503 },
++    );
++  }
++}
+diff --git a/mission-control/src/app/api/tasks/[taskId]/trace/route.ts b/mission-control/src/app/api/tasks/[taskId]/trace/route.ts
+new file mode 100644
+index 0000000..30fa3d5
+--- /dev/null
++++ b/mission-control/src/app/api/tasks/[taskId]/trace/route.ts
+@@ -0,0 +1,50 @@
++import { NextResponse } from "next/server";
++import { DAEMON_BASE_URL } from "@/lib/config";
++
++/**
++ * GET /api/tasks/[taskId]/trace
++ *
++ * Proxies to daemon's GET /tasks/{taskId}/trace to fetch archived
++ * trace events for completed tasks.
++ */
++export async function GET(
++  request: Request,
++  { params }: { params: Promise<{ taskId: string }> },
++): Promise<NextResponse> {
++  const { taskId } = await params;
++
++  if (!taskId || !/^task-[\da-f]+$/i.test(taskId)) {
++    return NextResponse.json({ error: "Invalid task ID" }, { status: 400 });
++  }
++
++  const url = new URL(request.url);
++  const limit = url.searchParams.get("limit") ?? "200";
++  const offset = url.searchParams.get("offset") ?? "0";
++
++  try {
++    const upstream = await fetch(
++      `${DAEMON_BASE_URL}/tasks/${taskId}/trace?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`,
++      {
++        signal: AbortSignal.timeout(5_000),
++        cache: "no-store",
++      },
++    );
++
++    if (!upstream.ok) {
++      const detail = await upstream.text().catch(() => "");
++      return NextResponse.json(
++        { error: `Daemon returned ${upstream.status}`, detail },
++        { status: upstream.status },
++      );
++    }
++
++    const data: unknown = await upstream.json();
++    return NextResponse.json(data);
++  } catch (err) {
++    const message = err instanceof Error ? err.message : "Unknown error";
++    return NextResponse.json(
++      { error: "Failed to fetch traces", detail: message },
++      { status: 503 },
++    );
++  }
++}
+diff --git a/mission-control/src/app/api/tasks/[taskId]/turns/route.ts b/mission-control/src/app/api/tasks/[taskId]/turns/route.ts
+new file mode 100644
+index 0000000..7a1b46d
+--- /dev/null
++++ b/mission-control/src/app/api/tasks/[taskId]/turns/route.ts
+@@ -0,0 +1,42 @@
++import { NextResponse } from "next/server";
++import { DAEMON_BASE_URL } from "@/lib/config";
++
++/**
++ * GET /api/tasks/[taskId]/turns
++ *
++ * Proxies to daemon's GET /tasks/{taskId}/turns to fetch turn records.
++ */
++export async function GET(
++  _request: Request,
++  { params }: { params: Promise<{ taskId: string }> },
++): Promise<NextResponse> {
++  const { taskId } = await params;
++
++  if (!taskId || !/^task-[\da-f]+$/i.test(taskId)) {
++    return NextResponse.json({ error: "Invalid task ID" }, { status: 400 });
++  }
++
++  try {
++    const upstream = await fetch(`${DAEMON_BASE_URL}/tasks/${taskId}/turns`, {
++      signal: AbortSignal.timeout(5_000),
++      cache: "no-store",
++    });
++
++    if (!upstream.ok) {
++      const detail = await upstream.text().catch(() => "");
++      return NextResponse.json(
++        { error: `Daemon returned ${upstream.status}`, detail },
++        { status: upstream.status },
++      );
++    }
++
++    const data: unknown = await upstream.json();
++    return NextResponse.json(data);
++  } catch (err) {
++    const message = err instanceof Error ? err.message : "Unknown error";
++    return NextResponse.json(
++      { error: "Failed to fetch turns", detail: message },
++      { status: 503 },
++    );
++  }
++}
+diff --git a/mission-control/src/app/globals.css b/mission-control/src/app/globals.css
+index 4b0da54..f0a3ded 100644
+--- a/mission-control/src/app/globals.css
++++ b/mission-control/src/app/globals.css
+@@ -42,6 +42,10 @@
+   --agent-planner: hsl(265 50% 60%);
+   --agent-executor: hsl(175 60% 45%);
+   --agent-auditor: hsl(32 80% 55%);
++  --agent-critic: hsl(350 60% 58%);
++  --agent-conflict-resolver: hsl(280 45% 58%);
++  --agent-cleaner: hsl(200 25% 55%);
++  --agent-decider: hsl(150 45% 50%);
+ 
+   /* ── Typography (§3) ───────────────────────────────────────────── */
+   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+@@ -250,6 +254,47 @@ body {
+   animation: metric-pop 400ms ease-out;
+ }
+ 
++/* ── Board Entry Lifecycle Animations (doc 08 §3) ─────────────────── */
++
++/* Entry appears on board */
++@keyframes entry-appear {
++  0% { opacity: 0; transform: scale(0.92); }
++  100% { opacity: 1; transform: scale(1); }
++}
++
++/* Cleaner removal — fade to 20%, strikethrough, hold 2s then remove */
++@keyframes entry-remove {
++  0% { opacity: 1; }
++  30% { opacity: 0.5; }
++  100% { opacity: 0.2; }
++}
++
++/* Confidence bar fill */
++@keyframes confidence-fill {
++  0% { width: 0; }
++}
++
++/* Solution acceptance bloom */
++@keyframes success-bloom {
++  0% { box-shadow: 0 0 0 0 hsl(142 71% 45% / 0.4); }
++  70% { box-shadow: 0 0 0 10px hsl(142 71% 45% / 0); }
++  100% { box-shadow: 0 0 0 0 hsl(142 71% 45% / 0); }
++}
++
++.entry-appear {
++  animation: entry-appear 300ms ease-out;
++}
++
++.entry-remove {
++  animation: entry-remove 2s ease-in forwards;
++  text-decoration: line-through;
++  text-decoration-color: var(--status-error);
++}
++
++.success-bloom {
++  animation: success-bloom 800ms ease-out;
++}
++
+ /* ── Reduced Motion ────────────────────────────────────────────────── */
+ @media (prefers-reduced-motion: reduce) {
+   *,
+diff --git a/mission-control/src/app/task/[taskId]/blackboard/page.tsx b/mission-control/src/app/task/[taskId]/blackboard/page.tsx
+index 12b0bff..fe19c43 100644
+--- a/mission-control/src/app/task/[taskId]/blackboard/page.tsx
++++ b/mission-control/src/app/task/[taskId]/blackboard/page.tsx
+@@ -3,6 +3,11 @@
+ /**
+  * Blackboard Tab — /task/[taskId]/blackboard
+  *
++ * Phase 4: Graph/Stream segmented control (doc 08 §2).
++ *
++ * - **Graph** (new default): BlackboardGraph + WorkerLane + ConsensusMeter
++ * - **Stream**: the existing debate list (preserved as-is)
++ *
+  * Debate history with:
+  * - Agent-identity-colored entries with timestamps
+  * - Phase-aware typing indicator (e.g. "Planner is deliberating…")
+@@ -16,8 +21,11 @@ import { useParams } from "next/navigation";
+ import { useTaskData } from "../TaskStreamContext";
+ import { Panel } from "@/components/ui/Panel";
+ import { Clipboard } from "lucide-react";
+-import { AGENT_COLORS, type AgentRole } from "@/lib/design-tokens";
++import { AGENT_COLORS, type AgentRole, authorColor } from "@/lib/design-tokens";
+ import type { DebateEntry } from "@/hooks/useTaskStream";
++import { BlackboardGraph } from "@/components/features/BlackboardGraph";
++import { WorkerLane } from "@/components/features/WorkerLane";
++import { ConsensusMeter } from "@/components/features/ConsensusMeter";
+ 
+ // ── Phase → agent/verb mapping ────────────────────────────────────────
+ 
+@@ -53,11 +61,29 @@ function mapArchivedDebate(raw: ArchivedDebate): DebateEntry {
+   };
+ }
+ 
++// ── View mode type ────────────────────────────────────────────────────
++
++type ViewMode = "graph" | "stream";
++
+ // ── Component ─────────────────────────────────────────────────────────
+ 
+ export default function BlackboardPage() {
+   const { taskId } = useParams();
+-  const { debates: liveDebates, phase, isLive } = useTaskData();
++  const {
++    debates: liveDebates,
++    phase,
++    isLive,
++    boardEntries,
++    removedEntryIds,
++    consensus,
++    activeTurns,
++    completedTurns,
++    traceEvents,
++    taskMeta,
++  } = useTaskData();
++
++  const [viewMode, setViewMode] = useState<ViewMode>("graph");
++
+   const scrollRef = useRef<HTMLDivElement>(null);
+   const sentinelRef = useRef<HTMLDivElement>(null);
+   const [isNearBottom, setIsNearBottom] = useState(true);
+@@ -135,25 +161,25 @@ export default function BlackboardPage() {
+   const phaseInfo = phase ? PHASE_MAP[phase] : null;
+ 
+   // ── Loading state (archived fetch in progress) ────────────────────
+-  if (archiveLoading && debates.length === 0) {
++  if (archiveLoading && debates.length === 0 && boardEntries.length === 0) {
+     return (
+       <div className="view-container">
+-        <Panel title="Debate History" status="loading" />
++        <Panel title="Blackboard" status="loading" />
+       </div>
+     );
+   }
+ 
+   // ── Empty state ───────────────────────────────────────────────────
+ 
+-  if (debates.length === 0 && !isLive) {
++  if (debates.length === 0 && boardEntries.length === 0 && !isLive) {
+     return (
+       <div className="view-container">
+         <Panel
+-          title="Debate History"
++          title="Blackboard"
+           status="empty"
+           emptyIcon={Clipboard}
+-          emptyMessage="No debate data"
+-          emptyHint="This task has no recorded debate entries."
++          emptyMessage="No blackboard data"
++          emptyHint="This task has no recorded board entries."
+         />
+       </div>
+     );
+@@ -162,80 +188,166 @@ export default function BlackboardPage() {
+   return (
+     <div className="view-container">
+       <Panel
+-        title="Debate History"
+-        subtitle={debates.length > 0 ? `${debates.length} entries` : undefined}
+-      >
+-        <div className="debate-scroll" ref={scrollRef}>
+-          {debates.map((entry) => {
+-            const agentColor =
+-              AGENT_COLORS[entry.agent_role as AgentRole] ?? "var(--text-tertiary)";
+-            return (
+-              <div
+-                key={entry.id}
+-                className="debate-entry"
+-                style={{ borderLeftColor: agentColor }}
++        title="Blackboard"
++        subtitle={
++          viewMode === "graph"
++            ? `${boardEntries.length} entries`
++            : `${debates.length} entries`
++        }
++        headerExtra={
++          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
++            <ConsensusMeter consensus={consensus} isLive={isLive} />
++            {/* Graph/Stream segmented control */}
++            <div
++              className="bb-toggle"
++              role="tablist"
++              style={{
++                display: "inline-flex",
++                background: "var(--surface-hover)",
++                borderRadius: "var(--radius-sm)",
++                padding: 2,
++              }}
++            >
++              <button
++                role="tab"
++                aria-selected={viewMode === "graph"}
++                className={viewMode === "graph" ? "bb-toggle__tab bb-toggle__tab--active" : "bb-toggle__tab"}
++                onClick={() => setViewMode("graph")}
++                style={{
++                  padding: "2px 10px",
++                  fontSize: "var(--text-xs)",
++                  fontWeight: "var(--weight-medium)",
++                  borderRadius: "var(--radius-sm)",
++                  border: "none",
++                  cursor: "pointer",
++                  fontFamily: "var(--font-sans)",
++                  background: viewMode === "graph" ? "var(--surface-overlay)" : "transparent",
++                  color: viewMode === "graph" ? "var(--text-primary)" : "var(--text-tertiary)",
++                  transition: "background 150ms ease, color 150ms ease",
++                }}
++              >
++                Graph
++              </button>
++              <button
++                role="tab"
++                aria-selected={viewMode === "stream"}
++                className={viewMode === "stream" ? "bb-toggle__tab bb-toggle__tab--active" : "bb-toggle__tab"}
++                onClick={() => setViewMode("stream")}
++                style={{
++                  padding: "2px 10px",
++                  fontSize: "var(--text-xs)",
++                  fontWeight: "var(--weight-medium)",
++                  borderRadius: "var(--radius-sm)",
++                  border: "none",
++                  cursor: "pointer",
++                  fontFamily: "var(--font-sans)",
++                  background: viewMode === "stream" ? "var(--surface-overlay)" : "transparent",
++                  color: viewMode === "stream" ? "var(--text-primary)" : "var(--text-tertiary)",
++                  transition: "background 150ms ease, color 150ms ease",
++                }}
+               >
+-                <div className="debate-entry__header">
++                Stream
++              </button>
++            </div>
++          </div>
++        }
++      >
++        {/* ── Graph Mode ───────────────────────────────────────────── */}
++        {viewMode === "graph" && (
++          <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
++            <WorkerLane
++              activeTurns={activeTurns}
++              completedTurns={completedTurns}
++              traceEvents={traceEvents}
++              boardEntries={boardEntries}
++            />
++            <div style={{ flex: 1, minHeight: 300 }}>
++              <BlackboardGraph
++                entries={boardEntries}
++                removedEntryIds={removedEntryIds}
++                variant={taskMeta?.variant}
++              />
++            </div>
++          </div>
++        )}
++
++        {/* ── Stream Mode (existing debate list) ───────────────────── */}
++        {viewMode === "stream" && (
++          <>
++            <div className="debate-scroll" ref={scrollRef}>
++              {debates.map((entry) => {
++                const agentColor =
++                  AGENT_COLORS[entry.agent_role as AgentRole] ??
++                  authorColor(entry.agent_role);
++                return (
++                  <div
++                    key={entry.id}
++                    className="debate-entry"
++                    style={{ borderLeftColor: agentColor }}
++                  >
++                    <div className="debate-entry__header">
++                      <span
++                        className="debate-entry__agent-dot"
++                        style={{ background: agentColor }}
++                      />
++                      <span
++                        className="debate-entry__agent-name"
++                        style={{ color: agentColor }}
++                      >
++                        {capitalize(entry.agent_role)}
++                      </span>
++                      <span className="debate-entry__timestamp">
++                        {new Date(entry.timestamp).toLocaleTimeString()}
++                      </span>
++                    </div>
++                    <div className="debate-entry__content">
++                      {entry.content}
++                    </div>
++                  </div>
++                );
++              })}
++
++              {/* Typing indicator */}
++              {isLive && phaseInfo && (
++                <div className="debate-entry debate-entry--typing">
+                   <span
+                     className="debate-entry__agent-dot"
+-                    style={{ background: agentColor }}
++                    style={{ background: AGENT_COLORS[phaseInfo.agent] }}
+                   />
+                   <span
+                     className="debate-entry__agent-name"
+-                    style={{ color: agentColor }}
++                    style={{ color: AGENT_COLORS[phaseInfo.agent] }}
+                   >
+-                    {capitalize(entry.agent_role)}
++                    {capitalize(phaseInfo.agent)}
++                  </span>
++                  <span className="debate-entry__typing-label">
++                    is {phaseInfo.verb}
+                   </span>
+-                  <span className="debate-entry__timestamp">
+-                    {new Date(entry.timestamp).toLocaleTimeString()}
++                  <span className="debate-entry__typing-dots" aria-hidden="true">
++                    <span /><span /><span />
+                   </span>
+                 </div>
+-                <div className="debate-entry__content">
+-                  {entry.content}
++              )}
++
++              {/* Waiting state when live but no entries yet */}
++              {debates.length === 0 && isLive && (
++                <div className="debate-empty-live">
++                  <Clipboard size={20} />
++                  <span>Waiting for debate entries…</span>
+                 </div>
+-              </div>
+-            );
+-          })}
+-
+-          {/* Typing indicator */}
+-          {isLive && phaseInfo && (
+-            <div className="debate-entry debate-entry--typing">
+-              <span
+-                className="debate-entry__agent-dot"
+-                style={{ background: AGENT_COLORS[phaseInfo.agent] }}
+-              />
+-              <span
+-                className="debate-entry__agent-name"
+-                style={{ color: AGENT_COLORS[phaseInfo.agent] }}
+-              >
+-                {capitalize(phaseInfo.agent)}
+-              </span>
+-              <span className="debate-entry__typing-label">
+-                is {phaseInfo.verb}
+-              </span>
+-              <span className="debate-entry__typing-dots" aria-hidden="true">
+-                <span /><span /><span />
+-              </span>
+-            </div>
+-          )}
++              )}
+ 
+-          {/* Waiting state when live but no entries yet */}
+-          {debates.length === 0 && isLive && (
+-            <div className="debate-empty-live">
+-              <Clipboard size={20} />
+-              <span>Waiting for debate entries…</span>
++              {/* Scroll sentinel */}
++              <div ref={sentinelRef} style={{ height: 1 }} />
+             </div>
+-          )}
+-
+-          {/* Scroll sentinel */}
+-          <div ref={sentinelRef} style={{ height: 1 }} />
+-        </div>
+ 
+-        {/* "New updates" pill */}
+-        {newUpdateCount > 0 && (
+-          <button className="new-output-pill" onClick={handleSnapToBottom}>
+-            ↓ {newUpdateCount} new update{newUpdateCount !== 1 ? "s" : ""}
+-          </button>
++            {/* "New updates" pill */}
++            {newUpdateCount > 0 && (
++              <button className="new-output-pill" onClick={handleSnapToBottom}>
++                ↓ {newUpdateCount} new update{newUpdateCount !== 1 ? "s" : ""}
++              </button>
++            )}
++          </>
+         )}
+       </Panel>
+     </div>
+diff --git a/mission-control/src/app/task/[taskId]/layout.tsx b/mission-control/src/app/task/[taskId]/layout.tsx
+index ee2cddc..5ae4d95 100644
+--- a/mission-control/src/app/task/[taskId]/layout.tsx
++++ b/mission-control/src/app/task/[taskId]/layout.tsx
+@@ -100,6 +100,14 @@ function TaskHeader({
+         {taskMeta?.complexity && (
+           <span className="task-header__badge">{taskMeta.complexity}</span>
+         )}
++        {taskMeta?.variant && (
++          <span
++            className="task-header__badge variant-chip"
++            title={`Coordination variant: ${taskMeta.variant}`}
++          >
++            {taskMeta.variant}
++          </span>
++        )}
+         {taskMeta?.model && (
+           <span className="task-header__model">{taskMeta.model}</span>
+         )}
+diff --git a/mission-control/src/app/task/[taskId]/logs/page.tsx b/mission-control/src/app/task/[taskId]/logs/page.tsx
+index 0f2a4b8..4ccca63 100644
+--- a/mission-control/src/app/task/[taskId]/logs/page.tsx
++++ b/mission-control/src/app/task/[taskId]/logs/page.tsx
+@@ -19,6 +19,8 @@ import { Skeleton } from "@/components/ui/Skeleton";
+ import { Panel } from "@/components/ui/Panel";
+ import { AGENT_COLORS, type AgentRole } from "@/lib/design-tokens";
+ import { Terminal as TerminalIcon } from "lucide-react";
++import { AgentTrace } from "@/components/features/AgentTrace";
++import { TurnInspector } from "@/components/features/TurnInspector";
+ 
+ 
+ const TaskLogTerminal = dynamic(() => import("@/components/features/TaskLogTerminal"), {
+@@ -64,9 +66,28 @@ interface ArchivedLog {
+ 
+ export default function LogsPage() {
+   const { taskId } = useParams();
+-  const { isLive, logs: liveLogs } = useTaskData();
++  const {
++    isLive,
++    logs: liveLogs,
++    traceEvents,
++    activeTurns,
++    completedTurns,
++    boardEntries,
++    rejectedEntries,
++  } = useTaskData();
+   const [activeTab, setActiveTab] = useState<AgentRole>("planner");
+ 
++  // Trace/Raw toggle — default to trace when trace data exists
++  type LogViewMode = "trace" | "raw";
++  const hasTraces = traceEvents.length > 0;
++  const [userLogView, setUserLogView] = useState<LogViewMode | null>(null);
++  // If user hasn't explicitly picked, auto-select based on trace availability
++  const logView: LogViewMode = userLogView ?? (hasTraces ? "trace" : "raw");
++  const setLogView = setUserLogView;
++
++  // TurnInspector state
++  const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
++
+   // ── Archived logs for completed tasks ─────────────────────────────
+   const [archivedLogs, setArchivedLogs] = useState<ArchivedLog[]>([]);
+   const [archiveLoading, setArchiveLoading] = useState(false);
+@@ -98,6 +119,55 @@ export default function LogsPage() {
+   if (isLive) {
+     return (
+       <div className="view-container logs-view">
++        {/* Trace/Raw segmented control */}
++        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", padding: "0 0 var(--space-2) 0" }}>
++          <div role="tablist" style={{ display: "inline-flex", background: "var(--surface-hover)", borderRadius: "var(--radius-sm)", padding: 2 }}>
++            <button
++              role="tab"
++              aria-selected={logView === "trace"}
++              onClick={() => setLogView("trace")}
++              style={{
++                padding: "2px 10px", fontSize: "var(--text-xs)", fontWeight: "var(--weight-medium)",
++                borderRadius: "var(--radius-sm)", border: "none", cursor: "pointer", fontFamily: "var(--font-sans)",
++                background: logView === "trace" ? "var(--surface-overlay)" : "transparent",
++                color: logView === "trace" ? "var(--text-primary)" : "var(--text-tertiary)",
++                transition: "background 150ms ease, color 150ms ease",
++              }}
++            >
++              Trace
++            </button>
++            <button
++              role="tab"
++              aria-selected={logView === "raw"}
++              onClick={() => setLogView("raw")}
++              style={{
++                padding: "2px 10px", fontSize: "var(--text-xs)", fontWeight: "var(--weight-medium)",
++                borderRadius: "var(--radius-sm)", border: "none", cursor: "pointer", fontFamily: "var(--font-sans)",
++                background: logView === "raw" ? "var(--surface-overlay)" : "transparent",
++                color: logView === "raw" ? "var(--text-primary)" : "var(--text-tertiary)",
++                transition: "background 150ms ease, color 150ms ease",
++              }}
++            >
++              Raw
++            </button>
++          </div>
++        </div>
++
++        {/* Trace mode */}
++        {logView === "trace" ? (
++          <div style={{ flex: 1, minHeight: 200 }}>
++            <Panel title="Agent Trace" subtitle={`${traceEvents.length} events`}>
++              <AgentTrace
++                traceEvents={traceEvents}
++                activeTurns={activeTurns}
++                completedTurns={completedTurns}
++                onTurnClick={setSelectedTurnId}
++              />
++            </Panel>
++          </div>
++        ) : (
++          <>
++            {/* Existing raw log UI */}
+         {/* Mobile tab bar */}
+         <div className="logs-tabs">
+           {ROLES.map(({ role, label }) => {
+@@ -146,6 +216,21 @@ export default function LogsPage() {
+             </div>
+           ))}
+         </div>
++          </>
++        )}
++
++        {/* TurnInspector slide-over */}
++        {selectedTurnId && (
++          <TurnInspector
++            turnId={selectedTurnId}
++            activeTurns={activeTurns}
++            completedTurns={completedTurns}
++            traceEvents={traceEvents}
++            boardEntries={boardEntries}
++            rejectedEntries={rejectedEntries}
++            onClose={() => setSelectedTurnId(null)}
++          />
++        )}
+       </div>
+     );
+   }
+diff --git a/mission-control/src/app/views.css b/mission-control/src/app/views.css
+index 1fa6493..d80976d 100644
+--- a/mission-control/src/app/views.css
++++ b/mission-control/src/app/views.css
+@@ -609,3 +609,42 @@
+ 
+ @keyframes spin{to{transform:rotate(360deg)}}
+ 
++/* ── Phase 4: Variant Chip (doc 08 §2.1) ──────────────────────────── */
++.variant-chip{background:var(--accent-subtle);color:var(--accent-primary);font-size:var(--text-xs);font-weight:var(--weight-medium);padding:1px 6px;border-radius:var(--radius-full);text-transform:capitalize}
++
++/* ── Phase 4: BlackboardGraph (doc 08 §3) ─────────────────────────── */
++.bb-graph-node{transition:box-shadow 200ms ease}
++.bb-graph-node:hover{box-shadow:var(--shadow-md)}
++.bb-graph-empty{text-align:center}
++
++/* ── Phase 4: WorkerLane (doc 08 §4) ──────────────────────────────── */
++.worker-lane{border-bottom:1px solid var(--border-subtle)}
++.worker-lane-card{transition:opacity 200ms ease,border-color 200ms ease,background 150ms ease}
++.worker-lane-card:hover{background:var(--surface-active) !important}
++
++/* ── Phase 4: ConsensusMeter (doc 08 §6) ──────────────────────────── */
++.consensus-meter{min-width:120px}
++
++/* ── Phase 4: BB Toggle (doc 08 §2) ───────────────────────────────── */
++.bb-toggle__tab{transition:background 150ms ease,color 150ms ease}
++.bb-toggle__tab:hover{color:var(--text-secondary)}
++.bb-toggle__tab--active{box-shadow:var(--shadow-sm)}
++
++/* ── Phase 4: AgentTrace (doc 09 §3) ──────────────────────────────── */
++.trace-turn-header{transition:background 150ms ease}
++.trace-turn-header:hover{background:var(--surface-active) !important}
++.trace-line{transition:background 100ms ease}
++.trace-line:hover{background:var(--surface-hover)}
++
++/* ── Phase 4: ToolCallCard (doc 09 §3) ────────────────────────────── */
++.tool-card{transition:border-color 200ms ease}
++.tool-card:hover{border-color:var(--border-focus)}
++
++/* ── Phase 4: TurnInspector (doc 09 §4) ───────────────────────────── */
++.turn-inspector-backdrop{transition:opacity 200ms ease}
++.turn-inspector{box-shadow:var(--shadow-lg)}
++
++/* ── Phase 4: ReplayScrubber (doc 08 §7) ──────────────────────────── */
++.replay-scrubber input[type="range"]{-webkit-appearance:none;appearance:none;background:var(--surface-active);border-radius:var(--radius-full);outline:none}
++.replay-scrubber input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:var(--radius-full);background:var(--accent-primary);cursor:pointer;border:none}
++.replay-scrubber input[type="range"]::-moz-range-thumb{width:12px;height:12px;border-radius:var(--radius-full);background:var(--accent-primary);cursor:pointer;border:none}
+diff --git a/mission-control/src/components/features/AgentTrace.tsx b/mission-control/src/components/features/AgentTrace.tsx
+new file mode 100644
+index 0000000..c7dae81
+--- /dev/null
++++ b/mission-control/src/components/features/AgentTrace.tsx
+@@ -0,0 +1,350 @@
++"use client";
++
++/**
++ * AgentTrace — structured trace timeline (doc 09 §3).
++ *
++ * Grouped by turn (newest pinned, scrollable). Smart auto-scroll
++ * with "↓ N new" pill. Virtualized for performance.
++ */
++
++import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
++import { useVirtualizer } from "@tanstack/react-virtual";
++import { authorColor } from "@/lib/design-tokens";
++import type { TraceEvent, TurnRecord } from "@/hooks/useTaskStream";
++import { ToolCallCard } from "./ToolCallCard";
++import { Activity } from "lucide-react";
++
++// ── Trace line glyph map (doc 09 §3) ─────────────────────────────────
++
++const TYPE_GLYPHS: Record<string, { glyph: string; color: string }> = {
++  reasoning:      { glyph: "●", color: "var(--accent-primary)" },
++  tool_call:      { glyph: "▸", color: "var(--status-paused)" },
++  entries_posted: { glyph: "◆", color: "var(--status-success)" },
++  final:          { glyph: "✓", color: "var(--status-success)" },
++  error:          { glyph: "✕", color: "var(--status-error)" },
++};
++
++function getGlyph(type: string) {
++  return TYPE_GLYPHS[type] ?? { glyph: "·", color: "var(--text-tertiary)" };
++}
++
++// ── Group traces by turn ──────────────────────────────────────────────
++
++interface TurnGroup {
++  turnId: string;
++  actor: string;
++  turn?: TurnRecord;
++  traces: TraceEvent[];
++}
++
++function groupByTurn(
++  traces: TraceEvent[],
++  activeTurns: TurnRecord[],
++  completedTurns: TurnRecord[],
++): TurnGroup[] {
++  const turnMap = new Map<string, TurnRecord>();
++  for (const t of [...activeTurns, ...completedTurns]) {
++    turnMap.set(t.turn_id, t);
++  }
++
++  const groups = new Map<string, TurnGroup>();
++  for (const trace of traces) {
++    const key = trace.turn_id || `orphan-${trace.actor}`;
++    if (!groups.has(key)) {
++      groups.set(key, {
++        turnId: key,
++        actor: trace.actor,
++        turn: turnMap.get(trace.turn_id),
++        traces: [],
++      });
++    }
++    groups.get(key)!.traces.push(trace);
++  }
++
++  // Newest first
++  return Array.from(groups.values()).reverse();
++}
++
++// ── Props ─────────────────────────────────────────────────────────────
++
++interface AgentTraceProps {
++  traceEvents: TraceEvent[];
++  activeTurns: TurnRecord[];
++  completedTurns: TurnRecord[];
++  onTurnClick?: (turnId: string) => void;
++}
++
++// ── Component ─────────────────────────────────────────────────────────
++
++export function AgentTrace({
++  traceEvents,
++  activeTurns,
++  completedTurns,
++  onTurnClick,
++}: AgentTraceProps) {
++  const scrollRef = useRef<HTMLDivElement>(null);
++  const [isNearBottom, setIsNearBottom] = useState(true);
++  const [newCount, setNewCount] = useState(0);
++  const prevLen = useRef(traceEvents.length);
++
++  const groups = useMemo(
++    () => groupByTurn(traceEvents, activeTurns, completedTurns),
++    [traceEvents, activeTurns, completedTurns],
++  );
++
++  // Flatten for virtualizer
++  const flatItems = useMemo(() => {
++    const items: ({ kind: "header"; group: TurnGroup } | { kind: "trace"; trace: TraceEvent; group: TurnGroup })[] = [];
++    for (const g of groups) {
++      items.push({ kind: "header", group: g });
++      for (const t of g.traces) {
++        items.push({ kind: "trace", trace: t, group: g });
++      }
++    }
++    return items;
++  }, [groups]);
++
++  const virtualizer = useVirtualizer({
++    count: flatItems.length,
++    getScrollElement: () => scrollRef.current,
++    estimateSize: (i) => (flatItems[i].kind === "header" ? 36 : 28),
++    overscan: 30,
++  });
++
++  // Smart auto-scroll
++  useEffect(() => {
++    const added = traceEvents.length - prevLen.current;
++    prevLen.current = traceEvents.length;
++    if (added > 0) {
++      if (isNearBottom && scrollRef.current) {
++        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
++      } else {
++        setNewCount((p) => p + added);
++      }
++    }
++  }, [traceEvents.length, isNearBottom]);
++
++  const handleScroll = useCallback(() => {
++    const el = scrollRef.current;
++    if (!el) return;
++    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
++    setIsNearBottom(near);
++    if (near) setNewCount(0);
++  }, []);
++
++  const snapToBottom = useCallback(() => {
++    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
++    setNewCount(0);
++  }, []);
++
++  if (traceEvents.length === 0) {
++    return (
++      <div
++        style={{
++          display: "flex",
++          flexDirection: "column",
++          alignItems: "center",
++          justifyContent: "center",
++          height: "100%",
++          gap: "var(--space-3)",
++          color: "var(--text-tertiary)",
++          padding: "var(--space-8)",
++        }}
++      >
++        <Activity size={28} />
++        <span style={{ fontSize: "var(--text-sm)" }}>
++          Waiting for trace events…
++        </span>
++      </div>
++    );
++  }
++
++  return (
++    <div style={{ position: "relative", height: "100%", display: "flex", flexDirection: "column" }}>
++      <div
++        ref={scrollRef}
++        onScroll={handleScroll}
++        style={{
++          flex: 1,
++          overflow: "auto",
++          padding: "var(--space-2)",
++        }}
++      >
++        <div
++          style={{
++            height: virtualizer.getTotalSize(),
++            width: "100%",
++            position: "relative",
++          }}
++        >
++          {virtualizer.getVirtualItems().map((vItem) => {
++            const item = flatItems[vItem.index];
++            if (item.kind === "header") {
++              const g = item.group;
++              const color = authorColor(g.actor);
++              return (
++                <div
++                  key={vItem.key}
++                  ref={virtualizer.measureElement}
++                  data-index={vItem.index}
++                  style={{
++                    position: "absolute",
++                    top: 0,
++                    left: 0,
++                    width: "100%",
++                    transform: `translateY(${vItem.start}px)`,
++                  }}
++                >
++                  <button
++                    onClick={() => onTurnClick?.(g.turnId)}
++                    className="trace-turn-header"
++                    style={{
++                      display: "flex",
++                      alignItems: "center",
++                      gap: "var(--space-2)",
++                      padding: "var(--space-1) var(--space-2)",
++                      background: "var(--surface-hover)",
++                      borderRadius: "var(--radius-sm)",
++                      border: "none",
++                      cursor: "pointer",
++                      width: "100%",
++                      fontFamily: "var(--font-sans)",
++                      color: "inherit",
++                      textAlign: "left",
++                      marginBottom: "var(--space-1)",
++                    }}
++                  >
++                    <span style={{ width: 8, height: 8, borderRadius: "var(--radius-full)", background: color, flexShrink: 0 }} />
++                    <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", textTransform: "capitalize" }}>
++                      {g.actor.replace(/_/g, " ")}
++                    </span>
++                    {g.turn && (
++                      <>
++                        <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums" }}>
++                          R{g.turn.round_no}
++                        </span>
++                        <span
++                          style={{
++                            fontSize: "var(--text-xs)",
++                            padding: "0 4px",
++                            borderRadius: "var(--radius-sm)",
++                            background: g.turn.status === "active" ? "var(--accent-subtle)" : "var(--surface-active)",
++                            color: g.turn.status === "active" ? "var(--accent-primary)" : "var(--text-secondary)",
++                          }}
++                        >
++                          {g.turn.phase}
++                        </span>
++                        {g.turn.tokens_in != null && (
++                          <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", marginLeft: "auto" }}>
++                            {((g.turn.tokens_in ?? 0) + (g.turn.tokens_out ?? 0)).toLocaleString()} tok
++                          </span>
++                        )}
++                      </>
++                    )}
++                  </button>
++                </div>
++              );
++            }
++
++            // Trace line
++            const trace = item.trace;
++            const { glyph, color } = getGlyph(trace.type);
++            const isToolCall = trace.type === "tool_call";
++
++            return (
++              <div
++                key={vItem.key}
++                ref={virtualizer.measureElement}
++                data-index={vItem.index}
++                style={{
++                  position: "absolute",
++                  top: 0,
++                  left: 0,
++                  width: "100%",
++                  transform: `translateY(${vItem.start}px)`,
++                }}
++              >
++                <div
++                  className="trace-line"
++                  style={{
++                    display: "flex",
++                    alignItems: "flex-start",
++                    gap: "var(--space-2)",
++                    padding: "1px var(--space-2) 1px var(--space-4)",
++                    fontSize: "var(--text-sm)",
++                    lineHeight: "var(--leading-sm)",
++                  }}
++                >
++                  {/* Gutter glyph */}
++                  <span
++                    style={{
++                      flexShrink: 0,
++                      width: 14,
++                      textAlign: "center",
++                      color,
++                      fontFamily: "var(--font-mono)",
++                      fontSize: "var(--text-xs)",
++                      lineHeight: "var(--leading-sm)",
++                    }}
++                  >
++                    {glyph}
++                  </span>
++
++                  {/* Timestamp */}
++                  <span
++                    style={{
++                      flexShrink: 0,
++                      fontSize: "var(--text-xs)",
++                      color: "var(--text-tertiary)",
++                      fontFamily: "var(--font-mono)",
++                      fontVariantNumeric: "tabular-nums",
++                      minWidth: 60,
++                    }}
++                  >
++                    {new Date(trace.timestamp).toLocaleTimeString()}
++                  </span>
++
++                  {/* Body */}
++                  <div style={{ flex: 1, minWidth: 0 }}>
++                    {isToolCall ? (
++                      <ToolCallCard content={trace.content} />
++                    ) : (
++                      <span
++                        style={{
++                          color: "var(--text-secondary)",
++                          wordBreak: "break-word",
++                        }}
++                      >
++                        {trace.content.length > 300
++                          ? trace.content.slice(0, 300) + "…"
++                          : trace.content}
++                      </span>
++                    )}
++                  </div>
++                </div>
++              </div>
++            );
++          })}
++        </div>
++      </div>
++
++      {/* "N new" pill */}
++      {newCount > 0 && (
++        <button
++          className="new-output-pill"
++          onClick={snapToBottom}
++          style={{
++            position: "absolute",
++            bottom: "var(--space-3)",
++            left: "50%",
++            transform: "translateX(-50%)",
++          }}
++        >
++          ↓ {newCount} new event{newCount !== 1 ? "s" : ""}
++        </button>
++      )}
++    </div>
++  );
++}
++
++export default AgentTrace;
+diff --git a/mission-control/src/components/features/BlackboardGraph.tsx b/mission-control/src/components/features/BlackboardGraph.tsx
+new file mode 100644
+index 0000000..daf14cb
+--- /dev/null
++++ b/mission-control/src/components/features/BlackboardGraph.tsx
+@@ -0,0 +1,308 @@
++"use client";
++
++/**
++ * BlackboardGraph — live entry/ref graph visualization (doc 08 §3).
++ *
++ * Renders board entries as nodes with type glyphs, agent dots, salience
++ * weighting, and confidence bars. Refs between entries render as typed
++ * edges. Extends DAGVisualizer patterns using @xyflow/react.
++ */
++
++import React, { useMemo, useCallback, useState } from "react";
++import {
++  ReactFlow,
++  Background,
++  Controls,
++  MiniMap,
++  type Node,
++  type Edge,
++  type NodeMouseHandler,
++} from "@xyflow/react";
++import "@xyflow/react/dist/style.css";
++import { authorColor, ENTRY_TYPE_ICONS } from "@/lib/design-tokens";
++import { getActiveAdapter } from "@/lib/variants";
++import type { BoardEntry } from "@/hooks/useTaskStream";
++import {
++  Target, Paperclip, ListTree, Lightbulb, AlertTriangle,
++  MessageSquareReply, GitMerge, CheckCircle2, FileCode2, Network,
++} from "lucide-react";
++import type { LucideIcon } from "lucide-react";
++
++// ── Icon lookup ───────────────────────────────────────────────────────
++
++const ICON_MAP: Record<string, LucideIcon> = {
++  Target, Paperclip, ListTree, Lightbulb, AlertTriangle,
++  MessageSquareReply, GitMerge, CheckCircle2, FileCode2,
++};
++
++function getIcon(entryType: string): LucideIcon {
++  const iconName = ENTRY_TYPE_ICONS[entryType];
++  return (iconName ? ICON_MAP[iconName] : null) ?? Lightbulb;
++}
++
++// ── Layout helpers ────────────────────────────────────────────────────
++
++const NODE_W = 220;
++const NODE_H = 64;
++const GAP_X = 280;
++const GAP_Y = 100;
++
++function layoutNodes(
++  entries: BoardEntry[],
++  removedIds: Set<string>,
++): Node[] {
++  // Compute depth from refs (reverse topological)
++  const depthMap = new Map<string, number>();
++  const entryMap = new Map(entries.map((e) => [e.id, e]));
++
++  function getDepth(id: string): number {
++    if (depthMap.has(id)) return depthMap.get(id)!;
++    const entry = entryMap.get(id);
++    if (!entry || entry.refs.length === 0) {
++      depthMap.set(id, 0);
++      return 0;
++    }
++    const maxParent = Math.max(
++      ...entry.refs
++        .filter((r) => entryMap.has(r))
++        .map((r) => getDepth(r)),
++      -1,
++    );
++    const d = maxParent + 1;
++    depthMap.set(id, d);
++    return d;
++  }
++
++  entries.forEach((e) => getDepth(e.id));
++
++  // Group by depth for Y positioning
++  const byDepth = new Map<number, BoardEntry[]>();
++  for (const entry of entries) {
++    const d = depthMap.get(entry.id) ?? 0;
++    if (!byDepth.has(d)) byDepth.set(d, []);
++    byDepth.get(d)!.push(entry);
++  }
++
++  const nodes: Node[] = [];
++  for (const [depth, group] of byDepth) {
++    group.forEach((entry, idx) => {
++      const isRemoved = removedIds.has(entry.id);
++      const isSolution = entry.type === "solution";
++      // Salience → opacity (0.6–1.0) and scale (1.0–1.06)
++      const opacity = 0.6 + Math.min(entry.salience, 1) * 0.4;
++      const scale = 1.0 + Math.min(entry.salience, 1) * 0.06;
++
++      nodes.push({
++        id: entry.id,
++        position: { x: depth * GAP_X, y: idx * GAP_Y },
++        data: { entry, isRemoved, isSolution },
++        style: {
++          width: NODE_W,
++          height: NODE_H,
++          opacity: isRemoved ? 0.2 : opacity,
++          transform: `scale(${isRemoved ? 0.95 : scale})`,
++          transition: "opacity 2s ease, transform 300ms ease",
++        },
++        type: "bbEntry",
++      });
++    });
++  }
++
++  return nodes;
++}
++
++function buildEdges(
++  entries: BoardEntry[],
++  variant: string,
++): Edge[] {
++  const adapter = getActiveAdapter(variant);
++  const edgeSpecs = adapter?.edgeSpecs ?? [];
++  const edges: Edge[] = [];
++  const entryIds = new Set(entries.map((e) => e.id));
++
++  for (const entry of entries) {
++    for (const ref of entry.refs) {
++      if (!entryIds.has(ref)) continue;
++      const spec = edgeSpecs.find((s) => s.refType === "supports") ?? edgeSpecs[0];
++      edges.push({
++        id: `${ref}-${entry.id}`,
++        source: ref,
++        target: entry.id,
++        animated: spec?.animated ?? false,
++        style: {
++          stroke: "var(--border-default)",
++          strokeDasharray: spec?.stroke === "dashed" ? "5 5" : spec?.stroke === "dotted" ? "2 4" : undefined,
++        },
++        label: spec?.label,
++      });
++    }
++  }
++
++  return edges;
++}
++
++// ── Custom Node Component ─────────────────────────────────────────────
++
++function BlackboardEntryNode({ data }: { data: { entry: BoardEntry; isRemoved: boolean; isSolution: boolean } }) {
++  const { entry, isRemoved, isSolution } = data;
++  const icon = React.createElement(getIcon(entry.type), { size: 14, style: { color: "var(--text-tertiary)", flexShrink: 0 } });
++  const color = authorColor(entry.author);
++
++  return (
++    <div
++      className={`bb-graph-node ${isRemoved ? "entry-remove" : "entry-appear"} ${isSolution ? "success-bloom" : ""}`}
++      style={{
++        background: "var(--surface-overlay)",
++        borderRadius: "var(--radius-md)",
++        padding: "var(--space-2) var(--space-3)",
++        display: "flex",
++        alignItems: "center",
++        gap: "var(--space-2)",
++        border: `1px solid ${isRemoved ? "var(--status-error)" : "var(--border-default)"}`,
++        height: "100%",
++        position: "relative",
++        overflow: "hidden",
++      }}
++    >
++      {/* Type glyph */}
++      {icon}
++
++      {/* Agent dot */}
++      <span
++        style={{
++          width: 8,
++          height: 8,
++          borderRadius: "var(--radius-full)",
++          background: color,
++          flexShrink: 0,
++        }}
++      />
++
++      {/* Content */}
++      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
++        <span
++          style={{
++            fontSize: "var(--text-xs)",
++            fontWeight: "var(--weight-semibold)",
++            color: "var(--text-primary)",
++            overflow: "hidden",
++            textOverflow: "ellipsis",
++            whiteSpace: "nowrap",
++          }}
++        >
++          {entry.title || entry.type}
++        </span>
++        <span
++          style={{
++            fontSize: "var(--text-xs)",
++            color: "var(--text-tertiary)",
++            fontFamily: "var(--font-mono)",
++          }}
++        >
++          {entry.author}
++        </span>
++      </div>
++
++      {/* Confidence bar */}
++      <div
++        style={{
++          position: "absolute",
++          bottom: 0,
++          left: 0,
++          height: 2,
++          width: `${Math.min(entry.confidence * 100, 100)}%`,
++          background: color,
++          borderRadius: "0 0 var(--radius-md) var(--radius-md)",
++          transition: "width 500ms ease-out",
++        }}
++      />
++    </div>
++  );
++}
++
++const nodeTypes = { bbEntry: BlackboardEntryNode };
++
++// ── Props ─────────────────────────────────────────────────────────────
++
++interface BlackboardGraphProps {
++  entries: BoardEntry[];
++  removedEntryIds: string[];
++  variant?: string;
++  onNodeClick?: (entryId: string) => void;
++}
++
++// ── Component ─────────────────────────────────────────────────────────
++
++export function BlackboardGraph({
++  entries,
++  removedEntryIds,
++  variant = "traditional",
++  onNodeClick,
++}: BlackboardGraphProps) {
++  const [selectedNode, setSelectedNode] = useState<string | null>(null);
++  const removedSet = useMemo(() => new Set(removedEntryIds), [removedEntryIds]);
++  const nodes = useMemo(() => layoutNodes(entries, removedSet), [entries, removedSet]);
++  const edges = useMemo(() => buildEdges(entries, variant), [entries, variant]);
++
++  const handleNodeClick: NodeMouseHandler = useCallback(
++    (_event, node) => {
++      setSelectedNode(node.id);
++      onNodeClick?.(node.id);
++    },
++    [onNodeClick],
++  );
++
++  if (entries.length === 0) {
++    return (
++      <div
++        className="bb-graph-empty"
++        style={{
++          display: "flex",
++          flexDirection: "column",
++          alignItems: "center",
++          justifyContent: "center",
++          height: "100%",
++          gap: "var(--space-3)",
++          color: "var(--text-tertiary)",
++        }}
++      >
++        <Network size={32} />
++        <span style={{ fontSize: "var(--text-sm)" }}>
++          Waiting for board entries…
++        </span>
++      </div>
++    );
++  }
++
++  return (
++    <div style={{ width: "100%", height: "100%", minHeight: 400 }}>
++      <ReactFlow
++        nodes={nodes}
++        edges={edges}
++        nodeTypes={nodeTypes}
++        onNodeClick={handleNodeClick}
++        fitView
++        proOptions={{ hideAttribution: true }}
++        style={{ background: "var(--surface-base)" }}
++      >
++        <Background color="var(--border-subtle)" gap={20} />
++        <Controls
++          style={{ background: "var(--surface-overlay)", borderRadius: "var(--radius-md)" }}
++        />
++        <MiniMap
++          nodeColor={(n) => {
++            if (n.id === selectedNode) return "var(--accent-primary)";
++            const entry = (n.data as { entry: BoardEntry }).entry;
++            return authorColor(entry.author);
++          }}
++          style={{
++            background: "var(--surface-raised)",
++            borderRadius: "var(--radius-md)",
++          }}
++        />
++      </ReactFlow>
++    </div>
++  );
++}
++
++export default BlackboardGraph;
+diff --git a/mission-control/src/components/features/ConsensusMeter.tsx b/mission-control/src/components/features/ConsensusMeter.tsx
+new file mode 100644
+index 0000000..62f9951
+--- /dev/null
++++ b/mission-control/src/components/features/ConsensusMeter.tsx
+@@ -0,0 +1,76 @@
++"use client";
++
++/**
++ * ConsensusMeter — convergence progress bar (doc 08 §6).
++ *
++ * Slim progress bar bound to consensus events from the stream.
++ * Shows the decider's convergence signal and state label.
++ */
++
++import React from "react";
++import type { ConsensusState } from "@/hooks/useTaskStream";
++
++interface ConsensusMeterProps {
++  consensus: ConsensusState | null;
++  isLive: boolean;
++}
++
++export function ConsensusMeter({ consensus, isLive }: ConsensusMeterProps) {
++  if (!consensus && !isLive) return null;
++
++  const signal = consensus?.signal ?? 0;
++  const state = consensus?.decider_state ?? "waiting";
++  const pct = Math.min(Math.max(signal * 100, 0), 100);
++  const isSolved = state === "accepted" || state === "solved";
++
++  return (
++    <div
++      className="consensus-meter"
++      style={{
++        display: "flex",
++        alignItems: "center",
++        gap: "var(--space-2)",
++        padding: "0 var(--space-1)",
++      }}
++    >
++      {/* Progress bar */}
++      <div
++        style={{
++          flex: 1,
++          height: 4,
++          borderRadius: "var(--radius-full)",
++          background: "var(--surface-hover)",
++          overflow: "hidden",
++          minWidth: 60,
++        }}
++      >
++        <div
++          className={isSolved ? "success-bloom" : ""}
++          style={{
++            height: "100%",
++            width: `${pct}%`,
++            borderRadius: "var(--radius-full)",
++            background: isSolved ? "var(--status-success)" : "var(--accent-primary)",
++            transition: "width 500ms ease-out, background 300ms ease",
++          }}
++        />
++      </div>
++
++      {/* State label */}
++      <span
++        style={{
++          fontSize: "var(--text-xs)",
++          fontFamily: "var(--font-mono)",
++          fontVariantNumeric: "tabular-nums",
++          color: isSolved ? "var(--status-success)" : "var(--text-tertiary)",
++          whiteSpace: "nowrap",
++          flexShrink: 0,
++        }}
++      >
++        {pct.toFixed(0)}% · {state}
++      </span>
++    </div>
++  );
++}
++
++export default ConsensusMeter;
+diff --git a/mission-control/src/components/features/ReplayScrubber.tsx b/mission-control/src/components/features/ReplayScrubber.tsx
+new file mode 100644
+index 0000000..34a27d0
+--- /dev/null
++++ b/mission-control/src/components/features/ReplayScrubber.tsx
+@@ -0,0 +1,118 @@
++"use client";
++
++/**
++ * ReplayScrubber — timeline scrubber for the BlackboardGraph (doc 08 §7).
++ *
++ * For completed tasks: drag to fold board_events up to seq N.
++ * For running tasks: sits at "live"; dragging back pauses live-follow.
++ */
++
++import React, { useState, useCallback } from "react";
++import type { BoardEntry } from "@/hooks/useTaskStream";
++
++interface ReplayScrubberProps {
++  entries: BoardEntry[];
++  isLive: boolean;
++  onSeqChange: (maxSeq: number) => void;
++}
++
++export function ReplayScrubber({
++  entries,
++  isLive,
++  onSeqChange,
++}: ReplayScrubberProps) {
++  const maxSeq = entries.length > 0 ? Math.max(...entries.map((e) => e.seq)) : 0;
++  const [isPaused, setIsPaused] = useState(false);
++  // When paused, this holds the user-selected position
++  const [pausedAt, setPausedAt] = useState(0);
++
++  // Derived display value: when following live, show maxSeq; when paused, show pausedAt
++  const value = isPaused ? pausedAt : maxSeq;
++
++  const handleChange = useCallback(
++    (e: React.ChangeEvent<HTMLInputElement>) => {
++      const seq = parseInt(e.target.value, 10);
++      onSeqChange(seq);
++      if (seq < maxSeq) {
++        setIsPaused(true);
++        setPausedAt(seq);
++      } else {
++        setIsPaused(false);
++      }
++    },
++    [maxSeq, onSeqChange],
++  );
++
++  const handleResumeLive = useCallback(() => {
++    setIsPaused(false);
++    onSeqChange(maxSeq);
++  }, [maxSeq, onSeqChange]);
++
++  if (entries.length <= 1) return null;
++
++  return (
++    <div
++      className="replay-scrubber"
++      style={{
++        display: "flex",
++        alignItems: "center",
++        gap: "var(--space-2)",
++        padding: "var(--space-2) var(--space-3)",
++        background: "var(--surface-hover)",
++        borderRadius: "var(--radius-sm)",
++        flexShrink: 0,
++      }}
++    >
++      {/* Position label */}
++      <span
++        style={{
++          fontSize: "var(--text-xs)",
++          fontFamily: "var(--font-mono)",
++          fontVariantNumeric: "tabular-nums",
++          color: "var(--text-tertiary)",
++          minWidth: 40,
++        }}
++      >
++        {value}/{maxSeq}
++      </span>
++
++      {/* Range slider */}
++      <input
++        type="range"
++        min={0}
++        max={maxSeq}
++        value={value}
++        onChange={handleChange}
++        style={{
++          flex: 1,
++          accentColor: "var(--accent-primary)",
++          cursor: "pointer",
++          height: 4,
++        }}
++      />
++
++      {/* Live/Paused indicator */}
++      {isLive && (
++        <button
++          onClick={isPaused ? handleResumeLive : undefined}
++          style={{
++            fontSize: "var(--text-xs)",
++            fontWeight: "var(--weight-medium)",
++            padding: "1px 6px",
++            borderRadius: "var(--radius-sm)",
++            border: "none",
++            cursor: isPaused ? "pointer" : "default",
++            fontFamily: "var(--font-sans)",
++            background: isPaused ? "var(--status-paused)" : "var(--status-success)",
++            color: "var(--text-inverse)",
++            transition: "background 200ms ease",
++          }}
++        >
++          {isPaused ? "Paused" : "Live"}
++        </button>
++      )}
++    </div>
++  );
++}
++
++export default ReplayScrubber;
+diff --git a/mission-control/src/components/features/SkillsExplorer.tsx b/mission-control/src/components/features/SkillsExplorer.tsx
+index 4fe20be..fb23969 100644
+--- a/mission-control/src/components/features/SkillsExplorer.tsx
++++ b/mission-control/src/components/features/SkillsExplorer.tsx
+@@ -19,7 +19,7 @@ interface Skill {
+ }
+ 
+ const ROLES: AgentRole[] = ["planner", "executor", "auditor"];
+-const ROLE_LABELS: Record<AgentRole, string> = { planner: "Planner", executor: "Executor", auditor: "Auditor" };
++const ROLE_LABELS: Record<AgentRole, string> = { planner: "Planner", executor: "Executor", auditor: "Auditor", critic: "Critic", conflict_resolver: "Conflict Resolver", cleaner: "Cleaner", decider: "Decider" };
+ 
+ // ── Main Component ────────────────────────────────────────────────────
+ 
+diff --git a/mission-control/src/components/features/TaskLogTerminal.tsx b/mission-control/src/components/features/TaskLogTerminal.tsx
+index 184bc82..39c66f1 100644
+--- a/mission-control/src/components/features/TaskLogTerminal.tsx
++++ b/mission-control/src/components/features/TaskLogTerminal.tsx
+@@ -28,6 +28,10 @@ const ACCENT_RGB: Record<AgentRole, string> = {
+   planner: "153;102;204",
+   executor: "46;184;163",
+   auditor: "224;156;63",
++  critic: "244;114;182",
++  conflict_resolver: "129;140;248",
++  cleaner: "148;163;184",
++  decider: "250;204;21",
+ };
+ 
+ function fmtLevel(l?: string): string {
+diff --git a/mission-control/src/components/features/ToolCallCard.tsx b/mission-control/src/components/features/ToolCallCard.tsx
+new file mode 100644
+index 0000000..451e53a
+--- /dev/null
++++ b/mission-control/src/components/features/ToolCallCard.tsx
+@@ -0,0 +1,158 @@
++"use client";
++
++/**
++ * ToolCallCard — collapsible tool-call + result card (doc 09 §3).
++ *
++ * Collapsed: one-line summary (tool name + status + duration).
++ * Expanded: full args + result body.
++ */
++
++import React, { useState, useMemo } from "react";
++
++interface ToolCallData {
++  tool?: string;
++  status?: string;
++  args?: Record<string, unknown>;
++  result?: string;
++  duration_ms?: number;
++  ok?: boolean;
++}
++
++interface ToolCallCardProps {
++  content: string;
++}
++
++export function ToolCallCard({ content }: ToolCallCardProps) {
++  const [expanded, setExpanded] = useState(false);
++
++  const parsed = useMemo<ToolCallData | null>(() => {
++    try {
++      return JSON.parse(content) as ToolCallData;
++    } catch {
++      return null;
++    }
++  }, [content]);
++
++  if (!parsed) {
++    // Fallback: render raw content
++    return (
++      <span style={{ color: "var(--text-secondary)", wordBreak: "break-word" }}>
++        {content.length > 200 ? content.slice(0, 200) + "…" : content}
++      </span>
++    );
++  }
++
++  const isError = parsed.ok === false || parsed.status === "error";
++  const autoExpand = isError && !expanded;
++
++  return (
++    <div
++      className="tool-card"
++      style={{
++        background: "var(--surface-overlay)",
++        borderRadius: "var(--radius-md)",
++        border: `1px solid ${isError ? "var(--status-error)" : "var(--border-default)"}`,
++        borderLeft: isError ? "3px solid var(--status-error)" : undefined,
++        overflow: "hidden",
++      }}
++    >
++      {/* Collapsed summary */}
++      <button
++        onClick={() => setExpanded(!expanded)}
++        style={{
++          display: "flex",
++          alignItems: "center",
++          gap: "var(--space-2)",
++          padding: "var(--space-1) var(--space-2)",
++          width: "100%",
++          background: "none",
++          border: "none",
++          cursor: "pointer",
++          fontFamily: "var(--font-mono)",
++          fontSize: "var(--text-xs)",
++          color: "var(--text-secondary)",
++          textAlign: "left",
++        }}
++      >
++        <span style={{ color: "var(--text-tertiary)" }}>
++          {expanded || autoExpand ? "▾" : "▸"}
++        </span>
++        <span style={{ fontWeight: "var(--weight-semibold)", color: "var(--text-primary)" }}>
++          {parsed.tool ?? "tool_call"}
++        </span>
++        {parsed.status && (
++          <span
++            style={{
++              padding: "0 4px",
++              borderRadius: "var(--radius-sm)",
++              background: isError ? "hsl(0 84% 60% / 0.15)" : "var(--surface-active)",
++              color: isError ? "var(--status-error)" : "var(--text-tertiary)",
++            }}
++          >
++            {parsed.status}
++          </span>
++        )}
++        {parsed.duration_ms != null && (
++          <span
++            style={{
++              marginLeft: "auto",
++              fontVariantNumeric: "tabular-nums",
++              color: "var(--text-tertiary)",
++            }}
++          >
++            {parsed.duration_ms}ms
++          </span>
++        )}
++      </button>
++
++      {/* Expanded details */}
++      {(expanded || autoExpand) && (
++        <div
++          style={{
++            padding: "var(--space-2)",
++            borderTop: "1px solid var(--border-subtle)",
++            fontSize: "var(--text-xs)",
++            fontFamily: "var(--font-mono)",
++          }}
++        >
++          {parsed.args && (
++            <div style={{ marginBottom: "var(--space-2)" }}>
++              <div style={{ color: "var(--text-tertiary)", marginBottom: 2 }}>args:</div>
++              <pre
++                style={{
++                  color: "var(--text-secondary)",
++                  whiteSpace: "pre-wrap",
++                  wordBreak: "break-word",
++                  margin: 0,
++                  maxHeight: 200,
++                  overflow: "auto",
++                }}
++              >
++                {JSON.stringify(parsed.args, null, 2)}
++              </pre>
++            </div>
++          )}
++          {parsed.result && (
++            <div>
++              <div style={{ color: "var(--text-tertiary)", marginBottom: 2 }}>result:</div>
++              <pre
++                style={{
++                  color: isError ? "var(--status-error)" : "var(--text-secondary)",
++                  whiteSpace: "pre-wrap",
++                  wordBreak: "break-word",
++                  margin: 0,
++                  maxHeight: 200,
++                  overflow: "auto",
++                }}
++              >
++                {parsed.result}
++              </pre>
++            </div>
++          )}
++        </div>
++      )}
++    </div>
++  );
++}
++
++export default ToolCallCard;
+diff --git a/mission-control/src/components/features/TurnInspector.tsx b/mission-control/src/components/features/TurnInspector.tsx
+new file mode 100644
+index 0000000..e5375e7
+--- /dev/null
++++ b/mission-control/src/components/features/TurnInspector.tsx
+@@ -0,0 +1,277 @@
++"use client";
++
++/**
++ * TurnInspector — right-side slide-over panel (doc 09 §4).
++ *
++ * Opens from board node click or worker card click.
++ * Shows complete trace timeline for a single turn plus
++ * "Resulted in" footer (board entries, rejections, artifacts).
++ */
++
++import React, { useMemo } from "react";
++import { authorColor } from "@/lib/design-tokens";
++import type { TurnRecord, TraceEvent, BoardEntry, RejectedEntry } from "@/hooks/useTaskStream";
++import { ToolCallCard } from "./ToolCallCard";
++import { X } from "lucide-react";
++
++// ── Trace line glyph map ──────────────────────────────────────────────
++
++const TYPE_GLYPHS: Record<string, { glyph: string; color: string }> = {
++  reasoning:      { glyph: "●", color: "var(--accent-primary)" },
++  tool_call:      { glyph: "▸", color: "var(--status-paused)" },
++  entries_posted: { glyph: "◆", color: "var(--status-success)" },
++  final:          { glyph: "✓", color: "var(--status-success)" },
++  error:          { glyph: "✕", color: "var(--status-error)" },
++};
++
++function getGlyph(type: string) {
++  return TYPE_GLYPHS[type] ?? { glyph: "·", color: "var(--text-tertiary)" };
++}
++
++// ── Props ─────────────────────────────────────────────────────────────
++
++interface TurnInspectorProps {
++  turnId: string | null;
++  activeTurns: TurnRecord[];
++  completedTurns: TurnRecord[];
++  traceEvents: TraceEvent[];
++  boardEntries: BoardEntry[];
++  rejectedEntries: RejectedEntry[];
++  onClose: () => void;
++}
++
++// ── Component ─────────────────────────────────────────────────────────
++
++export function TurnInspector({
++  turnId,
++  activeTurns,
++  completedTurns,
++  traceEvents,
++  boardEntries,
++  rejectedEntries,
++  onClose,
++}: TurnInspectorProps) {
++  // Find turn
++  const turn = useMemo(() => {
++    if (!turnId) return null;
++    return (
++      activeTurns.find((t) => t.turn_id === turnId) ??
++      completedTurns.find((t) => t.turn_id === turnId) ??
++      null
++    );
++  }, [turnId, activeTurns, completedTurns]);
++
++  // Filter traces for this turn
++  const turnTraces = useMemo(() => {
++    if (!turnId) return [];
++    return traceEvents.filter((t) => t.turn_id === turnId);
++  }, [turnId, traceEvents]);
++
++  // Board entries created during this turn (matched by actor + time window)
++  const createdEntries = useMemo(() => {
++    if (!turn) return [];
++    return boardEntries.filter(
++      (e) =>
++        e.author === turn.actor &&
++        new Date(e.created_at).getTime() >= new Date(turn.started_at).getTime(),
++    );
++  }, [turn, boardEntries]);
++
++  // Rejections during this turn
++  const turnRejections = useMemo(() => {
++    if (!turn) return [];
++    return rejectedEntries.filter((r) => r.actor === turn.actor);
++  }, [turn, rejectedEntries]);
++
++  if (!turnId) return null;
++
++  const actor = turn?.actor ?? turnTraces[0]?.actor ?? "unknown";
++  const color = authorColor(actor);
++
++  return (
++    <>
++      {/* Backdrop */}
++      <div
++        className="turn-inspector-backdrop"
++        onClick={onClose}
++        style={{
++          position: "fixed",
++          inset: 0,
++          background: "hsl(0 0% 0% / 0.4)",
++          zIndex: 90,
++          cursor: "pointer",
++        }}
++      />
++
++      {/* Slide-over panel */}
++      <div
++        className="turn-inspector"
++        style={{
++          position: "fixed",
++          top: 0,
++          right: 0,
++          bottom: 0,
++          width: "min(460px, 90vw)",
++          background: "var(--surface-raised)",
++          borderLeft: "1px solid var(--border-default)",
++          zIndex: 91,
++          display: "flex",
++          flexDirection: "column",
++          animation: "toast-enter 200ms ease-out",
++          overflowY: "auto",
++        }}
++      >
++        {/* Header */}
++        <div
++          style={{
++            display: "flex",
++            alignItems: "center",
++            gap: "var(--space-3)",
++            padding: "var(--space-4)",
++            borderBottom: "1px solid var(--border-subtle)",
++            flexShrink: 0,
++          }}
++        >
++          <span style={{ width: 10, height: 10, borderRadius: "var(--radius-full)", background: color, flexShrink: 0 }} />
++          <div style={{ flex: 1, minWidth: 0 }}>
++            <div style={{ fontWeight: "var(--weight-semibold)", fontSize: "var(--text-base)", textTransform: "capitalize" }}>
++              {actor.replace(/_/g, " ")}
++            </div>
++            {turn && (
++              <div style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
++                <span>Round {turn.round_no}</span>
++                <span>· {turn.phase}</span>
++                <span>· {turn.status}</span>
++                {turn.model && <span>· {turn.model}</span>}
++              </div>
++            )}
++          </div>
++
++          {/* Stats */}
++          {turn && (turn.tokens_in != null || turn.cost_usd != null) && (
++            <div style={{ fontSize: "var(--text-xs)", fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", color: "var(--text-tertiary)", textAlign: "right", flexShrink: 0 }}>
++              {turn.tokens_in != null && (
++                <div>{((turn.tokens_in ?? 0) + (turn.tokens_out ?? 0)).toLocaleString()} tok</div>
++              )}
++              {turn.cost_usd != null && <div>${turn.cost_usd.toFixed(4)}</div>}
++            </div>
++          )}
++
++          <button
++            onClick={onClose}
++            style={{
++              background: "none",
++              border: "none",
++              cursor: "pointer",
++              color: "var(--text-tertiary)",
++              padding: "var(--space-1)",
++              flexShrink: 0,
++            }}
++          >
++            <X size={16} />
++          </button>
++        </div>
++
++        {/* Trace timeline */}
++        <div style={{ flex: 1, overflow: "auto", padding: "var(--space-3)" }}>
++          {turnTraces.length === 0 ? (
++            <div style={{ color: "var(--text-tertiary)", textAlign: "center", padding: "var(--space-6)" }}>
++              No trace data for this turn.
++            </div>
++          ) : (
++            turnTraces.map((trace) => {
++              const { glyph, color: glyphColor } = getGlyph(trace.type);
++              const isToolCall = trace.type === "tool_call";
++
++              return (
++                <div
++                  key={trace.id}
++                  style={{
++                    display: "flex",
++                    alignItems: "flex-start",
++                    gap: "var(--space-2)",
++                    padding: "2px 0",
++                    fontSize: "var(--text-sm)",
++                  }}
++                >
++                  <span style={{ width: 14, textAlign: "center", color: glyphColor, fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", flexShrink: 0 }}>
++                    {glyph}
++                  </span>
++                  <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", minWidth: 60, flexShrink: 0 }}>
++                    {new Date(trace.timestamp).toLocaleTimeString()}
++                  </span>
++                  <div style={{ flex: 1, minWidth: 0 }}>
++                    {isToolCall ? (
++                      <ToolCallCard content={trace.content} />
++                    ) : (
++                      <span style={{ color: "var(--text-secondary)", wordBreak: "break-word" }}>
++                        {trace.content}
++                      </span>
++                    )}
++                  </div>
++                </div>
++              );
++            })
++          )}
++        </div>
++
++        {/* "Resulted in" footer */}
++        {(createdEntries.length > 0 || turnRejections.length > 0) && (
++          <div
++            style={{
++              borderTop: "1px solid var(--border-subtle)",
++              padding: "var(--space-3)",
++              flexShrink: 0,
++            }}
++          >
++            <div style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-tertiary)", marginBottom: "var(--space-2)" }}>
++              Resulted in
++            </div>
++
++            {createdEntries.map((e) => (
++              <div
++                key={e.id}
++                style={{
++                  display: "flex",
++                  alignItems: "center",
++                  gap: "var(--space-2)",
++                  padding: "2px 0",
++                  fontSize: "var(--text-xs)",
++                  color: "var(--text-secondary)",
++                }}
++              >
++                <span style={{ width: 6, height: 6, borderRadius: "var(--radius-full)", background: "var(--status-success)", flexShrink: 0 }} />
++                <span style={{ fontWeight: "var(--weight-medium)" }}>{e.type}</span>
++                <span style={{ color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
++                  {e.title || e.body.slice(0, 60)}
++                </span>
++              </div>
++            ))}
++
++            {turnRejections.map((r) => (
++              <div
++                key={r.entry_id}
++                style={{
++                  display: "flex",
++                  alignItems: "center",
++                  gap: "var(--space-2)",
++                  padding: "2px 0",
++                  fontSize: "var(--text-xs)",
++                  color: "var(--status-error)",
++                }}
++              >
++                <span style={{ width: 6, height: 6, borderRadius: "var(--radius-full)", background: "var(--status-error)", flexShrink: 0 }} />
++                <span>Rejected: {r.reason}</span>
++              </div>
++            ))}
++
++            {/* Phase 5 placeholder */}
++            {/* TODO(phase-5): Inline Approve/Deny buttons for approval_request events */}
++          </div>
++        )}
++      </div>
++    </>
++  );
++}
++
++export default TurnInspector;
+diff --git a/mission-control/src/components/features/VariantSelect.tsx b/mission-control/src/components/features/VariantSelect.tsx
+new file mode 100644
+index 0000000..9cb1519
+--- /dev/null
++++ b/mission-control/src/components/features/VariantSelect.tsx
+@@ -0,0 +1,82 @@
++"use client";
++
++import React, { useState, useEffect } from "react";
++
++/**
++ * VariantSelect — dropdown for the composer (doc 08 §2.1).
++ *
++ * Fetches the daemon's capabilities and renders a compact select with
++ * one enabled option (traditional) and disabled options with tooltips
++ * for planned variants.
++ */
++
++interface VariantDescriptor {
++  id: string;
++  label: string;
++  available: boolean;
++  reason?: string;
++}
++
++interface VariantSelectProps {
++  value: string;
++  onChange: (variant: string) => void;
++}
++
++export function VariantSelect({ value, onChange }: VariantSelectProps) {
++  const [variants, setVariants] = useState<VariantDescriptor[]>([
++    { id: "traditional", label: "Blackboard (bMAS)", available: true },
++  ]);
++
++  useEffect(() => {
++    let cancelled = false;
++    fetch("/api/capabilities")
++      .then((r) => r.json())
++      .then((data: { variants: VariantDescriptor[] }) => {
++        if (!cancelled && data.variants?.length) {
++          setVariants(data.variants);
++        }
++      })
++      .catch(() => {
++        // Keep the static default
++      });
++    return () => {
++      cancelled = true;
++    };
++  }, []);
++
++  return (
++    <select
++      id="variant-select"
++      className="variant-select"
++      value={value}
++      onChange={(e) => onChange(e.target.value)}
++      style={{
++        padding: "4px 8px",
++        background: "var(--surface-hover)",
++        border: "1px solid var(--border-subtle)",
++        borderRadius: "var(--radius-sm)",
++        color: "var(--text-secondary)",
++        fontSize: "var(--text-xs)",
++        fontFamily: "var(--font-sans)",
++        cursor: "pointer",
++        outline: "none",
++        minWidth: 0,
++        maxWidth: 160,
++      }}
++    >
++      {variants.map((v) => (
++        <option
++          key={v.id}
++          value={v.id}
++          disabled={!v.available}
++          title={v.reason ? `${v.label} — ${v.reason}` : v.label}
++        >
++          {v.label}
++          {!v.available && v.reason ? ` (${v.reason})` : ""}
++        </option>
++      ))}
++    </select>
++  );
++}
++
++export default VariantSelect;
+diff --git a/mission-control/src/components/features/WorkerLane.tsx b/mission-control/src/components/features/WorkerLane.tsx
+new file mode 100644
+index 0000000..a91b3b8
+--- /dev/null
++++ b/mission-control/src/components/features/WorkerLane.tsx
+@@ -0,0 +1,177 @@
++"use client";
++
++/**
++ * WorkerLane — horizontal agent activity strip (doc 08 §4).
++ *
++ * Shows one card per agent role with live activity indicators.
++ * Active turns show role + activity verb + token counter + cost.
++ * Idle agents render muted.
++ */
++
++import React, { useMemo } from "react";
++import { authorColor } from "@/lib/design-tokens";
++import type { TurnRecord, TraceEvent, BoardEntry } from "@/hooks/useTaskStream";
++
++interface WorkerLaneProps {
++  activeTurns: TurnRecord[];
++  completedTurns: TurnRecord[];
++  traceEvents: TraceEvent[];
++  boardEntries: BoardEntry[];
++  onTurnClick?: (turnId: string) => void;
++}
++
++export function WorkerLane({
++  activeTurns,
++  completedTurns,
++  traceEvents,
++  boardEntries,
++  onTurnClick,
++}: WorkerLaneProps) {
++  // Build roster from all known actors
++  const roster = useMemo(() => {
++    const actors = new Set<string>();
++    for (const t of activeTurns) actors.add(t.actor);
++    for (const t of completedTurns) actors.add(t.actor);
++    for (const e of boardEntries) actors.add(e.author);
++    return Array.from(actors).sort();
++  }, [activeTurns, completedTurns, boardEntries]);
++
++  // Latest trace per actor for activity verb
++  const latestTrace = useMemo(() => {
++    const map = new Map<string, TraceEvent>();
++    for (const t of traceEvents) {
++      const existing = map.get(t.actor);
++      if (!existing || t.seq > existing.seq) {
++        map.set(t.actor, t);
++      }
++    }
++    return map;
++  }, [traceEvents]);
++
++  // Active turn lookup
++  const activeByActor = useMemo(() => {
++    const map = new Map<string, TurnRecord>();
++    for (const t of activeTurns) map.set(t.actor, t);
++    return map;
++  }, [activeTurns]);
++
++  if (roster.length === 0) {
++    return null; // No agents yet
++  }
++
++  return (
++    <div
++      className="worker-lane"
++      style={{
++        display: "flex",
++        gap: "var(--space-2)",
++        overflowX: "auto",
++        padding: "var(--space-2) 0",
++        flexShrink: 0,
++        scrollbarWidth: "thin",
++      }}
++    >
++      {roster.map((actor) => {
++        const isActive = activeByActor.has(actor);
++        const turn = activeByActor.get(actor);
++        const trace = latestTrace.get(actor);
++        const color = authorColor(actor);
++
++        return (
++          <button
++            key={actor}
++            className="worker-lane-card"
++            onClick={() => turn && onTurnClick?.(turn.turn_id)}
++            style={{
++              display: "flex",
++              alignItems: "center",
++              gap: "var(--space-2)",
++              padding: "var(--space-2) var(--space-3)",
++              background: isActive ? "var(--surface-overlay)" : "var(--surface-hover)",
++              borderRadius: "var(--radius-md)",
++              border: isActive ? `1px solid ${color}` : "1px solid var(--border-subtle)",
++              opacity: isActive ? 1 : 0.5,
++              cursor: turn ? "pointer" : "default",
++              flexShrink: 0,
++              minWidth: 140,
++              transition: "opacity 200ms ease, border-color 200ms ease",
++              fontFamily: "var(--font-sans)",
++              color: "inherit",
++              textAlign: "left",
++            }}
++          >
++            {/* Agent dot */}
++            <span
++              className={isActive ? "pulse-dot" : ""}
++              style={{
++                width: 8,
++                height: 8,
++                borderRadius: "var(--radius-full)",
++                background: color,
++                flexShrink: 0,
++              }}
++            />
++
++            {/* Info */}
++            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
++              <span
++                style={{
++                  fontSize: "var(--text-xs)",
++                  fontWeight: "var(--weight-semibold)",
++                  color: isActive ? "var(--text-primary)" : "var(--text-tertiary)",
++                  textTransform: "capitalize",
++                  overflow: "hidden",
++                  textOverflow: "ellipsis",
++                  whiteSpace: "nowrap",
++                }}
++              >
++                {actor.replace(/_/g, " ")}
++              </span>
++              {isActive && trace && (
++                <span
++                  style={{
++                    fontSize: "var(--text-xs)",
++                    color: "var(--text-secondary)",
++                    overflow: "hidden",
++                    textOverflow: "ellipsis",
++                    whiteSpace: "nowrap",
++                  }}
++                >
++                  {trace.type}
++                </span>
++              )}
++              {!isActive && (
++                <span
++                  style={{
++                    fontSize: "var(--text-xs)",
++                    color: "var(--text-tertiary)",
++                    fontStyle: "italic",
++                  }}
++                >
++                  idle
++                </span>
++              )}
++            </div>
++
++            {/* Token counter */}
++            {isActive && turn && (
++              <span
++                style={{
++                  fontSize: "var(--text-xs)",
++                  fontFamily: "var(--font-mono)",
++                  fontVariantNumeric: "tabular-nums",
++                  color: "var(--text-tertiary)",
++                  flexShrink: 0,
++                }}
++              >
++                R{turn.round_no}
++              </span>
++            )}
++          </button>
++        );
++      })}
++    </div>
++  );
++}
++
++export default WorkerLane;
+diff --git a/mission-control/src/components/ui/Panel.tsx b/mission-control/src/components/ui/Panel.tsx
+index aac511d..9b5abb6 100644
+--- a/mission-control/src/components/ui/Panel.tsx
++++ b/mission-control/src/components/ui/Panel.tsx
+@@ -10,6 +10,7 @@ import { AlertCircle } from "lucide-react";
+ export interface PanelProps {
+   title: string;
+   subtitle?: string;
++  headerExtra?: React.ReactNode;
+   actions?: React.ReactNode;
+   status?: "loading" | "error" | "empty";
+   errorMessage?: string;
+@@ -24,6 +25,7 @@ export interface PanelProps {
+ export function Panel({
+   title,
+   subtitle,
++  headerExtra,
+   actions,
+   status,
+   errorMessage,
+@@ -81,6 +83,7 @@ export function Panel({
+             </p>
+           )}
+         </div>
++        {headerExtra}
+         {actions && (
+           <div style={{ display: "flex", gap: "var(--space-2)" }}>
+             {actions}
+diff --git a/mission-control/src/components/ui/TerminalPane.tsx b/mission-control/src/components/ui/TerminalPane.tsx
+index 69248f4..a3f459d 100644
+--- a/mission-control/src/components/ui/TerminalPane.tsx
++++ b/mission-control/src/components/ui/TerminalPane.tsx
+@@ -18,6 +18,10 @@ const ROLE_LABELS: Record<AgentRole, string> = {
+   planner: "Planner",
+   executor: "Executor",
+   auditor: "Auditor",
++  critic: "Critic",
++  conflict_resolver: "Conflict Resolver",
++  cleaner: "Cleaner",
++  decider: "Decider",
+ };
+ 
+ // ── Component ────────────────────────────────────────────────────────
+diff --git a/mission-control/src/hooks/useTaskStream.ts b/mission-control/src/hooks/useTaskStream.ts
+index cded9d6..c49fd6a 100644
+--- a/mission-control/src/hooks/useTaskStream.ts
++++ b/mission-control/src/hooks/useTaskStream.ts
+@@ -54,6 +54,52 @@ export interface LogEntry {
+   timestamp: string;
+ }
+ 
++// ── Phase 4 Types (doc 08/09) ─────────────────────────────────────────
++
++export interface BoardEntry {
++  id: string;
++  type: string;
++  title: string;
++  body: string;
++  author: string;
++  refs: string[];
++  confidence: number;
++  salience: number;
++  seq: number;
++  created_at: string;
++}
++
++export interface TurnRecord {
++  turn_id: string;
++  actor: string;
++  round_no: number;
++  phase: string;
++  status: string;
++  started_at: string;
++  ended_at?: string;
++  tokens_in?: number;
++  tokens_out?: number;
++  cost_usd?: number;
++  model?: string;
++}
++
++export interface TraceEvent {
++  id: string;
++  turn_id: string;
++  actor: string;
++  type: string;
++  content: string;
++  seq: number;
++  timestamp: string;
++}
++
++export interface RejectedEntry {
++  entry_id: string;
++  actor: string;
++  reason: string;
++  timestamp: string;
++}
++
+ export interface CostData {
+   total_cost: number;
+   total_tokens: number;
+@@ -66,11 +112,17 @@ export interface TaskMeta {
+   status: TaskStatus;
+   complexity?: string;
+   model?: string;
++  variant?: string;
+   created_at: string;
+   completed_at?: string;
+   duration_ms?: number;
+ }
+ 
++export interface ConsensusState {
++  signal: number;
++  decider_state: string;
++}
++
+ export interface TaskStreamData {
+   phase: string | null;
+   subTasks: SubTask[];
+@@ -81,6 +133,14 @@ export interface TaskStreamData {
+   error: string | null;
+   isLive: boolean;
+   taskMeta: TaskMeta | null;
++  // Phase 4 — board, trace, turns
++  boardEntries: BoardEntry[];
++  removedEntryIds: string[];
++  consensus: ConsensusState | null;
++  activeTurns: TurnRecord[];
++  completedTurns: TurnRecord[];
++  traceEvents: TraceEvent[];
++  rejectedEntries: RejectedEntry[];
+ }
+ 
+ // ── Empty / initial state ─────────────────────────────────────────────
+@@ -95,6 +155,13 @@ const INITIAL_STREAM_DATA: TaskStreamData = {
+   error: null,
+   isLive: false,
+   taskMeta: null,
++  boardEntries: [],
++  removedEntryIds: [],
++  consensus: null,
++  activeTurns: [],
++  completedTurns: [],
++  traceEvents: [],
++  rejectedEntries: [],
+ };
+ 
+ // ── Field mapping helpers ─────────────────────────────────────────────
+@@ -132,6 +199,7 @@ function mapTaskMeta(task: Record<string, unknown>): TaskMeta {
+     status: (task.status as TaskStatus) ?? "pending",
+     complexity: task.complexity as string | undefined,
+     model: (task.model ?? task.model_used) as string | undefined,
++    variant: (task.variant as string) ?? undefined,
+     created_at: (task.created_at as string) ?? "",
+     completed_at: task.completed_at as string | undefined,
+     duration_ms: task.duration_ms as number | undefined,
+@@ -155,6 +223,37 @@ export function useTaskStream(taskId: string): TaskStreamData {
+   const [data, setData] = useState<TaskStreamData>(INITIAL_STREAM_DATA);
+   const eventSourceRef = useRef<EventSource | null>(null);
+ 
++  // rAF batching buffers for high-frequency events (doc 09 §8, doc 13 §5)
++  const boardBufRef = useRef<BoardEntry[]>([]);
++  const traceBufRef = useRef<TraceEvent[]>([]);
++  const rafRef = useRef<number | null>(null);
++
++  const flushBuffers = useCallback(() => {
++    const boardBatch = boardBufRef.current;
++    const traceBatch = traceBufRef.current;
++    if (boardBatch.length === 0 && traceBatch.length === 0) return;
++    boardBufRef.current = [];
++    traceBufRef.current = [];
++    setData((prev) => ({
++      ...prev,
++      ...(boardBatch.length > 0
++        ? { boardEntries: [...prev.boardEntries, ...boardBatch] }
++        : {}),
++      ...(traceBatch.length > 0
++        ? { traceEvents: [...prev.traceEvents, ...traceBatch] }
++        : {}),
++    }));
++  }, []);
++
++  const scheduleFlush = useCallback(() => {
++    if (rafRef.current === null) {
++      rafRef.current = requestAnimationFrame(() => {
++        rafRef.current = null;
++        flushBuffers();
++      });
++    }
++  }, [flushBuffers]);
++
+   // REST fallback for completed/failed tasks (SSE closes immediately)
+   const fetchRestFallback = useCallback(async () => {
+     try {
+@@ -363,7 +462,141 @@ export function useTaskStream(taskId: string): TaskStreamData {
+       // Hydrate remaining data via REST
+       void fetchRestFallback();
+     });
+-  }, [taskId, fetchRestFallback]);
++
++    // ── Phase 4: board_entry — buffer + rAF flush ───────────────────
++    es.addEventListener("board_entry", (ev: MessageEvent) => {
++      try {
++        const raw = JSON.parse(ev.data);
++        const entry: BoardEntry = {
++          id: raw.id ?? raw.entry_id ?? `entry-${Date.now()}`,
++          type: raw.type ?? raw.entry_type ?? "finding",
++          title: raw.title ?? "",
++          body: raw.body ?? raw.content ?? "",
++          author: raw.author ?? raw.actor ?? "unknown",
++          refs: raw.refs ?? [],
++          confidence: raw.confidence ?? 0,
++          salience: raw.salience ?? 0,
++          seq: raw.seq ?? 0,
++          created_at: raw.created_at ?? new Date().toISOString(),
++        };
++        boardBufRef.current.push(entry);
++        scheduleFlush();
++      } catch {}
++    });
++
++    // ── Phase 4: entry_removed ──────────────────────────────────────
++    es.addEventListener("entry_removed", (ev: MessageEvent) => {
++      try {
++        const raw = JSON.parse(ev.data);
++        const entryId = raw.entry_id ?? raw.id;
++        if (entryId) {
++          setData((prev) => ({
++            ...prev,
++            removedEntryIds: [...prev.removedEntryIds, entryId],
++          }));
++        }
++      } catch {}
++    });
++
++    // ── Phase 4: consensus ──────────────────────────────────────────
++    es.addEventListener("consensus", (ev: MessageEvent) => {
++      try {
++        const raw = JSON.parse(ev.data);
++        setData((prev) => ({
++          ...prev,
++          consensus: {
++            signal: raw.signal ?? raw.convergence ?? 0,
++            decider_state: raw.decider_state ?? raw.state ?? "evaluating",
++          },
++        }));
++      } catch {}
++    });
++
++    // ── Phase 4: turn_start ─────────────────────────────────────────
++    es.addEventListener("turn_start", (ev: MessageEvent) => {
++      try {
++        const raw = JSON.parse(ev.data);
++        const turn: TurnRecord = {
++          turn_id: raw.turn_id ?? `turn-${Date.now()}`,
++          actor: raw.actor ?? raw.agent_role ?? "unknown",
++          round_no: raw.round_no ?? raw.round ?? 0,
++          phase: raw.phase ?? "active",
++          status: "active",
++          started_at: raw.started_at ?? new Date().toISOString(),
++          model: raw.model as string | undefined,
++        };
++        setData((prev) => ({
++          ...prev,
++          activeTurns: [...prev.activeTurns, turn],
++        }));
++      } catch {}
++    });
++
++    // ── Phase 4: turn_end ───────────────────────────────────────────
++    es.addEventListener("turn_end", (ev: MessageEvent) => {
++      try {
++        const raw = JSON.parse(ev.data);
++        const turnId = raw.turn_id;
++        setData((prev) => {
++          const finished = prev.activeTurns.find((t) => t.turn_id === turnId);
++          return {
++            ...prev,
++            activeTurns: prev.activeTurns.filter((t) => t.turn_id !== turnId),
++            completedTurns: finished
++              ? [
++                  ...prev.completedTurns,
++                  {
++                    ...finished,
++                    status: raw.status ?? "completed",
++                    ended_at: raw.ended_at ?? new Date().toISOString(),
++                    tokens_in: raw.tokens_in ?? raw.input_tokens,
++                    tokens_out: raw.tokens_out ?? raw.output_tokens,
++                    cost_usd: raw.cost_usd,
++                  },
++                ]
++              : prev.completedTurns,
++          };
++        });
++      } catch {}
++    });
++
++    // ── Phase 4: trace — buffer + rAF flush ─────────────────────────
++    es.addEventListener("trace", (ev: MessageEvent) => {
++      try {
++        const raw = JSON.parse(ev.data);
++        const trace: TraceEvent = {
++          id: raw.id ?? `trace-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
++          turn_id: raw.turn_id ?? "",
++          actor: raw.actor ?? raw.agent_role ?? "unknown",
++          type: raw.type ?? raw.trace_type ?? "reasoning",
++          content: raw.content ?? raw.message ?? "",
++          seq: raw.seq ?? 0,
++          timestamp: raw.timestamp ?? raw.ts ?? new Date().toISOString(),
++        };
++        traceBufRef.current.push(trace);
++        scheduleFlush();
++      } catch {}
++    });
++
++    // ── Phase 4: entry_rejected ─────────────────────────────────────
++    es.addEventListener("entry_rejected", (ev: MessageEvent) => {
++      try {
++        const raw = JSON.parse(ev.data);
++        setData((prev) => ({
++          ...prev,
++          rejectedEntries: [
++            ...prev.rejectedEntries,
++            {
++              entry_id: raw.entry_id ?? raw.id ?? "",
++              actor: raw.actor ?? "unknown",
++              reason: raw.reason ?? "Unknown reason",
++              timestamp: raw.timestamp ?? new Date().toISOString(),
++            },
++          ],
++        }));
++      } catch {}
++    });
++  }, [taskId, fetchRestFallback, scheduleFlush]);
+ 
+   // Connect on mount, disconnect on unmount
+   useEffect(() => {
+@@ -371,6 +604,10 @@ export function useTaskStream(taskId: string): TaskStreamData {
+     return () => {
+       eventSourceRef.current?.close();
+       eventSourceRef.current = null;
++      if (rafRef.current !== null) {
++        cancelAnimationFrame(rafRef.current);
++        rafRef.current = null;
++      }
+     };
+   }, [connect]);
+ 
+diff --git a/mission-control/src/lib/design-tokens.ts b/mission-control/src/lib/design-tokens.ts
+index 07ba575..4f7771a 100644
+--- a/mission-control/src/lib/design-tokens.ts
++++ b/mission-control/src/lib/design-tokens.ts
+@@ -18,16 +18,69 @@ export const STATUS_COLORS: Record<StatusType, string> = {
+   paused: "hsl(38, 92%, 50%)",
+ } as const;
+ 
+-// ── Agent Identity Colors ────────────────────────────────────────────
++// ── Agent Identity Colors (doc 08 §8) ────────────────────────────────
++// NOTE: "executor"/"auditor" are LEGACY aliases (the paper has neither —
++// doc 12 §2 / doc 04 §4). Kept so existing tasks/colors keep rendering;
++// new roles use the paper-faithful set.
++// Per seam rule 3 this enum is a *display convenience* — back it with the
++// deterministic fallback color generator so dynamic authors render.
+ 
+-export type AgentRole = "planner" | "executor" | "auditor";
++export type AgentRole =
++  | "planner" | "executor" | "auditor"
++  | "critic" | "conflict_resolver" | "cleaner" | "decider";
+ 
+ export const AGENT_COLORS: Record<AgentRole, string> = {
+-  planner: "hsl(265, 50%, 60%)",
+-  executor: "hsl(175, 60%, 45%)",
+-  auditor: "hsl(32, 80%, 55%)",
++  planner:            "hsl(265, 50%, 60%)",
++  executor:           "hsl(175, 60%, 45%)",
++  auditor:            "hsl(32, 80%, 55%)",
++  critic:             "hsl(350, 60%, 58%)",
++  conflict_resolver:  "hsl(280, 45%, 58%)",
++  cleaner:            "hsl(200, 25%, 55%)",
++  decider:            "hsl(150, 45%, 50%)",
+ } as const;
+ 
++/**
++ * Deterministic author-color fallback (doc 13 §7).
++ *
++ * Known roles → fixed AGENT_COLORS entry.
++ * Unknown authors (expert.<slug>, worker.<id>, universal-<n>) →
++ * stable HSL from a hash of the author string, with fixed S/L
++ * matching the muted palette in DESIGN.md §2.5.
++ */
++export function authorColor(author: string): string {
++  if (author in AGENT_COLORS) return AGENT_COLORS[author as AgentRole];
++  let hash = 0;
++  for (let i = 0; i < author.length; i++) {
++    hash = ((hash << 5) - hash + author.charCodeAt(i)) | 0;
++  }
++  const hue = ((hash % 360) + 360) % 360;
++  return `hsl(${hue}, 45%, 58%)`;
++}
++
++// ── Entry Type → Lucide Icon Name (doc 08 §3) ───────────────────────
++
++export const ENTRY_TYPE_ICONS: Record<string, string> = {
++  objective:  "Target",
++  attachment: "Paperclip",
++  plan:       "ListTree",
++  finding:    "Lightbulb",
++  critique:   "AlertTriangle",
++  rebuttal:   "MessageSquareReply",
++  conflict:   "GitMerge",
++  solution:   "CheckCircle2",
++  artifact:   "FileCode2",
++} as const;
++
++// ── Heat Ramp (doc 13 §7) ────────────────────────────────────────────
++// Low→high intensity via existing status hues (blue→amber→red).
++// Used for salience encoding and the future stigmergic pressure overlay.
++
++export const HEAT_RAMP = [
++  "hsl(217, 91%, 60%)",  // low — accent blue
++  "hsl(38, 92%, 50%)",   // mid — status paused/amber
++  "hsl(0, 84%, 60%)",    // high — status error/red
++] as const;
++
+ // ── Surface Colors ───────────────────────────────────────────────────
+ 
+ export const SURFACE_COLORS = {
+diff --git a/mission-control/src/lib/dummy-adapter.tsx b/mission-control/src/lib/dummy-adapter.tsx
+new file mode 100644
+index 0000000..642d202
+--- /dev/null
++++ b/mission-control/src/lib/dummy-adapter.tsx
+@@ -0,0 +1,65 @@
++/**
++ * Dummy Adapter — acceptance test for the panel registry (doc 08 §2.1).
++ *
++ * Proves that a variant can register a panel with ZERO edits outside
++ * variants.ts + this file.  This file is only loaded in development
++ * (via the conditional require in variants.ts).
++ *
++ * To verify:
++ *   1. `npm run dev`
++ *   2. Navigate to any task detail page
++ *   3. The dummy panel should appear in the panel list
++ *   4. No other files were modified
++ */
++
++"use client";
++
++import React from "react";
++import { registerAdapter } from "./variants";
++import { Puzzle } from "lucide-react";
++import { Panel } from "@/components/ui/Panel";
++import type { VariantUIAdapter } from "./variants";
++
++function DummyPanel({ taskId }: { taskId: string }) {
++  return (
++    <Panel title="Dummy Adapter Panel" subtitle="Acceptance test — doc 08 §2.1">
++      <div
++        style={{
++          display: "flex",
++          flexDirection: "column",
++          gap: "var(--space-3)",
++          padding: "var(--space-4)",
++          color: "var(--text-secondary)",
++          fontSize: "var(--text-sm)",
++        }}
++      >
++        <p>
++          This panel was injected by the <code>dummy</code> adapter with zero
++          edits outside <code>variants.ts</code> and{" "}
++          <code>dummy-adapter.ts</code>.
++        </p>
++        <p style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>
++          Task: {taskId}
++        </p>
++      </div>
++    </Panel>
++  );
++}
++
++const dummyAdapter: VariantUIAdapter = {
++  name:           "dummy",
++  label:          "Dummy (Dev Test)",
++  nodeTypes:      [],
++  edgeSpecs:      [],
++  missionPanels:  [
++    {
++      id:        "dummy-panel",
++      label:     "Dummy Panel",
++      icon:      Puzzle,
++      component: DummyPanel,
++    },
++  ],
++  composerExtras: null,
++};
++
++registerAdapter(dummyAdapter);
+diff --git a/mission-control/src/lib/variants.ts b/mission-control/src/lib/variants.ts
+new file mode 100644
+index 0000000..0aa86fe
+--- /dev/null
++++ b/mission-control/src/lib/variants.ts
+@@ -0,0 +1,138 @@
++/**
++ * Variant UI Adapter Registry (doc 08 §2.1)
++ *
++ * Each coordination variant registers its UI adapter here.
++ * The adapter defines: graph node types, edge mappings, extra panels,
++ * and event handlers for the blackboard view.
++ *
++ * Seam rule 8: "The UI is registry-driven: variant dropdown options
++ * come from the daemon's capabilities endpoint, and each variant
++ * registers its panels/graph adapters instead of being hard-wired
++ * into Mission Control."
++ */
++
++import type { LucideIcon } from "lucide-react";
++
++// ── Types ─────────────────────────────────────────────────────────────
++
++/** Describes how an entry type renders as a graph node. */
++export interface NodeTypeSpec {
++  /** Entry type this spec matches (e.g., "finding", "critique"). */
++  entryType: string;
++  /** Lucide icon name (must exist in the imported set). */
++  icon: string;
++  /** CSS class suffix for the node wrapper (e.g., "finding"). */
++  className: string;
++  /** Whether this node type is shown in the graph legend. */
++  showInLegend: boolean;
++}
++
++/** Describes how a ref-edge renders between two nodes. */
++export interface EdgeSpec {
++  /** The relationship type from the entry's `refs` array. */
++  refType: string;
++  /** CSS stroke style: "solid" | "dashed" | "dotted". */
++  stroke: "solid" | "dashed" | "dotted";
++  /** Whether the edge is animated (marching ants). */
++  animated: boolean;
++  /** Edge label (optional). */
++  label?: string;
++}
++
++/** A panel specification that a variant can inject into the UI. */
++export interface PanelSpec {
++  /** Unique panel ID. */
++  id: string;
++  /** Display label for the panel tab. */
++  label: string;
++  /** Lucide icon for the panel tab. */
++  icon: LucideIcon;
++  /** React component to mount in the panel. */
++  component: React.ComponentType<{ taskId: string }>;
++}
++
++/** The full adapter interface every variant must satisfy. */
++export interface VariantUIAdapter {
++  /** Variant name (matches daemon's variant string). */
++  name: string;
++  /** Human-readable label for the UI. */
++  label: string;
++  /** Node type specs for the blackboard graph. */
++  nodeTypes: NodeTypeSpec[];
++  /** Edge mapping specs for refs-based connections. */
++  edgeSpecs: EdgeSpec[];
++  /** Extra mission panels this variant registers (beyond core tabs). */
++  missionPanels: PanelSpec[];
++  /** Extra fields to render on the composer (future). */
++  composerExtras: React.ComponentType | null;
++}
++
++// ── Registry ──────────────────────────────────────────────────────────
++
++const VARIANT_ADAPTERS: Record<string, VariantUIAdapter> = {};
++
++/**
++ * Register a variant UI adapter.
++ * Call at import time from the adapter module.
++ */
++export function registerAdapter(adapter: VariantUIAdapter): void {
++  VARIANT_ADAPTERS[adapter.name] = adapter;
++}
++
++/**
++ * Get the active variant's adapter.
++ * Falls back to "traditional" if the requested variant is unknown.
++ */
++export function getActiveAdapter(variantId: string): VariantUIAdapter | null {
++  return VARIANT_ADAPTERS[variantId] ?? VARIANT_ADAPTERS["traditional"] ?? null;
++}
++
++/** List all registered variant adapters. */
++export function listAdapters(): VariantUIAdapter[] {
++  return Object.values(VARIANT_ADAPTERS);
++}
++
++// ── Traditional Adapter (doc 08 §2.1, doc 05) ────────────────────────
++
++const TRADITIONAL_NODE_TYPES: NodeTypeSpec[] = [
++  { entryType: "objective",  icon: "Target",              className: "objective",  showInLegend: true  },
++  { entryType: "attachment", icon: "Paperclip",           className: "attachment", showInLegend: true  },
++  { entryType: "plan",       icon: "ListTree",            className: "plan",       showInLegend: true  },
++  { entryType: "finding",    icon: "Lightbulb",           className: "finding",    showInLegend: true  },
++  { entryType: "critique",   icon: "AlertTriangle",       className: "critique",   showInLegend: true  },
++  { entryType: "rebuttal",   icon: "MessageSquareReply",  className: "rebuttal",   showInLegend: true  },
++  { entryType: "conflict",   icon: "GitMerge",            className: "conflict",   showInLegend: true  },
++  { entryType: "solution",   icon: "CheckCircle2",        className: "solution",   showInLegend: true  },
++  { entryType: "artifact",   icon: "FileCode2",           className: "artifact",   showInLegend: true  },
++];
++
++const TRADITIONAL_EDGE_SPECS: EdgeSpec[] = [
++  { refType: "supports",   stroke: "solid",   animated: false, label: "supports"   },
++  { refType: "critiques",  stroke: "dashed",  animated: false, label: "critiques"  },
++  { refType: "rebuts",     stroke: "dotted",  animated: false, label: "rebuts"     },
++  { refType: "conflicts",  stroke: "dashed",  animated: true,  label: "conflicts"  },
++  { refType: "resolves",   stroke: "solid",   animated: false, label: "resolves"   },
++  { refType: "refines",    stroke: "solid",   animated: false, label: "refines"    },
++  { refType: "attachment", stroke: "dotted",  animated: false                       },
++];
++
++registerAdapter({
++  name:           "traditional",
++  label:          "Blackboard (bMAS)",
++  nodeTypes:      TRADITIONAL_NODE_TYPES,
++  edgeSpecs:      TRADITIONAL_EDGE_SPECS,
++  missionPanels:  [],
++  composerExtras: null,
++});
++
++// ── Dev-only: dummy adapter (doc 08 §2.1 acceptance test) ────────────
++// Loaded conditionally so it never ships to production.
++if (process.env.NODE_ENV === "development") {
++  try {
++    // Dynamic import so the file is only required in dev
++    // eslint-disable-next-line @typescript-eslint/no-require-imports
++    require("./dummy-adapter.tsx");
++  } catch {
++    // dummy-adapter may not exist yet — that's fine
++  }
++}

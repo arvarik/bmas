@@ -55,6 +55,9 @@ export function ArtifactBrowser({ taskId }: { taskId: string }) {
         if (res.ok) {
           const data = await res.json();
           if (!cancelled) setArtifacts(data.artifacts || []);
+        } else if (res.status === 404) {
+          // 404 means task has no artifacts — show empty state, not error
+          if (!cancelled) setArtifacts([]);
         } else {
           if (!cancelled) setError(`Failed to load artifacts (${res.status})`);
         }

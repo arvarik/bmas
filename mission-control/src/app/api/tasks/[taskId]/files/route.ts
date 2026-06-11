@@ -18,6 +18,11 @@ export async function GET(
       signal: AbortSignal.timeout(5_000),
     });
 
+    if (upstream.status === 404) {
+      // Task has no files — return empty collection, not an error
+      return NextResponse.json({ files: [] });
+    }
+
     if (!upstream.ok) {
       return NextResponse.json(
         { error: `Daemon returned ${upstream.status}` },

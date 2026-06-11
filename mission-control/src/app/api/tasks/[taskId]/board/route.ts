@@ -23,6 +23,10 @@ export async function GET(
       cache: "no-store",
     });
 
+    if (upstream.status === 404) {
+      return NextResponse.json({ entries: [] });
+    }
+
     if (!upstream.ok) {
       const detail = await upstream.text().catch(() => "");
       return NextResponse.json(
