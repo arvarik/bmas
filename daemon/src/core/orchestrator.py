@@ -13,6 +13,7 @@ import uuid
 import asyncio
 import json
 import httpx
+from typing import Any
 
 from datetime import datetime, timezone
 
@@ -551,7 +552,7 @@ Task: {user_task}"""
         url = AGENT_ENDPOINTS[role]
         turn_id = f"turn-{str(uuid.uuid4())[:8]}"
 
-        payload = {
+        payload: dict[str, Any] = {
             "task_id": task_id,
             "description": description,
             "role_prompt": persona,
@@ -703,6 +704,9 @@ Task: {user_task}"""
                     pass
 
                 return {"task_id": task_id, "status": "failed", "result": str(e)}
+
+        # Unreachable — loop always returns, but satisfies mypy [return]
+        return {"task_id": task_id, "status": "failed", "result": "max retries"}  # pragma: no cover
 
     async def close(self):
         await self.bb.close()

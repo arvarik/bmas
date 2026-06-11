@@ -457,11 +457,11 @@ else:
 # Export individual storage constants for route modules (doc 17 §3, §6)
 STORAGE_USER_MEDIA_DIR: str = str(STORAGE_CONFIG["user_media_dir"])
 STORAGE_ARTIFACTS_DIR: str = str(STORAGE_CONFIG["artifacts_dir"])
-STORAGE_MAX_UPLOAD_MB: int = int(STORAGE_CONFIG["max_upload_mb"])
-STORAGE_MAX_TASK_OUTPUT_MB: int = int(STORAGE_CONFIG["max_task_output_mb"])
-STORAGE_ALLOWED_TYPES: set[str] = set(STORAGE_CONFIG["allowed_upload_types"])  # type: ignore[arg-type]
+STORAGE_MAX_UPLOAD_MB: int = int(STORAGE_CONFIG["max_upload_mb"])  # type: ignore[call-overload]
+STORAGE_MAX_TASK_OUTPUT_MB: int = int(STORAGE_CONFIG["max_task_output_mb"])  # type: ignore[call-overload]
+STORAGE_ALLOWED_TYPES: set[str] = set(STORAGE_CONFIG["allowed_upload_types"])  # type: ignore[call-overload]
 STORAGE_PDF_EXTRACTION: str = str(STORAGE_CONFIG["pdf_extraction"])
-STORAGE_EXTRACTION_MAX_CHARS: int = int(STORAGE_CONFIG["extraction_max_chars"])
+STORAGE_EXTRACTION_MAX_CHARS: int = int(STORAGE_CONFIG["extraction_max_chars"])  # type: ignore[call-overload]
 
 # ── Monitoring ───────────────────────────────────────────────────────
 
