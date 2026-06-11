@@ -16,4 +16,4 @@ Tracking table for the true-blackboard migration. Each phase appends a row after
 | 3a — Hermes Profiles | `feat/bb-phase-3a` | [#7](https://github.com/arvarik/bmas/pull/7) | Merged → `main` | ✅ |
 | 3b — Traditional Variant | `feat/bb-phase-3b` | [#8](https://github.com/arvarik/bmas/pull/8) | Merged → `main` | ✅ |
 | 3c — Coordinator Narration | `feat/bb-phase-3c` | [#9](https://github.com/arvarik/bmas/pull/9) | Merged → `main` | ✅ |
-| **4 — Blackboard Visualization** | `feat/bb-phase-4` | [#10](https://github.com/arvarik/bmas/pull/10) | Open | ⏳ |
+| **4 — Blackboard Visualization** | `feat/bb-phase-4` | [#10](https://github.com/arvarik/bmas/pull/10) | Merged → `main` | ✅ |
