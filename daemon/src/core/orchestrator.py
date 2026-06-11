@@ -548,8 +548,18 @@ Task: {user_task}"""
         cold-start delays (Gotcha #2 — first call after restart takes 5-15s).
         """
         from config import MODEL_PRICING
+        from config import ROLE_REGISTRY
 
-        url = AGENT_ENDPOINTS[role]
+        # Phase 3a: Resolve profile and endpoint from the role registry
+        # (doc 12 §2.5). Falls back to AGENT_ENDPOINTS for roles not in
+        # the registry (backward compatible with legacy dispatch).
+        _reg = ROLE_REGISTRY.get(role, {})
+        _profile = _reg.get("profile")
+        if _reg and _reg.get("endpoints"):
+            url = _reg["endpoints"][0]  # preferred host first, fallbacks after
+        else:
+            url = AGENT_ENDPOINTS[role]
+
         turn_id = f"turn-{str(uuid.uuid4())[:8]}"
 
         payload: dict[str, Any] = {
@@ -560,6 +570,8 @@ Task: {user_task}"""
             "turn_id": turn_id,
             "role": role,
             "model": model,
+            # Phase 3a: Hermes profile for role-scoped SOUL/toolset isolation
+            "profile": _profile,
         }
         if context:
             payload["context"] = context

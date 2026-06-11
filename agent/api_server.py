@@ -101,6 +101,10 @@ class TaskRequest(BaseModel):
     role: Optional[str] = Field(
         None, description="Opaque actor string for trace correlation"
     )
+    # ── Phase 3a additions (doc 12 §2.5) ───────────────────────────────
+    profile: Optional[str] = Field(
+        None, description="Hermes profile name for role-scoped SOUL/toolset isolation"
+    )
 
 
 class TaskResponse(BaseModel):
@@ -440,6 +444,7 @@ async def _run_via_api(
     role: str,
     model: str,
     request_id: str,
+    profile: Optional[str] = None,
 ) -> tuple[TaskStatus, str, Optional[dict], int, Optional[str]]:
     """Execute a task via the Hermes Runs API (POST /v1/runs + SSE).
 
@@ -462,7 +467,13 @@ async def _run_via_api(
     async with httpx.AsyncClient(timeout=30.0) as client:
         # 1. Submit the run
         headers = {"Authorization": f"Bearer {HERMES_GATEWAY_KEY}"}
-        logger.info(f"[{request_id}] POST /v1/runs | model={model} session={run_payload['session_id']}")
+        # Phase 3a: Log profile for traceability. Per-profile gateway
+        # dispatch is Phase 3b; for now the default gateway processes
+        # all profiles (role identity is in the instructions/SOUL).
+        logger.info(
+            f"[{request_id}] POST /v1/runs | model={model} "
+            f"session={run_payload['session_id']} profile={profile or 'default'}"
+        )
 
         try:
             resp = await client.post(
@@ -626,6 +637,7 @@ async def _run_hermes(
     task_id: str = "",
     turn_id: str = "",
     role: str = "agent",
+    profile: Optional[str] = None,
 ) -> tuple[TaskStatus, str, Optional[dict], int, Optional[str]]:
     """Execute a task via `hermes -z` in a temporary workspace directory.
 
@@ -663,14 +675,19 @@ async def _run_hermes(
             )
 
         # Build the hermes command
+        # Phase 3a: prepend --profile <role> for role-scoped SOUL/toolset
+        # isolation (doc 12 §2.5). When profile is None, uses the default
+        # Hermes profile (backward compatible).
         cmd = [
-            HERMES_BIN, "-z", description,
+            HERMES_BIN,
+            *(["-p", profile] if profile else []),
+            "-z", description,
             "--model", LITELLM_MODEL,
         ]
 
         logger.info(
             f"[{request_id}] Executing hermes -z (fallback) | "
-            f"timeout={timeout}s workspace={workspace}"
+            f"profile={profile or 'default'} timeout={timeout}s workspace={workspace}"
         )
 
         # Run as async subprocess with timeout
@@ -933,9 +950,11 @@ async def execute_task(req: TaskRequest, request: Request):
     model = req.model or LITELLM_MODEL
     start = time.monotonic()
 
+    profile = req.profile  # Phase 3a: Hermes profile for role isolation
+
     logger.info(
         f"[{request_id}] Received task={req.task_id} | "
-        f"role={role} turn={turn_id} model={model} "
+        f"role={role} profile={profile or 'default'} turn={turn_id} model={model} "
         f"mode={'api' if HERMES_GATEWAY_URL else 'cli'} "
         f"context={'yes' if req.context else 'no'}"
     )
@@ -951,6 +970,7 @@ async def execute_task(req: TaskRequest, request: Request):
             role=role,
             model=model,
             request_id=request_id,
+            profile=profile,
         )
     else:
         # Fallback: hermes -z subprocess
@@ -963,6 +983,7 @@ async def execute_task(req: TaskRequest, request: Request):
             task_id=req.task_id,
             turn_id=turn_id,
             role=role,
+            profile=profile,
         )
 
     duration_ms = int((time.monotonic() - start) * 1000)

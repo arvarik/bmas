@@ -1,0 +1,18 @@
+# bMAS Planner Profile — Hermes config.yaml
+# Toolset scoping per doc 12 §2.5 note: web + browser for research,
+# terminal for read-only analysis, no code_exec.
+
+model:
+  default: "medium"
+  provider: "custom"
+  base_url: "http://192.168.4.240:4000/v1"
+  api_key: "${LITELLM_MASTER_KEY}"
+
+toolsets:
+  web: true           # Web search for research during planning
+  browser: true       # Browser automation for deep research
+  terminal: true      # Terminal for read-only analysis
+  code_exec: false    # Planners don't execute code
+  file: true          # File read/write for board interaction
+  memory: true        # Persistent memory across rounds
+  skill_manage: false # No skill authoring

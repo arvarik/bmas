@@ -1,0 +1,19 @@
+# bMAS Universal Profile — Hermes config.yaml
+# Full toolset per doc 12 §2.5 note: "the universal profile carries
+# the full toolset and a roleless SOUL." Used by the stigmergic
+# variant (doc 16) — V1 ignores it.
+
+model:
+  default: "medium"
+  provider: "custom"
+  base_url: "http://192.168.4.240:4000/v1"
+  api_key: "${LITELLM_MASTER_KEY}"
+
+toolsets:
+  web: true           # Full web search capability
+  browser: true       # Full browser automation
+  terminal: true      # Full terminal access
+  code_exec: true     # Code execution enabled
+  file: true          # File read/write
+  memory: true        # Persistent memory
+  skill_manage: true  # Can create/manage skills (universal agent)

@@ -1,0 +1,18 @@
+# bMAS Critic Profile — Hermes config.yaml
+# Read-only/analysis tools per doc 12 §2.5 note: web + browser for
+# fact-checking, file for reading board entries. No code_exec.
+
+model:
+  default: "medium"
+  provider: "custom"
+  base_url: "http://192.168.4.240:4000/v1"
+  api_key: "${LITELLM_MASTER_KEY}"
+
+toolsets:
+  web: true           # Web search for fact-checking claims
+  browser: true       # Browser for verifying sources
+  terminal: false     # Critics don't need terminal access
+  code_exec: false    # Critics don't execute code
+  file: true          # File read for board interaction
+  memory: true        # Persistent memory across rounds
+  skill_manage: false # No skill authoring
