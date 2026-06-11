@@ -257,10 +257,12 @@ export function useTaskStream(taskId: string): TaskStreamData {
   // REST fallback for completed/failed tasks (SSE closes immediately)
   const fetchRestFallback = useCallback(async () => {
     try {
-      // Fetch task detail + cost in parallel
-      const [taskRes, costRes] = await Promise.all([
+      // Fetch task detail + cost + board + turns in parallel
+      const [taskRes, costRes, boardRes, turnsRes] = await Promise.all([
         fetch(`/api/tasks/${taskId}`, { cache: "no-store" }),
         fetch(`/api/tasks/${taskId}/cost`, { cache: "no-store" }).catch(() => null),
+        fetch(`/api/tasks/${taskId}/board`, { cache: "no-store" }).catch(() => null),
+        fetch(`/api/tasks/${taskId}/turns`, { cache: "no-store" }).catch(() => null),
       ]);
 
       if (!taskRes.ok) return;
@@ -290,6 +292,53 @@ export function useTaskStream(taskId: string): TaskStreamData {
         }
       }
 
+      // Map board entries for completed tasks (Bug 1 fix)
+      let hydratedBoard: BoardEntry[] = [];
+      if (boardRes?.ok) {
+        try {
+          const boardData = await boardRes.json();
+          const rawEntries = Array.isArray(boardData) ? boardData : boardData.entries ?? [];
+          hydratedBoard = rawEntries.map((raw: Record<string, unknown>, idx: number) => ({
+            id: (raw.id ?? raw.entry_id ?? `e-${idx}`) as string,
+            type: (raw.type ?? raw.entry_type ?? "finding") as string,
+            title: (raw.title ?? "") as string,
+            body: (raw.body ?? raw.content ?? "") as string,
+            author: (raw.author ?? raw.actor ?? "unknown") as string,
+            refs: (raw.refs ?? []) as string[],
+            confidence: (raw.confidence ?? 0) as number,
+            salience: (raw.salience ?? 0) as number,
+            seq: (raw.seq ?? idx) as number,
+            created_at: (raw.created_at ?? "") as string,
+          }));
+        } catch {
+          // Board data is non-critical
+        }
+      }
+
+      // Map completed turns for the trace timeline
+      let hydratedTurns: TurnRecord[] = [];
+      if (turnsRes?.ok) {
+        try {
+          const turnsData = await turnsRes.json();
+          const rawTurns = Array.isArray(turnsData) ? turnsData : turnsData.turns ?? [];
+          hydratedTurns = rawTurns.map((raw: Record<string, unknown>) => ({
+            turn_id: (raw.turn_id ?? raw.id ?? "") as string,
+            actor: (raw.actor ?? raw.role ?? "unknown") as string,
+            round_no: (raw.round_no ?? raw.round ?? 0) as number,
+            phase: (raw.phase ?? "completed") as string,
+            status: (raw.status ?? "completed") as string,
+            started_at: (raw.started_at ?? raw.created_at ?? "") as string,
+            ended_at: (raw.ended_at ?? raw.completed_at) as string | undefined,
+            tokens_in: (raw.tokens_in ?? raw.input_tokens) as number | undefined,
+            tokens_out: (raw.tokens_out ?? raw.output_tokens) as number | undefined,
+            cost_usd: raw.cost_usd as number | undefined,
+            model: raw.model as string | undefined,
+          }));
+        } catch {
+          // Turn data is non-critical
+        }
+      }
+
       setData((prev) => ({
         ...prev,
         taskMeta: task ? mapTaskMeta(task) : prev.taskMeta,
@@ -297,6 +346,8 @@ export function useTaskStream(taskId: string): TaskStreamData {
         result: task?.result_summary ?? prev.result,
         error: task?.error_message ?? prev.error,
         cost: costData ?? prev.cost,
+        boardEntries: hydratedBoard.length > 0 ? hydratedBoard : prev.boardEntries,
+        completedTurns: hydratedTurns.length > 0 ? hydratedTurns : prev.completedTurns,
         isLive: false,
       }));
     } catch {

@@ -77,13 +77,29 @@ These are the **only** colors used for status indication. They must be used cons
 
 ### 2.5 Agent Identity Colors
 
-Each agent role has a unique identity color used in terminal headers, DAG node accents, and log prefixes. These are intentionally muted to avoid competing with status colors.
+Each agent role has a unique identity color used in terminal headers, DAG node accents, log prefixes, and blackboard graph nodes. These are intentionally muted to avoid competing with status colors.
 
 | Agent | Token | HSL | Usage |
 |:---|:---|:---|:---|
 | Planner | `--agent-planner` | `265 50% 60%` | Purple — strategic, cerebral |
-| Executor | `--agent-executor` | `175 60% 45%` | Teal — action, execution |
-| Auditor | `--agent-auditor` | `32 80% 55%` | Amber — review, judgment |
+| Executor | `--agent-executor` | `175 60% 45%` | Teal — action, execution (legacy alias) |
+| Auditor | `--agent-auditor` | `32 80% 55%` | Amber — review, judgment (legacy alias) |
+| Critic | `--agent-critic` | `350 60% 58%` | Rose — identifies errors, weak reasoning |
+| Conflict Resolver | `--agent-conflict-resolver` | `280 45% 58%` | Violet — mediates contradictions |
+| Cleaner | `--agent-cleaner` | `200 25% 55%` | Steel — removes redundant entries |
+| Decider | `--agent-decider` | `150 45% 50%` | Emerald — posts final solution |
+
+> [!NOTE] Legacy Aliases
+> `executor` and `auditor` are legacy role names from the pre-blackboard pipeline. They are retained in the token system so existing task history renders correctly. New blackboard-variant tasks use the paper-faithful roles (planner, critic, conflict_resolver, cleaner, decider) plus AG-generated experts.
+
+#### Dynamic Author Fallback (`authorColor()`)
+
+The blackboard supports dynamic agent identities (e.g., `expert.valuation_analyst`, `worker.3`, `universal-7`) that are not in the fixed token table. The `authorColor()` function in [design-tokens.ts](file:///opt/bmas/mission-control/src/lib/design-tokens.ts) provides a deterministic color for any author string:
+
+1. **Known roles** → returns the fixed `AGENT_COLORS` entry from the table above.
+2. **Unknown authors** → computes a stable HSL color from a hash of the author string, using fixed `S=45%` and `L=58%` to match the muted palette. The hue is derived from the hash modulo 360°.
+
+This ensures every unique author always renders the same color, and that dynamic expert slugs (e.g., `expert.valuation_analyst`) get visually distinct but palette-consistent identities without manual configuration.
 
 ---
 

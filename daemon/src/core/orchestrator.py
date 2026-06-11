@@ -744,7 +744,7 @@ Task: {user_task}"""
         CU and AG calls are control-plane LiteLLM calls, never Hermes runs.
         """
         from core.board_store import InMemoryBoardStore
-        from core.event_emitter import InMemoryEventEmitter
+        from core.event_emitter import RedisEventEmitter
         from core.gateway import BoardGateway, salience_recompute_hook
         from core.variants.traditional import TraditionalVariant
         from config import MODEL_PRICING
@@ -753,9 +753,10 @@ Task: {user_task}"""
             f"Traditional variant | tier={triage.complexity.value}", task_id=task_id)
 
         # Boot board infrastructure
-        # Phase 4 will swap InMemory → SqliteRedis; for now both work.
+        # Use RedisEventEmitter so board_entry / entry_removed SSE events
+        # flow through Redis Pub/Sub → SSE endpoint → frontend.
         board_store = InMemoryBoardStore()
-        event_emitter = InMemoryEventEmitter()
+        event_emitter = RedisEventEmitter(self.bb.redis)
         gateway = BoardGateway(
             board_store, event_emitter,
             recompute_hooks=[salience_recompute_hook],
@@ -922,6 +923,7 @@ Task: {user_task}"""
         """Dispatch one turn for the traditional variant.
 
         Uses build_turn_payload → _dispatch_agent → parse_agent_response → apply.
+        Emits turn_start/turn_end SSE events for WorkerLane + AgentTrace.
         """
         task_id = task["task_id"]
         board = await variant.store.get_snapshot(task_id)
@@ -929,6 +931,19 @@ Task: {user_task}"""
         # Build payload
         payload = variant.build_turn_payload(task, activation.actor, board)
         payload["model"] = activation.model
+        turn_id = payload.get("turn_id", "")
+
+        # Emit turn_start SSE event for WorkerLane/AgentTrace
+        try:
+            await self.bb.publish_event(task_id, "turn_start", {
+                "turn_id": turn_id,
+                "actor": activation.actor,
+                "round": round_no,
+                "model": activation.model,
+                "node": activation.node_endpoint,
+            })
+        except Exception:
+            pass  # SSE is best-effort
 
         # Dispatch to agent node
         response = await self._dispatch_agent(
@@ -953,7 +968,7 @@ Task: {user_task}"""
             for entry in entries:
                 mutation = {
                     "actor": activation.actor,
-                    "turn_id": payload.get("turn_id", ""),
+                    "turn_id": turn_id,
                     "round": round_no,
                     **entry,
                 }
@@ -962,6 +977,19 @@ Task: {user_task}"""
                 else:
                     mutation["entries"] = [entry]
                 await variant.apply(task, [mutation])
+
+        # Emit turn_end SSE event
+        try:
+            turn_status = response.get("status", "completed") if isinstance(response, dict) else "completed"
+            await self.bb.publish_event(task_id, "turn_end", {
+                "turn_id": turn_id,
+                "actor": activation.actor,
+                "round": round_no,
+                "status": turn_status,
+                "entries_added": len(entries),
+            })
+        except Exception:
+            pass  # SSE is best-effort
 
         return response
 
