@@ -1121,6 +1121,16 @@ async def get_task_file(file_id: str) -> dict | None:
 
 # ── Artifacts CRUD (doc 17 §6) ──────────────────────────────────────
 
+async def update_task_output_dir(task_id: str, output_dir: str) -> None:
+    """Set the output_dir column on the tasks row (B4 fix)."""
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE tasks SET output_dir = ? WHERE id = ?",
+            (output_dir, task_id),
+        )
+        await db.commit()
+
+
 async def insert_artifact(
     artifact_id: str,
     task_id: str,

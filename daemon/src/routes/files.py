@@ -122,20 +122,18 @@ async def upload_file(task_id: str, request: Request, file: UploadFile = File(..
         elif ext in ("txt", "md", "csv", "json"):
             extracted_text = extract_text_file(content, STORAGE_EXTRACTION_MAX_CHARS)
 
-    # Create DB row
+    # Create DB row (B2 fix: positional args, not dict)
     file_id = f"f-{str(uuid.uuid4())[:8]}"
-    row = {
-        "id": file_id,
-        "task_id": task_id,
-        "name": safe_name,
-        "mime": mime,
-        "bytes": len(content),
-        "sha256": sha256,
-        "stored_path": stored_path,
-        "extracted_text": extracted_text,
-        "extracted_chars": len(extracted_text),
-    }
-    await db.insert_task_file(row)
+    await db.insert_task_file(
+        file_id, task_id, safe_name, mime,
+        len(content), sha256, stored_path, len(extracted_text),
+    )
+
+    # Persist extracted text alongside the file (B5 fix)
+    if extracted_text:
+        text_path = stored_path + ".extracted.txt"
+        with open(text_path, "w", encoding="utf-8") as tf:
+            tf.write(extracted_text)
 
     # Emit SSE event
     try:
@@ -151,6 +149,32 @@ async def upload_file(task_id: str, request: Request, file: UploadFile = File(..
         })
     except Exception:
         pass  # SSE is best-effort
+
+    # Post attachment board entry (spec §4)
+    try:
+        from app import app
+        orch = app.state.orchestrator
+        preview = extracted_text[:1500] if extracted_text else ""
+        body_parts = [f"**{safe_name}** ({mime}, {len(content)} bytes, sha256: {sha256[:16]}…)"]
+        if preview:
+            body_parts.append(f"\n\nExtracted text preview:\n{preview}")
+        body_parts.append("\n\nFetch the full content via your attachments list.")
+
+        await orch.gateway.append(
+            task_id=task_id,
+            actor="daemon",
+            capabilities=["post:attachment"],
+            proposed=[{
+                "type": "attachment",
+                "title": safe_name,
+                "body": "".join(body_parts),
+                "confidence": 1.0,
+            }],
+            turn_id=f"upload-{file_id}",
+            round_no=0,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to create attachment board entry for {file_id}: {e}")
 
     logger.info(f"File uploaded: {file_id} ({safe_name}, {len(content)} bytes, sha256={sha256[:16]}…)")
 
@@ -229,9 +253,20 @@ async def get_file_text(task_id: str, file_id: str, request: Request):
     if not file_row or file_row["task_id"] != task_id:
         return JSONResponse({"error": "File not found"}, status_code=404)
 
+    # Read extracted text from sidecar file (B5 fix)
+    extracted_text = ""
+    stored_path = file_row.get("stored_path", "")
+    text_path = stored_path + ".extracted.txt" if stored_path else ""
+    if text_path and os.path.exists(text_path):
+        try:
+            with open(text_path, "r", encoding="utf-8") as tf:
+                extracted_text = tf.read()
+        except Exception:
+            pass
+
     return {
         "file_id": file_id,
         "name": file_row["name"],
-        "extracted_text": file_row.get("extracted_text", ""),
+        "extracted_text": extracted_text,
         "extracted_chars": file_row.get("extracted_chars", 0),
     }

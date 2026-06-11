@@ -3,6 +3,8 @@
 Tests for the artifact ingest pipeline (routes/artifacts.py).
 
 Uses FastAPI TestClient with an in-memory SQLite database.
+conftest.py injects a fake config module so routes/artifacts.py can be
+imported without triggering config.py's sys.exit(1).
 """
 
 import os
@@ -11,8 +13,7 @@ import asyncio
 
 import pytest
 
-# Add parent src dir to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+# conftest.py already injected fake config and added src to path
 
 
 @pytest.fixture(autouse=True)
@@ -21,15 +22,17 @@ def mock_config(monkeypatch, tmp_path):
     artifacts_dir = str(tmp_path / "output")
     os.makedirs(artifacts_dir, exist_ok=True)
 
-    monkeypatch.setattr("config.STORAGE_ENABLED", True)
-    monkeypatch.setattr("config.STORAGE_ARTIFACTS_DIR", artifacts_dir)
-    monkeypatch.setattr("config.STORAGE_MAX_TASK_OUTPUT_MB", 1)  # 1MB for tests
-    monkeypatch.setattr("config.BMAS_NODE_KEY", "test-node-key")
+    import config
+    monkeypatch.setattr(config, "STORAGE_ENABLED", True)
+    monkeypatch.setattr(config, "STORAGE_ARTIFACTS_DIR", artifacts_dir)
+    monkeypatch.setattr(config, "STORAGE_MAX_TASK_OUTPUT_MB", 1)
+    monkeypatch.setattr(config, "BMAS_NODE_KEY", "test-node-key")
 
-    monkeypatch.setattr("routes.artifacts.STORAGE_ENABLED", True)
-    monkeypatch.setattr("routes.artifacts.STORAGE_ARTIFACTS_DIR", artifacts_dir)
-    monkeypatch.setattr("routes.artifacts._MAX_TASK_OUTPUT_BYTES", 1 * 1024 * 1024)
-    monkeypatch.setattr("routes.artifacts.BMAS_NODE_KEY", "test-node-key")
+    import routes.artifacts as ra
+    monkeypatch.setattr(ra, "STORAGE_ENABLED", True)
+    monkeypatch.setattr(ra, "STORAGE_ARTIFACTS_DIR", artifacts_dir)
+    monkeypatch.setattr(ra, "_MAX_TASK_OUTPUT_BYTES", 1 * 1024 * 1024)
+    monkeypatch.setattr(ra, "BMAS_NODE_KEY", "test-node-key")
 
     return artifacts_dir
 
@@ -204,6 +207,18 @@ class TestArtifactIngest:
         )
         assert response.status_code == 401
 
+    def test_missing_bearer_rejected(self, client, task_id):
+        """Missing bearer token should be rejected on ingest."""
+        content = b"hello"
+        sha = _sha256(content)
+
+        response = client.post(
+            f"/ingest/artifacts/{task_id}/turn-1",
+            data={"rel_path": "file.txt", "sha256": sha},
+            files={"file": ("file.txt", content, "text/plain")},
+        )
+        assert response.status_code == 401
+
     def test_list_artifacts(self, client, task_id):
         """List artifacts after ingest."""
         content = b"print('hi')"
@@ -221,6 +236,18 @@ class TestArtifactIngest:
         data = response.json()
         assert len(data["artifacts"]) == 1
         assert data["artifacts"][0]["rel_path"] == "app.py"
+
+    def test_empty_file_rejected(self, client, task_id):
+        """Empty artifact file should be rejected."""
+        sha = _sha256(b"")
+
+        response = client.post(
+            f"/ingest/artifacts/{task_id}/turn-1",
+            headers=_auth_headers(),
+            data={"rel_path": "empty.txt", "sha256": sha},
+            files={"file": ("empty.txt", b"", "text/plain")},
+        )
+        assert response.status_code == 422
 
 
 if __name__ == "__main__":

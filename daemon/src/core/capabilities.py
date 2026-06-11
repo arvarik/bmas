@@ -96,6 +96,9 @@ def authorize_post(capabilities: list[str], entry_type: str) -> None:
     The check is: at least one capability in the list must include the
     entry_type in its may_post set, AND no capability must include it
     in its may_never set.
+
+    Also supports direct ``post:TYPE`` capability strings (e.g.
+    ``post:attachment``, ``post:artifact``) for daemon-originated entries.
     """
     if not capabilities:
         raise AuthorizationError(
@@ -118,6 +121,10 @@ def authorize_post(capabilities: list[str], entry_type: str) -> None:
     # Check may_post — at least one capability must allow it
     allowed = False
     for cap_name in capabilities:
+        # Direct post:TYPE capability (daemon-originated entries)
+        if cap_name == f"post:{entry_type}":
+            allowed = True
+            break
         profile = CAPABILITY_PROFILES.get(cap_name)
         if profile and entry_type in profile.may_post:
             allowed = True

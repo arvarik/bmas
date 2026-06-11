@@ -3,18 +3,17 @@
 Tests for the file upload pipeline (routes/files.py).
 
 Uses FastAPI TestClient with an in-memory SQLite database.
+conftest.py injects a fake config module so routes/files.py can be
+imported without triggering config.py's sys.exit(1).
 """
 
 import os
 import sys
-import tempfile
-import shutil
 import asyncio
 
 import pytest
 
-# Add parent src dir to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+# conftest.py already injected fake config and added src to path
 
 
 @pytest.fixture(autouse=True)
@@ -23,21 +22,26 @@ def mock_config(monkeypatch, tmp_path):
     upload_dir = str(tmp_path / "uploads")
     os.makedirs(upload_dir, exist_ok=True)
 
-    monkeypatch.setattr("config.STORAGE_ENABLED", True)
-    monkeypatch.setattr("config.STORAGE_USER_MEDIA_DIR", upload_dir)
-    monkeypatch.setattr("config.STORAGE_MAX_UPLOAD_MB", 1)  # 1MB for tests
-    monkeypatch.setattr("config.STORAGE_ALLOWED_TYPES", {"pdf", "txt", "md", "csv", "json", "png"})
-    monkeypatch.setattr("config.STORAGE_PDF_EXTRACTION", "pymupdf")
-    monkeypatch.setattr("config.STORAGE_EXTRACTION_MAX_CHARS", 1000)
-    monkeypatch.setattr("config.BMAS_NODE_KEY", "")
+    # Patch the fake config module values
+    import config
+    monkeypatch.setattr(config, "STORAGE_ENABLED", True)
+    monkeypatch.setattr(config, "STORAGE_USER_MEDIA_DIR", upload_dir)
+    monkeypatch.setattr(config, "STORAGE_MAX_UPLOAD_MB", 1)  # 1MB for tests
+    monkeypatch.setattr(config, "STORAGE_ALLOWED_TYPES", {"pdf", "txt", "md", "csv", "json", "png"})
+    monkeypatch.setattr(config, "STORAGE_PDF_EXTRACTION", "pymupdf")
+    monkeypatch.setattr(config, "STORAGE_EXTRACTION_MAX_CHARS", 1000)
+    monkeypatch.setattr(config, "BMAS_NODE_KEY", "")
 
-    # Also patch the module-level computed value in routes/files
-    monkeypatch.setattr("routes.files.STORAGE_USER_MEDIA_DIR", upload_dir)
-    monkeypatch.setattr("routes.files._MAX_UPLOAD_BYTES", 1 * 1024 * 1024)
-    monkeypatch.setattr("routes.files.STORAGE_ENABLED", True)
-    monkeypatch.setattr("routes.files.STORAGE_ALLOWED_TYPES", {"pdf", "txt", "md", "csv", "json", "png"})
-    monkeypatch.setattr("routes.files.STORAGE_EXTRACTION_MAX_CHARS", 1000)
-    monkeypatch.setattr("routes.files.BMAS_NODE_KEY", "")
+    # Also patch the module-level computed values in routes.files
+    # (these were captured at import time from config)
+    import routes.files as rf
+    monkeypatch.setattr(rf, "STORAGE_USER_MEDIA_DIR", upload_dir)
+    monkeypatch.setattr(rf, "_MAX_UPLOAD_BYTES", 1 * 1024 * 1024)
+    monkeypatch.setattr(rf, "STORAGE_ENABLED", True)
+    monkeypatch.setattr(rf, "STORAGE_ALLOWED_TYPES", {"pdf", "txt", "md", "csv", "json", "png"})
+    monkeypatch.setattr(rf, "STORAGE_PDF_EXTRACTION", "pymupdf")
+    monkeypatch.setattr(rf, "STORAGE_EXTRACTION_MAX_CHARS", 1000)
+    monkeypatch.setattr(rf, "BMAS_NODE_KEY", "")
 
 
 @pytest.fixture
@@ -45,7 +49,6 @@ def db_path(tmp_path, monkeypatch):
     """Use a temp SQLite database."""
     path = str(tmp_path / "test.db")
     monkeypatch.setattr("database.DB_PATH", path)
-    # Initialize DB
     asyncio.get_event_loop().run_until_complete(
         _init_test_db(path)
     )
@@ -184,6 +187,28 @@ class TestExtractionCaps:
         data = response.json()
         # Should be truncated to around max_chars + marker
         assert data["extracted_chars"] < 2000
+
+
+class TestFileTextEndpoint:
+    """Tests for the /text endpoint (B5 fix: sidecar extracted text)."""
+
+    def test_get_extracted_text(self, client, task_id):
+        """Extracted text should be retrievable via /text endpoint."""
+        content = b"This is extracted content."
+        # Upload
+        resp = client.post(
+            f"/tasks/{task_id}/files",
+            files={"file": ("sample.txt", content, "text/plain")},
+        )
+        assert resp.status_code == 200
+        file_id = resp.json()["file_id"]
+
+        # Get text
+        text_resp = client.get(f"/tasks/{task_id}/files/{file_id}/text")
+        assert text_resp.status_code == 200
+        data = text_resp.json()
+        assert data["extracted_text"] == "This is extracted content."
+        assert data["extracted_chars"] > 0
 
 
 if __name__ == "__main__":

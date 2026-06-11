@@ -124,8 +124,15 @@ async def ingest_artifact(
         return JSONResponse({"error": "Empty file"}, status_code=422)
 
     # Validate path traversal BEFORE touching the filesystem
+    # Reject absolute paths before normalization
+    normalized_check = rel_path.replace("\\", "/")
+    if normalized_check.startswith("/"):
+        return JSONResponse(
+            {"error": "Path rejected: absolute paths not allowed"},
+            status_code=422,
+        )
     # Normalize the rel_path
-    rel_path = rel_path.replace("\\", "/").strip("/")
+    rel_path = normalized_check.strip("/")
     if not rel_path:
         return JSONResponse({"error": "Empty rel_path"}, status_code=422)
 
@@ -168,8 +175,8 @@ async def ingest_artifact(
             status_code=413,
         )
 
-    # Version handling — check if this path was already synced
-    current_version = await db.get_latest_artifact_version(task_id, rel_path)
+    # Version handling — check if this path was already synced (B3 fix)
+    current_version = await db.get_artifact_max_version(task_id, rel_path)
     new_version = current_version + 1
 
     # If file exists, archive previous version
@@ -188,22 +195,14 @@ async def ingest_artifact(
     with open(safe_path, "wb") as f:
         f.write(content)
 
-    # Insert DB row
+    # Insert DB row (B2 fix: positional args, not dict)
     artifact_id = f"a-{str(uuid.uuid4())[:8]}"
     mime = get_mime_type(rel_path.split("/")[-1]) if "/" in rel_path else get_mime_type(rel_path)
-    row = {
-        "id": artifact_id,
-        "task_id": task_id,
-        "turn_id": turn_id,
-        "author": author,
-        "rel_path": rel_path,
-        "stored_path": safe_path,
-        "mime": mime,
-        "bytes": len(content),
-        "sha256": computed_sha256,
-        "version": new_version,
-    }
-    await db.insert_artifact(row)
+    await db.insert_artifact(
+        artifact_id, task_id, turn_id, author,
+        rel_path, safe_path, mime,
+        len(content), computed_sha256, new_version,
+    )
 
     # Emit SSE event
     try:
@@ -220,6 +219,33 @@ async def ingest_artifact(
         })
     except Exception:
         pass  # SSE is best-effort
+
+    # Post artifact board entry (spec §6)
+    try:
+        from app import app
+        orch = app.state.orchestrator
+        body = (
+            f"**{rel_path}** v{new_version} ({mime or 'unknown'}, "
+            f"{len(content)} bytes, sha256: {computed_sha256[:16]}…)"
+        )
+        if author:
+            body += f"\nProduced by: {author}"
+
+        await orch.gateway.append(
+            task_id=task_id,
+            actor=author or "daemon",
+            capabilities=["post:artifact"],
+            proposed=[{
+                "type": "artifact",
+                "title": rel_path,
+                "body": body,
+                "confidence": 1.0,
+            }],
+            turn_id=turn_id,
+            round_no=0,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to create artifact board entry for {artifact_id}: {e}")
 
     logger.info(
         f"Artifact ingested: {artifact_id} ({rel_path} v{new_version}, "

@@ -8,6 +8,7 @@ are best-effort — they log warnings on failure but never interrupt a running t
 """
 
 import logging
+import os
 import uuid
 import asyncio
 import json
@@ -270,12 +271,22 @@ class Orchestrator:
                         }
                         # Include extracted text preview if available
                         if tf.get("extracted_chars", 0) > 0:
-                            from file_utils import extract_text_file
                             stored = tf.get("stored_path", "")
                             if stored:
                                 try:
-                                    preview = extract_text_file(stored, max_chars=preview_chars)
-                                    att["text_preview"] = preview
+                                    # Read from sidecar extracted text file first
+                                    text_path = stored + ".extracted.txt"
+                                    if os.path.exists(text_path):
+                                        with open(text_path, "r", encoding="utf-8") as fh:
+                                            full_text = fh.read()
+                                        att["text_preview"] = full_text[:preview_chars]
+                                    else:
+                                        # Fallback: read raw file bytes and extract
+                                        from file_utils import extract_text_file
+                                        with open(stored, "rb") as fh:
+                                            file_bytes = fh.read()
+                                        preview = extract_text_file(file_bytes, max_chars=preview_chars)
+                                        att["text_preview"] = preview
                                 except Exception:
                                     pass
                         attachments.append(att)
