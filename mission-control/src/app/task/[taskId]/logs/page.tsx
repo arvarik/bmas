@@ -19,6 +19,8 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { Panel } from "@/components/ui/Panel";
 import { AGENT_COLORS, type AgentRole } from "@/lib/design-tokens";
 import { Terminal as TerminalIcon } from "lucide-react";
+import { AgentTrace } from "@/components/features/AgentTrace";
+import { TurnInspector } from "@/components/features/TurnInspector";
 
 
 const TaskLogTerminal = dynamic(() => import("@/components/features/TaskLogTerminal"), {
@@ -64,8 +66,30 @@ interface ArchivedLog {
 
 export default function LogsPage() {
   const { taskId } = useParams();
-  const { isLive, logs: liveLogs } = useTaskData();
+  const {
+    isLive,
+    logs: liveLogs,
+    traceEvents,
+    activeTurns,
+    completedTurns,
+    boardEntries,
+    rejectedEntries,
+  } = useTaskData();
   const [activeTab, setActiveTab] = useState<AgentRole>("planner");
+
+  // Trace/Raw toggle — default to trace when trace data exists
+  type LogViewMode = "trace" | "raw";
+  const hasTraces = traceEvents.length > 0;
+  const [logView, setLogView] = useState<LogViewMode>(hasTraces ? "trace" : "raw");
+  // Update default when traces arrive
+  useEffect(() => {
+    if (hasTraces && logView === "raw" && traceEvents.length === 1) {
+      setLogView("trace");
+    }
+  }, [hasTraces, traceEvents.length, logView]);
+
+  // TurnInspector state
+  const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
 
   // ── Archived logs for completed tasks ─────────────────────────────
   const [archivedLogs, setArchivedLogs] = useState<ArchivedLog[]>([]);
@@ -98,6 +122,55 @@ export default function LogsPage() {
   if (isLive) {
     return (
       <div className="view-container logs-view">
+        {/* Trace/Raw segmented control */}
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", padding: "0 0 var(--space-2) 0" }}>
+          <div role="tablist" style={{ display: "inline-flex", background: "var(--surface-hover)", borderRadius: "var(--radius-sm)", padding: 2 }}>
+            <button
+              role="tab"
+              aria-selected={logView === "trace"}
+              onClick={() => setLogView("trace")}
+              style={{
+                padding: "2px 10px", fontSize: "var(--text-xs)", fontWeight: "var(--weight-medium)",
+                borderRadius: "var(--radius-sm)", border: "none", cursor: "pointer", fontFamily: "var(--font-sans)",
+                background: logView === "trace" ? "var(--surface-overlay)" : "transparent",
+                color: logView === "trace" ? "var(--text-primary)" : "var(--text-tertiary)",
+                transition: "background 150ms ease, color 150ms ease",
+              }}
+            >
+              Trace
+            </button>
+            <button
+              role="tab"
+              aria-selected={logView === "raw"}
+              onClick={() => setLogView("raw")}
+              style={{
+                padding: "2px 10px", fontSize: "var(--text-xs)", fontWeight: "var(--weight-medium)",
+                borderRadius: "var(--radius-sm)", border: "none", cursor: "pointer", fontFamily: "var(--font-sans)",
+                background: logView === "raw" ? "var(--surface-overlay)" : "transparent",
+                color: logView === "raw" ? "var(--text-primary)" : "var(--text-tertiary)",
+                transition: "background 150ms ease, color 150ms ease",
+              }}
+            >
+              Raw
+            </button>
+          </div>
+        </div>
+
+        {/* Trace mode */}
+        {logView === "trace" ? (
+          <div style={{ flex: 1, minHeight: 200 }}>
+            <Panel title="Agent Trace" subtitle={`${traceEvents.length} events`}>
+              <AgentTrace
+                traceEvents={traceEvents}
+                activeTurns={activeTurns}
+                completedTurns={completedTurns}
+                onTurnClick={setSelectedTurnId}
+              />
+            </Panel>
+          </div>
+        ) : (
+          <>
+            {/* Existing raw log UI */}
         {/* Mobile tab bar */}
         <div className="logs-tabs">
           {ROLES.map(({ role, label }) => {
@@ -146,6 +219,21 @@ export default function LogsPage() {
             </div>
           ))}
         </div>
+          </>
+        )}
+
+        {/* TurnInspector slide-over */}
+        {selectedTurnId && (
+          <TurnInspector
+            turnId={selectedTurnId}
+            activeTurns={activeTurns}
+            completedTurns={completedTurns}
+            traceEvents={traceEvents}
+            boardEntries={boardEntries}
+            rejectedEntries={rejectedEntries}
+            onClose={() => setSelectedTurnId(null)}
+          />
+        )}
       </div>
     );
   }

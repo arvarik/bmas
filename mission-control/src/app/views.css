@@ -609,3 +609,42 @@
 
 @keyframes spin{to{transform:rotate(360deg)}}
 
+/* ── Phase 4: Variant Chip (doc 08 §2.1) ──────────────────────────── */
+.variant-chip{background:var(--accent-subtle);color:var(--accent-primary);font-size:var(--text-xs);font-weight:var(--weight-medium);padding:1px 6px;border-radius:var(--radius-full);text-transform:capitalize}
+
+/* ── Phase 4: BlackboardGraph (doc 08 §3) ─────────────────────────── */
+.bb-graph-node{transition:box-shadow 200ms ease}
+.bb-graph-node:hover{box-shadow:var(--shadow-md)}
+.bb-graph-empty{text-align:center}
+
+/* ── Phase 4: WorkerLane (doc 08 §4) ──────────────────────────────── */
+.worker-lane{border-bottom:1px solid var(--border-subtle)}
+.worker-lane-card{transition:opacity 200ms ease,border-color 200ms ease,background 150ms ease}
+.worker-lane-card:hover{background:var(--surface-active) !important}
+
+/* ── Phase 4: ConsensusMeter (doc 08 §6) ──────────────────────────── */
+.consensus-meter{min-width:120px}
+
+/* ── Phase 4: BB Toggle (doc 08 §2) ───────────────────────────────── */
+.bb-toggle__tab{transition:background 150ms ease,color 150ms ease}
+.bb-toggle__tab:hover{color:var(--text-secondary)}
+.bb-toggle__tab--active{box-shadow:var(--shadow-sm)}
+
+/* ── Phase 4: AgentTrace (doc 09 §3) ──────────────────────────────── */
+.trace-turn-header{transition:background 150ms ease}
+.trace-turn-header:hover{background:var(--surface-active) !important}
+.trace-line{transition:background 100ms ease}
+.trace-line:hover{background:var(--surface-hover)}
+
+/* ── Phase 4: ToolCallCard (doc 09 §3) ────────────────────────────── */
+.tool-card{transition:border-color 200ms ease}
+.tool-card:hover{border-color:var(--border-focus)}
+
+/* ── Phase 4: TurnInspector (doc 09 §4) ───────────────────────────── */
+.turn-inspector-backdrop{transition:opacity 200ms ease}
+.turn-inspector{box-shadow:var(--shadow-lg)}
+
+/* ── Phase 4: ReplayScrubber (doc 08 §7) ──────────────────────────── */
+.replay-scrubber input[type="range"]{-webkit-appearance:none;appearance:none;background:var(--surface-active);border-radius:var(--radius-full);outline:none}
+.replay-scrubber input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:var(--radius-full);background:var(--accent-primary);cursor:pointer;border:none}
+.replay-scrubber input[type="range"]::-moz-range-thumb{width:12px;height:12px;border-radius:var(--radius-full);background:var(--accent-primary);cursor:pointer;border:none}

@@ -18,15 +18,68 @@ export const STATUS_COLORS: Record<StatusType, string> = {
   paused: "hsl(38, 92%, 50%)",
 } as const;
 
-// ── Agent Identity Colors ────────────────────────────────────────────
+// ── Agent Identity Colors (doc 08 §8) ────────────────────────────────
+// NOTE: "executor"/"auditor" are LEGACY aliases (the paper has neither —
+// doc 12 §2 / doc 04 §4). Kept so existing tasks/colors keep rendering;
+// new roles use the paper-faithful set.
+// Per seam rule 3 this enum is a *display convenience* — back it with the
+// deterministic fallback color generator so dynamic authors render.
 
-export type AgentRole = "planner" | "executor" | "auditor";
+export type AgentRole =
+  | "planner" | "executor" | "auditor"
+  | "critic" | "conflict_resolver" | "cleaner" | "decider";
 
 export const AGENT_COLORS: Record<AgentRole, string> = {
-  planner: "hsl(265, 50%, 60%)",
-  executor: "hsl(175, 60%, 45%)",
-  auditor: "hsl(32, 80%, 55%)",
+  planner:            "hsl(265, 50%, 60%)",
+  executor:           "hsl(175, 60%, 45%)",
+  auditor:            "hsl(32, 80%, 55%)",
+  critic:             "hsl(350, 60%, 58%)",
+  conflict_resolver:  "hsl(280, 45%, 58%)",
+  cleaner:            "hsl(200, 25%, 55%)",
+  decider:            "hsl(150, 45%, 50%)",
 } as const;
+
+/**
+ * Deterministic author-color fallback (doc 13 §7).
+ *
+ * Known roles → fixed AGENT_COLORS entry.
+ * Unknown authors (expert.<slug>, worker.<id>, universal-<n>) →
+ * stable HSL from a hash of the author string, with fixed S/L
+ * matching the muted palette in DESIGN.md §2.5.
+ */
+export function authorColor(author: string): string {
+  if (author in AGENT_COLORS) return AGENT_COLORS[author as AgentRole];
+  let hash = 0;
+  for (let i = 0; i < author.length; i++) {
+    hash = ((hash << 5) - hash + author.charCodeAt(i)) | 0;
+  }
+  const hue = ((hash % 360) + 360) % 360;
+  return `hsl(${hue}, 45%, 58%)`;
+}
+
+// ── Entry Type → Lucide Icon Name (doc 08 §3) ───────────────────────
+
+export const ENTRY_TYPE_ICONS: Record<string, string> = {
+  objective:  "Target",
+  attachment: "Paperclip",
+  plan:       "ListTree",
+  finding:    "Lightbulb",
+  critique:   "AlertTriangle",
+  rebuttal:   "MessageSquareReply",
+  conflict:   "GitMerge",
+  solution:   "CheckCircle2",
+  artifact:   "FileCode2",
+} as const;
+
+// ── Heat Ramp (doc 13 §7) ────────────────────────────────────────────
+// Low→high intensity via existing status hues (blue→amber→red).
+// Used for salience encoding and the future stigmergic pressure overlay.
+
+export const HEAT_RAMP = [
+  "hsl(217, 91%, 60%)",  // low — accent blue
+  "hsl(38, 92%, 50%)",   // mid — status paused/amber
+  "hsl(0, 84%, 60%)",    // high — status error/red
+] as const;
 
 // ── Surface Colors ───────────────────────────────────────────────────
 

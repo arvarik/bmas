@@ -18,6 +18,10 @@ const ROLE_LABELS: Record<AgentRole, string> = {
   planner: "Planner",
   executor: "Executor",
   auditor: "Auditor",
+  critic: "Critic",
+  conflict_resolver: "Conflict Resolver",
+  cleaner: "Cleaner",
+  decider: "Decider",
 };
 
 // ── Component ────────────────────────────────────────────────────────

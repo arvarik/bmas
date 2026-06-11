@@ -54,6 +54,52 @@ export interface LogEntry {
   timestamp: string;
 }
 
+// ── Phase 4 Types (doc 08/09) ─────────────────────────────────────────
+
+export interface BoardEntry {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  author: string;
+  refs: string[];
+  confidence: number;
+  salience: number;
+  seq: number;
+  created_at: string;
+}
+
+export interface TurnRecord {
+  turn_id: string;
+  actor: string;
+  round_no: number;
+  phase: string;
+  status: string;
+  started_at: string;
+  ended_at?: string;
+  tokens_in?: number;
+  tokens_out?: number;
+  cost_usd?: number;
+  model?: string;
+}
+
+export interface TraceEvent {
+  id: string;
+  turn_id: string;
+  actor: string;
+  type: string;
+  content: string;
+  seq: number;
+  timestamp: string;
+}
+
+export interface RejectedEntry {
+  entry_id: string;
+  actor: string;
+  reason: string;
+  timestamp: string;
+}
+
 export interface CostData {
   total_cost: number;
   total_tokens: number;
@@ -66,9 +112,15 @@ export interface TaskMeta {
   status: TaskStatus;
   complexity?: string;
   model?: string;
+  variant?: string;
   created_at: string;
   completed_at?: string;
   duration_ms?: number;
+}
+
+export interface ConsensusState {
+  signal: number;
+  decider_state: string;
 }
 
 export interface TaskStreamData {
@@ -81,6 +133,14 @@ export interface TaskStreamData {
   error: string | null;
   isLive: boolean;
   taskMeta: TaskMeta | null;
+  // Phase 4 — board, trace, turns
+  boardEntries: BoardEntry[];
+  removedEntryIds: string[];
+  consensus: ConsensusState | null;
+  activeTurns: TurnRecord[];
+  completedTurns: TurnRecord[];
+  traceEvents: TraceEvent[];
+  rejectedEntries: RejectedEntry[];
 }
 
 // ── Empty / initial state ─────────────────────────────────────────────
@@ -95,6 +155,13 @@ const INITIAL_STREAM_DATA: TaskStreamData = {
   error: null,
   isLive: false,
   taskMeta: null,
+  boardEntries: [],
+  removedEntryIds: [],
+  consensus: null,
+  activeTurns: [],
+  completedTurns: [],
+  traceEvents: [],
+  rejectedEntries: [],
 };
 
 // ── Field mapping helpers ─────────────────────────────────────────────
@@ -132,6 +199,7 @@ function mapTaskMeta(task: Record<string, unknown>): TaskMeta {
     status: (task.status as TaskStatus) ?? "pending",
     complexity: task.complexity as string | undefined,
     model: (task.model ?? task.model_used) as string | undefined,
+    variant: (task.variant as string) ?? undefined,
     created_at: (task.created_at as string) ?? "",
     completed_at: task.completed_at as string | undefined,
     duration_ms: task.duration_ms as number | undefined,
@@ -154,6 +222,37 @@ function mapLog(raw: Record<string, unknown>, index: number): LogEntry {
 export function useTaskStream(taskId: string): TaskStreamData {
   const [data, setData] = useState<TaskStreamData>(INITIAL_STREAM_DATA);
   const eventSourceRef = useRef<EventSource | null>(null);
+
+  // rAF batching buffers for high-frequency events (doc 09 §8, doc 13 §5)
+  const boardBufRef = useRef<BoardEntry[]>([]);
+  const traceBufRef = useRef<TraceEvent[]>([]);
+  const rafRef = useRef<number | null>(null);
+
+  const flushBuffers = useCallback(() => {
+    const boardBatch = boardBufRef.current;
+    const traceBatch = traceBufRef.current;
+    if (boardBatch.length === 0 && traceBatch.length === 0) return;
+    boardBufRef.current = [];
+    traceBufRef.current = [];
+    setData((prev) => ({
+      ...prev,
+      ...(boardBatch.length > 0
+        ? { boardEntries: [...prev.boardEntries, ...boardBatch] }
+        : {}),
+      ...(traceBatch.length > 0
+        ? { traceEvents: [...prev.traceEvents, ...traceBatch] }
+        : {}),
+    }));
+  }, []);
+
+  const scheduleFlush = useCallback(() => {
+    if (rafRef.current === null) {
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        flushBuffers();
+      });
+    }
+  }, [flushBuffers]);
 
   // REST fallback for completed/failed tasks (SSE closes immediately)
   const fetchRestFallback = useCallback(async () => {
@@ -363,7 +462,141 @@ export function useTaskStream(taskId: string): TaskStreamData {
       // Hydrate remaining data via REST
       void fetchRestFallback();
     });
-  }, [taskId, fetchRestFallback]);
+
+    // ── Phase 4: board_entry — buffer + rAF flush ───────────────────
+    es.addEventListener("board_entry", (ev: MessageEvent) => {
+      try {
+        const raw = JSON.parse(ev.data);
+        const entry: BoardEntry = {
+          id: raw.id ?? raw.entry_id ?? `entry-${Date.now()}`,
+          type: raw.type ?? raw.entry_type ?? "finding",
+          title: raw.title ?? "",
+          body: raw.body ?? raw.content ?? "",
+          author: raw.author ?? raw.actor ?? "unknown",
+          refs: raw.refs ?? [],
+          confidence: raw.confidence ?? 0,
+          salience: raw.salience ?? 0,
+          seq: raw.seq ?? 0,
+          created_at: raw.created_at ?? new Date().toISOString(),
+        };
+        boardBufRef.current.push(entry);
+        scheduleFlush();
+      } catch {}
+    });
+
+    // ── Phase 4: entry_removed ──────────────────────────────────────
+    es.addEventListener("entry_removed", (ev: MessageEvent) => {
+      try {
+        const raw = JSON.parse(ev.data);
+        const entryId = raw.entry_id ?? raw.id;
+        if (entryId) {
+          setData((prev) => ({
+            ...prev,
+            removedEntryIds: [...prev.removedEntryIds, entryId],
+          }));
+        }
+      } catch {}
+    });
+
+    // ── Phase 4: consensus ──────────────────────────────────────────
+    es.addEventListener("consensus", (ev: MessageEvent) => {
+      try {
+        const raw = JSON.parse(ev.data);
+        setData((prev) => ({
+          ...prev,
+          consensus: {
+            signal: raw.signal ?? raw.convergence ?? 0,
+            decider_state: raw.decider_state ?? raw.state ?? "evaluating",
+          },
+        }));
+      } catch {}
+    });
+
+    // ── Phase 4: turn_start ─────────────────────────────────────────
+    es.addEventListener("turn_start", (ev: MessageEvent) => {
+      try {
+        const raw = JSON.parse(ev.data);
+        const turn: TurnRecord = {
+          turn_id: raw.turn_id ?? `turn-${Date.now()}`,
+          actor: raw.actor ?? raw.agent_role ?? "unknown",
+          round_no: raw.round_no ?? raw.round ?? 0,
+          phase: raw.phase ?? "active",
+          status: "active",
+          started_at: raw.started_at ?? new Date().toISOString(),
+          model: raw.model as string | undefined,
+        };
+        setData((prev) => ({
+          ...prev,
+          activeTurns: [...prev.activeTurns, turn],
+        }));
+      } catch {}
+    });
+
+    // ── Phase 4: turn_end ───────────────────────────────────────────
+    es.addEventListener("turn_end", (ev: MessageEvent) => {
+      try {
+        const raw = JSON.parse(ev.data);
+        const turnId = raw.turn_id;
+        setData((prev) => {
+          const finished = prev.activeTurns.find((t) => t.turn_id === turnId);
+          return {
+            ...prev,
+            activeTurns: prev.activeTurns.filter((t) => t.turn_id !== turnId),
+            completedTurns: finished
+              ? [
+                  ...prev.completedTurns,
+                  {
+                    ...finished,
+                    status: raw.status ?? "completed",
+                    ended_at: raw.ended_at ?? new Date().toISOString(),
+                    tokens_in: raw.tokens_in ?? raw.input_tokens,
+                    tokens_out: raw.tokens_out ?? raw.output_tokens,
+                    cost_usd: raw.cost_usd,
+                  },
+                ]
+              : prev.completedTurns,
+          };
+        });
+      } catch {}
+    });
+
+    // ── Phase 4: trace — buffer + rAF flush ─────────────────────────
+    es.addEventListener("trace", (ev: MessageEvent) => {
+      try {
+        const raw = JSON.parse(ev.data);
+        const trace: TraceEvent = {
+          id: raw.id ?? `trace-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          turn_id: raw.turn_id ?? "",
+          actor: raw.actor ?? raw.agent_role ?? "unknown",
+          type: raw.type ?? raw.trace_type ?? "reasoning",
+          content: raw.content ?? raw.message ?? "",
+          seq: raw.seq ?? 0,
+          timestamp: raw.timestamp ?? raw.ts ?? new Date().toISOString(),
+        };
+        traceBufRef.current.push(trace);
+        scheduleFlush();
+      } catch {}
+    });
+
+    // ── Phase 4: entry_rejected ─────────────────────────────────────
+    es.addEventListener("entry_rejected", (ev: MessageEvent) => {
+      try {
+        const raw = JSON.parse(ev.data);
+        setData((prev) => ({
+          ...prev,
+          rejectedEntries: [
+            ...prev.rejectedEntries,
+            {
+              entry_id: raw.entry_id ?? raw.id ?? "",
+              actor: raw.actor ?? "unknown",
+              reason: raw.reason ?? "Unknown reason",
+              timestamp: raw.timestamp ?? new Date().toISOString(),
+            },
+          ],
+        }));
+      } catch {}
+    });
+  }, [taskId, fetchRestFallback, scheduleFlush]);
 
   // Connect on mount, disconnect on unmount
   useEffect(() => {
@@ -371,6 +604,10 @@ export function useTaskStream(taskId: string): TaskStreamData {
     return () => {
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
     };
   }, [connect]);
 

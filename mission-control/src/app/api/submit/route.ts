@@ -3,6 +3,7 @@ import { DAEMON_SUBMIT_URL } from "@/lib/config";
 
 interface SubmitPayload {
   task: string;
+  variant?: string;
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -19,7 +20,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     const upstream = await fetch(DAEMON_SUBMIT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task: body.task.trim() }),
+      body: JSON.stringify({
+        task: body.task.trim(),
+        ...(body.variant ? { variant: body.variant } : {}),
+      }),
       signal: AbortSignal.timeout(5_000), // daemon responds immediately (HTTP 202)
     });
 

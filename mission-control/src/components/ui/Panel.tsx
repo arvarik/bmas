@@ -10,6 +10,7 @@ import { AlertCircle } from "lucide-react";
 export interface PanelProps {
   title: string;
   subtitle?: string;
+  headerExtra?: React.ReactNode;
   actions?: React.ReactNode;
   status?: "loading" | "error" | "empty";
   errorMessage?: string;
@@ -24,6 +25,7 @@ export interface PanelProps {
 export function Panel({
   title,
   subtitle,
+  headerExtra,
   actions,
   status,
   errorMessage,
@@ -81,6 +83,7 @@ export function Panel({
             </p>
           )}
         </div>
+        {headerExtra}
         {actions && (
           <div style={{ display: "flex", gap: "var(--space-2)" }}>
             {actions}
