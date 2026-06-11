@@ -42,7 +42,7 @@ def db_path(tmp_path, monkeypatch):
     """Use a temp SQLite database."""
     path = str(tmp_path / "test.db")
     monkeypatch.setattr("database.DB_PATH", path)
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         _init_test_db(path)
     )
     return path
@@ -58,7 +58,7 @@ async def _init_test_db(path):
 def task_id(db_path):
     """Create a test task and return its ID."""
     tid = "task-artifact1"
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         _create_test_task(tid)
     )
     return tid

@@ -12,10 +12,13 @@ import logging
 import os
 import uuid
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, UploadFile, File, Request, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
 
 import database as db
+from auth import check_bearer_or_pass
 from config import (
     STORAGE_ENABLED, STORAGE_USER_MEDIA_DIR, STORAGE_MAX_UPLOAD_MB,
     STORAGE_ALLOWED_TYPES, STORAGE_PDF_EXTRACTION, STORAGE_EXTRACTION_MAX_CHARS,
@@ -35,22 +38,8 @@ _MAX_UPLOAD_BYTES = STORAGE_MAX_UPLOAD_MB * 1024 * 1024
 
 
 def _check_bearer_or_pass(request: Request) -> None:
-    """Verify BMAS_NODE_KEY bearer auth if the key is configured.
-
-    Dashboard requests have no auth (matches existing pattern — single-user
-    homelab). Node requests must present the bearer token.
-    """
-    if not BMAS_NODE_KEY:
-        return  # No key configured — auth disabled
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        token = auth[7:].strip()
-        if token == BMAS_NODE_KEY:
-            return
-    # If an Authorization header is present but wrong, reject
-    if auth:
-        raise HTTPException(status_code=401, detail="Invalid bearer token")
-    # No auth header at all — allow (dashboard session)
+    """Auth helper — delegates to shared auth module."""
+    check_bearer_or_pass(request, BMAS_NODE_KEY)
 
 
 @router.post("/tasks/{task_id}/files")
@@ -234,7 +223,7 @@ async def download_file(task_id: str, file_id: str, request: Request):
         filename=file_row["name"],
         media_type=file_row["mime"],
         headers={
-            "Content-Disposition": f'attachment; filename="{file_row["name"]}"',
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(file_row['name'])}",
             "X-Content-Type-Options": "nosniff",
         },
     )

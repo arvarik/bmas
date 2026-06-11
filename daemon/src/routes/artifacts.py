@@ -12,10 +12,13 @@ import os
 import shutil
 import uuid
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, UploadFile, File, Form, Request
 from fastapi.responses import JSONResponse, FileResponse
 
 import database as db
+from auth import check_bearer_or_pass, require_node_key
 from config import (
     STORAGE_ENABLED, STORAGE_ARTIFACTS_DIR, STORAGE_MAX_TASK_OUTPUT_MB,
     BMAS_NODE_KEY,
@@ -33,29 +36,13 @@ _MAX_TASK_OUTPUT_BYTES = STORAGE_MAX_TASK_OUTPUT_MB * 1024 * 1024
 
 
 def _require_node_key(request: Request) -> None:
-    """Require BMAS_NODE_KEY bearer auth for ingest endpoints."""
-    if not BMAS_NODE_KEY:
-        return  # No key configured — auth disabled (dev mode)
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        raise ValueError("Missing bearer token")
-    token = auth[7:].strip()
-    if token != BMAS_NODE_KEY:
-        raise ValueError("Invalid bearer token")
+    """Auth helper — delegates to shared auth module."""
+    require_node_key(request, BMAS_NODE_KEY)
 
 
 def _check_bearer_or_pass(request: Request) -> None:
-    """Check bearer auth if present, otherwise allow (dashboard)."""
-    if not BMAS_NODE_KEY:
-        return
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        token = auth[7:].strip()
-        if token == BMAS_NODE_KEY:
-            return
-    if auth:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=401, detail="Invalid bearer token")
+    """Auth helper — delegates to shared auth module."""
+    check_bearer_or_pass(request, BMAS_NODE_KEY)
 
 
 async def _ensure_task_output_dir(task_id: str) -> str:
@@ -311,7 +298,7 @@ async def download_artifact(task_id: str, artifact_id: str, request: Request):
         filename=filename,
         media_type=artifact.get("mime", "application/octet-stream"),
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
             "X-Content-Type-Options": "nosniff",
         },
     )
