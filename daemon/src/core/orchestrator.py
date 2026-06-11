@@ -8,6 +8,7 @@ are best-effort — they log warnings on failure but never interrupt a running t
 """
 
 import logging
+import os
 import uuid
 import asyncio
 import json
@@ -251,8 +252,53 @@ class Orchestrator:
         sub_tasks[1]["status"] = "running"
         await self._publish_task_state(task_id, user_task[:80], "running", sub_tasks)
 
+        # Gather file attachments for context (doc 17 §4)
+        attachment_context: dict | None = None
+        try:
+            from config import STORAGE_ENABLED, STORAGE_CONFIG
+            if STORAGE_ENABLED:
+                task_files = await db.get_task_files(task_id)
+                if task_files:
+                    preview_chars = int(STORAGE_CONFIG.get("attachment_preview_chars", 1500))
+                    attachments = []
+                    for tf in task_files:
+                        att = {
+                            "file_id": tf["id"],
+                            "name": tf["name"],
+                            "mime": tf["mime"],
+                            "bytes": tf["bytes"],
+                            "sha256": tf["sha256"],
+                        }
+                        # Include extracted text preview if available
+                        if tf.get("extracted_chars", 0) > 0:
+                            stored = tf.get("stored_path", "")
+                            if stored:
+                                try:
+                                    # Read from sidecar extracted text file first
+                                    text_path = stored + ".extracted.txt"
+                                    if os.path.exists(text_path):
+                                        with open(text_path, "r", encoding="utf-8") as fh:
+                                            full_text = fh.read()
+                                        att["text_preview"] = full_text[:preview_chars]
+                                    else:
+                                        # Fallback: read raw file bytes and extract
+                                        from file_utils import extract_text_file
+                                        with open(stored, "rb") as fh:
+                                            file_bytes = fh.read()
+                                        preview = extract_text_file(file_bytes, max_chars=preview_chars)
+                                        att["text_preview"] = preview
+                                except Exception:
+                                    pass
+                        attachments.append(att)
+                    attachment_context = {"_task_id": task_id, "attachments": attachments}
+                    await self._safe_log("daemon",
+                        f"Attachments: {len(attachments)} file(s) attached", task_id=task_id)
+        except Exception as e:
+            logger.warning(f"Attachment gathering failed for {task_id}: {e}")
+
         plan = await self._dispatch_agent(
             "planner", task_id, user_task, DEFAULT_PERSONAS["planner"],
+            context=attachment_context,
             model=triage.litellm_model,
         )
         # Dual-write debate: Redis (ephemeral) + SQLite (permanent)
