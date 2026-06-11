@@ -1,0 +1,18 @@
+# bMAS Expert Profile — Hermes config.yaml
+# Full toolset per doc 12 §2.5 note: experts need maximum capability
+# since their domain is dynamic (injected per-task via AGENTS.md).
+
+model:
+  default: "medium"
+  provider: "custom"
+  base_url: "http://192.168.4.240:4000/v1"
+  api_key: "${LITELLM_MASTER_KEY}"
+
+toolsets:
+  web: true           # Web search for domain research
+  browser: true       # Browser automation for deep dives
+  terminal: true      # Terminal for code analysis, testing
+  code_exec: true     # Code execution for technical domains
+  file: true          # File read/write for board interaction
+  memory: true        # Persistent memory across rounds
+  skill_manage: false # No skill authoring (experts are transient)

@@ -163,6 +163,42 @@ coordination:
     cu_mode: llm                    # llm | heuristic_first
     coordinator_narration: false
     sole_similarity: auto           # auto | exact | embedding | judge
+
+  # ── Role Registry (doc 12 §2.5) ──────────────────────────────────
+  # Maps blackboard roles to Hermes profiles and preferred hosts.
+  # preferred_host: null → load-balanced across all nodes.
+  # profile: Hermes profile name (in ~/.hermes/profiles/<profile>/).
+  # dispatch_port: Port of the api_server.py bridge on the target node.
+  role_registry:
+    planner:
+      preferred_host: "192.168.4.103"     # node-1
+      profile: planner
+      dispatch_port: 8000
+    expert:
+      preferred_host: null                # any host (load-balanced)
+      profile: expert
+      dispatch_port: 8000
+    critic:
+      preferred_host: "192.168.4.103"     # node-1
+      profile: critic
+      dispatch_port: 8000
+    conflict_resolver:
+      preferred_host: "192.168.4.122"     # node-3
+      profile: conflict_resolver
+      dispatch_port: 8000
+    cleaner:
+      preferred_host: "192.168.4.103"     # node-1
+      profile: cleaner
+      dispatch_port: 8000
+    decider:
+      preferred_host: "192.168.4.112"     # node-2
+      profile: decider
+      dispatch_port: 8000
+    universal:
+      preferred_host: null                # any host
+      profile: universal
+      dispatch_port: 8000
+
   board:
     max_entry_chars: 8000           # Max body length; larger content → artifacts (doc 17 §6)
     max_title_len: 200              # Max title length for indexing

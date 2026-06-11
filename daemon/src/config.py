@@ -403,6 +403,53 @@ SALIENCE_W_P: float = float(_sal_weights.get("penalty", 0.3))
 _ok(f"Coordination: variant={COORDINATION_VARIANT}, bb_v2={BLACKBOARD_V2}, round_exec={ROUND_EXECUTION}")
 _ok(f"Board: max_entry={MAX_ENTRY_CHARS}, max_title={MAX_TITLE_LEN}, salience_w=[{SALIENCE_W_C},{SALIENCE_W_R},{SALIENCE_W_X},{SALIENCE_W_P}]")
 
+# ── Role Registry (Phase 3a, doc 12 §2.5) ────────────────────────────
+# Maps each blackboard role to its Hermes profile, preferred host, and
+# dispatch endpoints (preferred first, then all other nodes as fallback).
+
+_role_reg = _coordination.get("role_registry", {})
+_node_hosts = {n["host"] for n in _nodes if n.get("host")}
+
+ROLE_REGISTRY: dict[str, dict] = {}
+
+if _role_reg:
+    print("", file=sys.stderr)
+    print("  Validating role registry (doc 12 §2.5)...", file=sys.stderr)
+    for _role_name, _role_cfg in _role_reg.items():
+        if not isinstance(_role_cfg, dict):
+            _warn(f"role_registry.{_role_name}: expected a mapping, got {type(_role_cfg).__name__}; skipped")
+            continue
+
+        _pref = _role_cfg.get("preferred_host")
+        if _pref and _pref not in _node_hosts:
+            _warn(
+                f"role_registry.{_role_name}.preferred_host '{_pref}' "
+                f"is not a configured node host ({', '.join(sorted(_node_hosts))})"
+            )
+
+        _port = int(_role_cfg.get("dispatch_port", 8000))
+        _profile = str(_role_cfg.get("profile", _role_name))
+
+        # Build endpoint list: preferred first, then all other hosts as fallback
+        _endpoints: list[str] = []
+        if _pref:
+            _endpoints.append(f"http://{_pref}:{_port}")
+        for _n in _nodes:
+            _ep = f"http://{_n['host']}:{_port}"
+            if _ep not in _endpoints:
+                _endpoints.append(_ep)
+
+        ROLE_REGISTRY[_role_name] = {
+            "preferred_host": _pref,
+            "profile": _profile,
+            "dispatch_port": _port,
+            "endpoints": _endpoints,
+        }
+        _ok(
+            f"Role '{_role_name}' → profile={_profile}, "
+            f"home={_pref or 'any'}, endpoints={len(_endpoints)}"
+        )
+
 # ── Storage (Files & Artifacts, doc 17 §2) ───────────────────────────
 
 print("", file=sys.stderr)
@@ -496,6 +543,7 @@ print(f"  Agents:   {', '.join(AGENT_ENDPOINTS.keys()) or 'none'}", file=sys.std
 print(f"  Routing:  {' | '.join(f'{k}→{v}' for k, v in MODEL_ROUTING.items())}", file=sys.stderr)
 print(f"  Variant:  {COORDINATION_VARIANT} (bb_v2={'on' if BLACKBOARD_V2 else 'off'})", file=sys.stderr)
 print(f"  Storage:  {'enabled' if STORAGE_ENABLED else 'disabled'}", file=sys.stderr)
+print(f"  Roles:    {len(ROLE_REGISTRY)} registered" if ROLE_REGISTRY else "  Roles:    none (legacy dispatch)", file=sys.stderr)
 print(f"  Pricing:  {len(MODEL_PRICING)}/{len(_models)} models configured", file=sys.stderr)
 if _optional_features:
     print(f"  Optional: {', '.join(_optional_features)}", file=sys.stderr)
