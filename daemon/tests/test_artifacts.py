@@ -8,7 +8,6 @@ imported without triggering config.py's sys.exit(1).
 """
 
 import os
-import sys
 import asyncio
 
 import pytest

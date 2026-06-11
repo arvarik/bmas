@@ -15,7 +15,6 @@ bmas.yaml is missing.  These tests bypass that by mocking `config`
 as a module before importing ingest.
 """
 
-import json
 import os
 import sys
 import pytest
@@ -42,7 +41,7 @@ _mock_config.MODEL_PRICING = {
 
 # Now safe to add daemon/src to path and import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from routes.ingest import _compute_cost, _verify_bearer
+from routes.ingest import _compute_cost, _verify_bearer  # noqa: E402
 
 
 # ── Test _compute_cost ─────────────────────────────────────────────────

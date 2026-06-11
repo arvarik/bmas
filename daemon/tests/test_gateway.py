@@ -11,10 +11,8 @@ from __future__ import annotations
 import asyncio
 import pytest
 
-from core.entry import BoardEntry, ProposedEntry, envelope_fallback
-from core.gateway import BoardGateway, EntryRejected, salience_recompute_hook
-from core.board_store import InMemoryBoardStore
-from core.event_emitter import InMemoryEventEmitter
+from core.entry import envelope_fallback
+from core.gateway import BoardGateway, salience_recompute_hook
 from core.protocol import (
     EVENT_BOARD_ENTRY,
     EVENT_ENTRY_REMOVED,
@@ -421,7 +419,7 @@ class TestEventEmission:
     @pytest.mark.asyncio
     async def test_board_entry_payload_shape(self, gateway, event_emitter):
         """board_entry event carries the full entry dict."""
-        entries = await gateway.append(
+        _entries = await gateway.append(
             task_id="task-1",
             actor="expert.x",
             capabilities=["finding_writer"],
@@ -623,14 +621,14 @@ class TestConcurrency:
     @pytest.mark.asyncio
     async def test_different_tasks_independent(self, gateway, board_store):
         """Different tasks don't block each other."""
-        entries_a = await gateway.append(
+        _entries_a = await gateway.append(
             task_id="task-a",
             actor="expert.x",
             capabilities=["finding_writer"],
             proposed=[make_proposed_entry()],
             turn_id="turn-1",
         )
-        entries_b = await gateway.append(
+        _entries_b = await gateway.append(
             task_id="task-b",
             actor="expert.y",
             capabilities=["finding_writer"],
@@ -680,7 +678,7 @@ class TestReplayDeterminism:
         gw = gateway_no_hooks
 
         # Build a board through various operations
-        entries = await gw.append(
+        _entries = await gw.append(
             task_id="task-1",
             actor="planner",
             capabilities=["plan_writer"],

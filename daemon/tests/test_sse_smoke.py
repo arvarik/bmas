@@ -6,7 +6,6 @@ a live daemon to connect to.
 """
 
 import os
-import asyncio
 
 import pytest
 

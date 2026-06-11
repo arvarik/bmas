@@ -2,10 +2,9 @@
 """Salience computation tests (doc 04 §7)."""
 from __future__ import annotations
 
-import pytest
 
 from core.entry import BoardEntry
-from core.salience import compute_salience, SalienceWeights, DEFAULT_WEIGHTS
+from core.salience import compute_salience, SalienceWeights
 
 
 def _entry(
