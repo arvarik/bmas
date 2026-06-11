@@ -22,7 +22,10 @@ import yaml
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DAEMON_DIR = os.path.join(REPO_ROOT, "daemon")
 SRC_DIR = os.path.join(DAEMON_DIR, "src")
-BMAS_YAML = os.path.join(REPO_ROOT, "bmas.yaml")
+# bmas.yaml is gitignored; fall back to bmas.example.yaml on CI
+_bmas_yaml = os.path.join(REPO_ROOT, "bmas.yaml")
+_bmas_example = os.path.join(REPO_ROOT, "bmas.example.yaml")
+BMAS_YAML = _bmas_yaml if os.path.exists(_bmas_yaml) else _bmas_example
 
 
 def _run_config_probe(yaml_override: dict | None = None,
