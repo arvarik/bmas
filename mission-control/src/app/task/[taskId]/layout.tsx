@@ -17,6 +17,7 @@ import type { TaskStreamData, CostData } from "@/hooks/useTaskStream";
 import { TaskStreamContext } from "./TaskStreamContext";
 import { usePendingTask, type PendingTask } from "@/contexts/PendingTaskContext";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { AttachmentRail } from "@/components/features/AttachmentRail";
 import type { StatusType } from "@/lib/design-tokens";
 import { ArrowLeft } from "lucide-react";
 
@@ -31,6 +32,7 @@ const TABS = [
   { label: "DAG", segment: "dag" },              // /task/[id]/dag
   { label: "Logs", segment: "logs" },            // /task/[id]/logs
   { label: "Blackboard", segment: "blackboard" },// /task/[id]/blackboard
+  { label: "Artifacts", segment: "artifacts" },  // /task/[id]/artifacts
   { label: "Cost", segment: "cost" },            // /task/[id]/cost
 ];
 
@@ -166,6 +168,7 @@ export default function TaskLayout({
           pending={pending}
           cost={streamData.cost}
         />
+        <AttachmentRail taskId={taskId as string} />
         <nav className="task-tabs" role="tablist">
           {TABS.map((tab) => (
             <Link

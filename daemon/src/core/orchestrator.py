@@ -251,8 +251,43 @@ class Orchestrator:
         sub_tasks[1]["status"] = "running"
         await self._publish_task_state(task_id, user_task[:80], "running", sub_tasks)
 
+        # Gather file attachments for context (doc 17 §4)
+        attachment_context: dict | None = None
+        try:
+            from config import STORAGE_ENABLED, STORAGE_CONFIG
+            if STORAGE_ENABLED:
+                task_files = await db.get_task_files(task_id)
+                if task_files:
+                    preview_chars = int(STORAGE_CONFIG.get("attachment_preview_chars", 1500))
+                    attachments = []
+                    for tf in task_files:
+                        att = {
+                            "file_id": tf["id"],
+                            "name": tf["name"],
+                            "mime": tf["mime"],
+                            "bytes": tf["bytes"],
+                            "sha256": tf["sha256"],
+                        }
+                        # Include extracted text preview if available
+                        if tf.get("extracted_chars", 0) > 0:
+                            from file_utils import extract_text_file
+                            stored = tf.get("stored_path", "")
+                            if stored:
+                                try:
+                                    preview = extract_text_file(stored, max_chars=preview_chars)
+                                    att["text_preview"] = preview
+                                except Exception:
+                                    pass
+                        attachments.append(att)
+                    attachment_context = {"_task_id": task_id, "attachments": attachments}
+                    await self._safe_log("daemon",
+                        f"Attachments: {len(attachments)} file(s) attached", task_id=task_id)
+        except Exception as e:
+            logger.warning(f"Attachment gathering failed for {task_id}: {e}")
+
         plan = await self._dispatch_agent(
             "planner", task_id, user_task, DEFAULT_PERSONAS["planner"],
+            context=attachment_context,
             model=triage.litellm_model,
         )
         # Dual-write debate: Redis (ephemeral) + SQLite (permanent)

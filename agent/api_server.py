@@ -643,11 +643,24 @@ async def _run_hermes(
         if role_prompt:
             agents_content = role_prompt
             if context:
-                agents_content += (
-                    f"\n\n## Blackboard Context\n"
-                    f"```json\n{json.dumps(context, indent=2)}\n```"
-                )
+                # Exclude attachments from AGENTS.md context (they're staged as files)
+                ctx_for_md = {k: v for k, v in context.items() if k != "attachments"}
+                if ctx_for_md:
+                    agents_content += (
+                        f"\n\n## Blackboard Context\n"
+                        f"```json\n{json.dumps(ctx_for_md, indent=2)}\n```"
+                    )
             (workspace / "AGENTS.md").write_text(agents_content)
+
+        # Stage uploaded file attachments into workspace (doc 17 §5)
+        attachments = (context or {}).get("attachments", []) if context else []
+        if attachments and DAEMON_INGEST_URL:
+            await _stage_attachments(
+                task_id=task_id or request_id,
+                attachments=attachments,
+                workspace=workspace,
+                request_id=request_id,
+            )
 
         # Build the hermes command
         cmd = [
@@ -749,12 +762,118 @@ async def _run_hermes(
                 logger.warning(f"[{request_id}] Synthetic trace ingest failed: {e}")
 
         logger.info(f"[{request_id}] Task completed (fallback) | output_len={len(output)}")
+
+        # Sync any files hermes created in outputs/ back to daemon (doc 17 §6)
+        outputs_dir = workspace / "outputs"
+        if outputs_dir.is_dir() and DAEMON_INGEST_URL:
+            await _sync_artifacts(
+                task_id=task_id or request_id,
+                turn_id=turn_id or request_id,
+                outputs_dir=outputs_dir,
+                request_id=request_id,
+            )
+
         # usage is null under the legacy path (doc 06 §3.1 note)
         return TaskStatus.completed, output, None, trace_count, None
 
     finally:
         # Always clean up the temporary workspace
         shutil.rmtree(workspace, ignore_errors=True)
+
+
+# ── File Staging & Artifact Sync (doc 17 §5-6) ───────────────────────────
+
+async def _stage_attachments(
+    task_id: str,
+    attachments: list[dict],
+    workspace: Path,
+    request_id: str,
+) -> None:
+    """Fetch uploaded files from daemon into workspace/inputs/ (doc 17 §5).
+
+    Each attachment dict has: file_id, name, mime, bytes, sha256.
+    Text previews are also written as .extracted.txt files.
+    """
+    inputs_dir = workspace / "inputs"
+    inputs_dir.mkdir(parents=True, exist_ok=True)
+    (workspace / "outputs").mkdir(exist_ok=True)  # create outputs/ for agent use
+
+    headers = {}
+    if BMAS_NODE_KEY:
+        headers["Authorization"] = f"Bearer {BMAS_NODE_KEY}"
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for att in attachments:
+            fid = att.get("file_id", "")
+            name = att.get("name", "file")
+            if not fid:
+                continue
+
+            try:
+                resp = await client.get(
+                    f"{DAEMON_INGEST_URL}/tasks/{task_id}/files/{fid}",
+                    headers=headers,
+                )
+                if resp.status_code == 200:
+                    (inputs_dir / name).write_bytes(resp.content)
+                    logger.info(f"[{request_id}] Staged file: {name} ({len(resp.content)} bytes)")
+
+                    text_preview = att.get("text_preview", "")
+                    if text_preview:
+                        (inputs_dir / f"{name}.extracted.txt").write_text(text_preview)
+                else:
+                    logger.warning(
+                        f"[{request_id}] Failed to fetch file {fid}: HTTP {resp.status_code}"
+                    )
+            except Exception as e:
+                logger.warning(f"[{request_id}] Error staging file {fid}: {e}")
+
+
+async def _sync_artifacts(
+    task_id: str,
+    turn_id: str,
+    outputs_dir: Path,
+    request_id: str,
+) -> None:
+    """Sync files in outputs/ back to daemon as artifacts (doc 17 §6).
+
+    Walks the outputs directory and POSTs each file to
+    /ingest/artifacts/{task_id}/{turn_id}.
+    """
+    import hashlib
+
+    headers = {}
+    if BMAS_NODE_KEY:
+        headers["Authorization"] = f"Bearer {BMAS_NODE_KEY}"
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for file_path in outputs_dir.rglob("*"):
+            if not file_path.is_file():
+                continue
+            rel_path = str(file_path.relative_to(outputs_dir))
+            content = file_path.read_bytes()
+            sha256 = hashlib.sha256(content).hexdigest()
+
+            try:
+                resp = await client.post(
+                    f"{DAEMON_INGEST_URL}/ingest/artifacts/{task_id}/{turn_id}",
+                    headers=headers,
+                    data={"rel_path": rel_path, "sha256": sha256},
+                    files={"file": (file_path.name, content)},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    logger.info(
+                        f"[{request_id}] Synced artifact: {rel_path} "
+                        f"v{data.get('version', '?')} ({len(content)} bytes)"
+                    )
+                else:
+                    logger.warning(
+                        f"[{request_id}] Failed to sync {rel_path}: "
+                        f"HTTP {resp.status_code} {resp.text[:200]}"
+                    )
+            except Exception as e:
+                logger.warning(f"[{request_id}] Error syncing {rel_path}: {e}")
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────

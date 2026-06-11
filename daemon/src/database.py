@@ -1072,3 +1072,117 @@ async def update_board_entry_salience(
             (salience, entry_id, task_id),
         )
         await db.commit()
+
+
+# ── Task Files CRUD (doc 17 §3) ─────────────────────────────────────
+
+async def insert_task_file(
+    file_id: str,
+    task_id: str,
+    name: str,
+    mime: str,
+    size_bytes: int,
+    sha256: str,
+    stored_path: str,
+    extracted_chars: int = 0,
+) -> None:
+    """Insert a task_files row after successful upload."""
+    async with _connect() as db:
+        await db.execute(
+            "INSERT INTO task_files (id, task_id, name, mime, bytes, sha256, stored_path, extracted_chars) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (file_id, task_id, name, mime, size_bytes, sha256, stored_path, extracted_chars),
+        )
+        await db.commit()
+
+
+async def get_task_files(task_id: str) -> list[dict]:
+    """Return all files for a task, ordered by created_at."""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, task_id, name, mime, bytes, sha256, stored_path, extracted_chars, created_at "
+            "FROM task_files WHERE task_id = ? ORDER BY created_at",
+            (task_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_task_file(file_id: str) -> dict | None:
+    """Return a single file row by ID."""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM task_files WHERE id = ?", (file_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+# ── Artifacts CRUD (doc 17 §6) ──────────────────────────────────────
+
+async def insert_artifact(
+    artifact_id: str,
+    task_id: str,
+    turn_id: str | None,
+    author: str | None,
+    rel_path: str,
+    stored_path: str,
+    mime: str | None,
+    size_bytes: int,
+    sha256: str,
+    version: int = 1,
+) -> None:
+    """Insert an artifact row after successful ingest."""
+    async with _connect() as db:
+        await db.execute(
+            "INSERT INTO artifacts (id, task_id, turn_id, author, rel_path, stored_path, mime, bytes, sha256, version) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (artifact_id, task_id, turn_id, author, rel_path, stored_path, mime, size_bytes, sha256, version),
+        )
+        await db.commit()
+
+
+async def get_artifacts(task_id: str) -> list[dict]:
+    """Return all artifacts for a task, ordered by created_at."""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, task_id, turn_id, author, rel_path, stored_path, mime, bytes, sha256, version, created_at "
+            "FROM artifacts WHERE task_id = ? ORDER BY created_at",
+            (task_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_artifact(artifact_id: str) -> dict | None:
+    """Return a single artifact row by ID."""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM artifacts WHERE id = ?", (artifact_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def get_artifact_max_version(task_id: str, rel_path: str) -> int:
+    """Return the current highest version number for a given (task_id, rel_path)."""
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT MAX(version) FROM artifacts WHERE task_id = ? AND rel_path = ?",
+            (task_id, rel_path),
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row and row[0] else 0
+
+
+async def get_task_artifacts_total_bytes(task_id: str) -> int:
+    """Return total bytes of all artifacts for a task (quota enforcement)."""
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT COALESCE(SUM(bytes), 0) FROM artifacts WHERE task_id = ?",
+            (task_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else 0

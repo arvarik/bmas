@@ -1,0 +1,291 @@
+# /opt/bmas/daemon/src/routes/artifacts.py
+"""
+Artifact ingest and retrieval endpoints (doc 17 §6).
+
+POST /ingest/artifacts/{task_id}/{turn_id}  — node artifact sync (bearer auth)
+GET  /tasks/{task_id}/artifacts             — list artifacts
+GET  /tasks/{task_id}/artifacts/{artifact_id} — download artifact
+"""
+
+import logging
+import os
+import shutil
+import uuid
+
+from fastapi import APIRouter, UploadFile, File, Form, Request
+from fastapi.responses import JSONResponse, FileResponse
+
+import database as db
+from config import (
+    STORAGE_ENABLED, STORAGE_ARTIFACTS_DIR, STORAGE_MAX_TASK_OUTPUT_MB,
+    BMAS_NODE_KEY,
+)
+from file_utils import (
+    validate_path_traversal, compute_sha256, get_mime_type,
+    slugify_task, resolve_slug_collision,
+)
+
+logger = logging.getLogger("bmas.artifacts")
+
+router = APIRouter()
+
+_MAX_TASK_OUTPUT_BYTES = STORAGE_MAX_TASK_OUTPUT_MB * 1024 * 1024
+
+
+def _require_node_key(request: Request) -> None:
+    """Require BMAS_NODE_KEY bearer auth for ingest endpoints."""
+    if not BMAS_NODE_KEY:
+        return  # No key configured — auth disabled (dev mode)
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise ValueError("Missing bearer token")
+    token = auth[7:].strip()
+    if token != BMAS_NODE_KEY:
+        raise ValueError("Invalid bearer token")
+
+
+def _check_bearer_or_pass(request: Request) -> None:
+    """Check bearer auth if present, otherwise allow (dashboard)."""
+    if not BMAS_NODE_KEY:
+        return
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth[7:].strip()
+        if token == BMAS_NODE_KEY:
+            return
+    if auth:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Invalid bearer token")
+
+
+async def _ensure_task_output_dir(task_id: str) -> str:
+    """Lazily create and return the task output directory.
+
+    Uses the task slug from the task label, with collision resolution.
+    Records the output_dir in the tasks row.
+    """
+    task = await db.get_task(task_id)
+    if not task:
+        raise ValueError("Task not found")
+
+    # Check if output_dir is already set
+    existing = task.get("output_dir")
+    if existing and os.path.isdir(existing):
+        return existing
+
+    # Generate slug from task label
+    label = task.get("label", task_id)
+    slug = slugify_task(label)
+    slug = resolve_slug_collision(STORAGE_ARTIFACTS_DIR, slug)
+
+    output_dir = os.path.join(STORAGE_ARTIFACTS_DIR, slug)
+    os.makedirs(output_dir, exist_ok=True)
+
+    await db.update_task_output_dir(task_id, output_dir)
+    logger.info(f"Created output dir for {task_id}: {output_dir}")
+    return output_dir
+
+
+@router.post("/ingest/artifacts/{task_id}/{turn_id}")
+async def ingest_artifact(
+    task_id: str,
+    turn_id: str,
+    request: Request,
+    rel_path: str = Form(...),
+    sha256: str = Form(...),
+    author: str = Form(None),
+    file: UploadFile = File(...),
+):
+    """Ingest an agent-created artifact from a node.
+
+    Validates path safety, quota, sha256, and stores the file in the
+    task's output directory with versioning.
+    """
+    if not STORAGE_ENABLED:
+        return JSONResponse(
+            {"error": "Storage is not enabled"},
+            status_code=422,
+        )
+
+    # Auth: require node key
+    try:
+        _require_node_key(request)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=401)
+
+    # Verify task exists
+    task = await db.get_task(task_id)
+    if not task:
+        return JSONResponse({"error": "Task not found"}, status_code=404)
+
+    # Read file content
+    content = await file.read()
+    if len(content) == 0:
+        return JSONResponse({"error": "Empty file"}, status_code=422)
+
+    # Validate path traversal BEFORE touching the filesystem
+    # Normalize the rel_path
+    rel_path = rel_path.replace("\\", "/").strip("/")
+    if not rel_path:
+        return JSONResponse({"error": "Empty rel_path"}, status_code=422)
+
+    # Get or create the output directory
+    try:
+        output_dir = await _ensure_task_output_dir(task_id)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+
+    # Validate the path stays within the output directory
+    try:
+        safe_path = validate_path_traversal(rel_path, output_dir)
+    except ValueError as e:
+        logger.warning(f"Path traversal rejected for {task_id}: {rel_path} — {e}")
+        return JSONResponse(
+            {"error": f"Path rejected: {e}"},
+            status_code=422,
+        )
+
+    # Verify sha256
+    computed_sha256 = compute_sha256(content)
+    if computed_sha256 != sha256:
+        return JSONResponse(
+            {"error": f"SHA256 mismatch: expected {sha256}, got {computed_sha256}"},
+            status_code=422,
+        )
+
+    # Check quota
+    current_total = await db.get_task_artifacts_total_bytes(task_id)
+    if current_total + len(content) > _MAX_TASK_OUTPUT_BYTES:
+        logger.warning(
+            f"Artifact quota exceeded for {task_id}: "
+            f"{current_total + len(content)} > {_MAX_TASK_OUTPUT_BYTES}"
+        )
+        return JSONResponse(
+            {
+                "error": f"Task output quota exceeded "
+                f"({(current_total + len(content)) / (1024*1024):.1f}MB / {STORAGE_MAX_TASK_OUTPUT_MB}MB)"
+            },
+            status_code=413,
+        )
+
+    # Version handling — check if this path was already synced
+    current_version = await db.get_latest_artifact_version(task_id, rel_path)
+    new_version = current_version + 1
+
+    # If file exists, archive previous version
+    if os.path.exists(safe_path) and current_version > 0:
+        versions_dir = os.path.join(output_dir, ".bmas-versions")
+        os.makedirs(versions_dir, exist_ok=True)
+        archive_name = f"{rel_path.replace('/', '__')}.v{current_version}"
+        archive_path = os.path.join(versions_dir, archive_name)
+        try:
+            shutil.copy2(safe_path, archive_path)
+        except Exception as e:
+            logger.warning(f"Failed to archive {safe_path} → {archive_path}: {e}")
+
+    # Write the file
+    os.makedirs(os.path.dirname(safe_path), exist_ok=True)
+    with open(safe_path, "wb") as f:
+        f.write(content)
+
+    # Insert DB row
+    artifact_id = f"a-{str(uuid.uuid4())[:8]}"
+    mime = get_mime_type(rel_path.split("/")[-1]) if "/" in rel_path else get_mime_type(rel_path)
+    row = {
+        "id": artifact_id,
+        "task_id": task_id,
+        "turn_id": turn_id,
+        "author": author,
+        "rel_path": rel_path,
+        "stored_path": safe_path,
+        "mime": mime,
+        "bytes": len(content),
+        "sha256": computed_sha256,
+        "version": new_version,
+    }
+    await db.insert_artifact(row)
+
+    # Emit SSE event
+    try:
+        from app import app
+        orch = app.state.orchestrator
+        await orch.bb.publish_event(task_id, "artifact_created", {
+            "artifact_id": artifact_id,
+            "rel_path": rel_path,
+            "version": new_version,
+            "bytes": len(content),
+            "sha256": computed_sha256,
+            "author": author,
+            "turn_id": turn_id,
+        })
+    except Exception:
+        pass  # SSE is best-effort
+
+    logger.info(
+        f"Artifact ingested: {artifact_id} ({rel_path} v{new_version}, "
+        f"{len(content)} bytes, sha256={computed_sha256[:16]}…)"
+    )
+
+    return {
+        "artifact_id": artifact_id,
+        "rel_path": rel_path,
+        "version": new_version,
+        "bytes": len(content),
+        "sha256": computed_sha256,
+    }
+
+
+@router.get("/tasks/{task_id}/artifacts")
+async def list_artifacts(task_id: str):
+    """List all artifacts for a task."""
+    task = await db.get_task(task_id)
+    if not task:
+        return JSONResponse({"error": "Task not found"}, status_code=404)
+
+    artifacts = await db.get_artifacts(task_id)
+    return {
+        "artifacts": [
+            {
+                "id": a["id"],
+                "rel_path": a["rel_path"],
+                "mime": a.get("mime"),
+                "bytes": a["bytes"],
+                "sha256": a["sha256"],
+                "version": a["version"],
+                "author": a.get("author"),
+                "turn_id": a.get("turn_id"),
+                "created_at": a["created_at"],
+            }
+            for a in artifacts
+        ],
+        "output_dir": task.get("output_dir"),
+    }
+
+
+@router.get("/tasks/{task_id}/artifacts/{artifact_id}")
+async def download_artifact(task_id: str, artifact_id: str, request: Request):
+    """Download an artifact file.
+
+    Auth: dashboard session (no auth) or BMAS_NODE_KEY bearer.
+    Forces download via Content-Disposition: attachment.
+    """
+    _check_bearer_or_pass(request)
+
+    artifact = await db.get_artifact(artifact_id)
+    if not artifact or artifact["task_id"] != task_id:
+        return JSONResponse({"error": "Artifact not found"}, status_code=404)
+
+    stored_path = artifact["stored_path"]
+    if not os.path.exists(stored_path):
+        return JSONResponse({"error": "Artifact not found on disk"}, status_code=404)
+
+    filename = artifact["rel_path"].split("/")[-1] if "/" in artifact["rel_path"] else artifact["rel_path"]
+    return FileResponse(
+        path=stored_path,
+        filename=filename,
+        media_type=artifact.get("mime", "application/octet-stream"),
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
