@@ -3,7 +3,7 @@
 Tracking table for the true-blackboard migration. Each phase appends a row after opening its PR.
 
 > **Branching note:** Phases 0–2F were developed on feature branches merged into
-> `feat/true-blackboard`. This PR consolidates everything into `main`.
+> `feat/true-blackboard`. PR #6 consolidates everything into `main`.
 
 | Phase | Branch | PR | Status | Merged |
 |-------|--------|----|--------|--------|
