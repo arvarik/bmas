@@ -20,7 +20,11 @@ from datetime import datetime, timezone
 from core.blackboard import Blackboard
 from core.triage import TriageRouter, TriageResult, Complexity, MODEL_ROUTING  # Phase 4 §4.4
 from models.personas import DEFAULT_PERSONAS, generate_expert_persona
-from config import AGENT_ENDPOINTS, LITELLM_URL, LITELLM_KEY, TRIAGE_URL
+from config import (
+    AGENT_ENDPOINTS, LITELLM_URL, LITELLM_KEY, TRIAGE_URL,
+    COORDINATION_VARIANT, TRADITIONAL_CONFIG, ROLE_REGISTRY,
+    MODEL_ROUTING as CONFIG_MODEL_ROUTING,
+)
 import database as db
 
 logger = logging.getLogger("bmas.orchestrator")
@@ -197,13 +201,21 @@ class Orchestrator:
                 {"id": f"{task_id}-audit",   "label": "Audit & consensus",     "status": "pending",  "agent_role": "auditor",  "depends_on": [f"{task_id}-exec"]},
             ])
 
-            # 3. For COMPLEX tasks, use dynamic expert personas
+            # 3. Phase 3b: Traditional variant intercept (doc 05)
+            # When coordination.variant == 'traditional', the cyclic
+            # blackboard loop replaces both legacy pipelines.
+            if COORDINATION_VARIANT == "traditional":
+                return await self._run_traditional(
+                    task_id, session_id, user_task, triage,
+                )
+
+            # 4. For COMPLEX tasks, use dynamic expert personas (legacy)
             if triage.complexity == Complexity.COMPLEX:
                 return await self._complex_research_flow(
                     task_id, session_id, user_task
                 )
 
-            # 4. For SIMPLE/LIGHT/MEDIUM, use standard Planner→Executor→Auditor flow
+            # 5. For SIMPLE/LIGHT/MEDIUM, use standard Planner→Executor→Auditor flow (legacy)
             return await self._standard_flow(task_id, session_id, user_task, triage)
 
         except Exception as e:
@@ -719,6 +731,254 @@ Task: {user_task}"""
 
         # Unreachable — loop always returns, but satisfies mypy [return]
         return {"task_id": task_id, "status": "failed", "result": "max retries"}  # pragma: no cover
+
+    # ── Traditional Variant Integration (Phase 3b, doc 05) ────────────
+
+    async def _run_traditional(
+        self, task_id: str, session_id: str, user_task: str, triage: TriageResult,
+    ) -> dict:
+        """Run the paper's cyclic blackboard loop (doc 05).
+
+        The orchestrator owns lifecycle (lock, abort, events, SQLite).
+        The TraditionalVariant owns the loop (genesis, step, finalize).
+        CU and AG calls are control-plane LiteLLM calls, never Hermes runs.
+        """
+        from core.board_store import InMemoryBoardStore
+        from core.event_emitter import InMemoryEventEmitter
+        from core.gateway import BoardGateway, salience_recompute_hook
+        from core.variants.traditional import TraditionalVariant
+        from config import MODEL_PRICING
+
+        await self._safe_log("daemon",
+            f"Traditional variant | tier={triage.complexity.value}", task_id=task_id)
+
+        # Boot board infrastructure
+        # Phase 4 will swap InMemory → SqliteRedis; for now both work.
+        board_store = InMemoryBoardStore()
+        event_emitter = InMemoryEventEmitter()
+        gateway = BoardGateway(
+            board_store, event_emitter,
+            recompute_hooks=[salience_recompute_hook],
+        )
+
+        # Build node endpoint list
+        node_endpoints = list({ep for ep in AGENT_ENDPOINTS.values()})
+
+        variant = TraditionalVariant(
+            gateway=gateway,
+            board_store=board_store,
+            event_emitter=event_emitter,
+            triage=self.triage,
+            config=dict(TRADITIONAL_CONFIG),
+            litellm_url=LITELLM_URL,
+            litellm_key=LITELLM_KEY,
+            node_endpoints=node_endpoints,
+            role_registry=dict(ROLE_REGISTRY),
+            model_routing=dict(CONFIG_MODEL_ROUTING),
+        )
+
+        try:
+            # ── Genesis ──────────────────────────────────────────────
+            await self._set_phase("genesis", 0, task_id=task_id)
+
+            # Get file attachments for context (doc 17 §4)
+            attachments = []
+            try:
+                from config import STORAGE_ENABLED
+                if STORAGE_ENABLED:
+                    task_files = await db.get_task_files(task_id)
+                    if task_files:
+                        attachments = [
+                            {
+                                "name": f.get("original_filename", "file"),
+                                "text_preview": f.get("text_preview", ""),
+                            }
+                            for f in task_files
+                        ]
+            except Exception as e:
+                logger.warning(f"Failed to get attachments for {task_id}: {e}")
+
+            task = {
+                "task_id": task_id,
+                "query": user_task,
+                "triage_result": triage,
+                "attachments": attachments,
+            }
+            await variant.genesis(task)
+
+            await self._safe_log("daemon",
+                f"Genesis complete | roster={len(variant.roster.all_actors()) if variant.roster else 0} agents",
+                task_id=task_id)
+
+            # ── Round loop ───────────────────────────────────────────
+            for round_no in range(1, variant.max_rounds + 2):  # +2 for safety
+                await self._check_abort(task_id)
+                await self._set_phase("round", round_no, task_id=task_id)
+
+                # Step: deterministic guards → CU selection → activations
+                board = await board_store.get_snapshot(task_id)
+                step_result = await variant.step(task, board)
+
+                if step_result.terminal:
+                    await self._safe_log("daemon",
+                        f"Terminal at round {round_no}: {step_result.reason}",
+                        task_id=task_id)
+                    break
+
+                # Dispatch activations concurrently
+                if step_result.activations:
+                    dispatch_tasks = []
+                    for activation in step_result.activations:
+                        dispatch_tasks.append(
+                            self._dispatch_traditional_turn(
+                                variant, task, activation, round_no,
+                            )
+                        )
+                    results = await asyncio.gather(
+                        *dispatch_tasks, return_exceptions=True,
+                    )
+
+                    # Process results and track cost
+                    for activation, result in zip(step_result.activations, results):
+                        if isinstance(result, Exception):
+                            logger.warning(
+                                f"Turn failed for {activation.actor}: {result}"
+                            )
+                            continue
+                        if isinstance(result, dict):
+                            # Track cost from response usage
+                            usage = result.get("usage")
+                            if usage:
+                                cost = self._compute_cost(usage, MODEL_PRICING)
+                                variant.track_cost(cost)
+                                await gateway.set_meta(
+                                    task_id, budget_spent=variant.budget_spent,
+                                )
+
+                    await self._safe_log("daemon",
+                        f"Round {round_no} complete | "
+                        f"{len(step_result.activations)} turns, "
+                        f"budget=${variant.budget_spent:.4f}",
+                        task_id=task_id)
+            else:
+                from core.variants.traditional import StepResult
+                step_result = StepResult(terminal=True, reason="max_rounds")
+
+            # ── Finalize ─────────────────────────────────────────────
+            await self._set_phase("finalize", 0, task_id=task_id)
+            result = await variant.finalize(
+                task, board, step_result.reason or "unknown",
+            )
+
+            # Record final answer
+            answer = result.get("answer", "")
+            try:
+                await db.complete_task(
+                    task_id, answer[:10000],
+                    model_used=triage.litellm_model,
+                    cost_usd=variant.budget_spent,
+                )
+            except Exception as e:
+                logger.warning(f"SQLite complete_task failed for {task_id}: {e}")
+
+            # Emit completion events
+            try:
+                await self.bb.publish_event(task_id, "complete", {
+                    "answer": answer[:2000],
+                    "terminated_by": result.get("terminated_by"),
+                    "answer_source": result.get("answer_source"),
+                    "rounds_completed": result.get("rounds_completed"),
+                    "budget_spent": variant.budget_spent,
+                })
+                await self.bb.publish_system_event("task-completed", {
+                    "task_id": task_id,
+                    "status": "completed",
+                    "label": user_task[:80],
+                })
+            except Exception:
+                pass
+
+            return {
+                "task_id": task_id,
+                "answer": answer,
+                "variant": "traditional",
+                "terminated_by": result.get("terminated_by"),
+                "answer_source": result.get("answer_source"),
+                "rounds": result.get("rounds_completed"),
+                "budget_spent": variant.budget_spent,
+                "complexity": triage.complexity.value,
+            }
+
+        finally:
+            await variant.close()
+
+    async def _dispatch_traditional_turn(
+        self,
+        variant: Any,
+        task: dict,
+        activation: Any,
+        round_no: int,
+    ) -> dict:
+        """Dispatch one turn for the traditional variant.
+
+        Uses build_turn_payload → _dispatch_agent → parse_agent_response → apply.
+        """
+        task_id = task["task_id"]
+        board = await variant.store.get_snapshot(task_id)
+
+        # Build payload
+        payload = variant.build_turn_payload(task, activation.actor, board)
+        payload["model"] = activation.model
+
+        # Dispatch to agent node
+        response = await self._dispatch_agent(
+            role=activation.role,
+            task_id=task_id,
+            description=task["query"],
+            persona=payload.get("role_prompt", ""),
+            context={
+                "board": payload.get("board"),
+                "objective": payload.get("objective"),
+                "round": round_no,
+                "budget_remaining_usd": payload.get("budget_remaining_usd"),
+            },
+            model=activation.model,
+        )
+
+        # Parse response into board entries
+        entries = variant.parse_agent_response(task, activation.actor, response)
+
+        # Apply through gateway (if agent contributed anything)
+        if entries:
+            for entry in entries:
+                mutation = {
+                    "actor": activation.actor,
+                    "turn_id": payload.get("turn_id", ""),
+                    "round": round_no,
+                    **entry,
+                }
+                if entry.get("_action") == "clean":
+                    mutation["_action"] = "clean"
+                else:
+                    mutation["entries"] = [entry]
+                await variant.apply(task, [mutation])
+
+        return response
+
+    @staticmethod
+    def _compute_cost(usage: dict, pricing: dict) -> float:
+        """Compute cost from usage and pricing tables."""
+        model = usage.get("model", "unknown")
+        model_pricing = pricing.get(model, {})
+        if not model_pricing:
+            return 0.0
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        cost = (
+            prompt_tokens * float(model_pricing.get("input_cost_per_token", 0))
+            + completion_tokens * float(model_pricing.get("output_cost_per_token", 0))
+        )
+        return round(cost, 8)
 
     async def close(self):
         await self.bb.close()
