@@ -22,21 +22,20 @@ export function ReplayScrubber({
   onSeqChange,
 }: ReplayScrubberProps) {
   const maxSeq = entries.length > 0 ? Math.max(...entries.map((e) => e.seq)) : 0;
-  const [value, setValue] = useState(maxSeq);
   const [isPaused, setIsPaused] = useState(false);
+  // When paused, this holds the user-selected position
+  const [pausedAt, setPausedAt] = useState(0);
 
-  // Update live position when new entries arrive
-  React.useEffect(() => {
-    if (!isPaused) setValue(maxSeq);
-  }, [maxSeq, isPaused]);
+  // Derived display value: when following live, show maxSeq; when paused, show pausedAt
+  const value = isPaused ? pausedAt : maxSeq;
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const seq = parseInt(e.target.value, 10);
-      setValue(seq);
       onSeqChange(seq);
       if (seq < maxSeq) {
         setIsPaused(true);
+        setPausedAt(seq);
       } else {
         setIsPaused(false);
       }
@@ -46,7 +45,6 @@ export function ReplayScrubber({
 
   const handleResumeLive = useCallback(() => {
     setIsPaused(false);
-    setValue(maxSeq);
     onSeqChange(maxSeq);
   }, [maxSeq, onSeqChange]);
 

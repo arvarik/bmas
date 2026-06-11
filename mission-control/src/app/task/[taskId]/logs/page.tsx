@@ -80,13 +80,10 @@ export default function LogsPage() {
   // Trace/Raw toggle — default to trace when trace data exists
   type LogViewMode = "trace" | "raw";
   const hasTraces = traceEvents.length > 0;
-  const [logView, setLogView] = useState<LogViewMode>(hasTraces ? "trace" : "raw");
-  // Update default when traces arrive
-  useEffect(() => {
-    if (hasTraces && logView === "raw" && traceEvents.length === 1) {
-      setLogView("trace");
-    }
-  }, [hasTraces, traceEvents.length, logView]);
+  const [userLogView, setUserLogView] = useState<LogViewMode | null>(null);
+  // If user hasn't explicitly picked, auto-select based on trace availability
+  const logView: LogViewMode = userLogView ?? (hasTraces ? "trace" : "raw");
+  const setLogView = setUserLogView;
 
   // TurnInspector state
   const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);

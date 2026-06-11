@@ -145,7 +145,7 @@ function buildEdges(
 
 function BlackboardEntryNode({ data }: { data: { entry: BoardEntry; isRemoved: boolean; isSolution: boolean } }) {
   const { entry, isRemoved, isSolution } = data;
-  const Icon = getIcon(entry.type);
+  const icon = React.createElement(getIcon(entry.type), { size: 14, style: { color: "var(--text-tertiary)", flexShrink: 0 } });
   const color = authorColor(entry.author);
 
   return (
@@ -165,7 +165,7 @@ function BlackboardEntryNode({ data }: { data: { entry: BoardEntry; isRemoved: b
       }}
     >
       {/* Type glyph */}
-      <Icon size={14} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />
+      {icon}
 
       {/* Agent dot */}
       <span
