@@ -12,6 +12,6 @@ Tracking table for the true-blackboard migration. Each phase appends a row after
 | E — Evaluation & A/B | `feat/bb-eval` | [#3](https://github.com/arvarik/bmas/pull/3) | Merged → `feat/true-blackboard` | ✅ |
 | 2 — Board Gateway | `feat/bb-phase-2` | [#4](https://github.com/arvarik/bmas/pull/4) | Merged → `feat/true-blackboard` | ✅ |
 | 2F — Files & Artifacts | `feat/bb-phase-2f` | [#5](https://github.com/arvarik/bmas/pull/5) | Merged → `feat/true-blackboard` | ✅ |
-| **Consolidation → main** | `feat/true-blackboard` | [#6](https://github.com/arvarik/bmas/pull/6) | Open | ⏳ |
+| **Consolidation → main** | `feat/true-blackboard` | [#6](https://github.com/arvarik/bmas/pull/6) | Merged → `main` | ✅ |
 | 3a — Hermes Profiles | `feat/bb-phase-3a` | [#7](https://github.com/arvarik/bmas/pull/7) | Merged → `main` | ✅ |
 | 3b — Traditional Variant | `feat/bb-phase-3b` | [#8](https://github.com/arvarik/bmas/pull/8) | Merged → `main` | ✅ |
