@@ -42,6 +42,10 @@
   --agent-planner: hsl(265 50% 60%);
   --agent-executor: hsl(175 60% 45%);
   --agent-auditor: hsl(32 80% 55%);
+  --agent-critic: hsl(350 60% 58%);
+  --agent-conflict-resolver: hsl(280 45% 58%);
+  --agent-cleaner: hsl(200 25% 55%);
+  --agent-decider: hsl(150 45% 50%);
 
   /* ── Typography (§3) ───────────────────────────────────────────── */
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
@@ -248,6 +252,47 @@ body {
 
 .metric-pop {
   animation: metric-pop 400ms ease-out;
+}
+
+/* ── Board Entry Lifecycle Animations (doc 08 §3) ─────────────────── */
+
+/* Entry appears on board */
+@keyframes entry-appear {
+  0% { opacity: 0; transform: scale(0.92); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* Cleaner removal — fade to 20%, strikethrough, hold 2s then remove */
+@keyframes entry-remove {
+  0% { opacity: 1; }
+  30% { opacity: 0.5; }
+  100% { opacity: 0.2; }
+}
+
+/* Confidence bar fill */
+@keyframes confidence-fill {
+  0% { width: 0; }
+}
+
+/* Solution acceptance bloom */
+@keyframes success-bloom {
+  0% { box-shadow: 0 0 0 0 hsl(142 71% 45% / 0.4); }
+  70% { box-shadow: 0 0 0 10px hsl(142 71% 45% / 0); }
+  100% { box-shadow: 0 0 0 0 hsl(142 71% 45% / 0); }
+}
+
+.entry-appear {
+  animation: entry-appear 300ms ease-out;
+}
+
+.entry-remove {
+  animation: entry-remove 2s ease-in forwards;
+  text-decoration: line-through;
+  text-decoration-color: var(--status-error);
+}
+
+.success-bloom {
+  animation: success-bloom 800ms ease-out;
 }
 
 /* ── Reduced Motion ────────────────────────────────────────────────── */

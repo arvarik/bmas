@@ -83,3 +83,5 @@ eval/results/*.jsonl
 eval/results/*_summary.json
 eval/results/ab_*.md
 eval/results/failure_*.jsonl
+pr10.diff
+mission-control/public/ci-verify-input.json

@@ -19,7 +19,7 @@ interface Skill {
 }
 
 const ROLES: AgentRole[] = ["planner", "executor", "auditor"];
-const ROLE_LABELS: Record<AgentRole, string> = { planner: "Planner", executor: "Executor", auditor: "Auditor" };
+const ROLE_LABELS: Record<AgentRole, string> = { planner: "Planner", executor: "Executor", auditor: "Auditor", critic: "Critic", conflict_resolver: "Conflict Resolver", cleaner: "Cleaner", decider: "Decider" };
 
 // ── Main Component ────────────────────────────────────────────────────
 

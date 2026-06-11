@@ -21,6 +21,7 @@ import { useSystemStream } from "@/hooks/useSystemStream";
 import { usePendingTask } from "@/contexts/PendingTaskContext";
 import { useToast } from "@/hooks/useToast";
 import { ArrowUp, Zap, DollarSign, BarChart3, Paperclip } from "lucide-react";
+import { VariantSelect } from "@/components/features/VariantSelect";
 
 // ── Example tasks ─────────────────────────────────────────────────────
 
@@ -93,6 +94,7 @@ function formatRelativeTime(iso: string): string {
 
 export function LandingPageClient({ projectName }: { projectName: string }) {
   const [task, setTask] = useState("");
+  const [variant, setVariant] = useState("traditional");
   const [submitting, setSubmitting] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -135,7 +137,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
       const res = await fetch("/api/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task: input }),
+        body: JSON.stringify({ task: input, variant }),
       });
 
       if (!res.ok) {
@@ -181,7 +183,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
     } finally {
       setSubmitting(false);
     }
-  }, [task, submitting, attachedFiles, setPending, router, toast]);
+  }, [task, variant, submitting, attachedFiles, setPending, router, toast]);
 
   // ── Example pill click ────────────────────────────────────────────
   const handleExampleClick = useCallback((prompt: string) => {
@@ -291,8 +293,11 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
           )}
         </div>
 
-        {/* ── Shortcut Hint ─────────────────────────────────────── */}
-        <div className="landing__shortcut-hint">⌘ + Enter to submit</div>
+        {/* ── Shortcut Hint + Variant ─────────────────────────────── */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "var(--space-3)" }}>
+          <VariantSelect value={variant} onChange={setVariant} />
+          <span className="landing__shortcut-hint">⌘ + Enter to submit</span>
+        </div>
 
         {/* ── Example Pills ─────────────────────────────────────── */}
         <div className="landing__example-pills">

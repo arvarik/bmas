@@ -21,6 +21,11 @@ export async function GET(
       },
     );
 
+    if (upstream.status === 404) {
+      // Task has no artifacts — return empty collection, not an error
+      return NextResponse.json({ artifacts: [] });
+    }
+
     if (!upstream.ok) {
       return NextResponse.json(
         { error: `Daemon returned ${upstream.status}` },

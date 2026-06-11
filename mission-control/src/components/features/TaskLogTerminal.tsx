@@ -28,6 +28,10 @@ const ACCENT_RGB: Record<AgentRole, string> = {
   planner: "153;102;204",
   executor: "46;184;163",
   auditor: "224;156;63",
+  critic: "244;114;182",
+  conflict_resolver: "129;140;248",
+  cleaner: "148;163;184",
+  decider: "250;204;21",
 };
 
 function fmtLevel(l?: string): string {

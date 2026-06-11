@@ -100,6 +100,14 @@ function TaskHeader({
         {taskMeta?.complexity && (
           <span className="task-header__badge">{taskMeta.complexity}</span>
         )}
+        {taskMeta?.variant && (
+          <span
+            className="task-header__badge variant-chip"
+            title={`Coordination variant: ${taskMeta.variant}`}
+          >
+            {taskMeta.variant}
+          </span>
+        )}
         {taskMeta?.model && (
           <span className="task-header__model">{taskMeta.model}</span>
         )}

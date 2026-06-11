@@ -3,6 +3,11 @@
 /**
  * Blackboard Tab — /task/[taskId]/blackboard
  *
+ * Phase 4: Graph/Stream segmented control (doc 08 §2).
+ *
+ * - **Graph** (new default): BlackboardGraph + WorkerLane + ConsensusMeter
+ * - **Stream**: the existing debate list (preserved as-is)
+ *
  * Debate history with:
  * - Agent-identity-colored entries with timestamps
  * - Phase-aware typing indicator (e.g. "Planner is deliberating…")
@@ -16,8 +21,11 @@ import { useParams } from "next/navigation";
 import { useTaskData } from "../TaskStreamContext";
 import { Panel } from "@/components/ui/Panel";
 import { Clipboard } from "lucide-react";
-import { AGENT_COLORS, type AgentRole } from "@/lib/design-tokens";
+import { AGENT_COLORS, type AgentRole, authorColor } from "@/lib/design-tokens";
 import type { DebateEntry } from "@/hooks/useTaskStream";
+import { BlackboardGraph } from "@/components/features/BlackboardGraph";
+import { WorkerLane } from "@/components/features/WorkerLane";
+import { ConsensusMeter } from "@/components/features/ConsensusMeter";
 
 // ── Phase → agent/verb mapping ────────────────────────────────────────
 
@@ -53,11 +61,29 @@ function mapArchivedDebate(raw: ArchivedDebate): DebateEntry {
   };
 }
 
+// ── View mode type ────────────────────────────────────────────────────
+
+type ViewMode = "graph" | "stream";
+
 // ── Component ─────────────────────────────────────────────────────────
 
 export default function BlackboardPage() {
   const { taskId } = useParams();
-  const { debates: liveDebates, phase, isLive } = useTaskData();
+  const {
+    debates: liveDebates,
+    phase,
+    isLive,
+    boardEntries,
+    removedEntryIds,
+    consensus,
+    activeTurns,
+    completedTurns,
+    traceEvents,
+    taskMeta,
+  } = useTaskData();
+
+  const [viewMode, setViewMode] = useState<ViewMode>("graph");
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
@@ -135,25 +161,25 @@ export default function BlackboardPage() {
   const phaseInfo = phase ? PHASE_MAP[phase] : null;
 
   // ── Loading state (archived fetch in progress) ────────────────────
-  if (archiveLoading && debates.length === 0) {
+  if (archiveLoading && debates.length === 0 && boardEntries.length === 0) {
     return (
       <div className="view-container">
-        <Panel title="Debate History" status="loading" />
+        <Panel title="Blackboard" status="loading" />
       </div>
     );
   }
 
   // ── Empty state ───────────────────────────────────────────────────
 
-  if (debates.length === 0 && !isLive) {
+  if (debates.length === 0 && boardEntries.length === 0 && !isLive) {
     return (
       <div className="view-container">
         <Panel
-          title="Debate History"
+          title="Blackboard"
           status="empty"
           emptyIcon={Clipboard}
-          emptyMessage="No debate data"
-          emptyHint="This task has no recorded debate entries."
+          emptyMessage="No blackboard data"
+          emptyHint="This task has no recorded board entries."
         />
       </div>
     );
@@ -162,80 +188,166 @@ export default function BlackboardPage() {
   return (
     <div className="view-container">
       <Panel
-        title="Debate History"
-        subtitle={debates.length > 0 ? `${debates.length} entries` : undefined}
-      >
-        <div className="debate-scroll" ref={scrollRef}>
-          {debates.map((entry) => {
-            const agentColor =
-              AGENT_COLORS[entry.agent_role as AgentRole] ?? "var(--text-tertiary)";
-            return (
-              <div
-                key={entry.id}
-                className="debate-entry"
-                style={{ borderLeftColor: agentColor }}
+        title="Blackboard"
+        subtitle={
+          viewMode === "graph"
+            ? `${boardEntries.length} entries`
+            : `${debates.length} entries`
+        }
+        headerExtra={
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+            <ConsensusMeter consensus={consensus} isLive={isLive} />
+            {/* Graph/Stream segmented control */}
+            <div
+              className="bb-toggle"
+              role="tablist"
+              style={{
+                display: "inline-flex",
+                background: "var(--surface-hover)",
+                borderRadius: "var(--radius-sm)",
+                padding: 2,
+              }}
+            >
+              <button
+                role="tab"
+                aria-selected={viewMode === "graph"}
+                className={viewMode === "graph" ? "bb-toggle__tab bb-toggle__tab--active" : "bb-toggle__tab"}
+                onClick={() => setViewMode("graph")}
+                style={{
+                  padding: "2px 10px",
+                  fontSize: "var(--text-xs)",
+                  fontWeight: "var(--weight-medium)",
+                  borderRadius: "var(--radius-sm)",
+                  border: "none",
+                  cursor: "pointer",
+                  fontFamily: "var(--font-sans)",
+                  background: viewMode === "graph" ? "var(--surface-overlay)" : "transparent",
+                  color: viewMode === "graph" ? "var(--text-primary)" : "var(--text-tertiary)",
+                  transition: "background 150ms ease, color 150ms ease",
+                }}
               >
-                <div className="debate-entry__header">
+                Graph
+              </button>
+              <button
+                role="tab"
+                aria-selected={viewMode === "stream"}
+                className={viewMode === "stream" ? "bb-toggle__tab bb-toggle__tab--active" : "bb-toggle__tab"}
+                onClick={() => setViewMode("stream")}
+                style={{
+                  padding: "2px 10px",
+                  fontSize: "var(--text-xs)",
+                  fontWeight: "var(--weight-medium)",
+                  borderRadius: "var(--radius-sm)",
+                  border: "none",
+                  cursor: "pointer",
+                  fontFamily: "var(--font-sans)",
+                  background: viewMode === "stream" ? "var(--surface-overlay)" : "transparent",
+                  color: viewMode === "stream" ? "var(--text-primary)" : "var(--text-tertiary)",
+                  transition: "background 150ms ease, color 150ms ease",
+                }}
+              >
+                Stream
+              </button>
+            </div>
+          </div>
+        }
+      >
+        {/* ── Graph Mode ───────────────────────────────────────────── */}
+        {viewMode === "graph" && (
+          <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+            <WorkerLane
+              activeTurns={activeTurns}
+              completedTurns={completedTurns}
+              traceEvents={traceEvents}
+              boardEntries={boardEntries}
+            />
+            <div style={{ flex: 1, minHeight: 300 }}>
+              <BlackboardGraph
+                entries={boardEntries}
+                removedEntryIds={removedEntryIds}
+                variant={taskMeta?.variant}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* ── Stream Mode (existing debate list) ───────────────────── */}
+        {viewMode === "stream" && (
+          <>
+            <div className="debate-scroll" ref={scrollRef}>
+              {debates.map((entry) => {
+                const agentColor =
+                  AGENT_COLORS[entry.agent_role as AgentRole] ??
+                  authorColor(entry.agent_role);
+                return (
+                  <div
+                    key={entry.id}
+                    className="debate-entry"
+                    style={{ borderLeftColor: agentColor }}
+                  >
+                    <div className="debate-entry__header">
+                      <span
+                        className="debate-entry__agent-dot"
+                        style={{ background: agentColor }}
+                      />
+                      <span
+                        className="debate-entry__agent-name"
+                        style={{ color: agentColor }}
+                      >
+                        {capitalize(entry.agent_role)}
+                      </span>
+                      <span className="debate-entry__timestamp">
+                        {new Date(entry.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <div className="debate-entry__content">
+                      {entry.content}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Typing indicator */}
+              {isLive && phaseInfo && (
+                <div className="debate-entry debate-entry--typing">
                   <span
                     className="debate-entry__agent-dot"
-                    style={{ background: agentColor }}
+                    style={{ background: AGENT_COLORS[phaseInfo.agent] }}
                   />
                   <span
                     className="debate-entry__agent-name"
-                    style={{ color: agentColor }}
+                    style={{ color: AGENT_COLORS[phaseInfo.agent] }}
                   >
-                    {capitalize(entry.agent_role)}
+                    {capitalize(phaseInfo.agent)}
                   </span>
-                  <span className="debate-entry__timestamp">
-                    {new Date(entry.timestamp).toLocaleTimeString()}
+                  <span className="debate-entry__typing-label">
+                    is {phaseInfo.verb}
+                  </span>
+                  <span className="debate-entry__typing-dots" aria-hidden="true">
+                    <span /><span /><span />
                   </span>
                 </div>
-                <div className="debate-entry__content">
-                  {entry.content}
+              )}
+
+              {/* Waiting state when live but no entries yet */}
+              {debates.length === 0 && isLive && (
+                <div className="debate-empty-live">
+                  <Clipboard size={20} />
+                  <span>Waiting for debate entries…</span>
                 </div>
-              </div>
-            );
-          })}
+              )}
 
-          {/* Typing indicator */}
-          {isLive && phaseInfo && (
-            <div className="debate-entry debate-entry--typing">
-              <span
-                className="debate-entry__agent-dot"
-                style={{ background: AGENT_COLORS[phaseInfo.agent] }}
-              />
-              <span
-                className="debate-entry__agent-name"
-                style={{ color: AGENT_COLORS[phaseInfo.agent] }}
-              >
-                {capitalize(phaseInfo.agent)}
-              </span>
-              <span className="debate-entry__typing-label">
-                is {phaseInfo.verb}
-              </span>
-              <span className="debate-entry__typing-dots" aria-hidden="true">
-                <span /><span /><span />
-              </span>
+              {/* Scroll sentinel */}
+              <div ref={sentinelRef} style={{ height: 1 }} />
             </div>
-          )}
 
-          {/* Waiting state when live but no entries yet */}
-          {debates.length === 0 && isLive && (
-            <div className="debate-empty-live">
-              <Clipboard size={20} />
-              <span>Waiting for debate entries…</span>
-            </div>
-          )}
-
-          {/* Scroll sentinel */}
-          <div ref={sentinelRef} style={{ height: 1 }} />
-        </div>
-
-        {/* "New updates" pill */}
-        {newUpdateCount > 0 && (
-          <button className="new-output-pill" onClick={handleSnapToBottom}>
-            ↓ {newUpdateCount} new update{newUpdateCount !== 1 ? "s" : ""}
-          </button>
+            {/* "New updates" pill */}
+            {newUpdateCount > 0 && (
+              <button className="new-output-pill" onClick={handleSnapToBottom}>
+                ↓ {newUpdateCount} new update{newUpdateCount !== 1 ? "s" : ""}
+              </button>
+            )}
+          </>
         )}
       </Panel>
     </div>
