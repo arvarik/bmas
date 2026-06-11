@@ -201,7 +201,7 @@ For each expert, provide:
 - ability: A one-line description of this expert's unique capability
 
 Return ONLY valid JSON:
-{"experts": [{"name": "...", "slug": "...", "ability": "..."}]}
+{{"experts": [{{"name": "...", "slug": "...", "ability": "..."}}]}}
 
 Rules:
 - Generate exactly {n} experts
@@ -221,7 +221,7 @@ You are a REFEREE, not a brain — you do not solve the problem yourself.
 You select agents who can best advance the discussion RIGHT NOW.
 
 Return ONLY valid JSON:
-{"selected": ["agent_name_1", "agent_name_2"], "rationale": "Brief explanation"}
+{{"selected": ["agent_name_1", "agent_name_2"], "rationale": "Brief explanation"}}
 
 Rules:
 - Select from the available roster ONLY (names listed below)
