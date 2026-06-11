@@ -47,6 +47,7 @@ from core.protocol import (
     EVENT_ENTRY_STATUS_CHANGED,
     EVENT_ENTRY_REJECTED,
     EVENT_CONSENSUS,
+    EVENT_COORDINATOR_NARRATION,
     EVENT_TRACE,
     EVENT_TURN_START,
     EVENT_TURN_END,
@@ -189,6 +190,7 @@ class TestSSEEventNames:
         "entry_status_changed",
         "entry_rejected",
         "consensus",
+        "coordinator_narration",
         "trace",
         "turn_start",
         "turn_end",
@@ -201,13 +203,13 @@ class TestSSEEventNames:
     }
 
     def test_all_spec_v2_events_registered(self):
-        """All 10 v2 event names from doc 04 §9 are registered."""
+        """All 11 v2 event names from doc 04 §9 + doc 05 §1.2 are registered."""
         registered = set(V2_EVENT_NAMES.keys())
         assert registered == self.SPEC_V2_EVENTS
 
     def test_v2_event_count(self):
-        """Exactly 10 v2 events (matches the spec table)."""
-        assert len(V2_EVENT_NAMES) == 10
+        """Exactly 11 v2 events (doc 04 §9 + coordinator_narration from doc 05 §1.2)."""
+        assert len(V2_EVENT_NAMES) == 11
 
     def test_legacy_events_complete(self):
         """All 6 legacy event names are listed."""
@@ -220,6 +222,7 @@ class TestSSEEventNames:
         assert EVENT_ENTRY_STATUS_CHANGED == "entry_status_changed"
         assert EVENT_ENTRY_REJECTED == "entry_rejected"
         assert EVENT_CONSENSUS == "consensus"
+        assert EVENT_COORDINATOR_NARRATION == "coordinator_narration"
         assert EVENT_TRACE == "trace"
         assert EVENT_TURN_START == "turn_start"
         assert EVENT_TURN_END == "turn_end"
@@ -235,7 +238,7 @@ class TestSSEEventNames:
         """all_v2_event_names() returns sorted list."""
         names = all_v2_event_names()
         assert names == sorted(names)
-        assert len(names) == 10
+        assert len(names) == 11
 
     def test_is_v2_event(self):
         """is_v2_event() correctly identifies v2 events."""

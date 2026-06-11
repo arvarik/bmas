@@ -156,6 +156,7 @@ EVENT_ENTRY_REJECTED = "entry_rejected"                # {entry, actor, reason}
 
 # Coordination events (CU → UI)
 EVENT_CONSENSUS = "consensus"                          # {decider_state, open_critiques, phase, round}
+EVENT_COORDINATOR_NARRATION = "coordinator_narration"   # {round, selected, rationale, source} — doc 05 §1.2
 
 # Trace events (agent → UI)
 EVENT_TRACE = "trace"                                  # trace event (doc 06)
@@ -178,6 +179,7 @@ V2_EVENT_NAMES: dict[str, str] = {
     EVENT_ENTRY_STATUS_CHANGED: "{entry_id, by, reason} — graph status update",
     EVENT_ENTRY_REJECTED: "{entry, actor, reason} — rejection overlay, debug",
     EVENT_CONSENSUS: "{decider_state, open_critiques, phase, round} — convergence meter",
+    EVENT_COORDINATOR_NARRATION: "{round, selected, rationale, source} — Coordinator lane (doc 05 §1.2, doc 13 §3)",
     EVENT_TRACE: "Trace event (doc 06) — trace inspector, log terminal",
     EVENT_TURN_START: "{turn_id, actor, node, round} — worker activity lane",
     EVENT_TURN_END: "{turn_id, actor, node, round} — worker activity lane",

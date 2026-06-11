@@ -135,6 +135,7 @@ class TraditionalVariant:
         self.cleaner_threshold: int = int(config.get("cleaner_entry_threshold", 12))
         self.stall_rounds: int = int(config.get("stall_rounds", 2))
         self.cu_mode: str = str(config.get("cu_mode", "llm"))
+        self.coordinator_narration: bool = bool(config.get("coordinator_narration", False))
         self.sole_similarity: str = str(config.get("sole_similarity", "auto"))
 
         # External services
@@ -339,20 +340,36 @@ class TraditionalVariant:
 
         # ── 2. CU selection (one bare LiteLLM call, doc 05 §1.1) ─────
 
+        rationale: str | None = None
+        source: str = "heuristic"
+
         if self.cu_mode == "heuristic_first":
             selected = self._deterministic_fallback(snapshot, current_round)
         else:
-            selected = await self._cu_select(
-                task["query"], snapshot, current_round, meta,
+            selected, rationale = await self._cu_select(
+                task_id, task["query"], snapshot, current_round, meta,
             )
+            source = "llm" if selected else "heuristic"
 
         if not selected:
             # No agents selected — treat as stall
             self._stall_counter += 1
             selected = self._deterministic_fallback(snapshot, current_round)
+            source = "heuristic"
+            rationale = None
 
         # Clamp to max_concurrent
         selected = selected[:self.max_concurrent]
+
+        # Emit coordinator narration event (doc 05 §1.2, doc 13 §3)
+        # Gated by flag — when off, no event fires and the UI lane hides entirely.
+        if self.coordinator_narration and self.emitter:
+            await self.emitter.emit(task_id, "coordinator_narration", {
+                "round": current_round,
+                "selected": selected,
+                "rationale": rationale,
+                "source": source,
+            })
 
         # Update board meta
         phase = self._infer_phase(snapshot, current_round)
@@ -557,14 +574,20 @@ class TraditionalVariant:
 
     async def _cu_select(
         self,
+        task_id: str,
         query: str,
         snapshot: dict[str, BoardEntry],
         current_round: int,
         meta: dict[str, Any],
-    ) -> list[str]:
-        """One bare LiteLLM call per round for agent selection."""
+    ) -> tuple[list[str], str | None]:
+        """One bare LiteLLM call per round for agent selection.
+
+        Returns (selected_actors, rationale).  Rationale may be None if
+        the CU response was garbled or missing it — this NEVER blocks
+        the loop (doc 05 §1.2).
+        """
         if not self.roster:
-            return self._deterministic_fallback(snapshot, current_round)
+            return self._deterministic_fallback(snapshot, current_round), None
 
         from models.personas import CU_SYSTEM_PROMPT
 
@@ -607,16 +630,16 @@ class TraditionalVariant:
                 )
                 resp.raise_for_status()
                 raw = resp.json()["choices"][0]["message"]["content"]
-                selected = parse_cu_output(raw, self.roster.actor_names())
+                selected, rationale = parse_cu_output(raw, self.roster.actor_names())
                 if selected:
-                    return selected
+                    return selected, rationale
                 logger.warning("CU returned empty selection (attempt %d)", attempt + 1)
             except Exception as e:
                 logger.warning("CU call failed (attempt %d): %s", attempt + 1, e)
 
         # Fallback to deterministic table
         logger.info("CU failed after retries, using deterministic fallback")
-        return self._deterministic_fallback(snapshot, current_round)
+        return self._deterministic_fallback(snapshot, current_round), None
 
     def _deterministic_fallback(
         self,
@@ -943,10 +966,12 @@ class TraditionalVariant:
 
 def parse_cu_output(
     raw: str, valid_names: list[str],
-) -> list[str]:
-    """Parse CU selection JSON. Returns list of valid actor names.
+) -> tuple[list[str], str | None]:
+    """Parse CU selection JSON.  Returns (valid_actor_names, rationale).
 
-    Drops unknown names with warning. Returns empty list on garbled output.
+    Drops unknown names with warning.  Returns ([], None) on garbled output.
+    A malformed or missing rationale is returned as None — it NEVER raises
+    or blocks the loop (doc 05 §1.2).
     """
     try:
         data = json.loads(raw)
@@ -958,16 +983,23 @@ def parse_cu_output(
             try:
                 data = json.loads(match.group(1))
             except (json.JSONDecodeError, TypeError):
-                return []
+                return [], None
         else:
-            return []
+            return [], None
 
     if not isinstance(data, dict):
-        return []
+        return [], None
 
     selected = data.get("selected", [])
     if not isinstance(selected, list):
-        return []
+        return [], None
+
+    # Extract rationale — must be a non-empty string, else None.
+    # A malformed rationale never blocks the loop.
+    raw_rationale = data.get("rationale")
+    rationale: str | None = (
+        str(raw_rationale).strip() or None
+    ) if isinstance(raw_rationale, str) else None
 
     # Filter to valid names
     result = []
@@ -980,7 +1012,7 @@ def parse_cu_output(
         else:
             logger.warning("CU selected unknown agent '%s' — dropping", name)
 
-    return result
+    return result, rationale
 
 
 # ── SolE Majority-Similarity Vote (doc 05 §3) ───────────────────────
