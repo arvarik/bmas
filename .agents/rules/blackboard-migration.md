@@ -1,5 +1,5 @@
 ---
-description: Binding rules for the true-blackboard migration
+description: Binding rules for the true-blackboard migration (branch-per-phase → main)
 alwaysApply: true
 ---
 # Blackboard migration — binding constraints
@@ -35,6 +35,10 @@ You implement docs/proposals/. It is a spec, not a suggestion.
 - You'd need to start a different phase to finish this one.
 ## Working style
 - Stay strictly within the current phase's scope. One phase = one branch = one PR.
+- **Git workflow: branch off `main`, PR into `main`.** At the start of each implementation step,
+  `git checkout main && git pull origin main` to get a clean, up-to-date base, then create the
+  phase branch (e.g., `git checkout -b feat/bb-phase-X`). PRs always target `main`. Do NOT use a
+  long-lived integration branch (e.g., `feat/true-blackboard`) as either base or PR target.
 - Update the phase checklist in doc 10 as items land.
 - Update docs/proposals/MIGRATION_STATUS.md with the phase, PR number, and status after opening a PR.
 - Live verification uses a dedicated test namespace (task_id prefix ci-verify-*) and read-only probes;

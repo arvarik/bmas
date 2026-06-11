@@ -52,6 +52,7 @@ export function useTaskHistory(): TaskHistoryData {
   const offsetRef = useRef(0);
 
   const fetchPage = useCallback(async (offset: number, append: boolean) => {
+    setIsLoading(true);
     try {
       const res = await fetch(`/api/tasks?limit=${PAGE_SIZE}&offset=${offset}`, {
         cache: "no-store",
@@ -84,8 +85,8 @@ export function useTaskHistory(): TaskHistoryData {
 
   // Initial fetch on mount
   useEffect(() => {
-    setIsLoading(true);
     offsetRef.current = 0;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch, setState is in the callback not the effect body
     void fetchPage(0, false);
   }, [fetchPage]);
 

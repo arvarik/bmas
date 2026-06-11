@@ -5,3 +5,5 @@ redis[hiredis]>=7.4.0   # Async Redis with C-accelerated parser
 pydantic>=2.13.0        # Request/response validation
 pyyaml>=6.0             # bmas.yaml config file loading
 aiosqlite>=0.21.0       # Async SQLite for task history persistence
+pymupdf>=1.25.0         # PDF text extraction (doc 17 §3)
+python-multipart>=0.0.20  # FastAPI file upload support

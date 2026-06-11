@@ -87,6 +87,7 @@ export default function BlackboardPage() {
 
   useEffect(() => {
     if (!isLive && liveDebates.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch, setState is in the callback
       void fetchArchived();
     }
   }, [isLive, liveDebates.length, fetchArchived]);

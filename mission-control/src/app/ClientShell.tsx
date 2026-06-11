@@ -87,6 +87,7 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
 
   // ── Close mobile drawer on navigation ─────────────────────────────
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync UI state to pathname change
     setMobileDrawerOpen(false);
   }, [pathname]);
 

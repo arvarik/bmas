@@ -1,11 +1,26 @@
 # /opt/bmas/daemon/src/routes/tasks.py
-"""Task REST endpoints — list, detail, debate, cost, logs."""
+"""Task REST endpoints — list, detail, debate, cost, logs, config probe."""
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 import database as db
+from config import COORDINATION_VARIANT, BLACKBOARD_V2
 
 router = APIRouter()
+
+
+@router.get("/config/active")
+async def get_active_config():
+    """Return the daemon's active coordination variant and build flags.
+
+    Used by the eval A/B harness (Phase E) to verify which arm is running
+    before submitting benchmark items. Read-only; exposes only config that
+    is already visible in daemon startup logs.
+    """
+    return {
+        "variant": COORDINATION_VARIANT,
+        "blackboard_v2": BLACKBOARD_V2,
+    }
 
 
 @router.get("/tasks")
@@ -76,3 +91,34 @@ async def get_task_logs_endpoint(task_id: str, limit: int = 500, offset: int = 0
     entries = await db.get_task_logs(task_id, limit=limit, offset=offset)
     total = await db.count_task_logs(task_id)
     return {"entries": entries, "total": total}
+
+
+# ── Phase 1: Trace & Turn read endpoints ─────────────────────────────
+
+@router.get("/tasks/{task_id}/trace")
+async def get_task_traces_endpoint(task_id: str, limit: int = 200, offset: int = 0):
+    """Fetch agent trace events for a task (paginated).
+
+    Returns traces ordered by turn_id + seq.
+    """
+    task = await db.get_task(task_id)
+    if not task:
+        return JSONResponse({"error": "Task not found"}, status_code=404)
+
+    limit = min(max(limit, 1), 1000)
+    offset = max(offset, 0)
+
+    traces = await db.get_task_traces(task_id, limit=limit, offset=offset)
+    return {"traces": traces, "total": len(traces)}
+
+
+@router.get("/tasks/{task_id}/turns")
+async def get_task_turns_endpoint(task_id: str):
+    """Fetch all turn records for a task, ordered by round_no."""
+    task = await db.get_task(task_id)
+    if not task:
+        return JSONResponse({"error": "Task not found"}, status_code=404)
+
+    turns = await db.get_turns(task_id)
+    return {"turns": turns}
+

@@ -78,4 +78,8 @@ coverage/
 .pytest_cache/
 htmlcov/
 
-
+# ── Eval Results (per-run benchmark output) ────────────────────────
+eval/results/*.jsonl
+eval/results/*_summary.json
+eval/results/ab_*.md
+eval/results/failure_*.jsonl

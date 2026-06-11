@@ -21,7 +21,7 @@ Each step is tagged:
 
 **Pace:** run one phase at a time, top to bottom. (Optional parallelism is called out where safe.) You can use the Agent Manager to monitor multiple conversations side-by-side when parallelism is available.
 
-**Splitting large phases:** if an implementation agent signals it is running into complexity or context-window limits (most likely on Phases 2, 3b, or 5), split the phase into sub-branches (e.g., `feat/bb-phase-2a`, `feat/bb-phase-2b`) and run each as a separate implement → review → merge cycle, merging into the phase branch. Then open a single PR from the phase branch into `feat/true-blackboard`.
+**Splitting large phases:** if an implementation agent signals it is running into complexity or context-window limits (most likely on Phases 2, 3b, or 5), split the phase into sub-branches (e.g., `feat/bb-phase-2a`, `feat/bb-phase-2b`) and run each as a separate implement → review → merge cycle, merging into the phase branch. Then open a single PR from the phase branch into `main`.
 
 ---
 
@@ -34,7 +34,7 @@ Set up this repo for the autonomous blackboard-migration build. Do all of the fo
 
 1. Create .agents/rules/blackboard-migration.md with EXACTLY this content:
 ---
-description: Binding rules for the true-blackboard migration
+description: Binding rules for the true-blackboard migration (branch-per-phase → main)
 alwaysApply: true
 ---
 # Blackboard migration — binding constraints
@@ -70,6 +70,10 @@ You implement docs/proposals/. It is a spec, not a suggestion.
 - You'd need to start a different phase to finish this one.
 ## Working style
 - Stay strictly within the current phase's scope. One phase = one branch = one PR.
+- **Git workflow: branch off `main`, PR into `main`.** At the start of each implementation step,
+  `git checkout main && git pull origin main` to get a clean, up-to-date base, then create the
+  phase branch (e.g., `git checkout -b feat/bb-phase-X`). PRs always target `main`. Do NOT use a
+  long-lived integration branch (e.g., `feat/true-blackboard`) as either base or PR target.
 - Update the phase checklist in doc 10 as items land.
 - Update docs/proposals/MIGRATION_STATUS.md with the phase, PR number, and status after opening a PR.
 - Live verification uses a dedicated test namespace (task_id prefix ci-verify-*) and read-only probes;
@@ -77,7 +81,8 @@ You implement docs/proposals/. It is a spec, not a suggestion.
 
 2. Add a GitHub Actions CI workflow that, on every PR, runs the daemon test suite + type-check + lint,
    and builds Mission Control. If tooling is missing, infer it from the repo and wire it up.
-3. Create the integration branch feat/true-blackboard off main and push it.
+3. Confirm the `main` branch is clean and up to date — all phase branches will fork directly from `main`
+   and PR back into `main`. There is no long-lived integration branch.
 4. Create docs/proposals/MIGRATION_STATUS.md with a tracking table:
    | Phase | Branch | PR | Status | Merged |
    Headers only, no rows yet. Each implementer step will append its row after opening a PR.
@@ -102,7 +107,8 @@ Do not start any phase. Stop after reporting.
 ### Step 1 — 🆕 NEW AGENT (`/goal`) — Implement Phase 0
 ```
 Implement Phase 0 of docs/proposals/10-migration-and-rollout.md autonomously on branch
-feat/bb-phase-0 (off feat/true-blackboard). Plan first — create an implementation plan artifact and
+feat/bb-phase-0 (off main — `git checkout main && git pull origin main && git checkout -b feat/bb-phase-0`).
+Plan first — create an implementation plan artifact and
 wait for my approval before writing code. Then implement:
 (a) SQLite migration v2 from doc 07 (`SCHEMA_VERSION=2`, additive tables/columns: board_entries,
 board_events, agent_traces, turns, task_files, artifacts, plus tasks/cost_entries columns);
@@ -114,7 +120,7 @@ pdf_extraction) with startup directory-writability checks; (d) the blackboard_v2
 daemon-side cost_usd can be computed from Hermes token counts; (g) scaffold the CoordinationVariant seam
 (daemon/src/core/variants/__init__.py per doc 03 §6) and wire the seams checklist as a guard.
 No behavior change. Add/extend tests for the config validation; run tests + type-check + lint.
-Open a PR with gh into feat/true-blackboard, linking doc 10 Phase 0, doc 07, doc 17 §2, and doc 03 §6,
+Open a PR with gh into main, linking doc 10 Phase 0, doc 07, doc 17 §2, and doc 03 §6,
 and PRINT the PR number. Update docs/proposals/MIGRATION_STATUS.md with this phase's row.
 Escalate if the existing config style makes fail-fast validation ambiguous. Do not review your own PR.
 ```
@@ -151,7 +157,7 @@ require the board rewrite.
 VERIFY LIVE: ssh to 192.168.4.103, submit a ci-verify-* task through :8642 with the bearer key, and paste
 the real SSE events + the populated usage payload (this also closes Q2) into the PR. Remember
 `/v1/capabilities` booleans are under `features.*`, and `usage` contains tokens only, not cost. Add tests for
-the event parsing; run them. Open a PR with gh into feat/true-blackboard linking doc 06/07, and PRINT the
+the event parsing; run them. Open a PR with gh into main linking doc 06/07, and PRINT the
 PR number. Update docs/proposals/MIGRATION_STATUS.md with this phase's row.
 Do not review your own PR. Escalate per the rule if the live payload shape differs from doc 06.
 ```
@@ -190,7 +196,7 @@ an implementation plan artifact and wait for my approval before writing code. Th
 the benchmark runner (GSM8K + an MMLU subset) that submits through bMAS and scores accuracy; per-run metrics
 capture (accuracy/$/tokens/latency/rounds/terminated_by/joules_estimate); the A/B harness that swaps ONLY
 coordination.variant and emits a side-by-side report; and failure-injection tooling (hook) for the
-kill-a-node experiment. Add tests for the scorer; run them. Open a PR with gh into feat/true-blackboard
+kill-a-node experiment. Add tests for the scorer; run them. Open a PR with gh into main
 linking doc 10 Phase E + doc 15, and PRINT the PR number. Update docs/proposals/MIGRATION_STATUS.md.
 Do not review your own PR.
 ```
@@ -226,7 +232,7 @@ PatchBoard variant (doc 11), not this phase. Implement the event log with the du
 layout (doc 04 §8), and SSE emission (board_entry / entry_removed / entry_status_changed / entry_rejected).
 Heavy unit tests with an in-memory fake (no LLM, no Redis): envelope validation, capability rejection,
 fallback wrapping, salience recompute, event emission, and a replay+fork test that re-materializes board
-state to event N. Run the suite and paste the output in the PR. Open a PR with gh into feat/true-blackboard
+state to event N. Run the suite and paste the output in the PR. Open a PR with gh into main
 linking doc 04/07 + doc 03 §6, and PRINT the PR number. Update docs/proposals/MIGRATION_STATUS.md.
 Escalate before changing the Redis deployment topology. Do not review your own PR.
 ```
@@ -273,7 +279,7 @@ artifact board entries, with sha256, versioning, and path-traversal rejection (d
 attachments rail + artifact browser + download proxies (doc 17 §8). Add tests: upload validation, extraction
 caps, traversal rejection, artifact versioning. VERIFY LIVE: submit a ci-verify-* task with a real PDF
 attached and a task that writes files; paste the extraction excerpt and the resulting artifact tree under
-storage.artifacts_dir. Open a PR with gh into feat/true-blackboard linking doc 17, and PRINT the PR number.
+storage.artifacts_dir. Open a PR with gh into main linking doc 17, and PRINT the PR number.
 Update docs/proposals/MIGRATION_STATUS.md. Do not review your own PR.
 ```
 
@@ -305,7 +311,7 @@ profile-aware dispatch mechanism from doc 12: per-profile gateways/ports, a loca
 or a newly verified upstream selector. Add the role→(preferred_host, profile, dispatch_endpoint) registry to
 bmas.yaml/config.py (home + any-host fallback). DEPLOY + VERIFY LIVE: replicate profiles to all 3 nodes and
 confirm each role can actually execute through the chosen dispatch path. Paste `hermes profile list` and the
-profile-scoped run/model evidence from each node. Open a PR with gh into feat/true-blackboard linking doc 12,
+profile-scoped run/model evidence from each node. Open a PR with gh into main linking doc 12,
 and PRINT the PR number. Update docs/proposals/MIGRATION_STATUS.md. Escalate before overwriting any existing
 node config that isn't profile-related. Do not review your own PR.
 ```
@@ -353,7 +359,7 @@ budget ceiling, round/duration caps, concurrency cap, stall breaker, and daemon-
 the CU-output parser + fallback, and SolE scoring against an in-memory board (no LLM); run them.
 VERIFY LIVE end-to-end: run a ci-verify-* task and paste evidence that one agent critiques ANOTHER's
 finding unprompted and the loop terminates via the Decider or SolE (not a fixed pipeline). traditional only
-behind the flag; legacy default. Open a PR with gh into feat/true-blackboard linking doc 05 + doc 03 §6,
+behind the flag; legacy default. Open a PR with gh into main linking doc 05 + doc 03 §6,
 and PRINT the PR number. Update docs/proposals/MIGRATION_STATUS.md. Do not review your own PR.
 ```
 
@@ -394,7 +400,7 @@ implementation plan artifact and wait for my approval before writing code. Surfa
 coordination.traditional.coordinator_narration (default false). HARD CONSTRAINTS: it is the SAME selection
 call (no extra LLM spend), a malformed rationale never blocks the loop, and the lane hides entirely when
 flagged off. Test the malformed-rationale path explicitly; run tests. Open a PR with gh into
-feat/true-blackboard linking doc 05 §1.2 + doc 13, and PRINT the PR number. Update
+main linking doc 05 §1.2 + doc 13, and PRINT the PR number. Update
 docs/proposals/MIGRATION_STATUS.md. Do not review your own PR.
 ```
 
@@ -431,7 +437,7 @@ nodes, Cleaner removal animation), WorkerLane, ConsensusMeter, the blackboard ta
 (5) the linear replay scrubber on the Phase-2 event log. Compose ONLY from existing ui/ primitives +
 DESIGN.md tokens (zero hardcoded values). Use existing SSE plumbing with rAF batching for trace events.
 VERIFY: build passes, and run against a live task so the graph animates as entries land — attach a
-screenshot/recording to the PR. Open a PR with gh into feat/true-blackboard linking doc 08/09/13, and PRINT
+screenshot/recording to the PR. Open a PR with gh into main linking doc 08/09/13, and PRINT
 the PR number. Update docs/proposals/MIGRATION_STATUS.md. Do not review your own PR.
 ```
 
@@ -470,7 +476,7 @@ Conflict-Resolver (doc 05 §4), HITL directives/pause/steer (doc 05 §6), the bu
 the Mission cockpit (doc 13). Do the CUTOVER (flip coordination.variant default to traditional) ONLY after
 doc 10 §6 + README §4 all pass AND the Phase-E benchmark shows traditional ≥ legacy on the eval set — run
 that A/B and paste the numbers in the PR. Keep legacy_pipeline as a selectable fallback variant. Open a PR
-with gh into feat/true-blackboard linking doc 10 §5–6 + doc 12 §5, and PRINT the PR number. Update
+with gh into main linking doc 10 §5–6 + doc 12 §5, and PRINT the PR number. Update
 docs/proposals/MIGRATION_STATUS.md. Do not review your own PR.
 ```
 
@@ -493,7 +499,7 @@ Do not edit code.
 ```
 
 ### Step 36 — 🧑 YOU
-**If findings:** **♻️ RESUME Step 33** → `Address findings on PR <PR#> and CI. The reviewer flagged: [paste findings]. The verifier flagged: [paste findings]. Push fixes; no new PR.` Re-run 34–35 if needed. **If clean + CI green + benchmark gate met:** merge `<PR#>`, then merge `feat/true-blackboard` → `main`. **V1 is shipped.**
+**If findings:** **♻️ RESUME Step 33** → `Address findings on PR <PR#> and CI. The reviewer flagged: [paste findings]. The verifier flagged: [paste findings]. Push fixes; no new PR.` Re-run 34–35 if needed. **If clean + CI green + benchmark gate met:** merge `<PR#>`. **V1 is shipped.**
 
 ---
 

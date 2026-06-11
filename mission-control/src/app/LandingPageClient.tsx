@@ -20,7 +20,7 @@ import { useTaskHistory } from "@/hooks/useTaskHistory";
 import { useSystemStream } from "@/hooks/useSystemStream";
 import { usePendingTask } from "@/contexts/PendingTaskContext";
 import { useToast } from "@/hooks/useToast";
-import { ArrowUp, Zap, DollarSign, BarChart3 } from "lucide-react";
+import { ArrowUp, Zap, DollarSign, BarChart3, Paperclip } from "lucide-react";
 
 // ── Example tasks ─────────────────────────────────────────────────────
 
@@ -94,7 +94,9 @@ function formatRelativeTime(iso: string): string {
 export function LandingPageClient({ projectName }: { projectName: string }) {
   const [task, setTask] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const router = useRouter();
   const { toast } = useToast();
@@ -145,6 +147,22 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
 
       const data = (await res.json()) as { task_id?: string };
       if (data.task_id) {
+        // Upload attached files (best-effort, don't block navigation)
+        if (attachedFiles.length > 0) {
+          for (const file of attachedFiles) {
+            const formData = new FormData();
+            formData.append("file", file);
+            try {
+              await fetch(`/api/tasks/${data.task_id}/files`, {
+                method: "POST",
+                body: formData,
+              });
+            } catch {
+              // file upload failure shouldn't block task
+            }
+          }
+        }
+
         // Push optimistic state BEFORE navigating
         setPending({
           taskId: data.task_id,
@@ -152,6 +170,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
           submittedAt: Date.now(),
         });
         setTask("");
+        setAttachedFiles([]);
         router.push(`/task/${data.task_id}`);
       }
     } catch (err) {
@@ -162,7 +181,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
     } finally {
       setSubmitting(false);
     }
-  }, [task, submitting, setPending, router, toast]);
+  }, [task, submitting, attachedFiles, setPending, router, toast]);
 
   // ── Example pill click ────────────────────────────────────────────
   const handleExampleClick = useCallback((prompt: string) => {
@@ -208,6 +227,28 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
             rows={3}
             disabled={submitting}
           />
+          {/* File attach button */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".pdf,.txt,.md,.csv,.json,.png,.jpg,.docx"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []);
+              setAttachedFiles(prev => [...prev, ...files]);
+              e.target.value = "";
+            }}
+          />
+          <button
+            className="landing__attach-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={submitting}
+            title="Attach files"
+            type="button"
+          >
+            <Paperclip size={14} />
+          </button>
           <button
             className={`landing__send-btn ${hasInput ? "landing__send-btn--active" : ""}`}
             onClick={handleSubmit}
@@ -231,6 +272,23 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
               <ArrowUp size={16} />
             )}
           </button>
+          {/* Attached files chips */}
+          {attachedFiles.length > 0 && (
+            <div className="landing__attached-files">
+              {attachedFiles.map((f, i) => (
+                <span key={i} className="landing__attached-chip">
+                  {f.name}
+                  <button
+                    onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))}
+                    className="landing__attached-remove"
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ── Shortcut Hint ─────────────────────────────────────── */}

@@ -8,11 +8,12 @@ are best-effort — they log warnings on failure but never interrupt a running t
 """
 
 import logging
+import os
 import uuid
 import asyncio
 import json
 import httpx
-from typing import Optional
+from typing import Any
 
 from datetime import datetime, timezone
 
@@ -83,7 +84,7 @@ class Orchestrator:
             val = await self.bb.redis.get(abort_key)
             if val:
                 await self.bb.redis.delete(abort_key)
-                raise RuntimeError(f"Task aborted by operator")
+                raise RuntimeError("Task aborted by operator")
         except RuntimeError:
             raise  # Re-raise the abort — don't swallow it
         except Exception:
@@ -251,8 +252,54 @@ class Orchestrator:
         sub_tasks[1]["status"] = "running"
         await self._publish_task_state(task_id, user_task[:80], "running", sub_tasks)
 
+        # Gather file attachments for context (doc 17 §4)
+        attachment_context: dict | None = None
+        try:
+            from config import STORAGE_ENABLED, STORAGE_CONFIG
+            if STORAGE_ENABLED:
+                task_files = await db.get_task_files(task_id)
+                if task_files:
+                    preview_chars = int(STORAGE_CONFIG.get("attachment_preview_chars", 1500))
+                    attachments = []
+                    for tf in task_files:
+                        att = {
+                            "file_id": tf["id"],
+                            "name": tf["name"],
+                            "mime": tf["mime"],
+                            "bytes": tf["bytes"],
+                            "sha256": tf["sha256"],
+                        }
+                        # Include extracted text preview if available
+                        if tf.get("extracted_chars", 0) > 0:
+                            stored = tf.get("stored_path", "")
+                            if stored:
+                                try:
+                                    # Read from sidecar extracted text file first
+                                    text_path = stored + ".extracted.txt"
+                                    if os.path.exists(text_path):
+                                        with open(text_path, "r", encoding="utf-8") as fh:
+                                            full_text = fh.read()
+                                        att["text_preview"] = full_text[:preview_chars]
+                                    else:
+                                        # Fallback: read raw file bytes and extract
+                                        from file_utils import extract_text_file
+                                        with open(stored, "rb") as fh:
+                                            file_bytes = fh.read()
+                                        preview = extract_text_file(file_bytes, max_chars=preview_chars)
+                                        att["text_preview"] = preview
+                                except Exception:
+                                    pass
+                        attachments.append(att)
+                    attachment_context = {"_task_id": task_id, "attachments": attachments}
+                    await self._safe_log("daemon",
+                        f"Attachments: {len(attachments)} file(s) attached", task_id=task_id)
+        except Exception as e:
+            logger.warning(f"Attachment gathering failed for {task_id}: {e}")
+
         plan = await self._dispatch_agent(
-            "planner", task_id, user_task, DEFAULT_PERSONAS["planner"]
+            "planner", task_id, user_task, DEFAULT_PERSONAS["planner"],
+            context=attachment_context,
+            model=triage.litellm_model,
         )
         # Dual-write debate: Redis (ephemeral) + SQLite (permanent)
         await self.bb.post_debate(session_id, "planner", plan.get("result", ""))
@@ -278,7 +325,8 @@ class Orchestrator:
 
         exec_result = await self._dispatch_agent(
             "executor", task_id, plan.get("result", user_task),
-            DEFAULT_PERSONAS["executor"]
+            DEFAULT_PERSONAS["executor"],
+            model=triage.litellm_model,
         )
         # Dual-write debate
         await self.bb.post_debate(session_id, "executor", exec_result.get("result", ""))
@@ -307,7 +355,8 @@ class Orchestrator:
         audit = await self._dispatch_agent(
             "auditor", task_id,
             f"Review this debate and produce consensus:\n\n{audit_context}",
-            DEFAULT_PERSONAS["auditor"]
+            DEFAULT_PERSONAS["auditor"],
+            model=triage.litellm_model,
         )
         sub_tasks[3]["status"] = "completed"
 
@@ -401,7 +450,10 @@ Task: {user_task}"""
                 expert["domain"], expert["expertise"], user_task
             )
             tasks.append(
-                self._dispatch_agent(role, task_id, user_task, persona)
+                self._dispatch_agent(
+                    role, task_id, user_task, persona,
+                    model=MODEL_ROUTING.get(Complexity.COMPLEX, "gemini-pro"),
+                )
             )
 
         results = await asyncio.gather(*tasks)
@@ -432,7 +484,8 @@ Task: {user_task}"""
         synthesis = await self._dispatch_agent(
             "auditor", task_id,
             f"Synthesize these expert perspectives into a unified analysis:\n\n{json.dumps(debate, indent=2)}",
-            DEFAULT_PERSONAS["auditor"]
+            DEFAULT_PERSONAS["auditor"],
+            model=MODEL_ROUTING.get(Complexity.COMPLEX, "gemini-pro"),
         )
 
         result_data = {
@@ -476,23 +529,54 @@ Task: {user_task}"""
     async def _dispatch_agent(
         self, role: str, task_id: str, description: str, persona: str,
         context: dict | None = None,
+        model: str | None = None,
     ) -> dict:
         """Send a task to a Hermes Agent node via its REST API.
 
-        Payload matches the TaskRequest schema from Phase 2 §2.2 Step 5
-        (api_server.py): task_id, description, role_prompt, context, timeout.
+        Payload matches the TaskRequest schema from Phase 1: task_id,
+        description, role_prompt, context, timeout, turn_id, model, role.
+
+        Phase 1 additions:
+        - Sends turn_id, model, and role for trace correlation
+        - Reads v2 response fields: usage, trace_count, entries, artifacts
+        - Computes cost_usd DAEMON-SIDE from MODEL_PRICING (doc 06 §3.1)
+          ONLY when trace_count == 0 (fallback path). When traces are
+          present, the ingest endpoint is the sole cost authority (B2 fix).
+        - Creates turn records for trace tracking
 
         Retries up to 3 times with exponential backoff to handle Hermes
         cold-start delays (Gotcha #2 — first call after restart takes 5-15s).
         """
+        from config import MODEL_PRICING
+
         url = AGENT_ENDPOINTS[role]
-        payload = {
+        turn_id = f"turn-{str(uuid.uuid4())[:8]}"
+
+        payload: dict[str, Any] = {
             "task_id": task_id,
             "description": description,
             "role_prompt": persona,
+            # Phase 1 additions (B1 fix: model is now sent)
+            "turn_id": turn_id,
+            "role": role,
+            "model": model,
         }
         if context:
             payload["context"] = context
+
+        # Create turn record (best-effort)
+        try:
+            await db.create_turn({
+                "id": turn_id,
+                "task_id": task_id,
+                "round_no": 1,
+                "role": role,
+                "node": url,
+                "model": model,
+                "status": "running",
+            })
+        except Exception as e:
+            logger.warning(f"Turn create failed for {task_id}/{turn_id}: {e}")
 
         for attempt in range(3):
             try:
@@ -502,31 +586,106 @@ Task: {user_task}"""
                 response.raise_for_status()
                 response_data = response.json()
 
-                # Opportunistic cost capture — Hermes agents may include usage metadata
+                # ── Phase 1: v2 cost computation (daemon-side) ──────────
+                #
+                # B2 fix: The ingest endpoint is the sole cost authority
+                # when traces are present (trace_count > 0). Only record
+                # cost HERE for the fallback path (trace_count == 0) where
+                # no traces reach the ingest endpoint.
                 usage = response_data.get("usage")
-                if usage:
-                    try:
-                        await db.insert_cost_entry(
-                            task_id=task_id,
-                            model=response_data.get("model", "unknown"),
-                            input_tokens=usage.get("prompt_tokens", 0),
-                            output_tokens=usage.get("completion_tokens", 0),
-                            cost_usd=usage.get("cost", 0.0),
-                            phase=None,
-                        )
-                    except Exception:
-                        pass  # Cost tracking is best-effort
+                trace_count = response_data.get("trace_count", 0)
+                model_used = "unknown"
+                cost_usd = 0.0
 
-                    try:
-                        await self.bb.publish_event(task_id, "cost", {
-                            "model": response_data.get("model", "unknown"),
-                            "input_tokens": usage.get("prompt_tokens", 0),
-                            "output_tokens": usage.get("completion_tokens", 0),
-                            "cost_usd": usage.get("cost", 0.0),
-                            "phase": None,
-                        })
-                    except Exception:
-                        pass
+                if usage and isinstance(usage, dict):
+                    model_used = usage.get("model", response_data.get("model", model or "unknown"))
+                    prompt_tokens = usage.get("prompt_tokens", 0)
+                    completion_tokens = usage.get("completion_tokens", 0)
+
+                    # Compute cost from MODEL_PRICING (daemon-side)
+                    pricing = MODEL_PRICING.get(model_used, {})
+                    if pricing:
+                        cost_usd = (
+                            prompt_tokens * float(pricing.get("input_cost_per_token", 0))
+                            + completion_tokens * float(pricing.get("output_cost_per_token", 0))
+                        )
+                        cost_usd = round(cost_usd, 8)
+                        price_source = str(pricing.get("source", "bmas.yaml"))
+                    else:
+                        price_source = "missing"
+                        if model_used != "unknown":
+                            logger.warning(
+                                f"No pricing for model '{model_used}' — cost_usd=0.0"
+                            )
+
+                    # B2 fix: Only insert cost entry when no traces flowed
+                    # through the ingest endpoint (fallback path). When
+                    # trace_count > 0, the ingest endpoint already recorded
+                    # cost from the final trace's usage.
+                    if trace_count == 0:
+                        try:
+                            await db.insert_cost_entry_v2(
+                                task_id=task_id,
+                                model=model_used,
+                                input_tokens=prompt_tokens,
+                                output_tokens=completion_tokens,
+                                cost_usd=cost_usd,
+                                phase=None,
+                                node_id=response_data.get("node_id"),
+                                turn_id=response_data.get("turn_id", turn_id),
+                                provider=None,
+                                price_source=price_source,
+                                joules_estimate=0.0,  # Beszel stub
+                            )
+                        except Exception:
+                            pass  # Cost tracking is best-effort
+
+                        try:
+                            await self.bb.publish_event(task_id, "cost", {
+                                "model": model_used,
+                                "input_tokens": prompt_tokens,
+                                "output_tokens": completion_tokens,
+                                "cost_usd": cost_usd,
+                                "node_id": response_data.get("node_id"),
+                                "turn_id": response_data.get("turn_id", turn_id),
+                                "price_source": price_source,
+                            })
+                        except Exception:
+                            pass
+                    else:
+                        logger.debug(
+                            f"Skipping cost insert for {task_id}/{turn_id} — "
+                            f"trace_count={trace_count}, ingest endpoint owns cost"
+                        )
+
+                elif usage is None:
+                    # Legacy hermes -z fallback — usage unknown
+                    logger.debug(
+                        f"No usage in response for {task_id}/{role} "
+                        f"(likely hermes -z fallback)"
+                    )
+
+                # Complete the turn record
+                # B3 fix: map declined to 'declined', not 'failed'.
+                # Declined is a first-class blackboard behavior (doc 03 §4).
+                try:
+                    agent_status = response_data.get("status", "")
+                    if agent_status == "completed":
+                        turn_status = "completed"
+                    elif agent_status == "declined":
+                        turn_status = "declined"
+                    else:
+                        turn_status = "failed"
+
+                    await db.complete_turn(
+                        turn_id=turn_id,
+                        status=turn_status,
+                        entries_added=len(response_data.get("entries") or []),
+                        cost_usd=cost_usd,
+                        joules_estimate=0.0,
+                    )
+                except Exception as e:
+                    logger.warning(f"Turn complete failed for {turn_id}: {e}")
 
                 return response_data
             except Exception as e:
@@ -537,7 +696,17 @@ Task: {user_task}"""
                     await asyncio.sleep(delay)
                     continue
                 await self._safe_log(role, f"ERROR after 3 attempts: {e}", task_id=task_id)
+
+                # Complete turn as failed
+                try:
+                    await db.complete_turn(turn_id, "failed", 0, 0.0)
+                except Exception:
+                    pass
+
                 return {"task_id": task_id, "status": "failed", "result": str(e)}
+
+        # Unreachable — loop always returns, but satisfies mypy [return]
+        return {"task_id": task_id, "status": "failed", "result": "max retries"}  # pragma: no cover
 
     async def close(self):
         await self.bb.close()
