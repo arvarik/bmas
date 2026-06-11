@@ -2,6 +2,9 @@
 
 Tracking table for the true-blackboard migration. Each phase appends a row after opening its PR.
 
+> **Branching strategy:** each phase branches off an up-to-date `main` and PRs target `main` directly.
+> There is no long-lived integration branch. (See `.agents/rules/blackboard-migration.md`.)
+
 | Phase | Branch | PR | Status | Merged |
 |-------|--------|----|--------|--------|
 | 0 — Foundations | `feat/bb-phase-0` | [#1](https://github.com/arvarik/bmas/pull/1) | Merged | ✅ |
