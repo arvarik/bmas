@@ -67,48 +67,52 @@ class TestParseCuOutput:
 
     def test_valid_json(self):
         raw = '{"selected": ["critic", "expert.valuation"], "rationale": "Open critique"}'
-        result = parse_cu_output(raw, VALID_NAMES)
-        assert result == ["critic", "expert.valuation"]
+        selected, rationale = parse_cu_output(raw, VALID_NAMES)
+        assert selected == ["critic", "expert.valuation"]
+        assert rationale == "Open critique"
 
     def test_json_in_markdown_code_block(self):
         raw = '```json\n{"selected": ["planner"], "rationale": "Round 1"}\n```'
-        result = parse_cu_output(raw, VALID_NAMES)
-        assert result == ["planner"]
+        selected, rationale = parse_cu_output(raw, VALID_NAMES)
+        assert selected == ["planner"]
+        assert rationale == "Round 1"
 
     def test_garbled_output_returns_empty(self):
         raw = "I think we should ask the critic to review..."
-        result = parse_cu_output(raw, VALID_NAMES)
-        assert result == []
+        selected, rationale = parse_cu_output(raw, VALID_NAMES)
+        assert selected == []
+        assert rationale is None
 
     def test_unknown_names_dropped(self):
         raw = '{"selected": ["critic", "expert.unknown", "decider"], "rationale": "test"}'
-        result = parse_cu_output(raw, VALID_NAMES)
-        assert result == ["critic", "decider"]
+        selected, rationale = parse_cu_output(raw, VALID_NAMES)
+        assert selected == ["critic", "decider"]
 
     def test_empty_selection_returns_empty(self):
         raw = '{"selected": [], "rationale": "nothing to do"}'
-        result = parse_cu_output(raw, VALID_NAMES)
-        assert result == []
+        selected, rationale = parse_cu_output(raw, VALID_NAMES)
+        assert selected == []
 
     def test_missing_selected_key_returns_empty(self):
         raw = '{"agents": ["critic"], "rationale": "test"}'
-        result = parse_cu_output(raw, VALID_NAMES)
-        assert result == []
+        selected, rationale = parse_cu_output(raw, VALID_NAMES)
+        assert selected == []
 
     def test_non_list_selected_returns_empty(self):
         raw = '{"selected": "critic", "rationale": "test"}'
-        result = parse_cu_output(raw, VALID_NAMES)
-        assert result == []
+        selected, rationale = parse_cu_output(raw, VALID_NAMES)
+        assert selected == []
 
     def test_non_string_items_dropped(self):
         raw = '{"selected": ["critic", 42, null, "decider"], "rationale": "test"}'
-        result = parse_cu_output(raw, VALID_NAMES)
-        assert result == ["critic", "decider"]
+        selected, rationale = parse_cu_output(raw, VALID_NAMES)
+        assert selected == ["critic", "decider"]
 
     def test_non_dict_root_returns_empty(self):
         raw = '["critic", "decider"]'
-        result = parse_cu_output(raw, VALID_NAMES)
-        assert result == []
+        selected, rationale = parse_cu_output(raw, VALID_NAMES)
+        assert selected == []
+        assert rationale is None
 
 
 # ── Deterministic Fallback Table ─────────────────────────────────────
