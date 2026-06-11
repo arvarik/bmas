@@ -12,7 +12,6 @@ never used by the gateway itself.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from core.protocol import (
     ENTRY_TYPE_OBJECTIVE,

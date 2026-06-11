@@ -34,7 +34,7 @@ function ArtifactIcon({ mime, path }: { mime: string | null; path: string }) {
   const ext = path.split(".").pop()?.toLowerCase() || "";
   if (["py", "js", "ts", "tsx", "rs", "go", "java", "c", "cpp", "rb"].includes(ext))
     return <Code size={14} />;
-  if (mime?.startsWith("image/")) return <Image size={14} />;
+  if (mime?.startsWith("image/")) return <Image size={14} aria-hidden="true" />;
   if (mime === "application/pdf" || mime?.startsWith("text/"))
     return <FileText size={14} />;
   return <File size={14} />;
@@ -58,7 +58,7 @@ export function ArtifactBrowser({ taskId }: { taskId: string }) {
         } else {
           if (!cancelled) setError(`Failed to load artifacts (${res.status})`);
         }
-      } catch (err) {
+      } catch (_err) {
         if (!cancelled) setError("Failed to load artifacts");
       } finally {
         if (!cancelled) setLoading(false);

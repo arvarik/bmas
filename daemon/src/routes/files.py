@@ -14,7 +14,7 @@ import uuid
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, UploadFile, File, Request, HTTPException
+from fastapi import APIRouter, UploadFile, File, Request
 from fastapi.responses import JSONResponse, FileResponse
 
 import database as db

@@ -145,6 +145,7 @@ export default function TaskLayout({
     if (!consumed.current) {
       consumed.current = true;
       const p = consumePending(taskId as string);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time consumption on mount
       if (p) setPending(p);
     }
   }, [taskId, consumePending]);
@@ -155,6 +156,7 @@ export default function TaskLayout({
   // Clear optimistic state when real data arrives
   useEffect(() => {
     if (streamData.taskMeta && pending) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing optimistic state when real data arrives
       setPending(null);
     }
   }, [streamData.taskMeta, pending]);

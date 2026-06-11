@@ -6,10 +6,8 @@ multi-instance Redlock via aioredlock for production HA).
 """
 
 import uuid
-import asyncio
 import json
 from datetime import datetime, timezone
-from typing import Optional
 import redis.asyncio as aioredis
 from config import REDIS_URL, LOCK_TTL_MS, AGENT_ENDPOINTS
 

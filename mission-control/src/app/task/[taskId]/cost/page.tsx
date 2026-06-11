@@ -112,11 +112,25 @@ export default function CostPage() {
 
   useEffect(() => {
     if (!isLive && !liveCost) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch, setState is in the callback
       void fetchCost();
     }
   }, [isLive, liveCost, fetchCost]);
 
   const cost = liveCost ?? restCost;
+
+  // ── Build chart data (must be above early return for rules-of-hooks) ─
+  const chartData = useMemo<ChartDatum[]>(() => {
+    if (!cost) return [];
+    const models = Object.entries(cost.by_model);
+    return models
+      .map(([model, d]) => ({
+        model: shortenModel(model),
+        cost: d.cost,
+        tokens: d.tokens,
+      }))
+      .sort((a, b) => b.cost - a.cost);
+  }, [cost]);
 
   // ── Empty state ───────────────────────────────────────────────────
   if (!cost) {
@@ -132,18 +146,6 @@ export default function CostPage() {
       </div>
     );
   }
-
-  // ── Build chart data ──────────────────────────────────────────────
-  const chartData = useMemo<ChartDatum[]>(() => {
-    const models = Object.entries(cost.by_model);
-    return models
-      .map(([model, d]) => ({
-        model: shortenModel(model),
-        cost: d.cost,
-        tokens: d.tokens,
-      }))
-      .sort((a, b) => b.cost - a.cost);
-  }, [cost.by_model]);
 
   return (
     <div className="view-container">

@@ -153,6 +153,7 @@ export default function TaskLogTerminal({ role, logs }: TaskLogTerminalProps) {
     lastIndexRef.current = logs.length;
 
     if (!isAtBottom) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- updating count based on new streamed data
       setNewLineCount((prev) => prev + newCount);
     } else {
       // Auto-scroll to bottom

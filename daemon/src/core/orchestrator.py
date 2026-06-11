@@ -13,7 +13,6 @@ import uuid
 import asyncio
 import json
 import httpx
-from typing import Optional
 
 from datetime import datetime, timezone
 
@@ -84,7 +83,7 @@ class Orchestrator:
             val = await self.bb.redis.get(abort_key)
             if val:
                 await self.bb.redis.delete(abort_key)
-                raise RuntimeError(f"Task aborted by operator")
+                raise RuntimeError("Task aborted by operator")
         except RuntimeError:
             raise  # Re-raise the abort — don't swallow it
         except Exception:

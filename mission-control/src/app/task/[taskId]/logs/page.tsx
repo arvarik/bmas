@@ -89,6 +89,7 @@ export default function LogsPage() {
 
   useEffect(() => {
     if (!isLive) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch, setState is in the callback not the effect body
       void fetchArchived();
     }
   }, [isLive, fetchArchived]);

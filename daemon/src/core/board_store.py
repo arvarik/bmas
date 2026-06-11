@@ -17,12 +17,11 @@ Event types are variant-namespaced (seam rule 2).
 from __future__ import annotations
 
 import copy
-import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol, runtime_checkable
 
-from core.entry import BoardEntry, entry_to_dict, entry_from_dict
+from core.entry import BoardEntry, entry_from_dict
 
 
 # ── Board Event ──────────────────────────────────────────────────────

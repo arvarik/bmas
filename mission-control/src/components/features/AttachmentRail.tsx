@@ -27,7 +27,7 @@ function formatBytes(bytes: number): string {
 }
 
 function FileIcon({ mime }: { mime: string }) {
-  if (mime.startsWith("image/")) return <Image size={14} />;
+  if (mime.startsWith("image/")) return <Image size={14} aria-hidden="true" />;
   if (mime === "application/pdf" || mime.startsWith("text/"))
     return <FileText size={14} />;
   return <File size={14} />;

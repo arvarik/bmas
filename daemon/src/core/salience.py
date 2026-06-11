@@ -14,7 +14,6 @@ Pure function, no I/O, fully deterministic.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from core.entry import BoardEntry
 

@@ -24,11 +24,9 @@ from typing import Any, Callable, Awaitable
 
 from core.entry import (
     BoardEntry,
-    ProposedEntry,
     clamp_confidence,
     entry_to_dict,
     role_default_type,
-    DEFAULT_CONFIDENCE,
     DEFAULT_MAX_TITLE_LEN,
     DEFAULT_MAX_BODY_LEN,
 )
@@ -473,7 +471,7 @@ async def salience_recompute_hook(
     This is the traditional variant's derived-field computation.
     Import SalienceWeights from config if needed.
     """
-    from core.salience import compute_salience, SalienceWeights
+    from core.salience import compute_salience
 
     snapshot = await store.get_snapshot(task_id)
     meta = await store.get_meta(task_id)
