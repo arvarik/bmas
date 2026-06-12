@@ -150,9 +150,10 @@ The **input half ships standalone** (like Phase 1); the output half needs the Ph
 ## 5. Backward-compatibility contract
 
 - **SQLite**: additive only (new tables, `ADD COLUMN`). Existing queries untouched.
-- **SSE**: new event *names*; `routes/events.py` forwards any `{event,data}` unchanged ([04 §9](04-blackboard-protocol.md#9-new-sse-event-types-additive)). Legacy `debate`/`phase`/`subtask`/`cost`/`complete` keep firing through Phase 4.
+- **SSE**: new event *names*; `routes/events.py` forwards any `{event,data}` unchanged ([04 §9](04-blackboard-protocol.md#9-new-sse-event-types-additive)). Legacy `debate`/`phase`/`subtask`/`cost`/`complete` keep firing through Phase 4. **Phase 5 additions (15 total v2 events):** `paused`, `resumed`, `budget`, `approval_request` — all additive, no removals.
 - **UI**: new components live behind toggles inside existing tabs; the current `DebateList`/`DAGVisualizer`/`TaskLogTerminal` keep working until explicitly replaced.
-- **Config**: new keys validated fail-fast (matching `config.py` style); `coordination.variant: legacy_pipeline` reproduces today's behavior exactly.
+- **Config**: new keys validated fail-fast (matching `config.py` style). After Phase 5 cutover, `coordination.variant` defaults to `traditional` in `bmas.yaml`; the Python code fallback remains `legacy_pipeline` for environments without a config file. `legacy_pipeline` remains a valid, selectable variant.
+- **Dual-write deprecation** (Phase 5): the `debate_entries` SQLite dual-write paths in `orchestrator.py` are marked `DEPRECATED(phase-5)` and will be removed when the `legacy_pipeline` variant is dropped. They remain fully functional until then.
 
 ## 6. Definition of done (maps to README §4)
 
