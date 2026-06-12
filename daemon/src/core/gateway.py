@@ -84,12 +84,25 @@ class BoardGateway:
         self._recompute_hooks = recompute_hooks or []
         self._max_title_len = max_title_len
         self._max_body_len = max_body_len
-        # Per-task locks (doc 04 §6): one writer per task
+        # Per-task locks (doc 04 §6): one writer per task.
+        # Capped at _LOCK_CAPACITY to prevent unbounded growth in long-running
+        # daemons. Python dicts maintain insertion order (3.7+), so evicting
+        # the first key removes the least-recently-added task lock.
         self._locks: dict[str, asyncio.Lock] = {}
+        self._lock_capacity: int = 1024
 
     def _task_lock(self, task_id: str) -> asyncio.Lock:
-        """Get or create the per-task lock."""
+        """Get or create the per-task asyncio.Lock.
+
+        Evicts the least-recently-added lock when the capacity limit is
+        reached. Eviction is safe: completed tasks no longer hold their lock.
+        """
         if task_id not in self._locks:
+            if len(self._locks) >= self._lock_capacity:
+                # Evict the oldest entry (first key in insertion order)
+                oldest = next(iter(self._locks))
+                del self._locks[oldest]
+                logger.debug("Evicted lock for completed task %s", oldest)
             self._locks[task_id] = asyncio.Lock()
         return self._locks[task_id]
 

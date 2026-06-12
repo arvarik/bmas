@@ -12,6 +12,12 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  mapSubTask,
+  mapDebate,
+  mapLog,
+  mapTaskMeta,
+} from "@/lib/mappers";
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -201,58 +207,10 @@ const INITIAL_STREAM_DATA: TaskStreamData = {
   coordinatorNarrations: [],
 };
 
-// ── Field mapping helpers ─────────────────────────────────────────────
+// Field mapping helpers are imported from @/lib/mappers.
+// They are pure functions that convert daemon API shapes to frontend types.
+// Tests: src/lib/__tests__/mappers.test.ts
 
-/** Map daemon sub-task shape (agent_role) → frontend SubTask (agent). */
-function mapSubTask(raw: Record<string, unknown>): SubTask {
-  return {
-    id: raw.id as string,
-    label: (raw.label as string) ?? "",
-    status: (raw.status as TaskStatus) ?? "pending",
-    agent: ((raw.agent ?? raw.agent_role) as SubTask["agent"]) ?? "planner",
-    depends_on: (raw.depends_on as string[]) ?? [],
-    result: raw.result as string | undefined,
-    error: raw.error as string | undefined,
-    started_at: raw.started_at as string | undefined,
-    completed_at: raw.completed_at as string | undefined,
-  };
-}
-
-/** Map daemon debate shape (created_at) → frontend DebateEntry (timestamp). */
-function mapDebate(raw: Record<string, unknown>, index: number): DebateEntry {
-  return {
-    id: (raw.id as string) ?? `debate-${index}`,
-    agent_role: (raw.agent_role as string) ?? "unknown",
-    content: (raw.content as string) ?? "",
-    timestamp: ((raw.timestamp ?? raw.created_at) as string) ?? new Date().toISOString(),
-  };
-}
-
-/** Map daemon task → frontend TaskMeta. */
-function mapTaskMeta(task: Record<string, unknown>): TaskMeta {
-  return {
-    task_id: (task.id ?? task.task_id) as string,
-    label: (task.label as string) ?? "",
-    status: (task.status as TaskStatus) ?? "pending",
-    complexity: task.complexity as string | undefined,
-    model: (task.model ?? task.model_used) as string | undefined,
-    variant: (task.variant as string) ?? undefined,
-    created_at: (task.created_at as string) ?? "",
-    completed_at: task.completed_at as string | undefined,
-    duration_ms: task.duration_ms as number | undefined,
-  };
-}
-
-/** Map daemon log event (ts) → frontend LogEntry (timestamp). */
-function mapLog(raw: Record<string, unknown>, index: number): LogEntry {
-  return {
-    id: (raw.id as string) ?? `log-${index}`,
-    agent_role: (raw.agent_role as string) ?? "daemon",
-    level: (raw.level as string) ?? "info",
-    message: (raw.message as string) ?? "",
-    timestamp: ((raw.timestamp ?? raw.ts) as string) ?? new Date().toISOString(),
-  };
-}
 
 // ── Hook ──────────────────────────────────────────────────────────────
 

@@ -9,6 +9,7 @@ Endpoints:
   POST /api/tasks/{taskId}/approval  — approve/deny a pending run approval
 """
 
+import json
 import logging
 import os
 import re
@@ -91,7 +92,6 @@ async def steer_entry(task_id: str, req: SteerRequest):
         # Read current salience from Redis board entries
         try:
             entry_key = f"bmas:board:{task_id}:entries"
-            import json
             raw = await bb.redis.hget(entry_key, req.entry_id)
             if not raw:
                 raise HTTPException(status_code=404, detail="Entry not found")
@@ -126,7 +126,6 @@ async def steer_entry(task_id: str, req: SteerRequest):
     elif req.action == "retract":
         try:
             entry_key = f"bmas:board:{task_id}:entries"
-            import json
             raw = await bb.redis.hget(entry_key, req.entry_id)
             if not raw:
                 raise HTTPException(status_code=404, detail="Entry not found")

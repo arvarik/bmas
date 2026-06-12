@@ -124,7 +124,7 @@ async def upload_file(task_id: str, request: Request, file: UploadFile = File(..
         with open(text_path, "w", encoding="utf-8") as tf:
             tf.write(extracted_text)
 
-    # Emit SSE event
+    # Emit SSE event and post attachment board entry
     try:
         from app import app
         orch = app.state.orchestrator
@@ -139,9 +139,9 @@ async def upload_file(task_id: str, request: Request, file: UploadFile = File(..
     except Exception:
         pass  # SSE is best-effort
 
-    # Post attachment board entry (spec §4)
+    # Post attachment board entry (doc 17 §4)
     try:
-        from app import app
+        from app import app  # noqa: PLC0415 — app not importable at module level
         orch = app.state.orchestrator
         preview = extracted_text[:1500] if extracted_text else ""
         body_parts = [f"**{safe_name}** ({mime}, {len(content)} bytes, sha256: {sha256[:16]}…)"]
@@ -163,7 +163,7 @@ async def upload_file(task_id: str, request: Request, file: UploadFile = File(..
             round_no=0,
         )
     except Exception as e:
-        logger.warning(f"Failed to create attachment board entry for {file_id}: {e}")
+        logger.warning("Failed to create attachment board entry for %s: %s", file_id, e)
 
     logger.info(f"File uploaded: {file_id} ({safe_name}, {len(content)} bytes, sha256={sha256[:16]}…)")
 

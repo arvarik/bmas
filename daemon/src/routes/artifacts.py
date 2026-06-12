@@ -207,9 +207,9 @@ async def ingest_artifact(
     except Exception:
         pass  # SSE is best-effort
 
-    # Post artifact board entry (spec §6)
+    # Post artifact board entry (doc 17 §6)
     try:
-        from app import app
+        from app import app  # noqa: PLC0415 — app not importable at module level
         orch = app.state.orchestrator
         body = (
             f"**{rel_path}** v{new_version} ({mime or 'unknown'}, "
@@ -232,7 +232,7 @@ async def ingest_artifact(
             round_no=0,
         )
     except Exception as e:
-        logger.warning(f"Failed to create artifact board entry for {artifact_id}: {e}")
+        logger.warning("Failed to create artifact board entry for %s: %s", artifact_id, e)
 
     logger.info(
         f"Artifact ingested: {artifact_id} ({rel_path} v{new_version}, "

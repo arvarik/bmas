@@ -1,4 +1,4 @@
-# /opt/bmas/daemon/blackboard.py
+# /opt/bmas/daemon/src/core/blackboard.py
 """
 Redis Blackboard client with atomic Redlock for race-condition prevention.
 Uses single-instance Redis lock (sufficient for homelab; upgrade to
@@ -13,8 +13,8 @@ from config import REDIS_URL, LOCK_TTL_MS, AGENT_ENDPOINTS
 
 
 class Blackboard:
-    def __init__(self):
-        self.redis = aioredis.from_url(REDIS_URL, decode_responses=True)
+    def __init__(self) -> None:
+        self.redis: aioredis.Redis = aioredis.from_url(REDIS_URL, decode_responses=True)
 
     # ── Lock Management ──────────────────────────────────────────────
     async def acquire_lock(self, resource: str, ttl_ms: int = LOCK_TTL_MS) -> tuple[bool, str]:
@@ -190,9 +190,13 @@ class Blackboard:
         val = await self.redis.hget("bmas:public:state", "pause")
         return val == "true"
 
-    async def push_hint(self, task_id: str, hint: str):
-        """Push an operator hint for a specific task (read on resume)."""
-        await self.redis.lpush(f"bmas:public:hints:{task_id}", hint)
+    async def push_hint(self, task_id: str, hint: str) -> None:
+        """Push an operator hint for a specific task (read on resume).
+
+        Uses RPUSH so hints are processed in FIFO order — consistent with
+        the inject_directive HITL endpoint which also uses RPUSH.
+        """
+        await self.redis.rpush(f"bmas:public:hints:{task_id}", hint)
 
     async def pop_hints(self, task_id: str) -> list[str]:
         """Pop all pending hints for a task (destructive read)."""

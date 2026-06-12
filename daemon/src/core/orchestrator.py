@@ -1,4 +1,4 @@
-# /opt/bmas/daemon/orchestrator.py
+# /opt/bmas/daemon/src/core/orchestrator.py
 """
 bMAS Orchestrator: decomposes tasks, dispatches to agents, manages debate cycles.
 
@@ -23,6 +23,7 @@ from models.personas import DEFAULT_PERSONAS, generate_expert_persona
 from config import (
     AGENT_ENDPOINTS, LITELLM_URL, LITELLM_KEY, TRIAGE_URL,
     COORDINATION_VARIANT, TRADITIONAL_CONFIG, ROLE_REGISTRY,
+    MODEL_PRICING,
     MODEL_ROUTING as CONFIG_MODEL_ROUTING,
 )
 import database as db
@@ -313,14 +314,12 @@ class Orchestrator:
             context=attachment_context,
             model=triage.litellm_model,
         )
-        # DEPRECATED(phase-5): debate_entries dual-write — will be removed
-        # when legacy_pipeline variant is dropped (doc 10 §5 item 97).
-        # Under the 'traditional' variant, board_entries in Redis replace this.
+        # Post planner debate entry via pub/sub (legacy pipeline transport)
         await self.bb.post_debate(session_id, "planner", plan.get("result", ""))
         try:
             await db.insert_debate_entry(task_id, session_id, "planner", plan.get("result", ""))
         except Exception:
-            logger.warning(f"SQLite debate insert failed for {task_id}/planner")
+            logger.warning("SQLite debate insert failed for %s/planner", task_id)
         try:
             await self.bb.publish_event(task_id, "debate", {
                 "agent_role": "planner",
@@ -342,13 +341,12 @@ class Orchestrator:
             DEFAULT_PERSONAS["executor"],
             model=triage.litellm_model,
         )
-        # Dual-write debate
+        # Post executor debate entry
         await self.bb.post_debate(session_id, "executor", exec_result.get("result", ""))
         try:
-            # DEPRECATED(phase-5): debate_entries dual-write (see comment above)
             await db.insert_debate_entry(task_id, session_id, "executor", exec_result.get("result", ""))
         except Exception:
-            logger.warning(f"SQLite debate insert failed for {task_id}/executor")
+            logger.warning("SQLite debate insert failed for %s/executor", task_id)
         try:
             await self.bb.publish_event(task_id, "debate", {
                 "agent_role": "executor",
@@ -395,7 +393,7 @@ class Orchestrator:
             )
             await db.update_task_cost_totals(task_id)
         except Exception as e:
-            logger.warning(f"SQLite complete_task failed for {task_id}: {e}")
+            logger.warning("SQLite complete_task failed for %s: %s", task_id, e)
 
         try:
             await self.bb.publish_event(task_id, "complete", {
@@ -473,8 +471,7 @@ Task: {user_task}"""
 
         results = await asyncio.gather(*tasks)
 
-        # DEPRECATED(phase-5): debate_entries dual-write (doc 10 §5 item 97).
-        # Post all debate entries — dual-write Redis + SQLite
+        # Post all debate entries via pub/sub
         for expert, result in zip(experts, results):
             await self.bb.post_debate(
                 session_id, expert["domain"], result.get("result", "")
@@ -484,7 +481,7 @@ Task: {user_task}"""
                     task_id, session_id, expert["domain"], result.get("result", "")
                 )
             except Exception:
-                logger.warning(f"SQLite debate insert failed for {task_id}/{expert['domain']}")
+                logger.warning("SQLite debate insert failed for %s/%s", task_id, expert["domain"])
             try:
                 await self.bb.publish_event(task_id, "debate", {
                     "agent_role": expert["domain"],
@@ -563,9 +560,6 @@ Task: {user_task}"""
         Retries up to 3 times with exponential backoff to handle Hermes
         cold-start delays (Gotcha #2 — first call after restart takes 5-15s).
         """
-        from config import MODEL_PRICING
-        from config import ROLE_REGISTRY
-
         # Phase 3a: Resolve profile and endpoint from the role registry
         # (doc 12 §2.5). Falls back to AGENT_ENDPOINTS for roles not in
         # the registry (backward compatible with legacy dispatch).

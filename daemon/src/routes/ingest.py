@@ -19,6 +19,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 
+from auth import require_node_key
+from config import BMAS_NODE_KEY
+
 router = APIRouter()
 logger = logging.getLogger("bmas.ingest")
 
@@ -26,17 +29,13 @@ logger = logging.getLogger("bmas.ingest")
 def _verify_bearer(request: Request) -> None:
     """Validate the BMAS_NODE_KEY bearer token.
 
+    Delegates to the shared auth module (auth.require_node_key).
     Raises HTTPException(401) if the token is missing or invalid.
     """
-    from config import BMAS_NODE_KEY
-
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-
-    token = auth[len("Bearer "):]
-    if token != BMAS_NODE_KEY:
-        raise HTTPException(status_code=401, detail="Invalid bearer token")
+    try:
+        require_node_key(request, BMAS_NODE_KEY)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e)) from e
 
 
 def _compute_cost(

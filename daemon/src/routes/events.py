@@ -2,11 +2,20 @@
 """SSE streaming endpoints — task-scoped and system-wide."""
 
 import json
+import re
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 import database as db
 
 router = APIRouter()
+
+# Allow only safe task ID formats: alphanumeric, hyphens, underscores (same as hitl.py)
+_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+def _validate_task_id(task_id: str) -> bool:
+    """Return True if the task_id is a safe, well-formed identifier."""
+    return bool(_ID_PATTERN.match(task_id))
 
 
 @router.get("/events/system")
@@ -46,7 +55,17 @@ async def system_events(request: Request):
 
 @router.get("/events/{task_id}")
 async def task_events(task_id: str, request: Request):
-    """Task-scoped SSE stream."""
+    """Task-scoped SSE stream.
+
+    Returns 400 if the task_id contains unsafe characters, 404 if not found.
+    For completed/failed tasks, emits a single terminal event and closes.
+    """
+    if not _validate_task_id(task_id):
+        return JSONResponse(
+            {"error": "Invalid task_id: must be 1-64 alphanumeric/hyphen/underscore chars"},
+            status_code=400,
+        )
+
     from app import app
 
     task = await db.get_task(task_id)
