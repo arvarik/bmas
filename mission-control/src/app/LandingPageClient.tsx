@@ -229,7 +229,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
             rows={3}
             disabled={submitting}
           />
-          {/* File attach button */}
+          {/* Hidden file input */}
           <input
             ref={fileInputRef}
             type="file"
@@ -242,38 +242,47 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
               e.target.value = "";
             }}
           />
-          <button
-            className="landing__attach-btn"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={submitting}
-            title="Attach files"
-            type="button"
-          >
-            <Paperclip size={14} />
-          </button>
-          <button
-            className={`landing__send-btn ${hasInput ? "landing__send-btn--active" : ""}`}
-            onClick={handleSubmit}
-            disabled={!hasInput || submitting}
-            aria-label="Submit task"
-            title="Submit task (⌘+Enter)"
-          >
-            {submitting ? (
-              <span
-                className="spin"
-                style={{
-                  width: 14,
-                  height: 14,
-                  border: "2px solid currentColor",
-                  borderTopColor: "transparent",
-                  borderRadius: "var(--radius-full)",
-                  display: "inline-block",
-                }}
-              />
-            ) : (
-              <ArrowUp size={16} />
-            )}
-          </button>
+          {/* Toolbar row: attach + variant on left, send on right */}
+          <div className="landing__toolbar">
+            <div className="landing__toolbar-left">
+              <button
+                className="landing__attach-btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={submitting}
+                title="Attach files"
+                type="button"
+              >
+                <Paperclip size={13} />
+              </button>
+              <VariantSelect value={variant} onChange={setVariant} />
+            </div>
+            <div className="landing__toolbar-right">
+              <span className="landing__shortcut-hint">⌘ Enter</span>
+              <button
+                className={`landing__send-btn ${hasInput ? "landing__send-btn--active" : ""}`}
+                onClick={handleSubmit}
+                disabled={!hasInput || submitting}
+                aria-label="Submit task"
+                title="Submit task (⌘+Enter)"
+              >
+                {submitting ? (
+                  <span
+                    className="spin"
+                    style={{
+                      width: 14,
+                      height: 14,
+                      border: "2px solid currentColor",
+                      borderTopColor: "transparent",
+                      borderRadius: "var(--radius-full)",
+                      display: "inline-block",
+                    }}
+                  />
+                ) : (
+                  <ArrowUp size={16} />
+                )}
+              </button>
+            </div>
+          </div>
           {/* Attached files chips */}
           {attachedFiles.length > 0 && (
             <div className="landing__attached-files">
@@ -293,11 +302,6 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
           )}
         </div>
 
-        {/* ── Shortcut Hint + Variant ─────────────────────────────── */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "var(--space-3)" }}>
-          <VariantSelect value={variant} onChange={setVariant} />
-          <span className="landing__shortcut-hint">⌘ + Enter to submit</span>
-        </div>
 
         {/* ── Example Pills ─────────────────────────────────────── */}
         <div className="landing__example-pills">

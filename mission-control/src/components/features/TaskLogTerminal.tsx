@@ -19,7 +19,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { TerminalPane } from "@/components/ui/TerminalPane";
-import { AGENT_COLORS, type AgentRole } from "@/lib/design-tokens";
+import { AGENT_COLORS, NODE_LABELS, type AgentRole } from "@/lib/design-tokens";
 import type { LogEntry } from "@/hooks/useTaskStream";
 
 // ── ANSI color accents per role ───────────────────────────────────────
@@ -111,7 +111,7 @@ export default function TaskLogTerminal({ role, logs }: TaskLogTerminalProps) {
     fit.fit();
 
     // Header
-    term.writeln(`\x1b[1;38;2;${rgb}m  ${role.charAt(0).toUpperCase() + role.slice(1)} Agent Log\x1b[0m`);
+    term.writeln(`\x1b[1;38;2;${rgb}m  ${NODE_LABELS[role]} Agent Log\x1b[0m`);
     term.writeln(`\x1b[2m${"─".repeat(Math.max(term.cols - 1, 40))}\x1b[0m`);
     term.writeln("");
 

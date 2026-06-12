@@ -17,7 +17,7 @@ import { usePathname } from "next/navigation";
 import {
   Plus,
   Server,
-  Sparkles,
+  Bot,
   PanelLeftClose,
   PanelLeftOpen,
   ChevronDown,
@@ -119,9 +119,9 @@ function StatusIcon({ status }: { status: string }) {
 // ── Agent health dots (reused from current Sidebar) ───────────────────
 
 const AGENT_DOTS = [
-  { role: "planner", label: "Planner" },
-  { role: "executor", label: "Executor" },
-  { role: "auditor", label: "Auditor" },
+  { role: "planner", label: "Node 1" },
+  { role: "executor", label: "Node 2" },
+  { role: "auditor", label: "Node 3" },
 ] as const;
 
 // ── Component ─────────────────────────────────────────────────────────
@@ -247,21 +247,21 @@ export function TaskSidebar({
         )}
 
         <Link
+          href="/agents"
+          className={`task-sidebar__system-item ${pathname === "/agents" ? "task-sidebar__system-item--active" : ""}`}
+          title={collapsed ? "Agents" : undefined}
+        >
+          <Bot size={16} />
+          {!collapsed && <span>Agents</span>}
+        </Link>
+
+        <Link
           href="/infra"
           className={`task-sidebar__system-item ${pathname === "/infra" ? "task-sidebar__system-item--active" : ""}`}
           title={collapsed ? "Infrastructure" : undefined}
         >
           <Server size={16} />
           {!collapsed && <span>Infrastructure</span>}
-        </Link>
-
-        <Link
-          href="/skills"
-          className={`task-sidebar__system-item ${pathname === "/skills" ? "task-sidebar__system-item--active" : ""}`}
-          title={collapsed ? "Skills" : undefined}
-        >
-          <Sparkles size={16} />
-          {!collapsed && <span>Skills</span>}
         </Link>
       </div>
 

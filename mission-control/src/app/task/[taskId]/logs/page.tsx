@@ -17,7 +17,7 @@ import { useParams } from "next/navigation";
 import { useTaskData } from "../TaskStreamContext";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Panel } from "@/components/ui/Panel";
-import { AGENT_COLORS, type AgentRole } from "@/lib/design-tokens";
+import { AGENT_COLORS, NODE_LABELS, type AgentRole } from "@/lib/design-tokens";
 import { Terminal as TerminalIcon } from "lucide-react";
 import { AgentTrace } from "@/components/features/AgentTrace";
 import { TurnInspector } from "@/components/features/TurnInspector";
@@ -37,9 +37,9 @@ const TaskLogTerminal = dynamic(() => import("@/components/features/TaskLogTermi
 });
 
 const ROLES: { role: AgentRole; label: string }[] = [
-  { role: "planner", label: "Planner" },
-  { role: "executor", label: "Executor" },
-  { role: "auditor", label: "Auditor" },
+  { role: "planner", label: "Node 1" },
+  { role: "executor", label: "Node 2" },
+  { role: "auditor", label: "Node 3" },
 ];
 
 // ── Level formatting for archived logs ────────────────────────────────
@@ -326,7 +326,7 @@ function ArchivedLogPane({
     <div className="archived-log-pane" style={{ borderColor: agentColor }}>
       <div className="archived-log-pane__header" style={{ color: agentColor }}>
         <TerminalIcon size={14} />
-        <span>{role.charAt(0).toUpperCase() + role.slice(1)} Agent Log</span>
+        <span>{NODE_LABELS[role]} Agent Log</span>
         <span className="archived-log-pane__count">
           {entries.length} {entries.length === 1 ? "entry" : "entries"}
         </span>

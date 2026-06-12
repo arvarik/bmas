@@ -40,6 +40,21 @@ export const AGENT_COLORS: Record<AgentRole, string> = {
 } as const;
 
 /**
+ * User-facing display labels for agent roles.
+ * Internal keys (planner, executor, auditor) are kept for backend compatibility.
+ * UI shows these human-friendly labels instead.
+ */
+export const NODE_LABELS: Record<AgentRole, string> = {
+  planner:            "Node 1",
+  executor:           "Node 2",
+  auditor:            "Node 3",
+  critic:             "Critic",
+  conflict_resolver:  "Conflict Resolver",
+  cleaner:            "Cleaner",
+  decider:            "Decider",
+} as const;
+
+/**
  * Deterministic author-color fallback (doc 13 §7).
  *
  * Known roles → fixed AGENT_COLORS entry.

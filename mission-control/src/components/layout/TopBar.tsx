@@ -5,6 +5,7 @@
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import type { StatusType } from "@/lib/design-tokens";
 import { Menu } from "lucide-react";
+import Link from "next/link";
 
 export interface TopBarProps {
   daemonStatus?: StatusType;
@@ -36,10 +37,12 @@ export function TopBar({
           <Menu size={20} />
         </button>
 
-        <h1 className="topbar__title">
-          <span className="topbar__title-full">Mission Control</span>
-          <span className="topbar__title-short">MC</span>
-        </h1>
+        <Link href="/" className="topbar__title-link">
+          <h1 className="topbar__title">
+            <span className="topbar__title-full">bMAS</span>
+            <span className="topbar__title-short">bMAS</span>
+          </h1>
+        </Link>
 
         <StatusBadge
           status={daemonStatus}

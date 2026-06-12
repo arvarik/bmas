@@ -27,7 +27,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 export async function generateMetadata(): Promise<Metadata> {
   return {
-    title: `Mission Control — ${PROJECT_NAME}`,
+    title: `bMAS — ${PROJECT_NAME}`,
     description: PROJECT_DESCRIPTION,
   };
 }

@@ -2,7 +2,7 @@
 
 import React, { useCallback } from "react";
 import type { AgentRole } from "@/lib/design-tokens";
-import { AGENT_COLORS } from "@/lib/design-tokens";
+import { AGENT_COLORS, NODE_LABELS } from "@/lib/design-tokens";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -14,15 +14,7 @@ export interface TerminalPaneProps {
   children: React.ReactNode;
 }
 
-const ROLE_LABELS: Record<AgentRole, string> = {
-  planner: "Planner",
-  executor: "Executor",
-  auditor: "Auditor",
-  critic: "Critic",
-  conflict_resolver: "Conflict Resolver",
-  cleaner: "Cleaner",
-  decider: "Decider",
-};
+const ROLE_LABELS = NODE_LABELS;
 
 // ── Component ────────────────────────────────────────────────────────
 

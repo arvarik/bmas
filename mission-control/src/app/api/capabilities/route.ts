@@ -49,8 +49,9 @@ export async function GET(): Promise<NextResponse> {
 
     const variants: VariantDescriptor[] = KNOWN_VARIANTS.map((v) => ({
       ...v,
-      available: v.id === activeVariant,
-      ...(v.id !== activeVariant ? { reason: "planned" } : {}),
+      // Traditional is always available; other variants only if they are the active variant
+      available: v.id === "traditional" || v.id === activeVariant,
+      ...(v.id !== "traditional" && v.id !== activeVariant ? { reason: "coming soon" } : {}),
     }));
 
     return NextResponse.json({ variants }, {
@@ -61,7 +62,7 @@ export async function GET(): Promise<NextResponse> {
     const variants: VariantDescriptor[] = KNOWN_VARIANTS.map((v) => ({
       ...v,
       available: v.id === "traditional",
-      ...(v.id !== "traditional" ? { reason: "planned" } : {}),
+      ...(v.id !== "traditional" ? { reason: "coming soon" } : {}),
     }));
 
     return NextResponse.json({ variants }, {
