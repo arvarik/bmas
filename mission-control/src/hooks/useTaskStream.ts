@@ -106,6 +106,30 @@ export interface CostData {
   by_model: Record<string, { cost: number; tokens: number }>;
 }
 
+// Phase 5: HITL Types (doc 05 §6, doc 12 §5.1)
+
+export interface ApprovalRequest {
+  turn_id: string;
+  actor: string;
+  run_id: string;
+  description: string;
+  timestamp: string;
+}
+
+export interface BudgetState {
+  spent: number;
+  ceiling: number;
+  percentage: number;
+}
+
+export interface CoordinatorNarration {
+  round: number;
+  selected: string[];
+  rationale: string | null;
+  source: string;
+  timestamp: string;
+}
+
 export interface TaskMeta {
   task_id: string;
   label: string;
@@ -141,6 +165,11 @@ export interface TaskStreamData {
   completedTurns: TurnRecord[];
   traceEvents: TraceEvent[];
   rejectedEntries: RejectedEntry[];
+  // Phase 5 — HITL, budget, narration
+  approvalRequests: ApprovalRequest[];
+  isPaused: boolean;
+  budgetState: BudgetState | null;
+  coordinatorNarrations: CoordinatorNarration[];
 }
 
 // ── Empty / initial state ─────────────────────────────────────────────
@@ -162,6 +191,10 @@ const INITIAL_STREAM_DATA: TaskStreamData = {
   completedTurns: [],
   traceEvents: [],
   rejectedEntries: [],
+  approvalRequests: [],
+  isPaused: false,
+  budgetState: null,
+  coordinatorNarrations: [],
 };
 
 // ── Field mapping helpers ─────────────────────────────────────────────
@@ -644,6 +677,66 @@ export function useTaskStream(taskId: string): TaskStreamData {
               timestamp: raw.timestamp ?? new Date().toISOString(),
             },
           ],
+        }));
+      } catch {}
+    });
+
+    // ── Phase 5: approval_request ────────────────────────────────────
+    es.addEventListener("approval_request", (ev: MessageEvent) => {
+      try {
+        const raw = JSON.parse(ev.data);
+        const req: ApprovalRequest = {
+          turn_id: raw.turn_id ?? "",
+          actor: raw.actor ?? "unknown",
+          run_id: raw.run_id ?? "",
+          description: raw.description ?? "",
+          timestamp: raw.timestamp ?? new Date().toISOString(),
+        };
+        setData((prev) => ({
+          ...prev,
+          approvalRequests: [...prev.approvalRequests, req],
+        }));
+      } catch {}
+    });
+
+    // ── Phase 5: paused / resumed ───────────────────────────────────
+    es.addEventListener("paused", () => {
+      setData((prev) => ({ ...prev, isPaused: true }));
+    });
+
+    es.addEventListener("resumed", () => {
+      setData((prev) => ({ ...prev, isPaused: false }));
+    });
+
+    // ── Phase 5: budget ─────────────────────────────────────────────
+    es.addEventListener("budget", (ev: MessageEvent) => {
+      try {
+        const raw = JSON.parse(ev.data);
+        setData((prev) => ({
+          ...prev,
+          budgetState: {
+            spent: raw.spent ?? 0,
+            ceiling: raw.ceiling ?? 0,
+            percentage: raw.percentage ?? 0,
+          },
+        }));
+      } catch {}
+    });
+
+    // ── Phase 5: coordinator_narration ───────────────────────────────
+    es.addEventListener("coordinator_narration", (ev: MessageEvent) => {
+      try {
+        const raw = JSON.parse(ev.data);
+        const narration: CoordinatorNarration = {
+          round: raw.round ?? 0,
+          selected: raw.selected ?? [],
+          rationale: raw.rationale ?? null,
+          source: raw.source ?? "unknown",
+          timestamp: new Date().toISOString(),
+        };
+        setData((prev) => ({
+          ...prev,
+          coordinatorNarrations: [...prev.coordinatorNarrations, narration],
         }));
       } catch {}
     });

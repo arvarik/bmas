@@ -12,7 +12,7 @@ Cost rails (doc 05 §5) are integral — budget ceiling, round/duration caps,
 concurrency cap, stall breaker, decline gating — all deterministic, all
 shipped in this module alongside the loop.
 
-Registered behind `coordination.variant: traditional` (legacy_pipeline is default).
+Registered behind `coordination.variant: traditional` (default since Phase 5 cutover).
 """
 from __future__ import annotations
 
@@ -156,6 +156,12 @@ class TraditionalVariant:
         self._stall_counter: int = 0
         self._round_hashes: list[str] = []
         self._tier: str = "medium"
+
+        # Phase 5: stateful turn response IDs (doc 12 §5.2)
+        self._response_ids: dict[str, str] = {}
+
+        # Phase 5: HITL pause flag (doc 05 §6)
+        self._paused: bool = False
 
     # ── Genesis ──────────────────────────────────────────────────────
 
@@ -469,6 +475,9 @@ class TraditionalVariant:
             "board": board_data,
             "response_contract": "entries_v1",
             "budget_remaining_usd": max(0, self.budget_ceiling - self.budget_spent),
+            # Phase 5: stateful turns (doc 12 §5.2)
+            "session_id": f"{task_id}:{actor}",
+            "previous_response_id": self.get_response_id(actor),
         }
 
     # ── Parse Agent Response ─────────────────────────────────────────
@@ -844,6 +853,275 @@ class TraditionalVariant:
             self._round_hashes.append(round_hash)
 
         return self._stall_counter >= self.stall_rounds
+
+    # ── Private Sub-board Conflict Resolution (doc 05 §4) ────────────
+
+    async def handle_conflict_resolution(
+        self,
+        task: dict,
+        conflict_entry: BoardEntry,
+        dispatch_fn: Any,
+    ) -> list:
+        """Run private sub-board conflict resolution.
+
+        When the CU selects conflict_resolver and open conflict entries
+        exist, the conflicting agents debate privately for ≤2 rounds,
+        then their reconciled positions are posted to the public board.
+
+        The private space is archived after resolution.
+        """
+        task_id = task["task_id"]
+        conflict_id = conflict_entry.id
+        space = f"private:conflict-{conflict_id}"
+
+        # 1. Identify conflicting authors from refs
+        conflicting_authors: set[str] = set()
+        snapshot = await self.store.get_snapshot(task_id)
+        for ref_id in conflict_entry.refs:
+            ref_entry = snapshot.get(ref_id)
+            if ref_entry:
+                conflicting_authors.add(ref_entry.author)
+
+        if len(conflicting_authors) < 2:
+            logger.warning(
+                "Conflict %s has fewer than 2 authors — skipping private resolution",
+                conflict_id,
+            )
+            return []
+
+        logger.info(
+            "Private conflict resolution | conflict=%s authors=%s space=%s",
+            conflict_id, conflicting_authors, space,
+        )
+
+        # 2. Run ≤2 private rounds
+        committed_entries: list = []
+        for private_round in range(1, 3):
+            for author in sorted(conflicting_authors):
+                # Build activation for this author
+                base_role = author.split(".")[0] if "." in author else author
+                activations = self._to_activations([author])
+                if not activations:
+                    continue
+
+                activation = activations[0]
+
+                # Dispatch turn with private space context
+                try:
+                    result = await dispatch_fn(
+                        variant=self,
+                        task=task,
+                        activation=activation,
+                        round_no=private_round,
+                        space=space,
+                    )
+
+                    # Parse and apply entries to private space
+                    if isinstance(result, dict):
+                        entries = self.parse_agent_response(
+                            task, author, result,
+                        )
+                        for entry_data in entries:
+                            entry_data["space"] = space
+                            caps = capabilities_for_role(base_role)
+                            if not caps and author.startswith("expert."):
+                                caps = ["finding_writer"]
+                            applied = await self.gateway.append(
+                                task_id, author, caps,
+                                [entry_data],
+                                turn_id=f"private-{uuid.uuid4().hex[:8]}",
+                                round_no=private_round,
+                                space=space,
+                            )
+                            committed_entries.extend(applied)
+                except Exception as e:
+                    logger.warning(
+                        "Private turn failed for %s in conflict %s: %s",
+                        author, conflict_id, e,
+                    )
+
+        # 3. Mark original conflicting entries as superseded
+        for ref_id in conflict_entry.refs:
+            try:
+                await self.gateway.set_status(
+                    task_id, ref_id, "superseded", "conflict_resolver",
+                )
+            except Exception:
+                pass
+
+        # 4. Mark the conflict entry itself as superseded
+        try:
+            await self.gateway.set_status(
+                task_id, conflict_id, "superseded", "conflict_resolver",
+            )
+        except Exception:
+            pass
+
+        # 5. Archive the private space
+        try:
+            await self.store.archive_space(task_id, space)
+        except Exception as e:
+            logger.warning(
+                "Failed to archive private space %s: %s", space, e,
+            )
+
+        return committed_entries
+
+    # ── HITL: Directive Injection (doc 05 §6) ────────────────────────
+
+    async def inject_directives(self, task_id: str) -> int:
+        """Inject operator directives as board entries.
+
+        Reads from the Redis hint queue `bmas:public:hints:{task_id}`,
+        converts each hint to a `directive` entry (author: "operator"),
+        and clears the queue.
+
+        Returns the number of directives injected.
+        """
+        if not self.emitter:
+            return 0
+
+        try:
+            # The emitter wraps a Redis client — access it for hint reads
+            redis = getattr(self.emitter, '_redis', None)
+            if redis is None:
+                return 0
+
+            hint_key = f"bmas:public:hints:{task_id}"
+            hints = await redis.lrange(hint_key, 0, -1)
+            if not hints:
+                return 0
+
+            # Clear the queue atomically
+            await redis.delete(hint_key)
+
+            # Inject each hint as a directive entry
+            count = 0
+            for raw_hint in hints:
+                hint_text = raw_hint if isinstance(raw_hint, str) else raw_hint.decode("utf-8")
+                entry_data = {
+                    "type": "directive",
+                    "title": "Operator directive",
+                    "body": hint_text,
+                    "confidence": 1.0,
+                }
+                try:
+                    await self.gateway.append(
+                        task_id, "operator",
+                        ["decision_writer"],  # operator has full capabilities
+                        [entry_data],
+                        turn_id=f"directive-{uuid.uuid4().hex[:8]}",
+                        round_no=0,
+                    )
+                    count += 1
+                except Exception as e:
+                    logger.warning(
+                        "Failed to inject directive for task %s: %s",
+                        task_id, e,
+                    )
+
+            logger.info(
+                "Injected %d operator directives for task %s", count, task_id,
+            )
+            return count
+        except Exception as e:
+            logger.warning(
+                "Directive injection failed for task %s: %s", task_id, e,
+            )
+            return 0
+
+    # ── HITL: Pause-at-round-boundary (doc 05 §6) ────────────────────
+
+    async def check_pause(self, task_id: str) -> bool:
+        """Check if the operator has paused this task.
+
+        If paused, emits a 'paused' SSE event and waits until the
+        flag is cleared (poll every 2s, bounded by max_duration_s).
+        Emits 'resumed' when unpaused.
+
+        Returns True if the task was paused (and has now resumed).
+        """
+        if not self.emitter:
+            return False
+
+        try:
+            redis = getattr(self.emitter, '_redis', None)
+            if redis is None:
+                return False
+
+            pause_key = f"bmas:public:pause:{task_id}"
+            paused = await redis.get(pause_key)
+            if not paused:
+                return False
+
+            # Task is paused
+            self._paused = True
+            await self.emitter.emit(task_id, "paused", {
+                "message": "Task paused by operator",
+            })
+            logger.info("Task %s paused by operator", task_id)
+
+            # Poll until unpaused or timeout
+            start = time.monotonic()
+            while True:
+                await asyncio.sleep(2.0)
+                elapsed = time.monotonic() - start
+                if elapsed >= self.max_duration_s:
+                    logger.warning(
+                        "Task %s hit duration cap while paused — resuming",
+                        task_id,
+                    )
+                    break
+
+                still_paused = await redis.get(pause_key)
+                if not still_paused:
+                    break
+
+            self._paused = False
+            await self.emitter.emit(task_id, "resumed", {
+                "message": "Task resumed",
+            })
+            logger.info("Task %s resumed", task_id)
+            return True
+
+        except Exception as e:
+            logger.warning(
+                "Pause check failed for task %s: %s", task_id, e,
+            )
+            self._paused = False
+            return False
+
+    # ── Phase 5: Budget Event Emission ───────────────────────────────
+
+    async def emit_budget_event(self, task_id: str) -> None:
+        """Emit a budget SSE event with current spend vs ceiling.
+
+        Called after each round so the frontend budget gauge can update.
+        """
+        if not self.emitter:
+            return
+        try:
+            await self.emitter.emit(task_id, "budget", {
+                "spent": round(self.budget_spent, 6),
+                "ceiling": self.budget_ceiling,
+                "percentage": round(
+                    (self.budget_spent / self.budget_ceiling * 100)
+                    if self.budget_ceiling > 0 else 0.0,
+                    1,
+                ),
+            })
+        except Exception:
+            pass  # Budget events are best-effort
+
+    # ── Phase 5: Stateful Turn Helpers (doc 12 §5.2) ─────────────────
+
+    def get_response_id(self, actor: str) -> str | None:
+        """Get the last response_id for an actor (cross-round memory)."""
+        return self._response_ids.get(actor)
+
+    def set_response_id(self, actor: str, response_id: str) -> None:
+        """Store the response_id from an actor's latest turn."""
+        self._response_ids[actor] = response_id
 
     # ── Node Assignment ──────────────────────────────────────────────
 

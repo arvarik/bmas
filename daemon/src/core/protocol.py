@@ -169,6 +169,12 @@ EVENT_TURN_END = "turn_end"                            # {turn_id, actor, node, 
 EVENT_FILE_ADDED = "file_added"                        # file metadata (doc 17)
 EVENT_ARTIFACT_CREATED = "artifact_created"            # artifact metadata (doc 17)
 
+# Phase 5: HITL events (doc 05 §6)
+EVENT_PAUSED = "paused"                                # task paused by operator
+EVENT_RESUMED = "resumed"                              # task resumed
+EVENT_BUDGET = "budget"                                # {spent, ceiling, percentage} — budget gauge
+EVENT_APPROVAL_REQUEST = "approval_request"            # Hermes run approval (doc 12 §5.1)
+
 
 # ── Event Registry ───────────────────────────────────────────────────
 
@@ -185,6 +191,10 @@ V2_EVENT_NAMES: dict[str, str] = {
     EVENT_TURN_END: "{turn_id, actor, node, round} — worker activity lane",
     EVENT_FILE_ADDED: "File metadata (doc 17) — attachments rail",
     EVENT_ARTIFACT_CREATED: "Artifact metadata (doc 17) — artifact browser",
+    EVENT_PAUSED: "Task paused by operator (doc 05 §6)",
+    EVENT_RESUMED: "Task resumed (doc 05 §6)",
+    EVENT_BUDGET: "{spent, ceiling, percentage} — budget gauge (doc 09 §5)",
+    EVENT_APPROVAL_REQUEST: "Hermes run approval request (doc 12 §5.1)",
 }
 
 # Legacy events that continue to fire during migration (doc 10).
