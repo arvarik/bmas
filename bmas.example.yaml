@@ -148,8 +148,8 @@ routing:
 # Controls the coordination paradigm used for multi-agent tasks.
 # See docs/proposals/05-control-unit.md §3.
 coordination:
-  variant: legacy_pipeline          # traditional | patchboard | stigmergic | legacy_pipeline
-  blackboard_v2: false              # Gates the new board substrate independently of variant
+  variant: traditional               # traditional | patchboard | stigmergic | legacy_pipeline
+  blackboard_v2: true                 # Gates the new board substrate independently of variant
   view_budget_tokens: 12000         # Full-board default; budgeted mode above this
   round_execution: concurrent       # concurrent | sequential (paper-exact reproduction)
   traditional:
