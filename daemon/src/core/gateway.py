@@ -103,6 +103,7 @@ class BoardGateway:
         proposed: list[dict[str, Any]],
         turn_id: str,
         round_no: int = 0,
+        space: str = "public",
     ) -> list[BoardEntry]:
         """Validate, authorize, commit, and emit proposed entries.
 
@@ -115,7 +116,7 @@ class BoardGateway:
             for raw in proposed:
                 try:
                     entry = await self._normalize(
-                        raw, task_id, actor, turn_id, round_no
+                        raw, task_id, actor, turn_id, round_no, space,
                     )
                     self._validate_envelope(entry)
                     await self._validate_refs(task_id, entry)
@@ -256,6 +257,7 @@ class BoardGateway:
         actor: str,
         turn_id: str,
         round_no: int,
+        space: str = "public",
     ) -> BoardEntry:
         """Normalize a proposed entry: strip reserved fields, assign defaults.
 
@@ -298,7 +300,7 @@ class BoardGateway:
             status="open",
             salience=0.0,
             round=round_no,
-            space=raw.get("space", "public"),
+            space=raw.get("space", space),
             created_by_turn=turn_id,
             created_at=now,
             updated_at=now,

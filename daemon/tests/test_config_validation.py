@@ -113,7 +113,7 @@ class TestCoordinationConfig:
         """Default coordination config loads without error."""
         r = _run_config_probe(probe_expr="print(config.COORDINATION_VARIANT)")
         assert r.returncode == 0
-        assert "legacy_pipeline" in r.stdout
+        assert "traditional" in r.stdout
 
     def test_invalid_variant_fails(self):
         """An invalid variant value triggers a FATAL exit."""

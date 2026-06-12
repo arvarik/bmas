@@ -6,22 +6,26 @@
  * Opens from board node click or worker card click.
  * Shows complete trace timeline for a single turn plus
  * "Resulted in" footer (board entries, rejections, artifacts).
+ * Phase 5: includes inline Approve/Deny for approval_request events.
  */
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState, useCallback } from "react";
 import { authorColor } from "@/lib/design-tokens";
 import type { TurnRecord, TraceEvent, BoardEntry, RejectedEntry } from "@/hooks/useTaskStream";
 import { ToolCallCard } from "./ToolCallCard";
-import { X } from "lucide-react";
+import { X, CheckCircle, XCircle } from "lucide-react";
+
+const DAEMON_URL = process.env.NEXT_PUBLIC_DAEMON_URL ?? "http://192.168.4.240:9000";
 
 // ── Trace line glyph map ──────────────────────────────────────────────
 
 const TYPE_GLYPHS: Record<string, { glyph: string; color: string }> = {
-  reasoning:      { glyph: "●", color: "var(--accent-primary)" },
-  tool_call:      { glyph: "▸", color: "var(--status-paused)" },
-  entries_posted: { glyph: "◆", color: "var(--status-success)" },
-  final:          { glyph: "✓", color: "var(--status-success)" },
-  error:          { glyph: "✕", color: "var(--status-error)" },
+  reasoning:        { glyph: "●", color: "var(--accent-primary)" },
+  tool_call:        { glyph: "▸", color: "var(--status-paused)" },
+  entries_posted:   { glyph: "◆", color: "var(--status-success)" },
+  final:            { glyph: "✓", color: "var(--status-success)" },
+  error:            { glyph: "✕", color: "var(--status-error)" },
+  approval_request: { glyph: "⏸", color: "var(--status-paused)" },
 };
 
 function getGlyph(type: string) {
@@ -51,6 +55,9 @@ export function TurnInspector({
   rejectedEntries,
   onClose,
 }: TurnInspectorProps) {
+  // Approval decision state: track which run_ids have been decided
+  const [decidedRuns, setDecidedRuns] = useState<Record<string, string>>({});
+
   // Find turn
   const turn = useMemo(() => {
     if (!turnId) return null;
@@ -82,6 +89,30 @@ export function TurnInspector({
     if (!turn) return [];
     return rejectedEntries.filter((r) => r.actor === turn.actor);
   }, [turn, rejectedEntries]);
+
+  // Handle approval/deny
+  const handleApproval = useCallback(
+    async (runId: string, decision: "approve" | "deny") => {
+      const taskId = turn?.task_id;
+      if (!taskId) return;
+      try {
+        const resp = await fetch(
+          `${DAEMON_URL}/api/tasks/${taskId}/approval`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ run_id: runId, decision }),
+          },
+        );
+        if (resp.ok) {
+          setDecidedRuns((prev) => ({ ...prev, [runId]: decision }));
+        }
+      } catch (e) {
+        console.error("Approval failed:", e);
+      }
+    },
+    [turn],
+  );
 
   if (!turnId) return null;
 
@@ -182,6 +213,7 @@ export function TurnInspector({
             turnTraces.map((trace) => {
               const { glyph, color: glyphColor } = getGlyph(trace.type);
               const isToolCall = trace.type === "tool_call";
+              const isApproval = trace.type === "approval_request";
 
               return (
                 <div
@@ -201,7 +233,15 @@ export function TurnInspector({
                     {new Date(trace.timestamp).toLocaleTimeString()}
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    {isToolCall ? (
+                    {isApproval ? (
+                      <ApprovalInline
+                        trace={trace}
+                        decided={decidedRuns[trace.run_id ?? ""] ?? null}
+                        onDecide={(decision) =>
+                          handleApproval(trace.run_id ?? "", decision)
+                        }
+                      />
+                    ) : isToolCall ? (
                       <ToolCallCard content={trace.content} />
                     ) : (
                       <span style={{ color: "var(--text-secondary)", wordBreak: "break-word" }}>
@@ -264,13 +304,93 @@ export function TurnInspector({
                 <span>Rejected: {r.reason}</span>
               </div>
             ))}
-
-            {/* Phase 5 placeholder */}
-            {/* TODO(phase-5): Inline Approve/Deny buttons for approval_request events */}
           </div>
         )}
       </div>
     </>
+  );
+}
+
+// ── Approval Inline Component ─────────────────────────────────────────
+
+function ApprovalInline({
+  trace,
+  decided,
+  onDecide,
+}: {
+  trace: TraceEvent;
+  decided: string | null;
+  onDecide: (decision: "approve" | "deny") => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--space-1)",
+        padding: "var(--space-2)",
+        borderRadius: "var(--radius-sm)",
+        background: "hsl(38 92% 50%/0.06)",
+        border: "1px solid hsl(38 92% 50%/0.15)",
+      }}
+    >
+      <div style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--status-paused)" }}>
+        ⏸ Approval Required
+      </div>
+      <div style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>
+        {trace.content || "Agent is requesting approval to proceed."}
+      </div>
+      {decided ? (
+        <div
+          style={{
+            fontSize: "var(--text-xs)",
+            fontWeight: "var(--weight-semibold)",
+            color: decided === "approve" ? "var(--status-success)" : "var(--status-error)",
+          }}
+        >
+          {decided === "approve" ? "✓ Approved" : "✕ Denied"}
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: "var(--space-2)", marginTop: 2 }}>
+          <button
+            onClick={() => onDecide("approve")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "3px 10px",
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid hsl(142 71% 45%/0.3)",
+              background: "hsl(142 71% 45%/0.08)",
+              color: "var(--status-success)",
+              cursor: "pointer",
+              fontSize: "var(--text-xs)",
+              fontWeight: "var(--weight-semibold)",
+            }}
+          >
+            <CheckCircle size={12} /> Approve
+          </button>
+          <button
+            onClick={() => onDecide("deny")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "3px 10px",
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid hsl(0 84% 60%/0.3)",
+              background: "hsl(0 84% 60%/0.08)",
+              color: "var(--status-error)",
+              cursor: "pointer",
+              fontSize: "var(--text-xs)",
+              fontWeight: "var(--weight-semibold)",
+            }}
+          >
+            <XCircle size={12} /> Deny
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -750,3 +750,98 @@
 .node-card__error{display:flex;align-items:center;gap:var(--space-2);padding:var(--space-2) var(--space-3);background:hsl(0 84% 60% / 0.06);border-radius:var(--radius-sm);border:1px solid hsl(0 84% 60% / 0.15);font-size:var(--text-xs);color:var(--status-error)}
 .node-card__error span{flex:1}
 
+/* ── Mission Cockpit (Phase 5 — doc 13) ─────────────────────────────── */
+.mission-cockpit{display:flex;flex-direction:column;height:100%;overflow:hidden;gap:0}
+
+/* Top bar */
+.mission-cockpit__topbar{display:flex;align-items:center;justify-content:space-between;padding:var(--space-2) var(--space-3);background:var(--surface-raised);border-bottom:1px solid var(--border-default);flex-shrink:0;gap:var(--space-3)}
+.mission-cockpit__topbar-left{display:flex;align-items:center;gap:var(--space-2);min-width:0;flex:1}
+.mission-cockpit__topbar-right{display:flex;align-items:center;gap:var(--space-2);flex-shrink:0}
+.mission-cockpit__status{font-size:var(--text-xs);font-weight:var(--weight-semibold);color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em}
+.mission-cockpit__paused-chip{font-size:var(--text-xs);font-weight:var(--weight-semibold);padding:2px 8px;border-radius:var(--radius-full);background:hsl(38 92% 50%/0.15);color:var(--status-paused);animation:pulse 2s infinite}
+.mission-cockpit__narration{font-size:var(--text-xs);color:var(--text-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:320px}
+.mission-cockpit__btn{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:var(--radius-sm);border:1px solid var(--border-default);background:transparent;color:var(--text-secondary);cursor:pointer;transition:all 150ms ease}
+.mission-cockpit__btn:hover{background:var(--surface-hover);color:var(--text-primary)}
+
+/* Directive input bar */
+.mission-cockpit__directive-bar{display:flex;align-items:center;gap:var(--space-2);padding:var(--space-2) var(--space-3);background:var(--surface-overlay);border-bottom:1px solid var(--border-default);animation:fadeIn 150ms ease-out}
+.mission-cockpit__directive-input{flex:1;padding:var(--space-2) var(--space-3);background:var(--surface-base);border:1px solid var(--border-default);border-radius:var(--radius-md);color:var(--text-primary);font-size:var(--text-sm);font-family:var(--font-sans);outline:none;transition:border-color 150ms ease}
+.mission-cockpit__directive-input:focus{border-color:var(--accent-primary)}
+.mission-cockpit__directive-input::placeholder{color:var(--text-tertiary)}
+.mission-cockpit__directive-send{padding:var(--space-2) var(--space-3);background:var(--accent-primary);color:var(--text-inverse);border:none;border-radius:var(--radius-md);font-size:var(--text-sm);font-weight:var(--weight-semibold);cursor:pointer;transition:background 150ms ease}
+.mission-cockpit__directive-send:hover{background:var(--accent-primary-hover)}
+.mission-cockpit__directive-send:disabled{opacity:0.3;cursor:not-allowed}
+
+/* Body: 3-panel layout (center + agents + optional firehose) */
+.mission-cockpit__body{display:grid;grid-template-columns:1fr 280px;flex:1;min-height:0;overflow:hidden;gap:1px;background:var(--border-default)}
+.mission-cockpit__body--with-firehose{grid-template-columns:1fr 280px 300px}
+
+/* Center: Blackboard graph */
+.mission-cockpit__center{overflow:hidden;background:var(--surface-base);min-height:0}
+.mission-cockpit__center .panel{height:100%;display:flex;flex-direction:column}
+
+/* Right rail: Agent minds */
+.mission-cockpit__agents{display:flex;flex-direction:column;overflow:hidden;background:var(--surface-base)}
+.mission-cockpit__agents-header{display:flex;align-items:center;justify-content:space-between;padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--border-default);font-size:var(--text-xs);font-weight:var(--weight-semibold);color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em}
+.mission-cockpit__agents-count{font-size:var(--text-xs);color:var(--text-tertiary);background:var(--surface-hover);padding:1px 6px;border-radius:var(--radius-full)}
+.mission-cockpit__agents-list{flex:1;overflow-y:auto;padding:var(--space-2);display:flex;flex-direction:column;gap:var(--space-2)}
+
+/* Firehose panel */
+.mission-cockpit__firehose{display:flex;flex-direction:column;overflow:hidden;background:var(--surface-base)}
+
+/* Inspector overlay */
+.mission-cockpit__inspector-overlay{position:fixed;inset:0;z-index:300;background:hsl(222 47% 6%/0.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;animation:fadeIn 150ms ease-out}
+.mission-cockpit__inspector-panel{width:90%;max-width:800px;max-height:80vh;overflow-y:auto;background:var(--surface-raised);border-radius:var(--radius-lg);border:1px solid var(--border-default);padding:var(--space-4);position:relative}
+.mission-cockpit__inspector-close{position:absolute;top:var(--space-3);right:var(--space-3);width:28px;height:28px;border-radius:var(--radius-full);border:none;background:var(--surface-hover);color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;transition:background 150ms ease}
+.mission-cockpit__inspector-close:hover{background:var(--surface-active);color:var(--text-primary)}
+
+/* ── Agent Mind Card ─────────────────────────────────────────────────── */
+.agent-mind-card{padding:var(--space-2) var(--space-3);border-radius:var(--radius-md);background:var(--surface-overlay);display:flex;flex-direction:column;gap:var(--space-1);transition:background 150ms ease}
+.agent-mind-card:hover{background:var(--surface-hover)}
+.agent-mind-card__header{display:flex;align-items:center;justify-content:space-between;gap:var(--space-2)}
+.agent-mind-card__identity{display:flex;align-items:center;gap:var(--space-1)}
+.agent-mind-card__name{font-size:var(--text-xs);font-weight:var(--weight-semibold);text-transform:capitalize}
+.agent-mind-card__badges{display:flex;align-items:center;gap:var(--space-1)}
+.agent-mind-card__tokens{font-size:10px;font-family:var(--font-mono);color:var(--text-tertiary);font-variant-numeric:tabular-nums}
+.agent-mind-card__reasoning{font-size:11px;color:var(--text-tertiary);line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-style:italic}
+.agent-mind-card__tool{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text-tertiary);font-family:var(--font-mono)}
+.agent-mind-card__approval{font-size:10px;padding:2px 6px;border-radius:var(--radius-sm);background:hsl(38 92% 50%/0.1);color:var(--status-paused);font-weight:var(--weight-medium)}
+
+/* Agent pill (compact mode) */
+.agent-mind-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:var(--radius-full);border:1px solid;font-size:10px;font-weight:var(--weight-medium);color:var(--text-secondary);cursor:pointer;transition:background 150ms ease;background:transparent}
+.agent-mind-pill:hover{background:var(--surface-hover)}
+.agent-mind-pill__dot{width:6px;height:6px;border-radius:var(--radius-full);flex-shrink:0}
+.agent-mind-pill__name{text-transform:capitalize;white-space:nowrap}
+
+/* ── Global Firehose ─────────────────────────────────────────────────── */
+.global-firehose{display:flex;flex-direction:column;height:100%;overflow:hidden}
+.global-firehose__filters{display:flex;align-items:center;gap:var(--space-1);padding:var(--space-1) var(--space-2);border-bottom:1px solid var(--border-default);flex-shrink:0}
+.global-firehose__select{padding:2px 4px;background:var(--surface-hover);border:1px solid var(--border-default);border-radius:var(--radius-sm);font-size:10px;color:var(--text-secondary);font-family:var(--font-sans);outline:none;cursor:pointer;max-width:100px}
+.global-firehose__clear{display:flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:var(--radius-full);border:none;background:transparent;color:var(--text-tertiary);cursor:pointer}
+.global-firehose__clear:hover{color:var(--status-error)}
+.global-firehose__list{flex:1;overflow-y:auto;overflow-x:hidden;padding:var(--space-1);font-size:10px;font-family:var(--font-mono);line-height:1.5}
+.global-firehose__event{display:flex;gap:var(--space-1);padding:1px 0;border-bottom:1px solid hsl(222 40% 12%/0.5)}
+.global-firehose__author{flex-shrink:0;width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:var(--weight-medium)}
+.global-firehose__type{flex-shrink:0;width:56px;color:var(--text-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.global-firehose__content{flex:1;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.global-firehose__jump{position:absolute;bottom:var(--space-2);right:var(--space-2);display:flex;align-items:center;gap:4px;padding:4px 10px;background:var(--accent-primary);color:var(--text-inverse);border:none;border-radius:var(--radius-full);font-size:10px;font-weight:var(--weight-semibold);cursor:pointer;box-shadow:var(--shadow-md);animation:fadeIn 150ms ease-out}
+.global-firehose__jump:hover{background:var(--accent-primary-hover)}
+
+/* ── Convergence Strip ───────────────────────────────────────────────── */
+.convergence-strip{display:flex;align-items:stretch;gap:1px;background:var(--border-default);flex-shrink:0;height:56px}
+.convergence-strip--empty{display:flex;align-items:center;justify-content:center;height:36px;background:var(--surface-base)}
+.convergence-strip__chart{flex:1;background:var(--surface-base);padding:2px var(--space-2);display:flex;flex-direction:column;position:relative}
+.convergence-strip__label{font-size:9px;font-weight:var(--weight-medium);text-transform:uppercase;letter-spacing:0.05em;color:var(--text-tertiary);position:absolute;top:2px;left:var(--space-2);z-index:1}
+
+/* Pulse animation */
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+
+/* ── Mission Cockpit Responsive ──────────────────────────────────────── */
+@media(max-width:1439px){
+  .mission-cockpit__body--with-firehose{grid-template-columns:1fr 280px}
+  .mission-cockpit__firehose{display:none}
+}
+@media(max-width:1365px){
+  .mission-cockpit__body,.mission-cockpit__body--with-firehose{grid-template-columns:1fr}
+  .mission-cockpit__agents{display:none}
+}

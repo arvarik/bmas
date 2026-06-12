@@ -125,6 +125,8 @@ class TaskResponse(BaseModel):
     trace_count: Optional[int] = None
     artifacts: Optional[list[dict]] = None
     envelope_fallback: Optional[bool] = None
+    # Phase 5: stateful turns (doc 12 §5.2)
+    response_id: Optional[str] = None      # run_id serves as response_id for Responses API
 
 
 class HealthResponse(BaseModel):
@@ -463,6 +465,12 @@ async def _run_via_api(
     }
     if role_prompt:
         run_payload["instructions"] = role_prompt
+
+    # Phase 5: Stateful turns — include previous_response_id for
+    # cross-round memory via the Responses API (doc 12 §5.2)
+    prev_response_id = (context or {}).get("previous_response_id")
+    if prev_response_id:
+        run_payload["previous_response_id"] = prev_response_id
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         # 1. Submit the run
@@ -1005,4 +1013,6 @@ async def execute_task(req: TaskRequest, request: Request):
         trace_count=trace_count,
         artifacts=None,            # Artifact sync deferred to Phase 2F
         envelope_fallback=None,
+        # Phase 5: stateful turns
+        response_id=run_id,        # Hermes run_id doubles as response_id
     )

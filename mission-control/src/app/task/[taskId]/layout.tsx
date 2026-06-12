@@ -29,6 +29,7 @@ export { useTaskData } from "./TaskStreamContext";
 
 const TABS = [
   { label: "Overview", segment: null },          // /task/[id] (no child segment)
+  { label: "Mission", segment: "mission" },      // /task/[id]/mission — Phase 5 cockpit
   { label: "DAG", segment: "dag" },              // /task/[id]/dag
   { label: "Logs", segment: "logs" },            // /task/[id]/logs
   { label: "Blackboard", segment: "blackboard" },// /task/[id]/blackboard

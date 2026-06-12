@@ -20,6 +20,7 @@ import { useTaskData } from "../TaskStreamContext";
 import type { CostData } from "@/hooks/useTaskStream";
 import { Panel } from "@/components/ui/Panel";
 import { MetricCard } from "@/components/ui/MetricCard";
+import { BudgetGauge } from "@/components/features/BudgetGauge";
 import { AGENT_COLORS } from "@/lib/design-tokens";
 import { DollarSign } from "lucide-react";
 
@@ -88,7 +89,7 @@ function shortenModel(name: string): string {
 
 export default function CostPage() {
   const { taskId } = useParams();
-  const { cost: liveCost, isLive } = useTaskData();
+  const { cost: liveCost, isLive, budgetState } = useTaskData();
 
   // ── REST fallback for completed tasks ─────────────────────────────
   const [restCost, setRestCost] = useState<CostData | null>(null);
@@ -155,6 +156,14 @@ export default function CostPage() {
           <div className="cost-breakdown__metrics">
             <MetricCard label="Total Cost" value={cost.total_cost} format="currency" />
             <MetricCard label="Total Tokens" value={cost.total_tokens} format="number" />
+            {budgetState && (
+              <BudgetGauge
+                spent={budgetState.spent}
+                ceiling={budgetState.ceiling}
+                size={96}
+                strokeWidth={6}
+              />
+            )}
           </div>
 
           {/* Bar chart */}

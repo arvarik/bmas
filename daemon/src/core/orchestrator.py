@@ -313,7 +313,9 @@ class Orchestrator:
             context=attachment_context,
             model=triage.litellm_model,
         )
-        # Dual-write debate: Redis (ephemeral) + SQLite (permanent)
+        # DEPRECATED(phase-5): debate_entries dual-write — will be removed
+        # when legacy_pipeline variant is dropped (doc 10 §5 item 97).
+        # Under the 'traditional' variant, board_entries in Redis replace this.
         await self.bb.post_debate(session_id, "planner", plan.get("result", ""))
         try:
             await db.insert_debate_entry(task_id, session_id, "planner", plan.get("result", ""))
@@ -343,6 +345,7 @@ class Orchestrator:
         # Dual-write debate
         await self.bb.post_debate(session_id, "executor", exec_result.get("result", ""))
         try:
+            # DEPRECATED(phase-5): debate_entries dual-write (see comment above)
             await db.insert_debate_entry(task_id, session_id, "executor", exec_result.get("result", ""))
         except Exception:
             logger.warning(f"SQLite debate insert failed for {task_id}/executor")
@@ -470,6 +473,7 @@ Task: {user_task}"""
 
         results = await asyncio.gather(*tasks)
 
+        # DEPRECATED(phase-5): debate_entries dual-write (doc 10 §5 item 97).
         # Post all debate entries — dual-write Redis + SQLite
         for expert, result in zip(experts, results):
             await self.bb.post_debate(
@@ -814,6 +818,13 @@ Task: {user_task}"""
             # ── Round loop ───────────────────────────────────────────
             for round_no in range(1, variant.max_rounds + 2):  # +2 for safety
                 await self._check_abort(task_id)
+
+                # Phase 5: Inject operator directives (doc 05 §6)
+                await variant.inject_directives(task_id)
+
+                # Phase 5: Check pause-at-round-boundary (doc 05 §6)
+                await variant.check_pause(task_id)
+
                 await self._set_phase("round", round_no, task_id=task_id)
 
                 # Step: deterministic guards → CU selection → activations
@@ -856,11 +867,21 @@ Task: {user_task}"""
                                     task_id, budget_spent=variant.budget_spent,
                                 )
 
+                            # Phase 5: Store response_id for stateful turns
+                            response_id = result.get("response_id")
+                            if response_id:
+                                variant.set_response_id(
+                                    activation.actor, response_id,
+                                )
+
                     await self._safe_log("daemon",
                         f"Round {round_no} complete | "
                         f"{len(step_result.activations)} turns, "
                         f"budget=${variant.budget_spent:.4f}",
                         task_id=task_id)
+
+                # Phase 5: Emit budget event after each round (doc 09 §5)
+                await variant.emit_budget_event(task_id)
             else:
                 from core.variants.traditional import StepResult
                 step_result = StepResult(terminal=True, reason="max_rounds")
@@ -875,10 +896,11 @@ Task: {user_task}"""
             answer = result.get("answer", "")
             try:
                 await db.complete_task(
-                    task_id, answer[:10000],
-                    model_used=triage.litellm_model,
-                    cost_usd=variant.budget_spent,
+                    task_id,
+                    result_summary=answer[:10000],
+                    result_json=json.dumps(result),
                 )
+                await db.update_task_cost_totals(task_id)
             except Exception as e:
                 logger.warning(f"SQLite complete_task failed for {task_id}: {e}")
 
@@ -956,6 +978,9 @@ Task: {user_task}"""
                 "objective": payload.get("objective"),
                 "round": round_no,
                 "budget_remaining_usd": payload.get("budget_remaining_usd"),
+                # Phase 5: stateful turns (doc 12 §5.2)
+                "session_id": payload.get("session_id"),
+                "previous_response_id": payload.get("previous_response_id"),
             },
             model=activation.model,
         )

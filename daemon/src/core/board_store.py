@@ -116,6 +116,21 @@ class BoardStore(Protocol):
         """Check if an entry exists (any status)."""
         ...
 
+    async def get_private_snapshot(
+        self, task_id: str, space: str,
+    ) -> dict[str, BoardEntry]:
+        """Get entries scoped to a private space (doc 05 §4)."""
+        ...
+
+    async def archive_space(
+        self, task_id: str, space: str,
+    ) -> list[dict[str, Any]]:
+        """Archive a private space: return its events and wipe live state.
+
+        Returns the archived events for SQLite persistence.
+        """
+        ...
+
     async def fork(
         self,
         task_id: str,
@@ -226,6 +241,46 @@ class InMemoryBoardStore:
         self, task_id: str, entry_id: str
     ) -> bool:
         return entry_id in self._entries.get(task_id, {})
+
+    async def get_private_snapshot(
+        self, task_id: str, space: str,
+    ) -> dict[str, BoardEntry]:
+        """Get entries scoped to a private space (doc 05 §4).
+
+        Filters the main entry store by the space field.
+        """
+        all_entries = self._entries.get(task_id, {})
+        return {
+            eid: entry
+            for eid, entry in all_entries.items()
+            if entry.space == space and entry.status != "removed"
+        }
+
+    async def archive_space(
+        self, task_id: str, space: str,
+    ) -> list[dict[str, Any]]:
+        """Archive a private space: return its events and wipe entries.
+
+        Returns the archived events list for SQLite persistence.
+        Removes entries with matching space from the live snapshot.
+        """
+        # Collect events for this space
+        archived: list[dict[str, Any]] = []
+        for event in self._events.get(task_id, []):
+            payload = event.get("payload", {})
+            if payload.get("space") == space:
+                archived.append(copy.deepcopy(event))
+
+        # Remove entries with matching space from snapshot
+        entries = self._entries.get(task_id, {})
+        to_remove = [
+            eid for eid, entry in entries.items()
+            if entry.space == space
+        ]
+        for eid in to_remove:
+            del entries[eid]
+
+        return archived
 
     async def fork(
         self,
