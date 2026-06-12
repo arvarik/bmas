@@ -7,12 +7,10 @@ any seq-sorted order, must produce the same snapshot (durability contract,
 doc 04 §5.1).
 """
 
-import sys
 import os
+import sys
 import uuid
-from datetime import datetime, timezone
-
-import pytest
+from datetime import UTC, datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -51,7 +49,7 @@ def _make_add_event(
             "status": "open",
             "space": "public",
             "turn_id": "turn-001",
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         },
         round_no=round_no,
     )

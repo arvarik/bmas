@@ -4,17 +4,18 @@ bMAS Daemon entry point.
 Exposes a FastAPI interface for the Mission Control UI and CLI.
 """
 
-import logging
 import asyncio
+import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
-import httpx
-from core.orchestrator import Orchestrator
-from config import PROJECT_NAME
-from database import init_db
 
-from routes import submit, tasks, events, health, ingest, files, artifacts, hitl
+import httpx
+from fastapi import FastAPI
+
+from config import PROJECT_NAME
+from core.orchestrator import Orchestrator
+from database import init_db
 from monitoring.health_loop import system_health_loop
+from routes import artifacts, events, files, health, hitl, ingest, submit, tasks
 
 logging.basicConfig(
     level=logging.INFO,

@@ -23,7 +23,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-
 # ── Helpers ──────────────────────────────────────────────────────────
 
 def _sha256(data: bytes) -> str:
@@ -80,8 +79,8 @@ def pipeline_env(pipeline_dirs):
     asyncio.run(_create_task(task_id, "Smoke Test Task", "Pipeline verification"))
 
     # Patch route module-level constants (no reload needed)
-    import routes.files as rf
     import routes.artifacts as ra
+    import routes.files as rf
 
     rf_orig = {
         "STORAGE_ENABLED": rf.STORAGE_ENABLED,

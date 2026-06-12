@@ -14,18 +14,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from core.protocol import (
-    ENTRY_TYPE_OBJECTIVE,
-    ENTRY_TYPE_ATTACHMENT,
-    ENTRY_TYPE_PLAN,
-    ENTRY_TYPE_FINDING,
-    ENTRY_TYPE_CRITIQUE,
-    ENTRY_TYPE_REBUTTAL,
-    ENTRY_TYPE_CONFLICT,
-    ENTRY_TYPE_DIRECTIVE,
-    ENTRY_TYPE_SOLUTION,
     ENTRY_TYPE_ARTIFACT,
+    ENTRY_TYPE_ATTACHMENT,
+    ENTRY_TYPE_CONFLICT,
+    ENTRY_TYPE_CRITIQUE,
+    ENTRY_TYPE_DIRECTIVE,
+    ENTRY_TYPE_FINDING,
+    ENTRY_TYPE_OBJECTIVE,
+    ENTRY_TYPE_PLAN,
+    ENTRY_TYPE_REBUTTAL,
+    ENTRY_TYPE_SOLUTION,
 )
-
 
 # ── Capability Profiles (doc 04 §4) ─────────────────────────────────
 

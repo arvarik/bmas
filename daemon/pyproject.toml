@@ -32,6 +32,13 @@ module = ["core.*", "database", "config", "auth"]
 warn_return_any = true
 disallow_any_generics = false
 
+# redis-py type stubs expose commands as `Awaitable[T] | T` (supporting both sync
+# and async APIs), which mypy flags as [misc] errors when awaited. Suppress those
+# false positives specifically in the Redis client wrapper.
+[[tool.mypy.overrides]]
+module = ["core.blackboard"]
+disable_error_code = ["misc", "arg-type", "dict-item"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

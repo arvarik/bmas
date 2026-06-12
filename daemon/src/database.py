@@ -12,11 +12,11 @@ long-lived connections (e.g., SSE streams) and isolates background tasks
 from request handler lifecycles. See 02-data-layer.md §2.3 for rationale.
 """
 
-import os
 import json
 import logging
-from datetime import datetime, timezone
-from contextlib import asynccontextmanager
+import os
+from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 
 import aiosqlite
 
@@ -473,7 +473,7 @@ async def complete_task(
         if row and row["started_at"]:
             try:
                 started = datetime.fromisoformat(row["started_at"])
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 duration_ms = int((now - started).total_seconds() * 1000)
             except (ValueError, TypeError):
                 pass
@@ -591,10 +591,8 @@ async def get_sub_tasks(task_id: str) -> list[dict]:
             d = dict(r)
             # Parse depends_on back to list
             if d.get("depends_on"):
-                try:
+                with suppress(json.JSONDecodeError, TypeError):
                     d["depends_on"] = json.loads(d["depends_on"])
-                except (json.JSONDecodeError, TypeError):
-                    pass
             result.append(d)
         return result
 
@@ -806,10 +804,8 @@ async def get_turn_traces(task_id: str, turn_id: str) -> list[dict]:
         for r in rows:
             d = dict(r)
             if d.get("data"):
-                try:
+                with suppress(json.JSONDecodeError, TypeError):
                     d["data"] = json.loads(d["data"])
-                except (json.JSONDecodeError, TypeError):
-                    pass
             result.append(d)
         return result
 
@@ -828,10 +824,8 @@ async def get_task_traces(
         for r in rows:
             d = dict(r)
             if d.get("data"):
-                try:
+                with suppress(json.JSONDecodeError, TypeError):
                     d["data"] = json.loads(d["data"])
-                except (json.JSONDecodeError, TypeError):
-                    pass
             result.append(d)
         return result
 
@@ -1038,10 +1032,8 @@ async def get_board_events(
         for r in rows:
             d = dict(r)
             if d.get("payload"):
-                try:
+                with suppress(json.JSONDecodeError, TypeError):
                     d["payload"] = json.loads(d["payload"])
-                except (json.JSONDecodeError, TypeError):
-                    pass
             result.append(d)
         return result
 
@@ -1178,21 +1170,19 @@ async def get_artifact(artifact_id: str) -> dict | None:
 
 async def get_artifact_max_version(task_id: str, rel_path: str) -> int:
     """Return the current highest version number for a given (task_id, rel_path)."""
-    async with _connect() as db:
-        async with db.execute(
-            "SELECT MAX(version) FROM artifacts WHERE task_id = ? AND rel_path = ?",
-            (task_id, rel_path),
-        ) as cur:
-            row = await cur.fetchone()
-            return row[0] if row and row[0] else 0
+    async with _connect() as db, db.execute(
+        "SELECT MAX(version) FROM artifacts WHERE task_id = ? AND rel_path = ?",
+        (task_id, rel_path),
+    ) as cur:
+        row = await cur.fetchone()
+        return row[0] if row and row[0] else 0
 
 
 async def get_task_artifacts_total_bytes(task_id: str) -> int:
     """Return total bytes of all artifacts for a task (quota enforcement)."""
-    async with _connect() as db:
-        async with db.execute(
-            "SELECT COALESCE(SUM(bytes), 0) FROM artifacts WHERE task_id = ?",
-            (task_id,),
-        ) as cur:
-            row = await cur.fetchone()
-            return row[0] if row else 0
+    async with _connect() as db, db.execute(
+        "SELECT COALESCE(SUM(bytes), 0) FROM artifacts WHERE task_id = ?",
+        (task_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        return row[0] if row else 0

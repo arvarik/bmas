@@ -5,12 +5,11 @@ No LLM — tests the voting algorithm against canned answer sets.
 """
 
 from core.variants.traditional import (
-    sole_majority_vote,
-    _normalize_answer,
     _exact_similarity,
     _fuzzy_similarity,
+    _normalize_answer,
+    sole_majority_vote,
 )
-
 
 # ── _normalize_answer() ─────────────────────────────────────────────
 

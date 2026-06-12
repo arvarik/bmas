@@ -11,21 +11,25 @@ import logging
 import os
 import shutil
 import uuid
-
 from urllib.parse import quote
 
-from fastapi import APIRouter, UploadFile, File, Form, Request
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 
 import database as db
 from auth import check_bearer_or_pass, require_node_key
 from config import (
-    STORAGE_ENABLED, STORAGE_ARTIFACTS_DIR, STORAGE_MAX_TASK_OUTPUT_MB,
     BMAS_NODE_KEY,
+    STORAGE_ARTIFACTS_DIR,
+    STORAGE_ENABLED,
+    STORAGE_MAX_TASK_OUTPUT_MB,
 )
 from file_utils import (
-    validate_path_traversal, compute_sha256, get_mime_type,
-    slugify_task, resolve_slug_collision,
+    compute_sha256,
+    get_mime_type,
+    resolve_slug_collision,
+    slugify_task,
+    validate_path_traversal,
 )
 
 logger = logging.getLogger("bmas.artifacts")

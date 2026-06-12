@@ -13,7 +13,6 @@ import os
 import re
 import unicodedata
 
-
 # ── Filename Sanitization ────────────────────────────────────────────
 
 # Characters allowed in sanitized filenames

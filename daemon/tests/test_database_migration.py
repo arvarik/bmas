@@ -6,9 +6,9 @@ columns to tasks and cost_entries, and that the schema is idempotent.
 import os
 import sys
 
+import aiosqlite
 import pytest
 import pytest_asyncio
-import aiosqlite
 
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -16,11 +16,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from database import (
     SCHEMA_DDL,
     SCHEMA_VERSION,
-    _migrate_to_v2,
     _migrate,
+    _migrate_to_v2,
     init_db,
 )
-
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 

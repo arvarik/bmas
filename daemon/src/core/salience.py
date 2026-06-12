@@ -14,8 +14,10 @@ Pure function, no I/O, fully deterministic.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from core.entry import BoardEntry
+if TYPE_CHECKING:
+    from core.entry import BoardEntry
 
 
 @dataclass(frozen=True)

@@ -3,8 +3,10 @@
 
 import json
 import re
+
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+
 import database as db
 
 router = APIRouter()

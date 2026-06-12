@@ -6,6 +6,7 @@ are exposed.  Since config.py runs at import time with sys.exit() on
 error, we test by spawning subprocesses that import config and report
 results.
 """
+import contextlib
 import json
 import os
 import subprocess
@@ -14,7 +15,6 @@ import tempfile
 import textwrap
 
 import yaml
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -87,10 +87,8 @@ def _run_config_probe(yaml_override: dict | None = None,
         timeout=10,
     )
 
-    try:
+    with contextlib.suppress(OSError):
         os.unlink(tmp_path)
-    except OSError:
-        pass
 
     return result
 
@@ -223,10 +221,8 @@ class TestCoordinationConfig:
             [sys.executable, "-c", script],
             capture_output=True, text=True, env=env, timeout=10,
         )
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
         assert r.returncode != 0
         assert "FATAL" in r.stderr
 

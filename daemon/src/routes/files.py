@@ -11,22 +11,29 @@ GET  /tasks/{task_id}/files/{file_id}/text  — extracted text only
 import logging
 import os
 import uuid
-
 from urllib.parse import quote
 
-from fastapi import APIRouter, UploadFile, File, Request
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi import APIRouter, File, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 
 import database as db
 from auth import check_bearer_or_pass
 from config import (
-    STORAGE_ENABLED, STORAGE_USER_MEDIA_DIR, STORAGE_MAX_UPLOAD_MB,
-    STORAGE_ALLOWED_TYPES, STORAGE_PDF_EXTRACTION, STORAGE_EXTRACTION_MAX_CHARS,
     BMAS_NODE_KEY,
+    STORAGE_ALLOWED_TYPES,
+    STORAGE_ENABLED,
+    STORAGE_EXTRACTION_MAX_CHARS,
+    STORAGE_MAX_UPLOAD_MB,
+    STORAGE_PDF_EXTRACTION,
+    STORAGE_USER_MEDIA_DIR,
 )
 from file_utils import (
-    sanitize_filename, compute_sha256, get_mime_type, get_extension,
-    extract_pdf_text, extract_text_file,
+    compute_sha256,
+    extract_pdf_text,
+    extract_text_file,
+    get_extension,
+    get_mime_type,
+    sanitize_filename,
 )
 
 logger = logging.getLogger("bmas.files")
@@ -248,7 +255,7 @@ async def get_file_text(task_id: str, file_id: str, request: Request):
     text_path = stored_path + ".extracted.txt" if stored_path else ""
     if text_path and os.path.exists(text_path):
         try:
-            with open(text_path, "r", encoding="utf-8") as tf:
+            with open(text_path, encoding="utf-8") as tf:
                 extracted_text = tf.read()
         except Exception:
             pass

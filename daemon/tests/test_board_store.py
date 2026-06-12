@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.board_store import InMemoryBoardStore, make_event, fold_events_to_snapshot
+from core.board_store import InMemoryBoardStore, fold_events_to_snapshot, make_event
 from core.entry import BoardEntry, entry_to_dict
 
 

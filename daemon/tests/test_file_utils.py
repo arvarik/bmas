@@ -7,21 +7,22 @@ user-supplied filenames/paths and the filesystem.
 """
 
 import os
-import tempfile
-import pytest
 
 # Add parent src dir to path for imports
 import sys
+import tempfile
+
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from file_utils import (
-    sanitize_filename,
-    validate_path_traversal,
-    slugify_task,
     compute_sha256,
     extract_text_file,
+    sanitize_filename,
+    slugify_task,
+    validate_path_traversal,
 )
-
 
 # ── sanitize_filename ────────────────────────────────────────────────
 

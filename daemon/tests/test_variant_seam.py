@@ -7,13 +7,13 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from core.variants import (
-    CoordinationVariant,
-    SEAMS_CHECKLIST,
-    verify_seams_checklist,
-    register_variant,
-    get_variant_class,
-    available_variants,
     _VARIANTS,
+    SEAMS_CHECKLIST,
+    CoordinationVariant,
+    available_variants,
+    get_variant_class,
+    register_variant,
+    verify_seams_checklist,
 )
 
 

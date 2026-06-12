@@ -9,19 +9,19 @@ Covers:
 - Duplicate variant registration warning
 """
 
-import sys
-import os
 import asyncio
 import logging
+import os
+import sys
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 # conftest.py has already injected the fake config module.
-from core.gateway import BoardGateway  # noqa: E402
 from core.board_store import InMemoryBoardStore  # noqa: E402
 from core.event_emitter import InMemoryEventEmitter  # noqa: E402
+from core.gateway import BoardGateway  # noqa: E402
 
 
 @pytest.fixture
@@ -138,7 +138,7 @@ class TestVariantRegistry:
 
     def test_register_and_get_variant(self):
         """Registered variant is retrievable by name."""
-        from core.variants import register_variant, get_variant_class, available_variants
+        from core.variants import available_variants, get_variant_class, register_variant
 
         class FakeVariant:
             name = "test-fake"

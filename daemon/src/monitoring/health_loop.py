@@ -2,10 +2,13 @@
 """Background system health monitoring loop."""
 
 import asyncio
+import contextlib
 import logging
-from datetime import datetime, timezone
-from fastapi import FastAPI
+from datetime import UTC, datetime
+
 import httpx
+from fastapi import FastAPI
+
 from config import AGENT_ENDPOINTS
 from database import check_sqlite_health
 
@@ -19,7 +22,7 @@ async def _check_agent_health(client: httpx.AsyncClient, role: str, url: str) ->
         resp.raise_for_status()
         return {
             "alive": True,
-            "last_heartbeat": datetime.now(timezone.utc).isoformat(),
+            "last_heartbeat": datetime.now(UTC).isoformat(),
             "current_task": None,
         }
     except Exception:
@@ -40,10 +43,8 @@ async def system_health_loop(app: FastAPI):
             tick += 1
             # Daemon status every 5s
             redis_ok = False
-            try:
+            with contextlib.suppress(Exception):
                 redis_ok = bool(await orch.bb.redis.ping())
-            except Exception:
-                pass
             sqlite_ok = await check_sqlite_health()
 
             daemon_status = {

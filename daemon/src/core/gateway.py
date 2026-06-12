@@ -19,27 +19,30 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Any, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
+from core.board_store import BoardStore, make_event
+from core.capabilities import AuthorizationError, authorize_post, authorize_remove
 from core.entry import (
+    DEFAULT_MAX_BODY_LEN,
+    DEFAULT_MAX_TITLE_LEN,
     BoardEntry,
     clamp_confidence,
     entry_to_dict,
     role_default_type,
-    DEFAULT_MAX_TITLE_LEN,
-    DEFAULT_MAX_BODY_LEN,
 )
-from core.protocol import ENTRY_TYPES
-from core.capabilities import authorize_post, authorize_remove, AuthorizationError
-from core.board_store import BoardStore, make_event
-from core.event_emitter import EventEmitter
 from core.protocol import (
+    ENTRY_TYPES,
     EVENT_BOARD_ENTRY,
+    EVENT_ENTRY_REJECTED,
     EVENT_ENTRY_REMOVED,
     EVENT_ENTRY_STATUS_CHANGED,
-    EVENT_ENTRY_REJECTED,
 )
+
+if TYPE_CHECKING:
+    from core.event_emitter import EventEmitter
 
 logger = logging.getLogger("bmas.gateway")
 
@@ -232,7 +235,7 @@ class BoardGateway:
 
             old_status = entry.status
             entry.status = status
-            entry.updated_at = datetime.now(timezone.utc).isoformat()
+            entry.updated_at = datetime.now(UTC).isoformat()
             await self._store.upsert_entry(task_id, entry)
 
             seq = await self._store.get_next_seq(task_id)
@@ -277,7 +280,7 @@ class BoardGateway:
         Reserved fields (gateway-assigned): id, status, salience, round,
         author, author_node, created_at, updated_at.
         """
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         # Infer type from actor if not provided
         entry_type = raw.get("type")

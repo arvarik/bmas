@@ -3,8 +3,9 @@
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+
 import database as db
-from config import COORDINATION_VARIANT, BLACKBOARD_V2
+from config import BLACKBOARD_V2, COORDINATION_VARIANT
 
 router = APIRouter()
 

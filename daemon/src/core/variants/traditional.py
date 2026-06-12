@@ -17,6 +17,7 @@ Registered behind `coordination.variant: traditional` (default since Phase 5 cut
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -28,7 +29,7 @@ from typing import Any
 import httpx
 
 from core.capabilities import capabilities_for_role
-from core.entry import BoardEntry, envelope_fallback, entry_to_dict
+from core.entry import BoardEntry, entry_to_dict, envelope_fallback
 from core.variants import register_variant
 
 logger = logging.getLogger("bmas.traditional")
@@ -736,7 +737,7 @@ class TraditionalVariant:
             tasks.append(self._sole_answer(actor, query, board_text))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        for (actor, _), result in zip(self.roster.all_actors(), results):
+        for (actor, _), result in zip(self.roster.all_actors(), results, strict=False):
             if isinstance(result, str) and result.strip():
                 answers.append((actor, result.strip()))
             elif isinstance(result, Exception):
@@ -942,20 +943,16 @@ class TraditionalVariant:
 
         # 3. Mark original conflicting entries as superseded
         for ref_id in conflict_entry.refs:
-            try:
+            with contextlib.suppress(Exception):
                 await self.gateway.set_status(
                     task_id, ref_id, "superseded", "conflict_resolver",
                 )
-            except Exception:
-                pass
 
         # 4. Mark the conflict entry itself as superseded
-        try:
+        with contextlib.suppress(Exception):
             await self.gateway.set_status(
                 task_id, conflict_id, "superseded", "conflict_resolver",
             )
-        except Exception:
-            pass
 
         # 5. Archive the private space
         try:
@@ -1100,7 +1097,8 @@ class TraditionalVariant:
         """
         if not self.emitter:
             return
-        try:
+        # Budget events are best-effort
+        with contextlib.suppress(Exception):
             await self.emitter.emit(task_id, "budget", {
                 "spent": round(self.budget_spent, 6),
                 "ceiling": self.budget_ceiling,
@@ -1110,8 +1108,6 @@ class TraditionalVariant:
                     1,
                 ),
             })
-        except Exception:
-            pass  # Budget events are best-effort
 
     # ── Phase 5: Stateful Turn Helpers (doc 12 §5.2) ─────────────────
 
@@ -1330,7 +1326,7 @@ def sole_majority_vote(
     scores: list[tuple[float, str, str]] = []
     for i, (actor_i, answer_i) in enumerate(answers):
         v = 0.0
-        for j, (actor_j, answer_j) in enumerate(answers):
+        for j, (_actor_j, answer_j) in enumerate(answers):
             if i != j:
                 v += sim_fn(answer_i, answer_j)
         scores.append((v, actor_i, answer_i))

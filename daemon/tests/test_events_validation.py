@@ -6,10 +6,8 @@ Covers the _validate_task_id helper which guards against malformed task IDs
 before they reach the Redis pub/sub layer.
 """
 
-import sys
 import os
-
-import pytest
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
