@@ -17,4 +17,4 @@ Tracking table for the true-blackboard migration. Each phase appends a row after
 | 3b — Traditional Variant | `feat/bb-phase-3b` | [#8](https://github.com/arvarik/bmas/pull/8) | Merged → `main` | ✅ |
 | 3c — Coordinator Narration | `feat/bb-phase-3c` | [#9](https://github.com/arvarik/bmas/pull/9) | Merged → `main` | ✅ |
 | **4 — Blackboard Visualization** | `feat/bb-phase-4` | [#10](https://github.com/arvarik/bmas/pull/10) | Merged → `main` | ✅ |
-| **5 — HITL, Conflict, Cockpit, Cutover** | `feat/bb-phase-5` | TBD | In Progress | ⏳ |
+| **5 — HITL, Conflict, Cockpit, Cutover** | `feat/bb-phase-5` | [#11](https://github.com/arvarik/bmas/pull/11) | In Progress | ⏳ |
