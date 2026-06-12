@@ -204,8 +204,8 @@ class Blackboard:
         """Pop all pending hints for a task (destructive read)."""
         hints = await self.redis.lrange(f"bmas:public:hints:{task_id}", 0, -1)  # type: ignore[misc]
         if hints:
-            await self.redis.delete(f"bmas:public:hints:{task_id}")
-        return hints
+            await self.redis.delete(f"bmas:public:hints:{task_id}")  # type: ignore[misc]
+        return hints  # type: ignore[return-value]  # decode_responses=True → always str
 
     async def close(self):
         await self.redis.aclose()
