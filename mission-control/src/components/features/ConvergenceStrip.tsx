@@ -21,12 +21,11 @@ import {
   Tooltip,
   YAxis,
 } from "recharts";
-import type { BudgetState, CoordinatorNarration } from "@/hooks/useTaskStream";
-import type { BoardEntryData } from "@/hooks/useTaskStream";
+import type { BoardEntry, BudgetState, CoordinatorNarration } from "@/hooks/useTaskStream";
 import { STATUS_COLORS, HEAT_RAMP } from "@/lib/design-tokens";
 
 interface ConvergenceStripProps {
-  entries: BoardEntryData[];
+  entries: BoardEntry[];
   budgetState: BudgetState | null;
   narrations: CoordinatorNarration[];
 }

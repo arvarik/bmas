@@ -145,9 +145,7 @@ export default function MissionPage() {
               compact
             />
           )}
-          {consensus && (
-            <ConsensusMeter value={consensus.convergence ?? 0} size={48} />
-          )}
+          <ConsensusMeter consensus={consensus} isLive={isLive} />
 
           {/* HITL controls */}
           {isLive && (
@@ -207,10 +205,10 @@ export default function MissionPage() {
       >
         {/* Center: Blackboard Graph */}
         <div className="mission-cockpit__center">
-          <Panel title="Blackboard" compact>
+          <Panel title="Blackboard">
             <BlackboardGraph
               entries={boardEntries}
-              compact
+              removedEntryIds={[]}
             />
           </Panel>
         </div>
@@ -257,23 +255,16 @@ export default function MissionPage() {
       />
 
       {/* ── Turn Inspector Modal ──────────────────────────────────── */}
-      {selectedTurn && (
-        <div className="mission-cockpit__inspector-overlay">
-          <div className="mission-cockpit__inspector-panel">
-            <button
-              className="mission-cockpit__inspector-close"
-              onClick={() => setSelectedActor(null)}
-            >
-              ✕
-            </button>
-            <TurnInspector
-              turn={selectedTurn}
-              traceEvents={traceEvents.filter(
-                (t) => t.turn_id === selectedTurn.turn_id,
-              )}
-            />
-          </div>
-        </div>
+      {selectedActor && (
+        <TurnInspector
+          turnId={selectedTurn?.turn_id ?? null}
+          activeTurns={activeTurns}
+          completedTurns={completedTurns}
+          traceEvents={traceEvents}
+          boardEntries={boardEntries}
+          rejectedEntries={[]}
+          onClose={() => setSelectedActor(null)}
+        />
       )}
     </div>
   );

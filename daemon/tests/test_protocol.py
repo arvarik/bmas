@@ -53,6 +53,11 @@ from core.protocol import (
     EVENT_TURN_END,
     EVENT_FILE_ADDED,
     EVENT_ARTIFACT_CREATED,
+    # Phase 5 SSE events
+    EVENT_PAUSED,
+    EVENT_RESUMED,
+    EVENT_BUDGET,
+    EVENT_APPROVAL_REQUEST,
     V2_EVENT_NAMES,
     LEGACY_EVENT_NAMES,
     all_v2_event_names,
@@ -196,6 +201,11 @@ class TestSSEEventNames:
         "turn_end",
         "file_added",
         "artifact_created",
+        # Phase 5 additions (doc 05 §6, doc 09 §5, doc 12 §5.1)
+        "paused",
+        "resumed",
+        "budget",
+        "approval_request",
     }
 
     SPEC_LEGACY_EVENTS = {
@@ -203,13 +213,13 @@ class TestSSEEventNames:
     }
 
     def test_all_spec_v2_events_registered(self):
-        """All 11 v2 event names from doc 04 §9 + doc 05 §1.2 are registered."""
+        """All 15 v2 event names from doc 04 §9 + doc 05 §1.2 + Phase 5 are registered."""
         registered = set(V2_EVENT_NAMES.keys())
         assert registered == self.SPEC_V2_EVENTS
 
     def test_v2_event_count(self):
-        """Exactly 11 v2 events (doc 04 §9 + coordinator_narration from doc 05 §1.2)."""
-        assert len(V2_EVENT_NAMES) == 11
+        """Exactly 15 v2 events (doc 04 §9 + coordinator_narration + Phase 5 additions)."""
+        assert len(V2_EVENT_NAMES) == 15
 
     def test_legacy_events_complete(self):
         """All 6 legacy event names are listed."""
@@ -228,6 +238,11 @@ class TestSSEEventNames:
         assert EVENT_TURN_END == "turn_end"
         assert EVENT_FILE_ADDED == "file_added"
         assert EVENT_ARTIFACT_CREATED == "artifact_created"
+        # Phase 5
+        assert EVENT_PAUSED == "paused"
+        assert EVENT_RESUMED == "resumed"
+        assert EVENT_BUDGET == "budget"
+        assert EVENT_APPROVAL_REQUEST == "approval_request"
 
     def test_no_v2_legacy_overlap(self):
         """V2 and legacy event names must not overlap."""
@@ -238,7 +253,7 @@ class TestSSEEventNames:
         """all_v2_event_names() returns sorted list."""
         names = all_v2_event_names()
         assert names == sorted(names)
-        assert len(names) == 11
+        assert len(names) == 15
 
     def test_is_v2_event(self):
         """is_v2_event() correctly identifies v2 events."""

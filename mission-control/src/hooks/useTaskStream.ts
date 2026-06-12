@@ -67,10 +67,13 @@ export interface BoardEntry {
   salience: number;
   seq: number;
   created_at: string;
+  round?: number;
+  status?: string;
 }
 
 export interface TurnRecord {
   turn_id: string;
+  task_id: string;
   actor: string;
   round_no: number;
   phase: string;
@@ -91,6 +94,7 @@ export interface TraceEvent {
   content: string;
   seq: number;
   timestamp: string;
+  run_id?: string;
 }
 
 export interface RejectedEntry {
@@ -602,6 +606,7 @@ export function useTaskStream(taskId: string): TaskStreamData {
         const raw = JSON.parse(ev.data);
         const turn: TurnRecord = {
           turn_id: raw.turn_id ?? `turn-${Date.now()}`,
+          task_id: raw.task_id ?? taskId,
           actor: raw.actor ?? raw.agent_role ?? "unknown",
           round_no: raw.round_no ?? raw.round ?? 0,
           phase: raw.phase ?? "active",

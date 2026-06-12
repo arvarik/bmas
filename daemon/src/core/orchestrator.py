@@ -313,7 +313,9 @@ class Orchestrator:
             context=attachment_context,
             model=triage.litellm_model,
         )
-        # Dual-write debate: Redis (ephemeral) + SQLite (permanent)
+        # DEPRECATED(phase-5): debate_entries dual-write — will be removed
+        # when legacy_pipeline variant is dropped (doc 10 §5 item 97).
+        # Under the 'traditional' variant, board_entries in Redis replace this.
         await self.bb.post_debate(session_id, "planner", plan.get("result", ""))
         try:
             await db.insert_debate_entry(task_id, session_id, "planner", plan.get("result", ""))
@@ -343,6 +345,7 @@ class Orchestrator:
         # Dual-write debate
         await self.bb.post_debate(session_id, "executor", exec_result.get("result", ""))
         try:
+            # DEPRECATED(phase-5): debate_entries dual-write (see comment above)
             await db.insert_debate_entry(task_id, session_id, "executor", exec_result.get("result", ""))
         except Exception:
             logger.warning(f"SQLite debate insert failed for {task_id}/executor")
@@ -470,6 +473,7 @@ Task: {user_task}"""
 
         results = await asyncio.gather(*tasks)
 
+        # DEPRECATED(phase-5): debate_entries dual-write (doc 10 §5 item 97).
         # Post all debate entries — dual-write Redis + SQLite
         for expert, result in zip(experts, results):
             await self.bb.post_debate(
@@ -892,10 +896,11 @@ Task: {user_task}"""
             answer = result.get("answer", "")
             try:
                 await db.complete_task(
-                    task_id, answer[:10000],
-                    model_used=triage.litellm_model,
-                    cost_usd=variant.budget_spent,
+                    task_id,
+                    result_summary=answer[:10000],
+                    result_json=json.dumps(result),
                 )
+                await db.update_task_cost_totals(task_id)
             except Exception as e:
                 logger.warning(f"SQLite complete_task failed for {task_id}: {e}")
 
