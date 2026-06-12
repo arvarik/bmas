@@ -9,13 +9,15 @@ Endpoints:
   POST /api/tasks/{taskId}/approval  — approve/deny a pending run approval
 """
 
+import contextlib
+import json
 import logging
 import os
 import re
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, field_validator
 
 import httpx
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, field_validator
 
 logger = logging.getLogger("bmas.daemon")
 
@@ -91,7 +93,6 @@ async def steer_entry(task_id: str, req: SteerRequest):
         # Read current salience from Redis board entries
         try:
             entry_key = f"bmas:board:{task_id}:entries"
-            import json
             raw = await bb.redis.hget(entry_key, req.entry_id)
             if not raw:
                 raise HTTPException(status_code=404, detail="Entry not found")
@@ -126,7 +127,6 @@ async def steer_entry(task_id: str, req: SteerRequest):
     elif req.action == "retract":
         try:
             entry_key = f"bmas:board:{task_id}:entries"
-            import json
             raw = await bb.redis.hget(entry_key, req.entry_id)
             if not raw:
                 raise HTTPException(status_code=404, detail="Entry not found")
@@ -328,15 +328,13 @@ async def handle_approval(task_id: str, req: ApprovalRequest):
         )
 
     # Emit approval_request event to SSE so the UI updates
-    try:
+    with contextlib.suppress(Exception):
         await orch.bb.publish_event(task_id, "approval_request", {
             "run_id": req.run_id,
             "decision": req.decision,
             "reason": req.reason,
             "by": "operator",
         })
-    except Exception:
-        pass
 
     return {
         "status": f"{req.decision}d",

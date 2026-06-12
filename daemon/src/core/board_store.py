@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import copy
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Callable, Protocol, runtime_checkable
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from core.entry import BoardEntry, entry_from_dict
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # ── Board Event ──────────────────────────────────────────────────────
 
@@ -46,7 +48,7 @@ def make_event(
         "event_type": event_type,
         "entry_id": entry_id,
         "payload": payload or {},
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
 
 
@@ -197,7 +199,7 @@ class InMemoryBoardStore:
         if entry_id in entries:
             entries[entry_id].status = "removed"
             entries[entry_id].updated_at = (
-                datetime.now(timezone.utc).isoformat()
+                datetime.now(UTC).isoformat()
             )
 
     async def get_entry(

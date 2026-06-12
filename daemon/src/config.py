@@ -18,8 +18,8 @@ in main.py. All FATAL messages go to stderr for container log capture.
 import os
 import sys
 from typing import Any
-import yaml
 
+import yaml
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

@@ -1,20 +1,22 @@
-# /opt/bmas/daemon/blackboard.py
+# /opt/bmas/daemon/src/core/blackboard.py
 """
 Redis Blackboard client with atomic Redlock for race-condition prevention.
 Uses single-instance Redis lock (sufficient for homelab; upgrade to
 multi-instance Redlock via aioredlock for production HA).
 """
 
-import uuid
 import json
-from datetime import datetime, timezone
+import uuid
+from datetime import UTC, datetime
+
 import redis.asyncio as aioredis
-from config import REDIS_URL, LOCK_TTL_MS, AGENT_ENDPOINTS
+
+from config import AGENT_ENDPOINTS, LOCK_TTL_MS, REDIS_URL
 
 
 class Blackboard:
-    def __init__(self):
-        self.redis = aioredis.from_url(REDIS_URL, decode_responses=True)
+    def __init__(self) -> None:
+        self.redis: aioredis.Redis = aioredis.from_url(REDIS_URL, decode_responses=True)
 
     # ── Lock Management ──────────────────────────────────────────────
     async def acquire_lock(self, resource: str, ttl_ms: int = LOCK_TTL_MS) -> tuple[bool, str]:
@@ -35,22 +37,22 @@ class Blackboard:
             return 0
         end
         """
-        result = await self.redis.eval(lua, 1, key, lock_id)
+        result = await self.redis.eval(lua, 1, key, lock_id)  # type: ignore[misc]
         return bool(result)
 
     # ── Public Namespace ─────────────────────────────────────
     async def publish_task(self, task_id: str, task_data: dict):
         """Write a task to the public task queue."""
-        await self.redis.hset(
+        await self.redis.hset(  # type: ignore[misc]
             "bmas:public:tasks", task_id,
-            json.dumps({**task_data, "created_at": datetime.now(timezone.utc).isoformat()})
+            json.dumps({**task_data, "created_at": datetime.now(UTC).isoformat()})
         )
 
     async def publish_result(self, task_id: str, result: dict):
         """Write a consensus result to the public results store."""
-        await self.redis.hset(
+        await self.redis.hset(  # type: ignore[misc]
             "bmas:public:results", task_id,
-            json.dumps({**result, "finalized_at": datetime.now(timezone.utc).isoformat()})
+            json.dumps({**result, "finalized_at": datetime.now(UTC).isoformat()})
         )
 
     async def get_state(self) -> dict:
@@ -60,10 +62,10 @@ class Blackboard:
         { phase, iteration, paused, tasks: { id: Task }, agents: { role: AgentStatus } }
         """
         # Orchestrator metadata from bmas:public:state hash
-        state_meta = await self.redis.hgetall("bmas:public:state")
+        state_meta = await self.redis.hgetall("bmas:public:state")  # type: ignore[misc]
 
-        tasks_raw = await self.redis.hgetall("bmas:public:tasks")
-        results = await self.redis.hgetall("bmas:public:results")
+        tasks_raw = await self.redis.hgetall("bmas:public:tasks")  # type: ignore[misc]
+        results = await self.redis.hgetall("bmas:public:results")  # type: ignore[misc]
 
         # Parse tasks and merge in result data
         tasks = {}
@@ -99,13 +101,13 @@ class Blackboard:
         entry = json.dumps({
             "role": agent_role,
             "content": content,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         })
-        await self.redis.rpush(f"bmas:private:{session_id}:debate", entry)
+        await self.redis.rpush(f"bmas:private:{session_id}:debate", entry)  # type: ignore[misc]
 
     async def get_debate(self, session_id: str) -> list[dict]:
         """Read all debate entries for a session."""
-        raw = await self.redis.lrange(f"bmas:private:{session_id}:debate", 0, -1)
+        raw = await self.redis.lrange(f"bmas:private:{session_id}:debate", 0, -1)  # type: ignore[misc]
         return [json.loads(r) for r in raw]
 
     async def clear_private(self, session_id: str):
@@ -113,11 +115,11 @@ class Blackboard:
         Uses SCAN instead of KEYS to avoid blocking the Redis event loop."""
         cursor = 0
         while True:
-            cursor, keys = await self.redis.scan(
+            cursor, keys = await self.redis.scan(  # type: ignore[misc]
                 cursor, match=f"bmas:private:{session_id}:*", count=100
             )
             if keys:
-                await self.redis.delete(*keys)
+                await self.redis.delete(*keys)  # type: ignore[misc]
             if cursor == 0:
                 break
 
@@ -142,23 +144,23 @@ class Blackboard:
     # ── Logging (Streams) ────────────────────────────────────
     async def publish_log(self, node_id: str, message: str, task_id: str | None = None):
         """Push a log entry to global stream, task stream, and Pub/Sub."""
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
         fields = {"node": node_id, "msg": message, "ts": ts}
         
         # 1. Global stream (existing behavior — /api/logs global view)
-        await self.redis.xadd(
+        await self.redis.xadd(  # type: ignore[misc]
             f"bmas:logs:{node_id}",
-            fields,
+            fields,  # type: ignore[arg-type]
             maxlen=1000,
             approximate=True
         )
         
         if task_id:
             # 2. Task-scoped stream (archival to SQLite on completion)
-            await self.redis.xadd(
-                f"bmas:logs:task:{task_id}", {**fields, "task_id": task_id}
+            await self.redis.xadd(  # type: ignore[misc]
+                f"bmas:logs:task:{task_id}", {**fields, "task_id": task_id},  # type: ignore[dict-item]
             )
-            await self.redis.expire(f"bmas:logs:task:{task_id}", 86400)
+            await self.redis.expire(f"bmas:logs:task:{task_id}", 86400)  # type: ignore[misc]
             
             # 3. Pub/Sub (live SSE delivery)
             await self.redis.publish(
@@ -174,32 +176,36 @@ class Blackboard:
     # ── Metrics ──────────────────────────────────────────────
     async def track_cost(self, model: str, tokens: int, cost_usd: float):
         """Increment cost tracking counters."""
-        await self.redis.hincrbyfloat("bmas:metrics:cost", model, cost_usd)
-        await self.redis.hincrby("bmas:metrics:tokens", model, tokens)
+        await self.redis.hincrbyfloat("bmas:metrics:cost", model, cost_usd)  # type: ignore[misc]
+        await self.redis.hincrby("bmas:metrics:tokens", model, tokens)  # type: ignore[misc]
 
     # ── HITL (Human-in-the-Loop) ─────────────────────────────
     async def set_pause(self, paused: bool = True):
         """Set or clear the swarm pause flag (used by Mission Control UI)."""
         if paused:
-            await self.redis.hset("bmas:public:state", "pause", "true")
+            await self.redis.hset("bmas:public:state", "pause", "true")  # type: ignore[misc]
         else:
-            await self.redis.hdel("bmas:public:state", "pause")
+            await self.redis.hdel("bmas:public:state", "pause")  # type: ignore[misc]
 
     async def is_paused(self) -> bool:
         """Check if the swarm is paused by the operator."""
-        val = await self.redis.hget("bmas:public:state", "pause")
+        val = await self.redis.hget("bmas:public:state", "pause")  # type: ignore[misc]
         return val == "true"
 
-    async def push_hint(self, task_id: str, hint: str):
-        """Push an operator hint for a specific task (read on resume)."""
-        await self.redis.lpush(f"bmas:public:hints:{task_id}", hint)
+    async def push_hint(self, task_id: str, hint: str) -> None:
+        """Push an operator hint for a specific task (read on resume).
+
+        Uses RPUSH so hints are processed in FIFO order — consistent with
+        the inject_directive HITL endpoint which also uses RPUSH.
+        """
+        await self.redis.rpush(f"bmas:public:hints:{task_id}", hint)  # type: ignore[misc]
 
     async def pop_hints(self, task_id: str) -> list[str]:
         """Pop all pending hints for a task (destructive read)."""
-        hints = await self.redis.lrange(f"bmas:public:hints:{task_id}", 0, -1)
+        hints = await self.redis.lrange(f"bmas:public:hints:{task_id}", 0, -1)  # type: ignore[misc]
         if hints:
-            await self.redis.delete(f"bmas:public:hints:{task_id}")
-        return hints
+            await self.redis.delete(f"bmas:public:hints:{task_id}")  # type: ignore[misc]
+        return hints  # type: ignore[return-value]  # decode_responses=True → always str
 
     async def close(self):
         await self.redis.aclose()

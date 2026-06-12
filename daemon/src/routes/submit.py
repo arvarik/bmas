@@ -1,13 +1,16 @@
 # /opt/bmas/daemon/src/routes/submit.py
 """Task submission endpoint."""
 
-import uuid
 import asyncio
+import contextlib
 import logging
+import uuid
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-from core.orchestrator import Orchestrator
+
 import database as db
+from core.orchestrator import Orchestrator
 
 logger = logging.getLogger("bmas.daemon")
 
@@ -36,12 +39,10 @@ async def _run_task_safe(orch: Orchestrator, task_id: str, user_task: str):
             await db.fail_task(task_id, f"Internal error: {e}")
         except Exception:
             logger.exception(f"Failed to mark task {task_id} as failed in DB")
-        try:
+        with contextlib.suppress(Exception):  # Redis may be down — zombie recovery handles this on restart
             await orch.bb.publish_event(task_id, "error", {
                 "error_message": str(e)
             })
-        except Exception:
-            pass  # Redis may be down — zombie recovery handles this on restart
 
 
 @router.post("/submit", status_code=202)

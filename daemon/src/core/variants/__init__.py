@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-
 # ── The Variant Protocol ─────────────────────────────────────────────
 
 @runtime_checkable
@@ -136,9 +135,20 @@ _VARIANTS: dict[str, type] = {}
 
 
 def register_variant(name: str, cls: type) -> None:
-    """Register a CoordinationVariant implementation by name."""
+    """Register a CoordinationVariant implementation by name.
+
+    Raises TypeError if cls is not a class.
+    Logs a warning if name was already registered (last write wins).
+    """
     if not isinstance(cls, type):
         raise TypeError(f"register_variant expects a class, got {type(cls)}")
+    if name in _VARIANTS:
+        import logging
+        logging.getLogger("bmas.variants").warning(
+            "Variant '%s' is being re-registered (was %s, now %s). "
+            "Last registration wins.",
+            name, _VARIANTS[name].__name__, cls.__name__,
+        )
     _VARIANTS[name] = cls
 
 

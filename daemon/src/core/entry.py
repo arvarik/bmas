@@ -11,10 +11,9 @@ Authors are opaque strings (seam rule 3): "planner", "expert.valuation",
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from typing import Any
-
 
 # ── Validation Constants ─────────────────────────────────────────────
 
@@ -109,10 +108,10 @@ class BoardEntry:
     space: str = "public"            # public | private:<topic>
     created_by_turn: str | None = None
     created_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     updated_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
 
 

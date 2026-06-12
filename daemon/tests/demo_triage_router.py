@@ -1,5 +1,7 @@
 import asyncio
+
 from triage_router import TriageRouter
+
 
 async def demo():
     router = TriageRouter()

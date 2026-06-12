@@ -9,20 +9,18 @@ salience recompute.
 from __future__ import annotations
 
 import asyncio
+
 import pytest
+from test_helpers import make_critique_entry, make_proposed_entry, make_solution_entry
 
 from core.entry import envelope_fallback
 from core.gateway import BoardGateway, salience_recompute_hook
 from core.protocol import (
     EVENT_BOARD_ENTRY,
+    EVENT_ENTRY_REJECTED,
     EVENT_ENTRY_REMOVED,
     EVENT_ENTRY_STATUS_CHANGED,
-    EVENT_ENTRY_REJECTED,
 )
-
-from test_helpers import make_proposed_entry, make_critique_entry, make_solution_entry
-
-
 
 # ── Envelope Validation Tests ────────────────────────────────────────
 

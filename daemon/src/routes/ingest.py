@@ -12,12 +12,16 @@ cost entries with per-task/per-model/per-node breakdown.
 See doc 06 §5 for the transport architecture.
 """
 
+import contextlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+
+from auth import require_node_key
+from config import BMAS_NODE_KEY
 
 router = APIRouter()
 logger = logging.getLogger("bmas.ingest")
@@ -26,17 +30,13 @@ logger = logging.getLogger("bmas.ingest")
 def _verify_bearer(request: Request) -> None:
     """Validate the BMAS_NODE_KEY bearer token.
 
+    Delegates to the shared auth module (auth.require_node_key).
     Raises HTTPException(401) if the token is missing or invalid.
     """
-    from config import BMAS_NODE_KEY
-
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-
-    token = auth[len("Bearer "):]
-    if token != BMAS_NODE_KEY:
-        raise HTTPException(status_code=401, detail="Invalid bearer token")
+    try:
+        require_node_key(request, BMAS_NODE_KEY)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e)) from e
 
 
 def _compute_cost(
@@ -94,7 +94,7 @@ async def ingest_traces(task_id: str, turn_id: str, request: Request):
     try:
         traces = await request.json()
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
+        raise HTTPException(status_code=400, detail="Invalid JSON body") from None
 
     if not isinstance(traces, list):
         raise HTTPException(status_code=400, detail="Expected a JSON array of trace events")
@@ -102,8 +102,8 @@ async def ingest_traces(task_id: str, turn_id: str, request: Request):
     if not traces:
         return JSONResponse({"status": "ok", "ingested": 0})
 
-    from app import app
     import database as db
+    from app import app
 
     orch = app.state.orchestrator
 
@@ -128,7 +128,7 @@ async def ingest_traces(task_id: str, turn_id: str, request: Request):
                     "seq": str(trace.get("seq", 0)),
                     "role": trace.get("role", ""),
                     "node": trace.get("node", ""),
-                    "ts": trace.get("ts", datetime.now(timezone.utc).isoformat()),
+                    "ts": trace.get("ts", datetime.now(UTC).isoformat()),
                 },
                 maxlen=5000,
                 approximate=True,
@@ -210,7 +210,7 @@ async def ingest_traces(task_id: str, turn_id: str, request: Request):
                 logger.warning(f"Cost entry insert failed for {task_id}/{turn_id}: {e}")
 
             # Publish cost event for live SSE
-            try:
+            with contextlib.suppress(Exception):
                 await orch.bb.publish_event(task_id, "cost", {
                     "model": model,
                     "input_tokens": input_tokens,
@@ -220,8 +220,6 @@ async def ingest_traces(task_id: str, turn_id: str, request: Request):
                     "turn_id": turn_id,
                     "price_source": price_source,
                 })
-            except Exception:
-                pass
         elif usage is None:
             # Legacy hermes -z fallback — usage unknown (doc 06 §3.1 note)
             logger.warning(

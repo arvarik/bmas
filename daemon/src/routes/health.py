@@ -2,9 +2,12 @@
 """Health and state endpoints."""
 
 import asyncio
-from datetime import datetime, timezone
-from fastapi import APIRouter
+import contextlib
+from datetime import UTC, datetime
+
 import httpx
+from fastapi import APIRouter
+
 from config import AGENT_ENDPOINTS
 
 router = APIRouter()
@@ -17,7 +20,7 @@ async def _check_agent_health(client: httpx.AsyncClient, role: str, url: str) ->
         resp.raise_for_status()
         return {
             "alive": True,
-            "last_heartbeat": datetime.now(timezone.utc).isoformat(),
+            "last_heartbeat": datetime.now(UTC).isoformat(),
             "current_task": None,
         }
     except Exception:
@@ -48,7 +51,7 @@ async def get_state():
     )
 
     # Merge live agent health into the state
-    for role, health in zip(health_coros.keys(), agent_results):
+    for role, health in zip(health_coros.keys(), agent_results, strict=False):
         state["agents"][role] = health
 
     return state
@@ -72,10 +75,8 @@ async def health():
 
     orch = app.state.orchestrator
     redis_ok = False
-    try:
+    with contextlib.suppress(Exception):
         redis_ok = bool(await orch.bb.redis.ping())
-    except Exception:
-        pass
 
     sqlite_ok = await check_sqlite_health()
 

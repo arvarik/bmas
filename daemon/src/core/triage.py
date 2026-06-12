@@ -1,4 +1,4 @@
-# /opt/bmas/daemon/triage_router.py
+# /opt/bmas/daemon/src/core/triage.py
 """
 Semantic Triage Router.
 Uses the local Qwen3-1.7B model to classify task complexity and route
@@ -11,13 +11,13 @@ Qwen3's <think> tags are stripped from responses via regex.
 """
 
 import re
+from dataclasses import dataclass
+from enum import Enum
 
 import httpx
-from enum import Enum
-from dataclasses import dataclass
 
 from config import MODEL_ROUTING as _CONFIG_ROUTING
-from config import TRIAGE_ENABLED, TRIAGE_DEFAULT_COMPLEXITY, TRIAGE_MODEL
+from config import TRIAGE_DEFAULT_COMPLEXITY, TRIAGE_ENABLED, TRIAGE_MODEL
 
 
 class Complexity(Enum):

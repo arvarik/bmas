@@ -11,21 +11,25 @@ import logging
 import os
 import shutil
 import uuid
-
 from urllib.parse import quote
 
-from fastapi import APIRouter, UploadFile, File, Form, Request
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 
 import database as db
 from auth import check_bearer_or_pass, require_node_key
 from config import (
-    STORAGE_ENABLED, STORAGE_ARTIFACTS_DIR, STORAGE_MAX_TASK_OUTPUT_MB,
     BMAS_NODE_KEY,
+    STORAGE_ARTIFACTS_DIR,
+    STORAGE_ENABLED,
+    STORAGE_MAX_TASK_OUTPUT_MB,
 )
 from file_utils import (
-    validate_path_traversal, compute_sha256, get_mime_type,
-    slugify_task, resolve_slug_collision,
+    compute_sha256,
+    get_mime_type,
+    resolve_slug_collision,
+    slugify_task,
+    validate_path_traversal,
 )
 
 logger = logging.getLogger("bmas.artifacts")
@@ -207,9 +211,9 @@ async def ingest_artifact(
     except Exception:
         pass  # SSE is best-effort
 
-    # Post artifact board entry (spec §6)
+    # Post artifact board entry (doc 17 §6)
     try:
-        from app import app
+        from app import app  # noqa: PLC0415 — app not importable at module level
         orch = app.state.orchestrator
         body = (
             f"**{rel_path}** v{new_version} ({mime or 'unknown'}, "
@@ -232,7 +236,7 @@ async def ingest_artifact(
             round_no=0,
         )
     except Exception as e:
-        logger.warning(f"Failed to create artifact board entry for {artifact_id}: {e}")
+        logger.warning("Failed to create artifact board entry for %s: %s", artifact_id, e)
 
     logger.info(
         f"Artifact ingested: {artifact_id} ({rel_path} v{new_version}, "

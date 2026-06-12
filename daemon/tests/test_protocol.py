@@ -11,60 +11,59 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from core.protocol import (
-    # Entry types
-    ENTRY_TYPES,
-    ENTRY_TYPE_OBJECTIVE,
-    ENTRY_TYPE_ATTACHMENT,
-    ENTRY_TYPE_PLAN,
-    ENTRY_TYPE_FINDING,
-    ENTRY_TYPE_CRITIQUE,
-    ENTRY_TYPE_REBUTTAL,
-    ENTRY_TYPE_CONFLICT,
-    ENTRY_TYPE_DIRECTIVE,
-    ENTRY_TYPE_SOLUTION,
-    ENTRY_TYPE_ARTIFACT,
-    # Entry statuses
-    ENTRY_STATUSES,
-    ENTRY_STATUS_OPEN,
-    ENTRY_STATUS_SUPERSEDED,
-    ENTRY_STATUS_REMOVED,
     # Redis keys
     BOARD_ENTRIES_KEY,
     BOARD_EVENTS_KEY,
     BOARD_META_KEY,
     BOARD_PRIVATE_KEY,
     BOARD_SALIENCE_KEY,
-    TRACES_KEY,
-    FILES_KEY,
-    EVENTS_CHANNEL,
-    EVENTS_SYSTEM_CHANNEL,
-    V2_KEY_PATTERNS,
-    resolve_key,
-    task_key_patterns,
+    ENTRY_STATUS_OPEN,
+    ENTRY_STATUS_REMOVED,
+    ENTRY_STATUS_SUPERSEDED,
+    # Entry statuses
+    ENTRY_STATUSES,
+    ENTRY_TYPE_ARTIFACT,
+    ENTRY_TYPE_ATTACHMENT,
+    ENTRY_TYPE_CONFLICT,
+    ENTRY_TYPE_CRITIQUE,
+    ENTRY_TYPE_DIRECTIVE,
+    ENTRY_TYPE_FINDING,
+    ENTRY_TYPE_OBJECTIVE,
+    ENTRY_TYPE_PLAN,
+    ENTRY_TYPE_REBUTTAL,
+    ENTRY_TYPE_SOLUTION,
+    # Entry types
+    ENTRY_TYPES,
+    EVENT_APPROVAL_REQUEST,
+    EVENT_ARTIFACT_CREATED,
     # SSE events
     EVENT_BOARD_ENTRY,
-    EVENT_ENTRY_REMOVED,
-    EVENT_ENTRY_STATUS_CHANGED,
-    EVENT_ENTRY_REJECTED,
+    EVENT_BUDGET,
     EVENT_CONSENSUS,
     EVENT_COORDINATOR_NARRATION,
-    EVENT_TRACE,
-    EVENT_TURN_START,
-    EVENT_TURN_END,
+    EVENT_ENTRY_REJECTED,
+    EVENT_ENTRY_REMOVED,
+    EVENT_ENTRY_STATUS_CHANGED,
     EVENT_FILE_ADDED,
-    EVENT_ARTIFACT_CREATED,
     # Phase 5 SSE events
     EVENT_PAUSED,
     EVENT_RESUMED,
-    EVENT_BUDGET,
-    EVENT_APPROVAL_REQUEST,
-    V2_EVENT_NAMES,
+    EVENT_TRACE,
+    EVENT_TURN_END,
+    EVENT_TURN_START,
+    EVENTS_CHANNEL,
+    EVENTS_SYSTEM_CHANNEL,
+    FILES_KEY,
     LEGACY_EVENT_NAMES,
+    TRACES_KEY,
+    V2_EVENT_NAMES,
+    V2_KEY_PATTERNS,
     all_v2_event_names,
-    is_v2_event,
     is_legacy_event,
+    is_v2_event,
+    resolve_key,
+    task_key_patterns,
 )
-
 
 # ── Tests: Entry Types (doc 04 §1) ──────────────────────────────────
 
@@ -101,7 +100,7 @@ class TestEntryStatuses:
 
     def test_all_statuses_registered(self):
         """All 3 entry statuses are registered."""
-        assert ENTRY_STATUSES == {"open", "superseded", "removed"}
+        assert {"open", "superseded", "removed"} == ENTRY_STATUSES
 
     def test_constants_match(self):
         assert ENTRY_STATUS_OPEN == "open"

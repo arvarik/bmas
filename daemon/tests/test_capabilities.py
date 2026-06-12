@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 
 from core.capabilities import (
+    CAPABILITY_PROFILES,
+    AuthorizationError,
     authorize_post,
     authorize_remove,
     capabilities_for_role,
-    AuthorizationError,
-    CAPABILITY_PROFILES,
 )
 
 

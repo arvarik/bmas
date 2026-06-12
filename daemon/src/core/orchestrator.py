@@ -1,4 +1,4 @@
-# /opt/bmas/daemon/orchestrator.py
+# /opt/bmas/daemon/src/core/orchestrator.py
 """
 bMAS Orchestrator: decomposes tasks, dispatches to agents, manages debate cycles.
 
@@ -7,25 +7,34 @@ blackboard for live UI) and SQLite (permanent task history). SQLite writes
 are best-effort — they log warnings on failure but never interrupt a running task.
 """
 
+import asyncio
+import contextlib
+import json
 import logging
 import os
 import uuid
-import asyncio
-import json
-import httpx
+from datetime import UTC, datetime
 from typing import Any
 
-from datetime import datetime, timezone
+import httpx
 
-from core.blackboard import Blackboard
-from core.triage import TriageRouter, TriageResult, Complexity, MODEL_ROUTING  # Phase 4 §4.4
-from models.personas import DEFAULT_PERSONAS, generate_expert_persona
+import database as db
 from config import (
-    AGENT_ENDPOINTS, LITELLM_URL, LITELLM_KEY, TRIAGE_URL,
-    COORDINATION_VARIANT, TRADITIONAL_CONFIG, ROLE_REGISTRY,
+    AGENT_ENDPOINTS,
+    COORDINATION_VARIANT,
+    LITELLM_KEY,
+    LITELLM_URL,
+    MODEL_PRICING,
+    ROLE_REGISTRY,
+    TRADITIONAL_CONFIG,
+    TRIAGE_URL,
+)
+from config import (
     MODEL_ROUTING as CONFIG_MODEL_ROUTING,
 )
-import database as db
+from core.blackboard import Blackboard
+from core.triage import MODEL_ROUTING, Complexity, TriageResult, TriageRouter  # Phase 4 §4.4
+from models.personas import DEFAULT_PERSONAS, generate_expert_persona
 
 logger = logging.getLogger("bmas.orchestrator")
 
@@ -60,21 +69,17 @@ class Orchestrator:
 
     async def _set_phase(self, phase: str, iteration: int = 0, task_id: str | None = None):
         """Update the orchestrator phase in Redis and publish Pub/Sub event."""
-        try:
+        with contextlib.suppress(Exception):
             await self.bb.redis.hset("bmas:public:state", mapping={
                 "phase": phase,
                 "iteration": str(iteration),
             })
-        except Exception:
-            pass
 
         if task_id:
-            try:
+            with contextlib.suppress(Exception):
                 await self.bb.publish_event(task_id, "phase", {
                     "phase": phase, "iteration": iteration
                 })
-            except Exception:
-                pass
 
     async def _check_abort(self, task_id: str):
         """Check if the operator requested an abort for this task.
@@ -97,7 +102,7 @@ class Orchestrator:
     async def _publish_task_state(self, task_id: str, label: str, status: str,
                                   sub_tasks: list[dict] | None = None):
         """Write task state to Redis (real-time) AND sub-tasks to SQLite (persistent)."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         task_data = {
             "id": task_id,
             "label": label,
@@ -118,15 +123,13 @@ class Orchestrator:
 
             # Publish sub-task status changes via Pub/Sub
             for st in sub_tasks:
-                try:
+                with contextlib.suppress(Exception):
                     await self.bb.publish_event(task_id, "subtask", {
                         "id": st["id"],
                         "label": st.get("label", ""),
                         "status": st.get("status", "pending"),
                         "agent_role": st.get("agent_role", "unknown"),
                     })
-                except Exception:
-                    pass
 
     async def process_task(self, user_task: str, task_id: str | None = None) -> dict:
         """Main entry point: triage → plan → execute → audit → publish."""
@@ -141,12 +144,10 @@ class Orchestrator:
 
         try:
             # Emit task-started system event
-            try:
+            with contextlib.suppress(Exception):
                 await self.bb.publish_system_event("task-started", {
                     "task_id": task_id, "label": user_task[:80]
                 })
-            except Exception:
-                pass
 
             # Create persistent task record (SQLite)
             # Only create if we generated the ID here.
@@ -226,20 +227,16 @@ class Orchestrator:
                 logger.warning(f"SQLite fail_task failed for {task_id}")
             
             # Emit error event
-            try:
+            with contextlib.suppress(Exception):
                 await self.bb.publish_event(task_id, "error", {
                     "error_message": str(e)
                 })
-            except Exception:
-                pass
 
             # Emit system task-completed (failed) event
-            try:
+            with contextlib.suppress(Exception):
                 await self.bb.publish_system_event("task-completed", {
                     "task_id": task_id, "status": "failed", "label": user_task[:80]
                 })
-            except Exception:
-                pass
 
             raise
 
@@ -267,7 +264,7 @@ class Orchestrator:
         # Gather file attachments for context (doc 17 §4)
         attachment_context: dict | None = None
         try:
-            from config import STORAGE_ENABLED, STORAGE_CONFIG
+            from config import STORAGE_CONFIG, STORAGE_ENABLED
             if STORAGE_ENABLED:
                 task_files = await db.get_task_files(task_id)
                 if task_files:
@@ -289,7 +286,7 @@ class Orchestrator:
                                     # Read from sidecar extracted text file first
                                     text_path = stored + ".extracted.txt"
                                     if os.path.exists(text_path):
-                                        with open(text_path, "r", encoding="utf-8") as fh:
+                                        with open(text_path, encoding="utf-8") as fh:
                                             full_text = fh.read()
                                         att["text_preview"] = full_text[:preview_chars]
                                     else:
@@ -313,22 +310,18 @@ class Orchestrator:
             context=attachment_context,
             model=triage.litellm_model,
         )
-        # DEPRECATED(phase-5): debate_entries dual-write — will be removed
-        # when legacy_pipeline variant is dropped (doc 10 §5 item 97).
-        # Under the 'traditional' variant, board_entries in Redis replace this.
+        # Post planner debate entry via pub/sub (legacy pipeline transport)
         await self.bb.post_debate(session_id, "planner", plan.get("result", ""))
         try:
             await db.insert_debate_entry(task_id, session_id, "planner", plan.get("result", ""))
         except Exception:
-            logger.warning(f"SQLite debate insert failed for {task_id}/planner")
-        try:
+            logger.warning("SQLite debate insert failed for %s/planner", task_id)
+        with contextlib.suppress(Exception):
             await self.bb.publish_event(task_id, "debate", {
                 "agent_role": "planner",
                 "content": plan.get("result", ""),
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
             })
-        except Exception:
-            pass
         sub_tasks[1]["status"] = "completed"
 
         # Step 2: Executor handles sub-tasks
@@ -342,21 +335,18 @@ class Orchestrator:
             DEFAULT_PERSONAS["executor"],
             model=triage.litellm_model,
         )
-        # Dual-write debate
+        # Post executor debate entry
         await self.bb.post_debate(session_id, "executor", exec_result.get("result", ""))
         try:
-            # DEPRECATED(phase-5): debate_entries dual-write (see comment above)
             await db.insert_debate_entry(task_id, session_id, "executor", exec_result.get("result", ""))
         except Exception:
-            logger.warning(f"SQLite debate insert failed for {task_id}/executor")
-        try:
+            logger.warning("SQLite debate insert failed for %s/executor", task_id)
+        with contextlib.suppress(Exception):
             await self.bb.publish_event(task_id, "debate", {
                 "agent_role": "executor",
                 "content": exec_result.get("result", ""),
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
             })
-        except Exception:
-            pass
         sub_tasks[2]["status"] = "completed"
 
         # Step 3: Auditor reviews, resolves, cleans
@@ -395,24 +385,20 @@ class Orchestrator:
             )
             await db.update_task_cost_totals(task_id)
         except Exception as e:
-            logger.warning(f"SQLite complete_task failed for {task_id}: {e}")
+            logger.warning("SQLite complete_task failed for %s: %s", task_id, e)
 
-        try:
+        with contextlib.suppress(Exception):
             await self.bb.publish_event(task_id, "complete", {
                 "result_summary": audit.get("result", ""),
                 "result_json": result_data,
                 "duration_ms": None,
                 "total_cost_usd": None,
             })
-        except Exception:
-            pass
 
-        try:
+        with contextlib.suppress(Exception):
             await self.bb.publish_system_event("task-completed", {
                 "task_id": task_id, "status": "completed", "label": user_task[:80]
             })
-        except Exception:
-            pass
 
         return {"task_id": task_id, "result": audit.get("result", "")}
 
@@ -460,7 +446,7 @@ Task: {user_task}"""
         await self._check_abort(task_id)
         roles = ["planner", "executor", "auditor"]
         tasks = []
-        for i, (expert, role) in enumerate(zip(experts, roles)):
+        for _i, (expert, role) in enumerate(zip(experts, roles, strict=False)):
             persona = generate_expert_persona(
                 expert["domain"], expert["expertise"], user_task
             )
@@ -473,9 +459,8 @@ Task: {user_task}"""
 
         results = await asyncio.gather(*tasks)
 
-        # DEPRECATED(phase-5): debate_entries dual-write (doc 10 §5 item 97).
-        # Post all debate entries — dual-write Redis + SQLite
-        for expert, result in zip(experts, results):
+        # Post all debate entries via pub/sub
+        for expert, result in zip(experts, results, strict=False):
             await self.bb.post_debate(
                 session_id, expert["domain"], result.get("result", "")
             )
@@ -484,15 +469,13 @@ Task: {user_task}"""
                     task_id, session_id, expert["domain"], result.get("result", "")
                 )
             except Exception:
-                logger.warning(f"SQLite debate insert failed for {task_id}/{expert['domain']}")
-            try:
+                logger.warning("SQLite debate insert failed for %s/%s", task_id, expert["domain"])
+            with contextlib.suppress(Exception):
                 await self.bb.publish_event(task_id, "debate", {
                     "agent_role": expert["domain"],
                     "content": result.get("result", ""),
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                 })
-            except Exception:
-                pass
 
         # Revert to Auditor persona for synthesis
         await self._check_abort(task_id)
@@ -523,22 +506,18 @@ Task: {user_task}"""
         except Exception as e:
             logger.warning(f"SQLite complete_task failed for {task_id}: {e}")
 
-        try:
+        with contextlib.suppress(Exception):
             await self.bb.publish_event(task_id, "complete", {
                 "result_summary": synthesis.get("result", ""),
                 "result_json": result_data,
                 "duration_ms": None,
                 "total_cost_usd": None,
             })
-        except Exception:
-            pass
 
-        try:
+        with contextlib.suppress(Exception):
             await self.bb.publish_system_event("task-completed", {
                 "task_id": task_id, "status": "completed", "label": user_task[:80]
             })
-        except Exception:
-            pass
 
         return {"task_id": task_id, "result": synthesis.get("result", "")}
 
@@ -563,9 +542,6 @@ Task: {user_task}"""
         Retries up to 3 times with exponential backoff to handle Hermes
         cold-start delays (Gotcha #2 — first call after restart takes 5-15s).
         """
-        from config import MODEL_PRICING
-        from config import ROLE_REGISTRY
-
         # Phase 3a: Resolve profile and endpoint from the role registry
         # (doc 12 §2.5). Falls back to AGENT_ENDPOINTS for roles not in
         # the registry (backward compatible with legacy dispatch).
@@ -651,7 +627,7 @@ Task: {user_task}"""
                     # trace_count > 0, the ingest endpoint already recorded
                     # cost from the final trace's usage.
                     if trace_count == 0:
-                        try:
+                        with contextlib.suppress(Exception):  # Cost tracking is best-effort
                             await db.insert_cost_entry_v2(
                                 task_id=task_id,
                                 model=model_used,
@@ -665,10 +641,8 @@ Task: {user_task}"""
                                 price_source=price_source,
                                 joules_estimate=0.0,  # Beszel stub
                             )
-                        except Exception:
-                            pass  # Cost tracking is best-effort
 
-                        try:
+                        with contextlib.suppress(Exception):
                             await self.bb.publish_event(task_id, "cost", {
                                 "model": model_used,
                                 "input_tokens": prompt_tokens,
@@ -678,8 +652,6 @@ Task: {user_task}"""
                                 "turn_id": response_data.get("turn_id", turn_id),
                                 "price_source": price_source,
                             })
-                        except Exception:
-                            pass
                     else:
                         logger.debug(
                             f"Skipping cost insert for {task_id}/{turn_id} — "
@@ -726,10 +698,8 @@ Task: {user_task}"""
                 await self._safe_log(role, f"ERROR after 3 attempts: {e}", task_id=task_id)
 
                 # Complete turn as failed
-                try:
+                with contextlib.suppress(Exception):
                     await db.complete_turn(turn_id, "failed", 0, 0.0)
-                except Exception:
-                    pass
 
                 return {"task_id": task_id, "status": "failed", "result": str(e)}
 
@@ -747,11 +717,11 @@ Task: {user_task}"""
         The TraditionalVariant owns the loop (genesis, step, finalize).
         CU and AG calls are control-plane LiteLLM calls, never Hermes runs.
         """
+        from config import MODEL_PRICING
         from core.board_store import InMemoryBoardStore
         from core.event_emitter import RedisEventEmitter
         from core.gateway import BoardGateway, salience_recompute_hook
         from core.variants.traditional import TraditionalVariant
-        from config import MODEL_PRICING
 
         await self._safe_log("daemon",
             f"Traditional variant | tier={triage.complexity.value}", task_id=task_id)
@@ -851,7 +821,7 @@ Task: {user_task}"""
                     )
 
                     # Process results and track cost
-                    for activation, result in zip(step_result.activations, results):
+                    for activation, result in zip(step_result.activations, results, strict=False):
                         if isinstance(result, Exception):
                             logger.warning(
                                 f"Turn failed for {activation.actor}: {result}"
@@ -956,7 +926,7 @@ Task: {user_task}"""
         turn_id = payload.get("turn_id", "")
 
         # Emit turn_start SSE event for WorkerLane/AgentTrace
-        try:
+        with contextlib.suppress(Exception):  # SSE is best-effort
             await self.bb.publish_event(task_id, "turn_start", {
                 "turn_id": turn_id,
                 "actor": activation.actor,
@@ -964,8 +934,6 @@ Task: {user_task}"""
                 "model": activation.model,
                 "node": activation.node_endpoint,
             })
-        except Exception:
-            pass  # SSE is best-effort
 
         # Dispatch to agent node
         response = await self._dispatch_agent(

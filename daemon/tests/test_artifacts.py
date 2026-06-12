@@ -7,8 +7,8 @@ conftest.py injects a fake config module so routes/artifacts.py can be
 imported without triggering config.py's sys.exit(1).
 """
 
-import os
 import asyncio
+import os
 
 import pytest
 
@@ -71,9 +71,10 @@ async def _create_test_task(tid):
 @pytest.fixture
 def client(db_path, mock_config):
     """FastAPI test client."""
-    from fastapi.testclient import TestClient
-    from routes.artifacts import router
     from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from routes.artifacts import router
 
     test_app = FastAPI()
     test_app.include_router(router)

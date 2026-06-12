@@ -10,7 +10,6 @@ endpoint (routes/events.py) to register / filter / validate.
 """
 from __future__ import annotations
 
-
 # ── Board Entry Types (doc 04 §1) ────────────────────────────────────
 #
 # Fixed vocabulary — the gateway validates proposed entries against this

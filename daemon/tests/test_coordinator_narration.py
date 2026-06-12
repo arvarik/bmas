@@ -11,20 +11,19 @@ Hard constraints tested:
 """
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
 from core.entry import BoardEntry
 from core.event_emitter import InMemoryEventEmitter
 from core.variants.traditional import (
-    parse_cu_output,
-    TraditionalVariant,
+    CONSTANT_ROLE_DESCRIPTIONS,
     AgentRoster,
     ExpertIdentity,
-    CONSTANT_ROLE_DESCRIPTIONS,
+    TraditionalVariant,
+    parse_cu_output,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -43,8 +42,8 @@ def _make_entry(
         id=eid, task_id="t", type=etype, author=author, body=body,
         title=body[:80], refs=refs or [], confidence=0.8, status=status,
         round=round_no,
-        created_at=datetime.now(timezone.utc).isoformat(),
-        updated_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
+        updated_at=datetime.now(UTC).isoformat(),
     )
 
 

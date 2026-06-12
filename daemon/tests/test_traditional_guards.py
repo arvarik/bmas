@@ -5,13 +5,12 @@ No LLM, no Redis — pure logic tests against in-memory board state.
 """
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
 from core.entry import BoardEntry
 from core.variants.traditional import TraditionalVariant, _entries_hash
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -34,8 +33,8 @@ def _make_entry(
         status=status,
         salience=salience,
         round=round_no,
-        created_at=datetime.now(timezone.utc).isoformat(),
-        updated_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
+        updated_at=datetime.now(UTC).isoformat(),
     )
 
 

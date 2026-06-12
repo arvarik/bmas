@@ -1,0 +1,47 @@
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "TCH", # flake8-type-checking
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in default arguments (FastAPI Depends)
+    "SIM108", # ternary operators (readability preference)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["config", "database", "auth", "file_utils", "core", "models", "routes", "monitoring"]
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+warn_return_any = false
+warn_unused_configs = true
+# Core modules get stricter checking
+[[tool.mypy.overrides]]
+module = ["core.*", "database", "config", "auth"]
+warn_return_any = true
+disallow_any_generics = false
+
+# redis-py type stubs expose commands as `Awaitable[T] | T` (supporting both sync
+# and async APIs), which mypy flags as [misc] errors when awaited. Suppress those
+# false positives specifically in the Redis client wrapper.
+[[tool.mypy.overrides]]
+module = ["core.blackboard"]
+disable_error_code = ["misc", "arg-type", "dict-item"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

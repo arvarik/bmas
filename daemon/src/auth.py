@@ -5,7 +5,7 @@ Consolidates bearer-token auth logic used by both files.py and
 artifacts.py to avoid code duplication.
 """
 
-from fastapi import Request, HTTPException
+from fastapi import HTTPException, Request
 
 
 def check_bearer_or_pass(request: Request, node_key: str) -> None:
