@@ -38,14 +38,19 @@ async def system_health_loop(app: FastAPI):
     orch = app.state.orchestrator
     client = app.state.health_client
     tick = 0
+    sqlite_ok = True  # Assume healthy until first probe
     while True:
         try:
             tick += 1
-            # Daemon status every 5s
+            # Redis ping every 5s (cheap TCP round-trip)
             redis_ok = False
             with contextlib.suppress(Exception):
                 redis_ok = bool(await orch.bb.redis.ping())
-            sqlite_ok = await check_sqlite_health()
+
+            # SQLite check every 30s (every 6 ticks) — opening a connection
+            # with 4 PRAGMAs is expensive for a pure liveness signal.
+            if tick % 6 == 1:
+                sqlite_ok = await check_sqlite_health()
 
             daemon_status = {
                 "status": "healthy" if (redis_ok and sqlite_ok) else "degraded",
@@ -70,3 +75,4 @@ async def system_health_loop(app: FastAPI):
         except Exception as e:
             logger.warning(f"System health loop error: {e}")
             await asyncio.sleep(5)
+

@@ -2,7 +2,7 @@
 
 Usage:
   python -m eval.cli benchmark --dataset gsm8k --limit 10
-  python -m eval.cli ab --dataset gsm8k --variant-a legacy_pipeline --variant-b traditional
+  python -m eval.cli ab --dataset gsm8k --variant-a traditional --variant-b patchboard
   python -m eval.cli report --file-a results/run_a_summary.json --file-b results/run_b_summary.json
   python -m eval.cli inject-failure --node node-1 --mode kill --confirm-destructive
 
@@ -67,7 +67,7 @@ def main() -> None:
         help="Dataset to evaluate",
     )
     ab.add_argument(
-        "--variant-a", type=str, default="legacy_pipeline", help="First variant"
+        "--variant-a", type=str, default="traditional", help="First variant"
     )
     ab.add_argument(
         "--variant-b", type=str, default="traditional", help="Second variant"

@@ -271,15 +271,26 @@ export function useTaskStream(taskId: string): TaskStreamData {
         try {
           const rawCost = await costRes.json();
           const byModel: Record<string, { cost: number; tokens: number }> = {};
+          let computedTotalTokens = 0;
+          let computedTotalCost = 0;
           for (const entry of rawCost.by_model ?? []) {
+            const modelTokens = (entry.input_tokens ?? 0) + (entry.output_tokens ?? 0);
+            const modelCost = entry.cost_usd ?? 0;
             byModel[entry.model ?? "unknown"] = {
-              cost: entry.cost_usd ?? 0,
-              tokens: (entry.input_tokens ?? 0) + (entry.output_tokens ?? 0),
+              cost: modelCost,
+              tokens: modelTokens,
             };
+            computedTotalTokens += modelTokens;
+            computedTotalCost += modelCost;
           }
+          // Prefer top-level totals from daemon; fall back to computed
+          const totalCost = rawCost.total_cost_usd ?? rawCost.total_cost ?? computedTotalCost;
+          const totalTokens = rawCost.total_tokens ?? rawCost.total_input_tokens != null
+            ? (rawCost.total_input_tokens ?? 0) + (rawCost.total_output_tokens ?? 0)
+            : computedTotalTokens;
           costData = {
-            total_cost: rawCost.total_cost_usd ?? 0,
-            total_tokens: rawCost.total_tokens ?? 0,
+            total_cost: totalCost,
+            total_tokens: totalTokens,
             by_model: byModel,
           };
         } catch {

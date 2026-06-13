@@ -188,7 +188,7 @@ class TestTasksColumns:
 
     @pytest.mark.asyncio
     async def test_variant_default(self, v2_db):
-        """New tasks should get variant='legacy_pipeline' by default."""
+        """New tasks should get variant='traditional' by default."""
         async with aiosqlite.connect(v2_db) as db:
             await db.execute("PRAGMA foreign_keys=ON")
             await db.execute(
@@ -197,7 +197,7 @@ class TestTasksColumns:
             await db.commit()
             cursor = await db.execute("SELECT variant FROM tasks WHERE id='t1'")
             row = await cursor.fetchone()
-            assert row[0] == "legacy_pipeline"
+            assert row[0] == "traditional"
 
 
 # ── Tests: cost_entries column additions ─────────────────────────────

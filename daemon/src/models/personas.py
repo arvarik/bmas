@@ -133,12 +133,7 @@ If the board is NOT sufficient:
 """,
 }
 
-# Legacy aliases for backward compatibility
-DEFAULT_PERSONAS = {
-    "planner": ROLE_PERSONAS["planner"],
-    "executor": ROLE_PERSONAS.get("planner", ""),  # legacy; experts are generated dynamically
-    "auditor": ROLE_PERSONAS["critic"],             # legacy; auditor → critic
-}
+
 
 
 # ── Expert Persona Generation (AG, doc 05 §2.1) ────────────────────

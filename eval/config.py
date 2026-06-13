@@ -74,7 +74,7 @@ def load_eval_config(config_path: str | None = None) -> dict:
 
     # Coordination block
     coordination = cfg.get("coordination", {})
-    variant = coordination.get("variant", "legacy_pipeline")
+    variant = coordination.get("variant", "traditional")
 
     # Nodes
     nodes = cfg.get("nodes", [])

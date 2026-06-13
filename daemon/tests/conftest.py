@@ -54,7 +54,7 @@ _fake_config.STORAGE_CONFIG = {
 }
 
 # Phase 3b: Traditional variant config values (needed by orchestrator imports)
-_fake_config.COORDINATION_VARIANT = "legacy_pipeline"
+_fake_config.COORDINATION_VARIANT = "traditional"
 _fake_config.BLACKBOARD_V2 = False
 _fake_config.TRADITIONAL_CONFIG = {
     "max_rounds": 4,

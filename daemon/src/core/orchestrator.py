@@ -11,7 +11,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -33,8 +32,7 @@ from config import (
     MODEL_ROUTING as CONFIG_MODEL_ROUTING,
 )
 from core.blackboard import Blackboard
-from core.triage import MODEL_ROUTING, Complexity, TriageResult, TriageRouter  # Phase 4 §4.4
-from models.personas import DEFAULT_PERSONAS, generate_expert_persona
+from core.triage import MODEL_ROUTING, Complexity, TriageResult, TriageRouter
 
 logger = logging.getLogger("bmas.orchestrator")
 
@@ -154,7 +152,8 @@ class Orchestrator:
             # If task_id was passed, it was already created by the async submit endpoint.
             if task_id == f"task-{session_id}":
                 try:
-                    await db.create_task(task_id, user_task[:80], user_task)
+                    await db.create_task(task_id, user_task[:80], user_task,
+                                         variant=COORDINATION_VARIANT)
                 except Exception as e:
                     logger.error(f"SQLite create_task failed for {task_id}: {e}")
                     # Continue — Redis still tracks the task for the live UI
@@ -183,13 +182,14 @@ class Orchestrator:
             await self._safe_log("daemon",
                 f"Triage: {triage.complexity.value} → {triage.litellm_model}", task_id=task_id)
 
-            # Update task with triage result (SQLite)
+            # Update task with triage result + active variant (SQLite)
             try:
                 await db.update_task_status(
                     task_id,
                     status="running",
                     complexity=triage.complexity.value,
                     model_used=triage.litellm_model,
+                    variant=COORDINATION_VARIANT,  # stamp correct variant, not schema default
                 )
             except Exception as e:
                 logger.warning(f"SQLite update_task_status failed for {task_id}: {e}")
@@ -201,23 +201,10 @@ class Orchestrator:
                 {"id": f"{task_id}-exec",    "label": "Execute sub-tasks",     "status": "pending",  "agent_role": "executor", "depends_on": [f"{task_id}-plan"]},
                 {"id": f"{task_id}-audit",   "label": "Audit & consensus",     "status": "pending",  "agent_role": "auditor",  "depends_on": [f"{task_id}-exec"]},
             ])
-
-            # 3. Phase 3b: Traditional variant intercept (doc 05)
-            # When coordination.variant == 'traditional', the cyclic
-            # blackboard loop replaces both legacy pipelines.
-            if COORDINATION_VARIANT == "traditional":
-                return await self._run_traditional(
-                    task_id, session_id, user_task, triage,
-                )
-
-            # 4. For COMPLEX tasks, use dynamic expert personas (legacy)
-            if triage.complexity == Complexity.COMPLEX:
-                return await self._complex_research_flow(
-                    task_id, session_id, user_task
-                )
-
-            # 5. For SIMPLE/LIGHT/MEDIUM, use standard Planner→Executor→Auditor flow (legacy)
-            return await self._standard_flow(task_id, session_id, user_task, triage)
+            # 3. Run the blackboard coordination loop
+            return await self._run_traditional(
+                task_id, session_id, user_task, triage,
+            )
 
         except Exception as e:
             # Record failure in SQLite before re-raising
@@ -244,469 +231,7 @@ class Orchestrator:
             await self._set_phase("idle", 0, task_id=task_id)
             await self.bb.release_lock(f"orchestrator:{task_id}", lock_id)
 
-    async def _standard_flow(
-        self, task_id: str, session_id: str, user_task: str, triage
-    ) -> dict:
-        """Standard bMAS flow: Plan → Execute → Audit."""
-        sub_tasks = [
-            {"id": f"{task_id}-triage", "label": f"Triage: {triage.complexity.value}", "status": "completed", "agent_role": "planner",  "depends_on": []},
-            {"id": f"{task_id}-plan",   "label": "Plan decomposition",    "status": "pending",   "agent_role": "planner",  "depends_on": [f"{task_id}-triage"]},
-            {"id": f"{task_id}-exec",   "label": "Execute sub-tasks",     "status": "pending",   "agent_role": "executor", "depends_on": [f"{task_id}-plan"]},
-            {"id": f"{task_id}-audit",  "label": "Audit & consensus",     "status": "pending",   "agent_role": "auditor",  "depends_on": [f"{task_id}-exec"]},
-        ]
-
-        # Step 1: Planner decomposes the task
-        await self._check_abort(task_id)
-        await self._set_phase("planning", 1, task_id=task_id)
-        sub_tasks[1]["status"] = "running"
-        await self._publish_task_state(task_id, user_task[:80], "running", sub_tasks)
-
-        # Gather file attachments for context (doc 17 §4)
-        attachment_context: dict | None = None
-        try:
-            from config import STORAGE_CONFIG, STORAGE_ENABLED
-            if STORAGE_ENABLED:
-                task_files = await db.get_task_files(task_id)
-                if task_files:
-                    preview_chars = int(STORAGE_CONFIG.get("attachment_preview_chars", 1500))
-                    attachments = []
-                    for tf in task_files:
-                        att = {
-                            "file_id": tf["id"],
-                            "name": tf["name"],
-                            "mime": tf["mime"],
-                            "bytes": tf["bytes"],
-                            "sha256": tf["sha256"],
-                        }
-                        # Include extracted text preview if available
-                        if tf.get("extracted_chars", 0) > 0:
-                            stored = tf.get("stored_path", "")
-                            if stored:
-                                try:
-                                    # Read from sidecar extracted text file first
-                                    text_path = stored + ".extracted.txt"
-                                    if os.path.exists(text_path):
-                                        with open(text_path, encoding="utf-8") as fh:
-                                            full_text = fh.read()
-                                        att["text_preview"] = full_text[:preview_chars]
-                                    else:
-                                        # Fallback: read raw file bytes and extract
-                                        from file_utils import extract_text_file
-                                        with open(stored, "rb") as fh:
-                                            file_bytes = fh.read()
-                                        preview = extract_text_file(file_bytes, max_chars=preview_chars)
-                                        att["text_preview"] = preview
-                                except Exception:
-                                    pass
-                        attachments.append(att)
-                    attachment_context = {"_task_id": task_id, "attachments": attachments}
-                    await self._safe_log("daemon",
-                        f"Attachments: {len(attachments)} file(s) attached", task_id=task_id)
-        except Exception as e:
-            logger.warning(f"Attachment gathering failed for {task_id}: {e}")
-
-        plan = await self._dispatch_agent(
-            "planner", task_id, user_task, DEFAULT_PERSONAS["planner"],
-            context=attachment_context,
-            model=triage.litellm_model,
-        )
-        # Post planner debate entry via pub/sub (legacy pipeline transport)
-        await self.bb.post_debate(session_id, "planner", plan.get("result", ""))
-        try:
-            await db.insert_debate_entry(task_id, session_id, "planner", plan.get("result", ""))
-        except Exception:
-            logger.warning("SQLite debate insert failed for %s/planner", task_id)
-        with contextlib.suppress(Exception):
-            await self.bb.publish_event(task_id, "debate", {
-                "agent_role": "planner",
-                "content": plan.get("result", ""),
-                "created_at": datetime.now(UTC).isoformat(),
-            })
-        sub_tasks[1]["status"] = "completed"
-
-        # Step 2: Executor handles sub-tasks
-        await self._check_abort(task_id)
-        await self._set_phase("executing", 2, task_id=task_id)
-        sub_tasks[2]["status"] = "running"
-        await self._publish_task_state(task_id, user_task[:80], "running", sub_tasks)
-
-        exec_result = await self._dispatch_agent(
-            "executor", task_id, plan.get("result", user_task),
-            DEFAULT_PERSONAS["executor"],
-            model=triage.litellm_model,
-        )
-        # Post executor debate entry
-        await self.bb.post_debate(session_id, "executor", exec_result.get("result", ""))
-        try:
-            await db.insert_debate_entry(task_id, session_id, "executor", exec_result.get("result", ""))
-        except Exception:
-            logger.warning("SQLite debate insert failed for %s/executor", task_id)
-        with contextlib.suppress(Exception):
-            await self.bb.publish_event(task_id, "debate", {
-                "agent_role": "executor",
-                "content": exec_result.get("result", ""),
-                "created_at": datetime.now(UTC).isoformat(),
-            })
-        sub_tasks[2]["status"] = "completed"
-
-        # Step 3: Auditor reviews, resolves, cleans
-        await self._check_abort(task_id)
-        await self._set_phase("auditing", 3, task_id=task_id)
-        sub_tasks[3]["status"] = "running"
-        await self._publish_task_state(task_id, user_task[:80], "running", sub_tasks)
-
-        debate = await self.bb.get_debate(session_id)
-        audit_context = json.dumps(debate, indent=2)
-        audit = await self._dispatch_agent(
-            "auditor", task_id,
-            f"Review this debate and produce consensus:\n\n{audit_context}",
-            DEFAULT_PERSONAS["auditor"],
-            model=triage.litellm_model,
-        )
-        sub_tasks[3]["status"] = "completed"
-
-        # Step 4: Publish consensus and cleanup
-        await self._set_phase("finalizing", 4, task_id=task_id)
-        await self._publish_task_state(task_id, user_task[:80], "completed", sub_tasks)
-        result_data = {
-            "consensus": audit.get("result", ""),
-            "triage": triage.complexity.value,
-        }
-        await self.bb.publish_result(task_id, result_data)
-        await self.bb.clear_private(session_id)
-        await self._safe_log("daemon", f"Completed: {task_id}", task_id=task_id)
-
-        # Persist final result in SQLite
-        try:
-            await db.complete_task(
-                task_id,
-                result_summary=audit.get("result", ""),
-                result_json=json.dumps(result_data),
-            )
-            await db.update_task_cost_totals(task_id)
-        except Exception as e:
-            logger.warning("SQLite complete_task failed for %s: %s", task_id, e)
-
-        with contextlib.suppress(Exception):
-            await self.bb.publish_event(task_id, "complete", {
-                "result_summary": audit.get("result", ""),
-                "result_json": result_data,
-                "duration_ms": None,
-                "total_cost_usd": None,
-            })
-
-        with contextlib.suppress(Exception):
-            await self.bb.publish_system_event("task-completed", {
-                "task_id": task_id, "status": "completed", "label": user_task[:80]
-            })
-
-        return {"task_id": task_id, "result": audit.get("result", "")}
-
-    async def _complex_research_flow(
-        self, task_id: str, session_id: str, user_task: str
-    ) -> dict:
-        """Dynamic expert persona flow for complex research tasks."""
-        await self._safe_log("daemon", "Activating dynamic expert personas", task_id=task_id)
-
-        # Use Gemini Pro to generate 3 expert personas (fail-fast with defaults
-        # if Gemini Pro is unreachable or returns malformed JSON)
-        default_experts = [
-            {"domain": "Systems Architecture", "expertise": "distributed systems design"},
-            {"domain": "Domain Analysis", "expertise": "domain-specific subject matter"},
-            {"domain": "Quality Assurance", "expertise": "verification and validation"},
-        ]
-        try:
-            persona_response = await self.http.post(
-                f"{LITELLM_URL}/chat/completions",
-                headers={"Authorization": f"Bearer {LITELLM_KEY}"},
-                json={
-                    "model": MODEL_ROUTING.get(Complexity.COMPLEX, "gemini-pro"),
-                    "messages": [{
-                        "role": "user",
-                        "content": f"""Given this research task, identify exactly 3 expert domains needed.
-Respond in JSON: {{"experts": [{{"domain": "...", "expertise": "..."}}]}}
-
-Task: {user_task}"""
-                    }],
-                    "max_tokens": 256,
-                    "temperature": 0.3,
-                    "response_format": {"type": "json_object"},
-                },
-            )
-            persona_response.raise_for_status()
-            experts = json.loads(
-                persona_response.json()["choices"][0]["message"]["content"]
-            )["experts"][:3]
-        except Exception as e:
-            await self._safe_log("daemon",
-                f"WARN: Expert persona generation failed ({e}), using defaults", task_id=task_id)
-            experts = default_experts
-
-        # Inject expert personas and run parallel debate
-        await self._check_abort(task_id)
-        roles = ["planner", "executor", "auditor"]
-        tasks = []
-        for _i, (expert, role) in enumerate(zip(experts, roles, strict=False)):
-            persona = generate_expert_persona(
-                expert["domain"], expert["expertise"], user_task
-            )
-            tasks.append(
-                self._dispatch_agent(
-                    role, task_id, user_task, persona,
-                    model=MODEL_ROUTING.get(Complexity.COMPLEX, "gemini-pro"),
-                )
-            )
-
-        results = await asyncio.gather(*tasks)
-
-        # Post all debate entries via pub/sub
-        for expert, result in zip(experts, results, strict=False):
-            await self.bb.post_debate(
-                session_id, expert["domain"], result.get("result", "")
-            )
-            try:
-                await db.insert_debate_entry(
-                    task_id, session_id, expert["domain"], result.get("result", "")
-                )
-            except Exception:
-                logger.warning("SQLite debate insert failed for %s/%s", task_id, expert["domain"])
-            with contextlib.suppress(Exception):
-                await self.bb.publish_event(task_id, "debate", {
-                    "agent_role": expert["domain"],
-                    "content": result.get("result", ""),
-                    "created_at": datetime.now(UTC).isoformat(),
-                })
-
-        # Revert to Auditor persona for synthesis
-        await self._check_abort(task_id)
-        debate = await self.bb.get_debate(session_id)
-        synthesis = await self._dispatch_agent(
-            "auditor", task_id,
-            f"Synthesize these expert perspectives into a unified analysis:\n\n{json.dumps(debate, indent=2)}",
-            DEFAULT_PERSONAS["auditor"],
-            model=MODEL_ROUTING.get(Complexity.COMPLEX, "gemini-pro"),
-        )
-
-        result_data = {
-            "consensus": synthesis.get("result", ""),
-            "experts_used": [e["domain"] for e in experts],
-            "triage": "complex",
-        }
-        await self.bb.publish_result(task_id, result_data)
-        await self.bb.clear_private(session_id)
-
-        # Persist final result in SQLite
-        try:
-            await db.complete_task(
-                task_id,
-                result_summary=synthesis.get("result", ""),
-                result_json=json.dumps(result_data),
-            )
-            await db.update_task_cost_totals(task_id)
-        except Exception as e:
-            logger.warning(f"SQLite complete_task failed for {task_id}: {e}")
-
-        with contextlib.suppress(Exception):
-            await self.bb.publish_event(task_id, "complete", {
-                "result_summary": synthesis.get("result", ""),
-                "result_json": result_data,
-                "duration_ms": None,
-                "total_cost_usd": None,
-            })
-
-        with contextlib.suppress(Exception):
-            await self.bb.publish_system_event("task-completed", {
-                "task_id": task_id, "status": "completed", "label": user_task[:80]
-            })
-
-        return {"task_id": task_id, "result": synthesis.get("result", "")}
-
-    async def _dispatch_agent(
-        self, role: str, task_id: str, description: str, persona: str,
-        context: dict | None = None,
-        model: str | None = None,
-    ) -> dict:
-        """Send a task to a Hermes Agent node via its REST API.
-
-        Payload matches the TaskRequest schema from Phase 1: task_id,
-        description, role_prompt, context, timeout, turn_id, model, role.
-
-        Phase 1 additions:
-        - Sends turn_id, model, and role for trace correlation
-        - Reads v2 response fields: usage, trace_count, entries, artifacts
-        - Computes cost_usd DAEMON-SIDE from MODEL_PRICING (doc 06 §3.1)
-          ONLY when trace_count == 0 (fallback path). When traces are
-          present, the ingest endpoint is the sole cost authority (B2 fix).
-        - Creates turn records for trace tracking
-
-        Retries up to 3 times with exponential backoff to handle Hermes
-        cold-start delays (Gotcha #2 — first call after restart takes 5-15s).
-        """
-        # Phase 3a: Resolve profile and endpoint from the role registry
-        # (doc 12 §2.5). Falls back to AGENT_ENDPOINTS for roles not in
-        # the registry (backward compatible with legacy dispatch).
-        _reg = ROLE_REGISTRY.get(role, {})
-        _profile = _reg.get("profile")
-        if _reg and _reg.get("endpoints"):
-            url = _reg["endpoints"][0]  # preferred host first, fallbacks after
-        else:
-            url = AGENT_ENDPOINTS[role]
-
-        turn_id = f"turn-{str(uuid.uuid4())[:8]}"
-
-        payload: dict[str, Any] = {
-            "task_id": task_id,
-            "description": description,
-            "role_prompt": persona,
-            # Phase 1 additions (B1 fix: model is now sent)
-            "turn_id": turn_id,
-            "role": role,
-            "model": model,
-            # Phase 3a: Hermes profile for role-scoped SOUL/toolset isolation
-            "profile": _profile,
-        }
-        if context:
-            payload["context"] = context
-
-        # Create turn record (best-effort)
-        try:
-            await db.create_turn({
-                "id": turn_id,
-                "task_id": task_id,
-                "round_no": 1,
-                "role": role,
-                "node": url,
-                "model": model,
-                "status": "running",
-            })
-        except Exception as e:
-            logger.warning(f"Turn create failed for {task_id}/{turn_id}: {e}")
-
-        for attempt in range(3):
-            try:
-                response = await self.http.post(
-                    f"{url}/execute", json=payload,
-                )
-                response.raise_for_status()
-                response_data = response.json()
-
-                # ── Phase 1: v2 cost computation (daemon-side) ──────────
-                #
-                # B2 fix: The ingest endpoint is the sole cost authority
-                # when traces are present (trace_count > 0). Only record
-                # cost HERE for the fallback path (trace_count == 0) where
-                # no traces reach the ingest endpoint.
-                usage = response_data.get("usage")
-                trace_count = response_data.get("trace_count", 0)
-                model_used = "unknown"
-                cost_usd = 0.0
-
-                if usage and isinstance(usage, dict):
-                    model_used = usage.get("model", response_data.get("model", model or "unknown"))
-                    prompt_tokens = usage.get("prompt_tokens", 0)
-                    completion_tokens = usage.get("completion_tokens", 0)
-
-                    # Compute cost from MODEL_PRICING (daemon-side)
-                    pricing = MODEL_PRICING.get(model_used, {})
-                    if pricing:
-                        cost_usd = (
-                            prompt_tokens * float(pricing.get("input_cost_per_token", 0))
-                            + completion_tokens * float(pricing.get("output_cost_per_token", 0))
-                        )
-                        cost_usd = round(cost_usd, 8)
-                        price_source = str(pricing.get("source", "bmas.yaml"))
-                    else:
-                        price_source = "missing"
-                        if model_used != "unknown":
-                            logger.warning(
-                                f"No pricing for model '{model_used}' — cost_usd=0.0"
-                            )
-
-                    # B2 fix: Only insert cost entry when no traces flowed
-                    # through the ingest endpoint (fallback path). When
-                    # trace_count > 0, the ingest endpoint already recorded
-                    # cost from the final trace's usage.
-                    if trace_count == 0:
-                        with contextlib.suppress(Exception):  # Cost tracking is best-effort
-                            await db.insert_cost_entry_v2(
-                                task_id=task_id,
-                                model=model_used,
-                                input_tokens=prompt_tokens,
-                                output_tokens=completion_tokens,
-                                cost_usd=cost_usd,
-                                phase=None,
-                                node_id=response_data.get("node_id"),
-                                turn_id=response_data.get("turn_id", turn_id),
-                                provider=None,
-                                price_source=price_source,
-                                joules_estimate=0.0,  # Beszel stub
-                            )
-
-                        with contextlib.suppress(Exception):
-                            await self.bb.publish_event(task_id, "cost", {
-                                "model": model_used,
-                                "input_tokens": prompt_tokens,
-                                "output_tokens": completion_tokens,
-                                "cost_usd": cost_usd,
-                                "node_id": response_data.get("node_id"),
-                                "turn_id": response_data.get("turn_id", turn_id),
-                                "price_source": price_source,
-                            })
-                    else:
-                        logger.debug(
-                            f"Skipping cost insert for {task_id}/{turn_id} — "
-                            f"trace_count={trace_count}, ingest endpoint owns cost"
-                        )
-
-                elif usage is None:
-                    # Legacy hermes -z fallback — usage unknown
-                    logger.debug(
-                        f"No usage in response for {task_id}/{role} "
-                        f"(likely hermes -z fallback)"
-                    )
-
-                # Complete the turn record
-                # B3 fix: map declined to 'declined', not 'failed'.
-                # Declined is a first-class blackboard behavior (doc 03 §4).
-                try:
-                    agent_status = response_data.get("status", "")
-                    if agent_status == "completed":
-                        turn_status = "completed"
-                    elif agent_status == "declined":
-                        turn_status = "declined"
-                    else:
-                        turn_status = "failed"
-
-                    await db.complete_turn(
-                        turn_id=turn_id,
-                        status=turn_status,
-                        entries_added=len(response_data.get("entries") or []),
-                        cost_usd=cost_usd,
-                        joules_estimate=0.0,
-                    )
-                except Exception as e:
-                    logger.warning(f"Turn complete failed for {turn_id}: {e}")
-
-                return response_data
-            except Exception as e:
-                if attempt < 2:
-                    delay = 2 ** attempt  # 1s, 2s
-                    await self._safe_log(role,
-                        f"Retry {attempt + 1} of 2 after {delay}s: {e}", task_id=task_id)
-                    await asyncio.sleep(delay)
-                    continue
-                await self._safe_log(role, f"ERROR after 3 attempts: {e}", task_id=task_id)
-
-                # Complete turn as failed
-                with contextlib.suppress(Exception):
-                    await db.complete_turn(turn_id, "failed", 0, 0.0)
-
-                return {"task_id": task_id, "status": "failed", "result": str(e)}
-
-        # Unreachable — loop always returns, but satisfies mypy [return]
-        return {"task_id": task_id, "status": "failed", "result": "max retries"}  # pragma: no cover
-
-    # ── Traditional Variant Integration (Phase 3b, doc 05) ────────────
+    # ── Traditional Variant Integration (doc 05) ──────────────────────
 
     async def _run_traditional(
         self, task_id: str, session_id: str, user_task: str, triage: TriageResult,
@@ -936,7 +461,7 @@ Task: {user_task}"""
             })
 
         # Dispatch to agent node
-        response = await self._dispatch_agent(
+        response = await self._dispatch_turn(
             role=activation.role,
             task_id=task_id,
             description=task["query"],
@@ -1000,6 +525,101 @@ Task: {user_task}"""
             + completion_tokens * float(model_pricing.get("output_cost_per_token", 0))
         )
         return round(cost, 8)
+
+    async def _dispatch_turn(
+        self, role: str, task_id: str, description: str, persona: str,
+        context: dict | None = None,
+        model: str | None = None,
+    ) -> dict:
+        """HTTP dispatch to a Hermes agent node for the traditional variant.
+
+        Handles endpoint resolution (role registry → AGENT_ENDPOINTS fallback),
+        turn tracking in SQLite, 3-attempt retry with backoff, and best-effort
+        cost recording via MODEL_PRICING.
+        """
+        _reg = ROLE_REGISTRY.get(role, {})
+        if _reg and _reg.get("endpoints"):
+            url = _reg["endpoints"][0]
+        else:
+            url = AGENT_ENDPOINTS.get(role, "")
+
+        turn_id = f"turn-{str(uuid.uuid4())[:8]}"
+        payload: dict[str, Any] = {
+            "task_id": task_id,
+            "description": description,
+            "role_prompt": persona,
+            "turn_id": turn_id,
+            "role": role,
+            "model": model,
+            "profile": _reg.get("profile"),
+        }
+        if context:
+            payload["context"] = context
+
+        try:
+            await db.create_turn({
+                "id": turn_id, "task_id": task_id, "round_no": 1,
+                "role": role, "node": url, "model": model, "status": "running",
+            })
+        except Exception as e:
+            logger.warning(f"Turn create failed {task_id}/{turn_id}: {e}")
+
+        for attempt in range(3):
+            try:
+                resp = await self.http.post(f"{url}/execute", json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+
+                # Best-effort cost tracking
+                usage = data.get("usage")
+                cost_usd = 0.0
+                if usage and isinstance(usage, dict):
+                    model_used = usage.get("model", model or "unknown")
+                    pricing = MODEL_PRICING.get(model_used, {})
+                    if pricing:
+                        cost_usd = round(
+                            usage.get("prompt_tokens", 0) * float(pricing.get("input_cost_per_token", 0))
+                            + usage.get("completion_tokens", 0) * float(pricing.get("output_cost_per_token", 0)),
+                            8,
+                        )
+                    if data.get("trace_count", 0) == 0:
+                        with contextlib.suppress(Exception):
+                            await db.insert_cost_entry_v2(
+                                task_id=task_id, model=model_used,
+                                input_tokens=usage.get("prompt_tokens", 0),
+                                output_tokens=usage.get("completion_tokens", 0),
+                                cost_usd=cost_usd, phase=None,
+                                node_id=data.get("node_id"),
+                                turn_id=data.get("turn_id", turn_id),
+                                provider=None, price_source="bmas.yaml",
+                                joules_estimate=0.0,
+                            )
+
+                agent_status = data.get("status", "")
+                turn_status = "completed" if agent_status == "completed" else (
+                    "declined" if agent_status == "declined" else "failed"
+                )
+                with contextlib.suppress(Exception):
+                    await db.complete_turn(
+                        turn_id=turn_id, status=turn_status,
+                        entries_added=len(data.get("entries") or []),
+                        cost_usd=cost_usd, joules_estimate=0.0,
+                    )
+                return data
+
+            except Exception as e:
+                if attempt < 2:
+                    delay = 2 ** attempt
+                    await self._safe_log(role,
+                        f"Retry {attempt + 1}/2 after {delay}s: {e}", task_id=task_id)
+                    await asyncio.sleep(delay)
+                    continue
+                await self._safe_log(role, f"ERROR after 3 attempts: {e}", task_id=task_id)
+                with contextlib.suppress(Exception):
+                    await db.complete_turn(turn_id, "failed", 0, 0.0)
+                return {"task_id": task_id, "status": "failed", "result": str(e)}
+
+        return {"task_id": task_id, "status": "failed", "result": "max retries"}  # pragma: no cover
 
     async def close(self):
         await self.bb.close()
