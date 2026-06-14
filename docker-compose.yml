@@ -56,7 +56,7 @@ services:
     ports:
       - "${LITELLM_PORT:-4000}:4000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4000/health/readiness"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/readiness')"]
       interval: 15s
       timeout: 5s
       retries: 5
