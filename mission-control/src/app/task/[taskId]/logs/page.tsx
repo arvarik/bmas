@@ -33,17 +33,32 @@ interface ArchivedLog {
   level: string;
   message: string;
   created_at: string;
+  node?: string | null;
+  turn_id?: string | null;
+  fields?: Record<string, unknown> | null;
 }
 
 // ── Mappers ───────────────────────────────────────────────────────────
 
-function liveLogToLine(log: { id: string; agent_role: string; level: string; message: string; timestamp: string }): LogLine {
+function liveLogToLine(log: {
+  id: string;
+  agent_role: string;
+  level: string;
+  message: string;
+  timestamp: string;
+  node?: string;
+  turn_id?: string;
+  fields?: Record<string, unknown> | null;
+}): LogLine {
   return {
     id: log.id,
     agent: log.agent_role,
     level: log.level,
     message: log.message,
     timestamp: log.timestamp,
+    node: log.node ?? undefined,
+    turnId: log.turn_id ?? undefined,
+    fields: log.fields ?? null,
   };
 }
 
@@ -54,6 +69,9 @@ function archivedLogToLine(log: ArchivedLog): LogLine {
     level: log.level,
     message: log.message,
     timestamp: log.created_at,
+    node: log.node ?? undefined,
+    turnId: log.turn_id ?? undefined,
+    fields: log.fields ?? null,
   };
 }
 

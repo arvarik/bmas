@@ -105,6 +105,9 @@ CREATE TABLE IF NOT EXISTS log_entries (
     agent_role      TEXT NOT NULL,
     level           TEXT DEFAULT 'info',
     message         TEXT NOT NULL,
+    fields          TEXT,
+    node            TEXT,
+    turn_id         TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
@@ -399,6 +402,41 @@ async def init_db() -> None:
                 logger.info(f"Schema initialized at version {SCHEMA_VERSION}")
             else:
                 logger.info(f"Schema version {current_version} — up to date")
+
+            # Structured-logging columns on log_entries (additive, idempotent).
+            # These carry per-agent structured metadata, the originating node
+            # endpoint, and the correlating turn id. Added outside the version
+            # bump so existing v2 databases pick them up on the next startup
+            # without a schema-version migration.
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("PRAGMA table_info(log_entries)")
+            log_cols = {row[1] for row in await cursor.fetchall()}
+            for col, ddl in (
+                ("fields", "ALTER TABLE log_entries ADD COLUMN fields TEXT"),
+                ("node", "ALTER TABLE log_entries ADD COLUMN node TEXT"),
+                ("turn_id", "ALTER TABLE log_entries ADD COLUMN turn_id TEXT"),
+            ):
+                if col not in log_cols:
+                    await db.execute(ddl)
+            await db.commit()
+
+            # Execution-graph enrichment columns on turns (additive,
+            # idempotent). These let the Graph tab show the full actor
+            # identity, the Control Unit's per-round routing rationale, and
+            # the inferred phase for each turn (doc 05 §1). Added outside the
+            # version bump so existing v2 databases pick them up on the next
+            # startup without a schema-version migration.
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("PRAGMA table_info(turns)")
+            turn_cols = {row[1] for row in await cursor.fetchall()}
+            for col, ddl in (
+                ("actor", "ALTER TABLE turns ADD COLUMN actor TEXT"),
+                ("rationale", "ALTER TABLE turns ADD COLUMN rationale TEXT"),
+                ("phase", "ALTER TABLE turns ADD COLUMN phase TEXT"),
+            ):
+                if col not in turn_cols:
+                    await db.execute(ddl)
+            await db.commit()
 
             # Zombie task recovery: mark orphaned tasks as failed
             orphaned = await db.execute(
@@ -700,29 +738,54 @@ async def get_task_cost_summary(task_id: str) -> dict:
 # ── Log CRUD ─────────────────────────────────────────────────────────
 
 async def insert_log_entry(
-    task_id: str, agent_role: str, level: str, message: str
+    task_id: str,
+    agent_role: str,
+    level: str,
+    message: str,
+    fields: dict | None = None,
+    node: str | None = None,
+    turn_id: str | None = None,
 ) -> None:
-    """Insert a log entry (permanent archive — Redis streams are ephemeral)."""
+    """Insert a log entry (permanent archive — Redis streams are ephemeral).
+
+    `fields` is an arbitrary structured payload (reasoning, tool calls,
+    routing rationale, usage/cost, board reads/writes, …) stored as a JSON
+    blob so the UI can render a full, lossless detail view.
+    """
+    fields_json = json.dumps(fields) if fields else None
     async with _connect() as db:
         await db.execute(
-            "INSERT INTO log_entries (task_id, agent_role, level, message) "
-            "VALUES (?, ?, ?, ?)",
-            (task_id, agent_role, level, message),
+            "INSERT INTO log_entries "
+            "(task_id, agent_role, level, message, fields, node, turn_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (task_id, agent_role, level, message, fields_json, node, turn_id),
         )
         await db.commit()
+
+
+def _decode_log_row(row) -> dict:
+    """Convert a log_entries row to a dict, decoding the JSON `fields` blob."""
+    d = dict(row)
+    raw_fields = d.get("fields")
+    if isinstance(raw_fields, str) and raw_fields:
+        try:
+            d["fields"] = json.loads(raw_fields)
+        except (json.JSONDecodeError, TypeError):
+            d["fields"] = {"_raw": raw_fields}
+    return d
 
 
 async def get_task_logs(
     task_id: str, limit: int = 200, offset: int = 0
 ) -> list[dict]:
-    """Fetch log entries for a task with pagination."""
+    """Fetch log entries for a task with pagination (structured fields decoded)."""
     async with _connect() as db:
         rows = await db.execute_fetchall(
             "SELECT * FROM log_entries WHERE task_id = ? "
             "ORDER BY id LIMIT ? OFFSET ?",
             (task_id, limit, offset),
         )
-        return [dict(r) for r in rows]
+        return [_decode_log_row(r) for r in rows]
 
 
 async def count_task_logs(task_id: str) -> int:
@@ -814,20 +877,32 @@ async def get_task_traces(
 # ── Turns CRUD (Phase 1, doc 07 §3) ──────────────────────────────────
 
 async def create_turn(turn: dict) -> None:
-    """Create a new turn record (one row per KS activation)."""
+    """Create a new turn record (one row per KS activation).
+
+    `actor`, `rationale`, and `phase` are additive enrichment columns
+    (doc 05 §1) that power the execution-graph visualization: the full
+    opaque actor id (e.g. ``expert.valuation_analyst`` rather than the
+    base ``expert`` role), the Control Unit's routing rationale for this
+    round, and the inferred board phase. They default to NULL so older
+    callers and pre-migration databases remain compatible.
+    """
     async with _connect() as db:
         await db.execute(
             "INSERT INTO turns "
-            "(id, task_id, round_no, role, node, model, status) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(id, task_id, round_no, role, actor, node, model, status, "
+            "rationale, phase) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 turn["id"],
                 turn["task_id"],
                 turn.get("round_no", 1),
                 turn["role"],
+                turn.get("actor") or turn["role"],
                 turn.get("node"),
                 turn.get("model"),
                 turn.get("status", "running"),
+                turn.get("rationale"),
+                turn.get("phase"),
             ),
         )
         await db.commit()

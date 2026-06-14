@@ -33,13 +33,17 @@ const TurnGraph = dynamic(
 );
 
 export default function DAGPage() {
-  const { activeTurns, completedTurns, isLive, taskMeta } = useTaskData();
+  const { activeTurns, completedTurns, isLive, coordinatorNarrations } = useTaskData();
 
   const totalTurns = activeTurns.length + completedTurns.length;
+  const rounds = new Set(
+    [...activeTurns, ...completedTurns].map((t) => t.round_no ?? 0),
+  );
+  const actors = [...new Set([...activeTurns, ...completedTurns].map((t) => t.actor))];
   const subtitle = totalTurns > 0
-    ? `${totalTurns} turn${totalTurns !== 1 ? "s" : ""} · ${
-        [...new Set([...activeTurns, ...completedTurns].map((t) => t.actor))].join(", ")
-      }`
+    ? `${totalTurns} turn${totalTurns !== 1 ? "s" : ""} across ${rounds.size} round${
+        rounds.size !== 1 ? "s" : ""
+      } · ${actors.length} agent${actors.length !== 1 ? "s" : ""} · click a node for who/what/when/why`
     : isLive
     ? "Waiting for agent turns…"
     : "No turn data";
@@ -56,6 +60,7 @@ export default function DAGPage() {
               activeTurns={activeTurns}
               completedTurns={completedTurns}
               isLive={isLive}
+              narrations={coordinatorNarrations}
             />
           </Panel>
         </div>

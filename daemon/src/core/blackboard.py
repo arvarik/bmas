@@ -12,6 +12,20 @@ from datetime import UTC, datetime
 import redis.asyncio as aioredis
 
 from config import AGENT_ENDPOINTS, LOCK_TTL_MS, REDIS_URL
+from core.log_levels import normalize_level
+
+
+def _entry_seq(entry_id: str) -> int:
+    """Parse the numeric sequence from a gateway-assigned 'e-<n>' id."""
+    if entry_id and "-" in entry_id:
+        tail = entry_id.rsplit("-", 1)[-1]
+        if tail.isdigit():
+            return int(tail)
+    return 0
+
+
+# Internal alias used within this module (normalize_level imported above).
+_normalize_level = normalize_level
 
 
 class Blackboard:
@@ -95,6 +109,99 @@ class Blackboard:
             },
         }
 
+    # ── Durable Board Snapshot (board v2 persistence) ──────────────
+    #
+    # The traditional variant keeps its working board in an in-process
+    # store for the duration of a run.  To guarantee the board survives
+    # for the LIFE of the task — and is retained for completed tasks —
+    # we mirror the materialized snapshot into Redis with NO expiry.
+    #
+    # Keys follow the v2 layout (core/protocol.py):
+    #   bmas:board:{task}:entries  — Hash: entry_id → entry JSON
+    #   bmas:board:{task}:meta     — Hash: phase, round, variant, …
+    #
+    # These keys are intentionally persistent (no TTL).  Task cleanup
+    # deletes them explicitly via task_key_patterns(), never via expiry.
+
+    @staticmethod
+    def _board_entries_key(task_id: str) -> str:
+        return f"bmas:board:{task_id}:entries"
+
+    @staticmethod
+    def _board_meta_key(task_id: str) -> str:
+        return f"bmas:board:{task_id}:meta"
+
+    async def save_board_snapshot(
+        self,
+        task_id: str,
+        entries: dict[str, dict],
+        meta: dict | None = None,
+    ) -> None:
+        """Persist the full board snapshot to Redis (durable, no TTL).
+
+        ``entries`` maps entry_id → JSON-safe entry dict.  The whole
+        snapshot is rewritten on every commit so removed/superseded
+        statuses stay accurate (the snapshot always carries them).
+        """
+        entries_key = self._board_entries_key(task_id)
+        meta_key = self._board_meta_key(task_id)
+
+        pipe = self.redis.pipeline()
+        # Rewrite entries: delete stale then set current snapshot.
+        pipe.delete(entries_key)
+        if entries:
+            pipe.hset(  # type: ignore[misc]
+                entries_key,
+                mapping={eid: json.dumps(e) for eid, e in entries.items()},
+            )
+        if meta:
+            pipe.hset(  # type: ignore[misc]
+                meta_key,
+                mapping={
+                    k: (v if isinstance(v, str) else json.dumps(v))
+                    for k, v in meta.items()
+                },
+            )
+        await pipe.execute()
+
+        # Belt-and-suspenders: ensure these keys never expire even if a
+        # TTL was ever set on them by another code path.
+        await self.redis.persist(entries_key)
+        if meta:
+            await self.redis.persist(meta_key)
+
+    async def get_board_snapshot(self, task_id: str) -> dict:
+        """Read the durable board snapshot from Redis.
+
+        Returns {entries: [...], meta: {...}} with entries ordered by
+        their sequence (parsed from the gateway-assigned ``e-<seq>`` id).
+        Returns empty lists/dicts when no board exists yet.
+        """
+        entries_key = self._board_entries_key(task_id)
+        meta_key = self._board_meta_key(task_id)
+
+        raw_entries = await self.redis.hgetall(entries_key)  # type: ignore[misc]
+        entries: list[dict] = []
+        for v in raw_entries.values():
+            try:
+                entry = json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            # Derive a numeric seq from the "e-<n>" id for stable ordering.
+            entry.setdefault("seq", _entry_seq(entry.get("id", "")))
+            entries.append(entry)
+        entries.sort(key=lambda e: (e.get("seq", 0), str(e.get("id", ""))))
+
+        raw_meta = await self.redis.hgetall(meta_key)  # type: ignore[misc]
+        meta: dict = {}
+        for k, v in raw_meta.items():
+            try:
+                meta[k] = json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                meta[k] = v
+
+        return {"entries": entries, "meta": meta}
+
     # ── Private Namespace ──────────────────────────────────────
     async def get_debate(self, session_id: str) -> list[dict]:
         """Read all debate entries for a session."""
@@ -133,33 +240,66 @@ class Blackboard:
         )
 
     # ── Logging (Streams) ────────────────────────────────────
-    async def publish_log(self, node_id: str, message: str, task_id: str | None = None):
-        """Push a log entry to global stream, task stream, and Pub/Sub."""
+    async def publish_log(
+        self,
+        node_id: str,
+        message: str,
+        task_id: str | None = None,
+        level: str = "info",
+        fields: dict | None = None,
+        node: str | None = None,
+        turn_id: str | None = None,
+    ):
+        """Push a structured log entry to global stream, task stream, and Pub/Sub.
+
+        `level` is a canonical level (info|warning|error|debug). `fields` is an
+        arbitrary structured payload (agent reasoning, tool calls, routing
+        rationale, usage/cost, board reads/writes, stack traces, …) carried
+        end-to-end so the UI can render a lossless detail view. The full
+        message and payload are transported verbatim — never truncated here.
+        """
         ts = datetime.now(UTC).isoformat()
-        fields = {"node": node_id, "msg": message, "ts": ts}
-        
+        level = _normalize_level(level)
+        fields_json = json.dumps(fields) if fields else ""
+        # Redis Stream fields must be flat string/number values.
+        stream_fields = {
+            "node_id": node_id,
+            "msg": message,
+            "level": level,
+            "ts": ts,
+        }
+        if node:
+            stream_fields["node"] = node
+        if turn_id:
+            stream_fields["turn_id"] = turn_id
+        if fields_json:
+            stream_fields["fields"] = fields_json
+
         # 1. Global stream (existing behavior — /api/logs global view)
         await self.redis.xadd(  # type: ignore[misc]
             f"bmas:logs:{node_id}",
-            fields,  # type: ignore[arg-type]
+            stream_fields,  # type: ignore[arg-type]
             maxlen=1000,
             approximate=True
         )
-        
+
         if task_id:
             # 2. Task-scoped stream (archival to SQLite on completion)
             await self.redis.xadd(  # type: ignore[misc]
-                f"bmas:logs:task:{task_id}", {**fields, "task_id": task_id},  # type: ignore[dict-item]
+                f"bmas:logs:task:{task_id}", {**stream_fields, "task_id": task_id},  # type: ignore[dict-item]
             )
             await self.redis.expire(f"bmas:logs:task:{task_id}", 86400)  # type: ignore[misc]
-            
+
             # 3. Pub/Sub (live SSE delivery)
             await self.redis.publish(
                 f"bmas:events:{task_id}",
                 json.dumps({"event": "log", "data": {
                     "agent_role": node_id,
-                    "level": "info",
+                    "level": level,
                     "message": message,
+                    "fields": fields or None,
+                    "node": node,
+                    "turn_id": turn_id,
                     "ts": ts,
                 }})
             )

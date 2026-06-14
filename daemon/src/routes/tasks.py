@@ -68,6 +68,37 @@ async def get_task_debate(task_id: str):
     return {"entries": entries}
 
 
+@router.get("/tasks/{task_id}/board")
+async def get_task_board(task_id: str):
+    """Fetch the durable board snapshot for a task.
+
+    Reads the persistent Redis snapshot written by the board-persist hook
+    (no TTL).  Available for live AND completed tasks, so the Blackboard
+    view never loses content on refetch/reload.
+
+    Returns {entries: [...], meta: {...}}.  Entries carry full envelope
+    fields (type, author, body, refs, confidence, salience, status, round)
+    ordered by sequence.
+    """
+    import re
+
+    from app import app
+
+    if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", task_id):
+        return JSONResponse({"error": "Invalid task_id"}, status_code=400)
+
+    try:
+        orch = app.state.orchestrator
+        snapshot = await orch.bb.get_board_snapshot(task_id)
+    except Exception as e:
+        return JSONResponse(
+            {"error": "Failed to read board snapshot", "detail": str(e)},
+            status_code=503,
+        )
+
+    return snapshot
+
+
 @router.get("/tasks/{task_id}/cost")
 async def get_task_cost_endpoint(task_id: str):
     """Per-task cost breakdown by model and phase."""

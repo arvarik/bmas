@@ -75,6 +75,9 @@ export function mapLog(
     message: (raw.message as string) ?? "",
     timestamp:
       ((raw.timestamp ?? raw.ts) as string) ?? new Date().toISOString(),
+    node: (raw.node as string) ?? undefined,
+    turn_id: (raw.turn_id as string) ?? undefined,
+    fields: (raw.fields as Record<string, unknown> | null) ?? null,
   };
 }
 

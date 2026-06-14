@@ -260,6 +260,10 @@ class BoardGateway:
                 "status": status,
             })
 
+            # Recompute derived fields (salience) and re-persist the
+            # durable snapshot so status flips survive a refetch/reload.
+            await self._recompute_derived(task_id)
+
     async def set_meta(self, task_id: str, **fields: Any) -> None:
         """Update board metadata (phase, round, budget_spent, etc.)."""
         await self._store.set_meta(task_id, **fields)

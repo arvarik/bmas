@@ -27,6 +27,12 @@ router = APIRouter()
 logger = logging.getLogger("bmas.ingest")
 
 
+def _canon_level(level: str | None) -> str:
+    """Canonicalize a log level for archival."""
+    from core.log_levels import normalize_level
+    return normalize_level(level)
+
+
 def _verify_bearer(request: Request) -> None:
     """Validate the BMAS_NODE_KEY bearer token.
 
@@ -70,6 +76,75 @@ def _compute_cost(
 
     source = str(pricing.get("source", "bmas.yaml"))
     return round(cost, 8), source
+
+
+@router.post("/ingest/logs/{task_id}")
+async def ingest_logs(task_id: str, request: Request):
+    """Receive structured log records emitted by a distributed agent node.
+
+    Bearer auth via BMAS_NODE_KEY. Accepts either a single JSON log object or
+    a JSON array of them. Each record flows into the same collector pipeline
+    as daemon logs (Redis streams + Pub/Sub for live SSE + SQLite archive),
+    attributed to the emitting agent/persona — making the Logs tab a true
+    distributed agent-swarm collector rather than a daemon-only view.
+
+    Record shape (all optional except message):
+        {
+          "agent_role": "expert.valuation",  # opaque actor/persona id
+          "level": "info",                    # info|warning|error|debug
+          "message": "…",                     # full text, never truncated
+          "node": "agent-node1",              # originating node id
+          "turn_id": "turn-abc",              # correlation id
+          "ts": "<iso8601>",                  # emitted timestamp
+          "fields": { … }                     # arbitrary structured payload
+        }
+    """
+    _verify_bearer(request)
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body") from None
+
+    records = body if isinstance(body, list) else [body]
+    if not records:
+        return JSONResponse({"status": "ok", "ingested": 0})
+
+    import database as db
+    from app import app
+
+    orch = app.state.orchestrator
+    ingested = 0
+
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        agent_role = str(rec.get("agent_role") or rec.get("actor") or rec.get("role") or "agent")
+        message = str(rec.get("message") or rec.get("msg") or "")
+        if not message:
+            continue
+        level = rec.get("level", "info")
+        node = rec.get("node") or rec.get("node_id")
+        turn_id = rec.get("turn_id")
+        fields = rec.get("fields") if isinstance(rec.get("fields"), dict) else None
+
+        # Live stream + Pub/Sub (best-effort)
+        with contextlib.suppress(Exception):
+            await orch.bb.publish_log(
+                agent_role, message, task_id=task_id,
+                level=level, fields=fields, node=node, turn_id=turn_id,
+            )
+        # Durable archive (best-effort)
+        try:
+            await db.insert_log_entry(
+                task_id, agent_role, _canon_level(level), message,
+                fields=fields, node=node, turn_id=turn_id,
+            )
+        except Exception as e:
+            logger.warning(f"Log archive failed for {task_id}/{agent_role}: {e}")
+        ingested += 1
+
+    return JSONResponse({"status": "ok", "ingested": ingested})
 
 
 @router.post("/ingest/traces/{task_id}/{turn_id}")

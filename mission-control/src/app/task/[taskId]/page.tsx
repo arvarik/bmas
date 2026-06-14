@@ -13,6 +13,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useTaskData } from "./TaskStreamContext";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -22,7 +24,7 @@ import {
   Send, ArrowRight, ChevronDown, ChevronRight,
 } from "lucide-react";
 import type { StatusType } from "@/lib/design-tokens";
-import type { CostData } from "@/hooks/useTaskStream";
+import type { CostData, TurnRecord } from "@/hooks/useTaskStream";
 
 // ── Status mapping ───────────────────────────────────────────────────
 
@@ -33,14 +35,102 @@ const STATUS_MAP: Record<string, StatusType> = {
   failed: "error",
 };
 
-// ── Phase labels for the process pipeline ─────────────────────────────
+// ── Process summary stages (derived from real turn data) ──────────────
 
-const PIPELINE_PHASES = [
-  { id: "triage", label: "Triage" },
-  { id: "plan",   label: "Planning" },
-  { id: "exec",   label: "Execution" },
-  { id: "audit",  label: "Audit" },
+interface ProcessStage {
+  key: string;
+  label: string;
+  status: "completed" | "running" | "failed" | "pending";
+  detail?: string;
+}
+
+// Canonical traditional-blackboard role ordering for the process summary.
+const ROLE_STAGE_ORDER = [
+  "planner", "expert", "critic", "conflict_resolver", "cleaner", "decider",
 ];
+
+const ROLE_STAGE_LABELS: Record<string, string> = {
+  planner: "Planning",
+  expert: "Expert Analysis",
+  critic: "Critique",
+  conflict_resolver: "Conflict Resolution",
+  cleaner: "Board Cleanup",
+  decider: "Decision",
+};
+
+function stageLabelForRole(role: string): string {
+  const base = role.split(".")[0];
+  if (ROLE_STAGE_LABELS[base]) return ROLE_STAGE_LABELS[base];
+  return base.charAt(0).toUpperCase() + base.slice(1).replace(/_/g, " ");
+}
+
+/**
+ * Build the process summary from the *actual* stages that occurred.
+ *
+ * The daemon writes four static sub-tasks (triage/plan/exec/audit) but the
+ * traditional blackboard loop only ever marks triage complete — so keying
+ * the summary off sub-tasks made every task look like "triage only". The
+ * real signal is the per-turn record (planner → experts → critic → decider,
+ * across rounds), which we group into named stages here.
+ */
+function buildProcessStages(
+  subTasks: ReturnType<typeof useTaskData>["subTasks"],
+  completedTurns: TurnRecord[],
+  taskMeta: ReturnType<typeof useTaskData>["taskMeta"],
+): ProcessStage[] {
+  const stages: ProcessStage[] = [];
+  const taskDone = taskMeta?.status === "completed";
+  const taskFailed = taskMeta?.status === "failed";
+
+  // 1. Triage
+  const triage = subTasks.find(
+    (s) => s.id.includes("triage") || s.label.toLowerCase().includes("triage"),
+  );
+  stages.push({
+    key: "triage",
+    label: "Triage",
+    status: (triage?.status as ProcessStage["status"])
+      ?? (taskDone ? "completed" : "pending"),
+    detail: taskMeta?.complexity ? `${taskMeta.complexity} complexity` : undefined,
+  });
+
+  // 2. Stages from real turns, grouped by base role
+  const groups = new Map<string, TurnRecord[]>();
+  for (const t of completedTurns) {
+    const base = (t.actor || "agent").split(".")[0];
+    const arr = groups.get(base) ?? [];
+    arr.push(t);
+    groups.set(base, arr);
+  }
+  const orderedRoles = [
+    ...ROLE_STAGE_ORDER.filter((r) => groups.has(r)),
+    ...[...groups.keys()].filter((r) => !ROLE_STAGE_ORDER.includes(r)),
+  ];
+  for (const role of orderedRoles) {
+    const turns = groups.get(role)!;
+    const anyFailed = turns.some((t) => t.status === "failed");
+    const anyActive = turns.some((t) => t.status === "active" || t.status === "running");
+    const rounds = [...new Set(turns.map((t) => t.round_no).filter((n) => n > 0))];
+    const parts: string[] = [`${turns.length} turn${turns.length === 1 ? "" : "s"}`];
+    if (rounds.length === 1) parts.push(`round ${rounds[0]}`);
+    else if (rounds.length > 1) parts.push(`rounds ${Math.min(...rounds)}–${Math.max(...rounds)}`);
+    stages.push({
+      key: `role-${role}`,
+      label: stageLabelForRole(role),
+      status: anyFailed ? "failed" : anyActive ? "running" : "completed",
+      detail: parts.join(" · "),
+    });
+  }
+
+  // 3. Completion
+  stages.push({
+    key: "complete",
+    label: taskFailed ? "Failed" : "Completed",
+    status: taskFailed ? "failed" : taskDone ? "completed" : "pending",
+  });
+
+  return stages;
+}
 
 function getPhaseIcon(status: string) {
   switch (status) {
@@ -130,19 +220,25 @@ function ResultRenderer({ content }: { content: string }) {
   }
 
   // Step 3: Markdown-like plain text
-  const hasMarkdown =
-    /^#{1,3}\s/m.test(trimmed) ||
-    /^\s*[-*]\s/m.test(trimmed) ||
-    /`[^`]+`/.test(trimmed) ||
-    /^\d+\.\s/m.test(trimmed) ||
-    /\*\*[^*]+\*\*/.test(trimmed);
-
-  if (hasMarkdown) {
+  if (looksLikeMarkdown(trimmed)) {
     return <MarkdownResultCard content={trimmed} />;
   }
 
   // Step 4: Plain text
   return <PlainResultCard content={trimmed} />;
+}
+
+/** Heuristic: does this string contain markdown syntax worth rendering? */
+function looksLikeMarkdown(text: string): boolean {
+  return (
+    /^#{1,6}\s/m.test(text) ||      // headings (any level)
+    /^\s*[-*+]\s/m.test(text) ||    // bullet lists
+    /`[^`]+`/.test(text) ||         // inline code
+    /^\d+\.\s/m.test(text) ||       // numbered lists
+    /\*\*[^*]+\*\*/.test(text) ||   // bold
+    /\[[^\]]+\]\([^)]+\)/.test(text) || // links
+    /^\s*\|.+\|/m.test(text)        // tables
+  );
 }
 
 // ── JSON result card ─────────────────────────────────────────────────
@@ -201,7 +297,11 @@ function JsonObjectCard({ data, depth }: { data: Record<string, unknown>; depth:
               <span className="result-json-row__key">{key}</span>
               {!isComplex && (
                 <span className="result-json-row__value">
-                  {typeof value === "string" ? value : JSON.stringify(value)}
+                  {typeof value === "string"
+                    ? (looksLikeMarkdown(value)
+                        ? <MarkdownResultCard content={value} />
+                        : value)
+                    : JSON.stringify(value)}
                 </span>
               )}
               {isComplex && !isOpen && (
@@ -225,96 +325,17 @@ function JsonObjectCard({ data, depth }: { data: Record<string, unknown>; depth:
   );
 }
 
-// ── Markdown-lite result card ─────────────────────────────────────────
+// ── Markdown result card ──────────────────────────────────────────────
+// Full CommonMark + GitHub-flavored markdown (headings of any level,
+// tables, task lists, strikethrough, fenced code, etc.). The previous
+// hand-rolled renderer only understood h1–h3, so deeper headings (####)
+// and tables leaked through as raw text.
 
 function MarkdownResultCard({ content }: { content: string }) {
-  const lines = content.split("\n");
-  const rendered: React.ReactNode[] = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    // Heading
-    const headingMatch = line.match(/^(#{1,3})\s+(.+)/);
-    if (headingMatch) {
-      const level = headingMatch[1].length;
-      rendered.push(
-        <div key={i} className={`result-md-heading result-md-heading--h${level}`}>
-          {headingMatch[2]}
-        </div>
-      );
-      i++;
-      continue;
-    }
-
-    // Numbered list item
-    const numMatch = line.match(/^(\d+)\.\s+(.+)/);
-    if (numMatch) {
-      rendered.push(
-        <div key={i} className="result-md-list-item">
-          <span className="result-md-list-item__num">{numMatch[1]}.</span>
-          <span className="result-md-list-item__text">{inlineFormat(numMatch[2])}</span>
-        </div>
-      );
-      i++;
-      continue;
-    }
-
-    // Bullet list item
-    const bulletMatch = line.match(/^\s*[-*]\s+(.+)/);
-    if (bulletMatch) {
-      rendered.push(
-        <div key={i} className="result-md-list-item">
-          <span className="result-md-list-item__bullet">•</span>
-          <span className="result-md-list-item__text">{inlineFormat(bulletMatch[1])}</span>
-        </div>
-      );
-      i++;
-      continue;
-    }
-
-    // Empty line → spacer
-    if (line.trim() === "") {
-      rendered.push(<div key={i} className="result-md-spacer" />);
-      i++;
-      continue;
-    }
-
-    // Regular paragraph
-    rendered.push(
-      <p key={i} className="result-md-para">{inlineFormat(line)}</p>
-    );
-    i++;
-  }
-
-  return <div className="result-markdown">{rendered}</div>;
-}
-
-/** Very lightweight inline formatter: bold, italic, code spans */
-function inlineFormat(text: string): React.ReactNode {
-  // Split by code spans first
-  const parts = text.split(/(`[^`]+`)/);
   return (
-    <>
-      {parts.map((part, i) => {
-        if (part.startsWith("`") && part.endsWith("`")) {
-          return <code key={i} className="result-md-code">{part.slice(1, -1)}</code>;
-        }
-        // Bold **text**
-        const boldParts = part.split(/(\*\*[^*]+\*\*)/);
-        return (
-          <span key={i}>
-            {boldParts.map((bp, j) => {
-              if (bp.startsWith("**") && bp.endsWith("**")) {
-                return <strong key={j}>{bp.slice(2, -2)}</strong>;
-              }
-              return bp;
-            })}
-          </span>
-        );
-      })}
-    </>
+    <div className="result-markdown">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    </div>
   );
 }
 
@@ -359,7 +380,7 @@ function CostDisplay({ cost }: { cost: CostData | null }) {
 export default function TaskOverviewPage() {
   const { taskId } = useParams();
   const router = useRouter();
-  const { phase, subTasks, result, error, isLive, taskMeta, cost } = useTaskData();
+  const { phase, subTasks, result, error, isLive, taskMeta, cost, completedTurns } = useTaskData();
 
   const completedCount = subTasks.filter((st) => st.status === "completed").length;
   const totalCount = subTasks.length;
@@ -425,6 +446,7 @@ export default function TaskOverviewPage() {
       taskMeta={taskMeta}
       cost={cost}
       taskId={taskId as string}
+      completedTurns={completedTurns}
     />;
   }
 
@@ -490,41 +512,16 @@ function CompletedView({
   taskMeta,
   cost,
   taskId,
+  completedTurns,
 }: {
   result: string;
   subTasks: ReturnType<typeof useTaskData>["subTasks"];
   taskMeta: ReturnType<typeof useTaskData>["taskMeta"];
   cost: CostData | null;
   taskId: string;
+  completedTurns: TurnRecord[];
 }) {
-  // Determine pipeline phase statuses.
-  // For a completed task, we show all phases that were executed.
-  // We first try to find a matching sub-task, then fall back to
-  // marking the phase as "completed" if the task itself is done.
-  const isTaskCompleted = taskMeta?.status === "completed";
-
-  function getPhaseStatus(phaseId: string): string {
-    // Try matching sub-task by id suffix or label keyword
-    const matchBySuffix = subTasks.find((s) => s.id.endsWith(`-${phaseId}`));
-    if (matchBySuffix) return matchBySuffix.status;
-
-    const matchByLabel = subTasks.find((s) =>
-      s.label.toLowerCase().includes(phaseId) ||
-      s.id.toLowerCase().includes(phaseId)
-    );
-    if (matchByLabel) return matchByLabel.status;
-
-    // For completed tasks: if triage is done and no other sub-tasks exist,
-    // infer that the subsequent phases ran to completion.
-    if (isTaskCompleted) {
-      const triageDone = subTasks.some(
-        (s) => (s.id.includes("triage") || s.label.toLowerCase().includes("triage")) && s.status === "completed"
-      );
-      if (triageDone) return "completed";
-    }
-
-    return "pending";
-  }
+  const stages = buildProcessStages(subTasks, completedTurns, taskMeta);
 
   const durationText = taskMeta?.duration_ms
     ? fmtDuration(taskMeta.duration_ms)
@@ -540,24 +537,26 @@ function CompletedView({
         </div>
       </div>
 
-      {/* Process pipeline */}
+      {/* Process summary — derived from the actual stages/turns that ran */}
       <div className="overview__pipeline-section">
         <h4 className="overview__section-label">Process Summary</h4>
-        <div className="overview__pipeline">
-          {PIPELINE_PHASES.map((p, i) => {
-            const stStatus = getPhaseStatus(p.id);
-            return (
-              <div key={p.id} className="overview__pipeline-step-wrapper">
-                <div className={`overview__pipeline-step overview__pipeline-step--${stStatus}`}>
-                  {getPhaseIcon(stStatus)}
-                  <span className="overview__pipeline-step-label">{p.label}</span>
+        <div className="overview__stages">
+          {stages.map((s, i) => (
+            <div key={s.key} className="overview__stage-row">
+              <div className={`overview__stage overview__stage--${s.status}`}>
+                <div className="overview__stage-head">
+                  <span className="overview__stage-icon">{getPhaseIcon(s.status)}</span>
+                  <span className="overview__stage-label">{s.label}</span>
                 </div>
-                {i < PIPELINE_PHASES.length - 1 && (
-                  <ArrowRight size={14} className="overview__pipeline-arrow" />
+                {s.detail && (
+                  <span className="overview__stage-detail">{s.detail}</span>
                 )}
               </div>
-            );
-          })}
+              {i < stages.length - 1 && (
+                <ArrowRight size={13} className="overview__stage-arrow" />
+              )}
+            </div>
+          ))}
         </div>
       </div>
 
