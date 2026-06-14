@@ -274,7 +274,7 @@ export default function LogsPage() {
 
   return (
     <div className="view-container logs-view">
-      <ModeToggle />
+      <ModeToggle viewMode={viewMode} hasTraces={hasTraces} onSetMode={setViewMode} />
 
       {viewMode === "trace" && traceEvents.length > 0 ? (
         <div style={{ flex: 1, minHeight: 0 }}>
