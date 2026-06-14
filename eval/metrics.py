@@ -150,7 +150,7 @@ def compute_run_metrics(
         reason = r.terminated_by or "unknown"
         terminated_by[reason] = terminated_by.get(reason, 0) + 1
 
-    # Rounds (placeholder — legacy_pipeline is always 1)
+    # Rounds
     # Future: parse from task metadata when traditional variant populates it
     avg_rounds = 1.0
 

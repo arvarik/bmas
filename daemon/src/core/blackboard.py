@@ -95,16 +95,7 @@ class Blackboard:
             },
         }
 
-    # ── Private Namespace (Debate) ───────────────────────────
-    async def post_debate(self, session_id: str, agent_role: str, content: str):
-        """Post a debate entry to the private debate space."""
-        entry = json.dumps({
-            "role": agent_role,
-            "content": content,
-            "timestamp": datetime.now(UTC).isoformat(),
-        })
-        await self.redis.rpush(f"bmas:private:{session_id}:debate", entry)  # type: ignore[misc]
-
+    # ── Private Namespace ──────────────────────────────────────
     async def get_debate(self, session_id: str) -> list[dict]:
         """Read all debate entries for a session."""
         raw = await self.redis.lrange(f"bmas:private:{session_id}:debate", 0, -1)  # type: ignore[misc]

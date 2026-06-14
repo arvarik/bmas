@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Mission Cockpit — the flagship Phase 5 view (doc 13).
+ * Cockpit — the flagship Phase 5 live command center (doc 13).
  *
  * A dense, multi-panel command center with four synchronized regions:
  *   1. Blackboard Graph (center) — live board visualization
@@ -199,60 +199,64 @@ export default function MissionPage() {
         </div>
       )}
 
-      {/* ── Main Content ──────────────────────────────────────────── */}
-      <div
-        className={`mission-cockpit__body ${showFirehose ? "mission-cockpit__body--with-firehose" : ""}`}
-      >
-        {/* Center: Blackboard Graph */}
-        <div className="mission-cockpit__center">
-          <Panel title="Blackboard">
-            <BlackboardGraph
-              entries={boardEntries}
-              removedEntryIds={[]}
-            />
-          </Panel>
-        </div>
-
-        {/* Right Rail: Agent Minds */}
-        <div className="mission-cockpit__agents">
-          <div className="mission-cockpit__agents-header">
-            <span>Agent Minds</span>
-            <span className="mission-cockpit__agents-count">
-              {actors.length}
-            </span>
-          </div>
-          <div className="mission-cockpit__agents-list">
-            {actors.map((actor) => (
-              <AgentMindCard
-                key={actor}
-                actor={actor}
-                traceEvents={traceEvents}
-                activeTurns={activeTurns}
-                approvalRequests={approvalRequests}
-                onClick={() =>
-                  setSelectedActor(
-                    selectedActor === actor ? null : actor,
-                  )
-                }
+      {/* ── Main Content ────────────────────────────────────────── */}
+      <div className="mission-cockpit__scroll-area">
+        <div
+          className={`mission-cockpit__body ${showFirehose ? "mission-cockpit__body--with-firehose" : ""}`}
+        >
+          {/* Center: Blackboard Graph */}
+          <div className="mission-cockpit__center">
+            <Panel title="Blackboard">
+              <BlackboardGraph
+                entries={boardEntries}
+                removedEntryIds={[]}
               />
-            ))}
+            </Panel>
           </div>
-        </div>
 
-        {/* Far Right: Global Firehose */}
-        {showFirehose && (
-          <div className="mission-cockpit__firehose">
-            <GlobalFirehose events={traceEvents} />
+          {/* Right Rail: Agent Minds */}
+          <div className="mission-cockpit__agents">
+            <div className="mission-cockpit__agents-header">
+              <span>Agent Minds</span>
+              <span className="mission-cockpit__agents-count">
+                {actors.length}
+              </span>
+            </div>
+            <div className="mission-cockpit__agents-list">
+              {actors.map((actor) => (
+                <AgentMindCard
+                  key={actor}
+                  actor={actor}
+                  traceEvents={traceEvents}
+                  activeTurns={activeTurns}
+                  approvalRequests={approvalRequests}
+                  onClick={() =>
+                    setSelectedActor(
+                      selectedActor === actor ? null : actor,
+                    )
+                  }
+                />
+              ))}
+            </div>
           </div>
-        )}
+
+          {/* Far Right: Global Firehose */}
+          {showFirehose && (
+            <div className="mission-cockpit__firehose">
+              <GlobalFirehose events={traceEvents} />
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* ── Bottom: Convergence Strip ─────────────────────────────── */}
-      <ConvergenceStrip
-        entries={boardEntries}
-        budgetState={budgetState}
-        narrations={coordinatorNarrations}
-      />
+      {/* ── Convergence Strip — always visible at bottom ─────────── */}
+      <div className="mission-cockpit__convergence">
+        <ConvergenceStrip
+          entries={boardEntries}
+          budgetState={budgetState}
+          narrations={coordinatorNarrations}
+        />
+      </div>
 
       {/* ── Turn Inspector Modal ──────────────────────────────────── */}
       {selectedActor && (

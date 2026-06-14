@@ -230,7 +230,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_artifacts_task_path_v ON artifacts(task_id,
 
 # Column additions are ALTER TABLE statements that must run one at a time
 MIGRATION_V2_ALTER_TASKS = [
-    "ALTER TABLE tasks ADD COLUMN variant          TEXT DEFAULT 'legacy_pipeline'",
+    "ALTER TABLE tasks ADD COLUMN variant          TEXT DEFAULT 'traditional'",
     "ALTER TABLE tasks ADD COLUMN rounds_used      INTEGER DEFAULT 0",
     "ALTER TABLE tasks ADD COLUMN terminated_by    TEXT",
     "ALTER TABLE tasks ADD COLUMN answer_source    TEXT",
@@ -261,11 +261,21 @@ async def _connect():
     db = await aiosqlite.connect(DB_PATH, timeout=15.0)
     await db.execute("PRAGMA journal_mode=WAL")
     await db.execute("PRAGMA foreign_keys=ON")
+    # Performance tuning — safe with WAL mode (SQLite docs §3.3):
+    # synchronous=NORMAL: skip fsync on every commit, only on checkpoint
+    await db.execute("PRAGMA synchronous=NORMAL")
+    # 32 MB page cache (default is 2 MB) — reduces disk reads on hot tables
+    await db.execute("PRAGMA cache_size=-32000")
+    # 128 MB memory-mapped I/O — eliminates pread() syscalls on reads
+    await db.execute("PRAGMA mmap_size=134217728")
+    # Keep temp tables (GROUP BY, ORDER BY spills) in RAM
+    await db.execute("PRAGMA temp_store=MEMORY")
     db.row_factory = aiosqlite.Row
     try:
         yield db
     finally:
         await db.close()
+
 
 
 async def check_sqlite_health() -> bool:
@@ -415,12 +425,21 @@ async def init_db() -> None:
 
 # ── Task CRUD ────────────────────────────────────────────────────────
 
-async def create_task(task_id: str, label: str, full_input: str) -> None:
-    """Create a new task record with status='pending'."""
+async def create_task(
+    task_id: str, label: str, full_input: str,
+    variant: str = "traditional",
+) -> None:
+    """Create a new task record with status='pending'.
+
+    Always writes the active variant at creation time so the row never
+    sits at the old schema default between INSERT and the
+    triage update_task_status call.
+    """
     async with _connect() as db:
         await db.execute(
-            "INSERT INTO tasks (id, label, full_input, status) VALUES (?, ?, ?, 'pending')",
-            (task_id, label, full_input),
+            "INSERT INTO tasks (id, label, full_input, status, variant)"
+            " VALUES (?, ?, ?, 'pending', ?)",
+            (task_id, label, full_input, variant),
         )
         await db.commit()
 
@@ -430,6 +449,7 @@ async def update_task_status(
     status: str | None = None,
     complexity: str | None = None,
     model_used: str | None = None,
+    variant: str | None = None,
 ) -> None:
     """Update task fields. Only non-None arguments are written."""
     updates: list[str] = []
@@ -446,6 +466,9 @@ async def update_task_status(
     if model_used is not None:
         updates.append("model_used = ?")
         params.append(model_used)
+    if variant is not None:
+        updates.append("variant = ?")
+        params.append(variant)
 
     if not updates:
         return
@@ -599,19 +622,6 @@ async def get_sub_tasks(task_id: str) -> list[dict]:
 
 # ── Debate CRUD ──────────────────────────────────────────────────────
 
-async def insert_debate_entry(
-    task_id: str, session_id: str, agent_role: str, content: str
-) -> None:
-    """Insert a debate entry (permanent archive — Redis copy is ephemeral)."""
-    async with _connect() as db:
-        await db.execute(
-            "INSERT INTO debate_entries (task_id, session_id, agent_role, content) "
-            "VALUES (?, ?, ?, ?)",
-            (task_id, session_id, agent_role, content),
-        )
-        await db.commit()
-
-
 async def get_debate(task_id: str) -> list[dict]:
     """Fetch all debate entries for a task, ordered chronologically."""
     async with _connect() as db:
@@ -623,35 +633,6 @@ async def get_debate(task_id: str) -> list[dict]:
 
 
 # ── Cost CRUD ────────────────────────────────────────────────────────
-
-async def insert_cost_entry(
-    task_id: str,
-    model: str,
-    input_tokens: int = 0,
-    output_tokens: int = 0,
-    cost_usd: float = 0.0,
-    phase: str | None = None,
-) -> None:
-    """Insert a per-call cost entry for a task."""
-    async with _connect() as db:
-        await db.execute(
-            "INSERT INTO cost_entries "
-            "(task_id, model, input_tokens, output_tokens, cost_usd, phase) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (task_id, model, input_tokens, output_tokens, cost_usd, phase),
-        )
-        await db.commit()
-
-
-async def get_task_cost(task_id: str) -> list[dict]:
-    """Fetch all cost entries for a task."""
-    async with _connect() as db:
-        rows = await db.execute_fetchall(
-            "SELECT * FROM cost_entries WHERE task_id = ? ORDER BY id",
-            (task_id,),
-        )
-        return [dict(r) for r in rows]
-
 
 async def update_task_cost_totals(task_id: str) -> None:
     """Roll up cost_entries into the tasks row (total_cost_usd, total_tokens)."""

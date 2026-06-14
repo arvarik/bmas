@@ -299,8 +299,8 @@ print("  Validating coordination config...", file=sys.stderr)
 
 _coordination = _cfg.get("coordination", {})
 
-_VALID_VARIANTS = {"traditional", "patchboard", "stigmergic", "legacy_pipeline"}
-COORDINATION_VARIANT: str = _coordination.get("variant", "legacy_pipeline")
+_VALID_VARIANTS = {"traditional", "patchboard", "stigmergic"}
+COORDINATION_VARIANT: str = _coordination.get("variant", "traditional")
 if COORDINATION_VARIANT not in _VALID_VARIANTS:
     _fatal(
         f"Invalid coordination.variant: '{COORDINATION_VARIANT}'",
@@ -557,7 +557,7 @@ print(f"  Agents:   {', '.join(AGENT_ENDPOINTS.keys()) or 'none'}", file=sys.std
 print(f"  Routing:  {' | '.join(f'{k}→{v}' for k, v in MODEL_ROUTING.items())}", file=sys.stderr)
 print(f"  Variant:  {COORDINATION_VARIANT} (bb_v2={'on' if BLACKBOARD_V2 else 'off'})", file=sys.stderr)
 print(f"  Storage:  {'enabled' if STORAGE_ENABLED else 'disabled'}", file=sys.stderr)
-print(f"  Roles:    {len(ROLE_REGISTRY)} registered" if ROLE_REGISTRY else "  Roles:    none (legacy dispatch)", file=sys.stderr)
+print(f"  Roles:    {len(ROLE_REGISTRY)} registered" if ROLE_REGISTRY else "  Roles:    none", file=sys.stderr)
 print(f"  Pricing:  {len(MODEL_PRICING)}/{len(_models)} models configured", file=sys.stderr)
 if _optional_features:
     print(f"  Optional: {', '.join(_optional_features)}", file=sys.stderr)

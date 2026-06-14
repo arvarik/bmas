@@ -1,7 +1,7 @@
 """A/B harness — same dataset, swap only coordination.variant, emit side-by-side report.
 
 See docs/proposals/10-migration-and-rollout.md Phase E bullet 3:
-  "same dataset, swap only coordination.variant: legacy_pipeline vs traditional now;
+  "same dataset, swap only coordination.variant: traditional vs patchboard now;
    patchboard and stigmergic later. Emit a side-by-side report."
 
 Design: the daemon reads coordination.variant at startup. The A/B harness therefore
@@ -32,7 +32,7 @@ class ABHarness:
         harness = ABHarness(daemon_url="http://192.168.4.240:9000")
         report = await harness.run(
             items=dataset,
-            variant_a="legacy_pipeline",
+            variant_a="traditional",
             variant_b="traditional",
         )
     """

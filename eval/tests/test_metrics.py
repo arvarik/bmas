@@ -24,7 +24,7 @@ class TestComputeRunMetrics:
             run_id="test-001",
             dataset="mixed",
             results=sample_scored_results,
-            run_config={"variant": "legacy_pipeline"},
+            run_config={"variant": "traditional"},
             started_at="2026-06-10T00:00:00Z",
             completed_at="2026-06-10T00:10:00Z",
         )
@@ -40,7 +40,7 @@ class TestComputeRunMetrics:
             run_id="test-100",
             dataset="gsm8k",
             results=sample_scored_all_correct,
-            run_config={"variant": "legacy_pipeline"},
+            run_config={"variant": "traditional"},
         )
         assert metrics.accuracy == 1.0
         assert metrics.dataset_size == 10
@@ -50,7 +50,7 @@ class TestComputeRunMetrics:
             run_id="test-000",
             dataset="gsm8k",
             results=sample_scored_all_wrong,
-            run_config={"variant": "legacy_pipeline"},
+            run_config={"variant": "traditional"},
         )
         assert metrics.accuracy == 0.0
         assert metrics.dataset_size == 10
@@ -60,7 +60,7 @@ class TestComputeRunMetrics:
             run_id="test-empty",
             dataset="gsm8k",
             results=[],
-            run_config={"variant": "legacy_pipeline"},
+            run_config={"variant": "traditional"},
         )
         assert metrics.accuracy == 0.0
         assert metrics.dataset_size == 0
@@ -154,7 +154,7 @@ class TestRunMetricsSerialization:
             run_id="test-json",
             dataset="mixed",
             results=sample_scored_results,
-            run_config={"variant": "legacy_pipeline", "max_rounds": 4},
+            run_config={"variant": "traditional", "max_rounds": 4},
         )
         json_str = metrics.to_json()
         parsed = json.loads(json_str)
@@ -163,14 +163,14 @@ class TestRunMetricsSerialization:
         assert parsed["dataset_size"] == 7
         assert "accuracy" in parsed
         assert "run_config" in parsed
-        assert parsed["run_config"]["variant"] == "legacy_pipeline"
+        assert parsed["run_config"]["variant"] == "traditional"
 
     def test_save_and_load(self, sample_scored_results, tmp_path):
         metrics = compute_run_metrics(
             run_id="test-save",
             dataset="gsm8k",
             results=sample_scored_results,
-            run_config={"variant": "legacy_pipeline"},
+            run_config={"variant": "traditional"},
         )
         saved_path = metrics.save(tmp_path)
         assert saved_path.exists()

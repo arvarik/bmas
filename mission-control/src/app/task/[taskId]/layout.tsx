@@ -28,13 +28,11 @@ export { useTaskData } from "./TaskStreamContext";
 // ── Tab definitions ──────────────────────────────────────────────────
 
 const TABS = [
-  { label: "Overview", segment: null },          // /task/[id] (no child segment)
-  { label: "Mission", segment: "mission" },      // /task/[id]/mission — Phase 5 cockpit
-  { label: "DAG", segment: "dag" },              // /task/[id]/dag
-  { label: "Logs", segment: "logs" },            // /task/[id]/logs
-  { label: "Blackboard", segment: "blackboard" },// /task/[id]/blackboard
-  { label: "Artifacts", segment: "artifacts" },  // /task/[id]/artifacts
-  { label: "Cost", segment: "cost" },            // /task/[id]/cost
+  { label: "Overview",    segment: null },            // /task/[id]
+  { label: "Blackboard",  segment: "mission" },        // /task/[id]/mission — live command center + board
+  { label: "Graph",       segment: "dag" },             // /task/[id]/dag — execution graph (may have cycles)
+  { label: "Logs",        segment: "logs" },            // /task/[id]/logs
+  { label: "Artifacts",   segment: "artifacts" },       // /task/[id]/artifacts
 ];
 
 // ── Status mapping ───────────────────────────────────────────────────

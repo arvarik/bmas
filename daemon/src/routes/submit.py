@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 import database as db
+from config import COORDINATION_VARIANT
 from core.orchestrator import Orchestrator
 
 logger = logging.getLogger("bmas.daemon")
@@ -52,7 +53,9 @@ async def submit_task(req: TaskSubmission):
     task_id = f"task-{str(uuid.uuid4())[:8]}"
 
     # Create the SQLite row BEFORE spawning background task
-    await db.create_task(task_id, req.task[:80], req.task)
+    # Always stamp the active variant — never rely on schema default.
+    await db.create_task(task_id, req.task[:80], req.task,
+                         variant=COORDINATION_VARIANT)
 
     orch = app.state.orchestrator
     task = asyncio.create_task(_run_task_safe(orch, task_id, req.task))

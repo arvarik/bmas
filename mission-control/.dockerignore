@@ -1,0 +1,35 @@
+# Mission Control — Next.js Dashboard
+# Excludes large directories that don't belong in the build context
+
+# Build artifacts (rebuilt inside Docker)
+.next/
+out/
+
+# Dependencies (reinstalled inside Docker via npm ci)
+node_modules/
+
+# Development/test files
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+coverage/
+.nyc_output/
+
+# Tooling and local config
+.eslintcache
+.env*.local
+*.log
+npm-debug.log*
+
+# Version control
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
