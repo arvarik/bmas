@@ -3,21 +3,23 @@
 # bMAS — System Architecture
 
 > [!NOTE]
-> This document describes the **current** architecture as implemented. For planned enhancements and the bMAS paper's full vision (cyclic execution, dynamic roles, etc.), see the [Roadmap](../roadmap/README.md).
+> This document describes the **current** architecture as implemented in the traditional coordination variant. For future variants (stigmergic, patchboard) and the bMAS paper's full vision, see the [Roadmap](../roadmap/README.md).
 
 ## 1. Overview
 
-bMAS (Blackboard Multi-Agent System) is a distributed AI swarm that coordinates multiple LLM-powered agents through a shared blackboard. It implements a subset of the architecture proposed in [Han & Zhang (2025)](https://arxiv.org/abs/2507.01701), where agents coordinate through shared environmental signals rather than direct communication — a pattern called [stigmergy](https://en.wikipedia.org/wiki/Stigmergy).
+bMAS (Blackboard Multi-Agent System) is a distributed AI swarm that coordinates multiple LLM-powered agents through a shared blackboard. It implements the architecture proposed in [Han & Zhang (2025)](https://arxiv.org/abs/2507.01701), where agents coordinate through shared environmental signals rather than direct communication — a pattern called [stigmergy](https://en.wikipedia.org/wiki/Stigmergy).
 
-The system decomposes user tasks into sub-tasks, routes them to appropriate models based on complexity, and produces consensus results through a structured Planner → Executor → Auditor pipeline.
+The system uses a **cyclic execution model**: a Control Unit (CU) reads the board state, selects which agents to activate, those agents read the board and write new entries, and the cycle repeats until convergence. This contrasts with fixed pipelines — the CU dynamically determines the best agents per round based on what's on the board.
 
 ### 1.1 Design Philosophy
 
 | Principle | Implementation |
 |:---|:---|
-| **Single config file** | All deployment topology, model routing, and node configuration lives in `bmas.yaml` |
-| **Docker-first** | The control plane runs as 5 Docker containers via `docker-compose.yml` |
-| **Cost-optimized** | A local triage classifier routes tasks to the cheapest capable model |
+| **Cyclic blackboard protocol** | CU → agent selection → board read/write → convergence check → repeat |
+| **Dynamic agent roles** | 7 role profiles (planner, expert, critic, conflict_resolver, cleaner, decider, universal) activated per-round |
+| **Single config file** | All deployment topology, model routing, variant settings, and node configuration in `bmas.yaml` |
+| **Docker-first** | Control plane runs as 5 Docker containers via `docker-compose.yml` |
+| **Cost-optimized** | Local triage classifier routes tasks to the cheapest capable model; budget ceilings halt runaway spend |
 | **Dual-write persistence** | Every event writes to Redis (real-time) AND SQLite (permanent history) |
 | **Fail-open** | Triage, cost tracking, and logging are best-effort — failures never block task execution |
 
@@ -29,17 +31,17 @@ The system decomposes user tasks into sub-tasks, routes them to appropriate mode
 ┌─────────────────────── Control Plane (Docker Compose) ───────────────────────┐
 │                                                                               │
 │  ┌───────────┐  ┌────────────┐  ┌───────────┐  ┌──────────┐  ┌───────────┐  │
-│  │   Redis   │  │  LiteLLM   │  │  Triage   │  │  Daemon  │  │ Dashboard │  │
-│  │ Blackboard│  │  Gateway   │  │ Classifier│  │Orchestr. │  │ Mission   │  │
-│  │   :6379   │  │   :4000    │  │   :8001   │  │  :9000   │  │ Control   │  │
-│  │           │  │            │  │  (GPU)    │  │          │  │  :9321    │  │
+│  │   Redis   │  │  LiteLLM   │  │  Triage   │  │  Daemon  │  │ Mission   │  │
+│  │ Blackboard│  │  Gateway   │  │ Classifier│  │  Orch.   │  │ Control   │  │
+│  │   :6379   │  │   :4000    │  │   :8001   │  │  :9000   │  │  :9321    │  │
+│  │           │  │            │  │  (GPU)    │  │          │  │           │  │
 │  └─────┬─────┘  └──────┬─────┘  └─────┬─────┘  └────┬─────┘  └─────┬─────┘  │
 │        │               │              │             │              │         │
 └────────┼───────────────┼──────────────┼─────────────┼──────────────┼─────────┘
          │               │              │             │              │
          │        ┌──────┴──────┐       │      ┌──────┴──────┐       │
-         │        │ Cloud APIs  │       │      │ Agent LXCs  │       │
-         │        │ Gemini/etc  │       │      │  (×3 nodes) │       │
+         │        │ Cloud APIs  │       │      │ Agent Nodes │       │
+         │        │ Gemini/etc  │       │      │  (×3 LXCs)  │       │
          │        └─────────────┘       │      └──────┬──────┘       │
          │                              │             │              │
          │                              │      ┌──────┴──────┐       │
@@ -53,12 +55,10 @@ The system decomposes user tasks into sub-tasks, routes them to appropriate mode
          │                        └────────────┘              └─────────────┘
 ```
 
-The system separates into three deployment zones:
-
 | Zone | What runs here | Network |
 |:---|:---|:---|
 | **Control Plane** | 5 Docker containers (Redis, LiteLLM, Triage, Daemon, Dashboard) | Single host, bridged Docker network `bmas` |
-| **Edge Nodes** | Proxmox LXCs running Hermes Agent API + optional local inference | LAN — each node exposes `:8000` to the control plane |
+| **Agent Nodes** | Proxmox LXCs running Hermes Agent API + optional local inference | LAN — each node exposes `:8000` to the control plane |
 | **Cloud APIs** | Gemini, Claude, OpenAI (via LiteLLM proxy) | Internet — authenticated through LiteLLM |
 
 ---
@@ -67,72 +67,93 @@ The system separates into three deployment zones:
 
 ### 3.1 Daemon — Orchestrator (`daemon/`)
 
-**The brain.** A Python FastAPI service that manages the complete task lifecycle.
+**The brain.** A Python FastAPI service that manages the complete task lifecycle through cyclic blackboard execution.
 
 | Aspect | Detail |
 |:---|:---|
-| **Language** | Python 3.12+ |
+| **Language** | Python 3.13+ |
 | **Framework** | FastAPI + Uvicorn |
 | **Port** | 9000 |
-| **Persistence** | Dual-write: Redis (real-time) + SQLite via aiosqlite (permanent) |
+| **Persistence** | Dual-write: Redis (real-time) + SQLite v2 schema via aiosqlite (permanent) |
 | **Config** | Reads `bmas.yaml` at startup via `config.py` |
 
 #### Internal Structure
 
 ```
 daemon/src/
-├── app.py                  # FastAPI entry point + lifespan (startup/shutdown)
-├── config.py               # YAML config loader — parses bmas.yaml into module-level constants
-├── database.py             # SQLite persistence layer (aiosqlite) — tasks, sub-tasks, debate, cost, logs
+├── app.py                     # FastAPI entry point + lifespan
+├── config.py                  # YAML config loader → module-level constants
+├── database.py                # SQLite v2 schema (12 tables, additive migrations)
+├── auth.py                    # Bearer token auth for agent ingest
+├── file_utils.py              # File upload handling + PDF extraction
 ├── core/
-│   ├── orchestrator.py     # Task lifecycle: triage → plan → execute → audit → publish
-│   ├── blackboard.py       # Redis client abstraction (locks, state, debate, events, logging, HITL)
-│   └── triage.py           # Semantic complexity classifier client (calls vLLM)
+│   ├── orchestrator.py        # Task lifecycle: triage → CU → agents → converge
+│   ├── blackboard.py          # Redis state + durable board snapshots (no TTL)
+│   ├── board_store.py         # Event-sourced board (entries + events, deterministic replay)
+│   ├── gateway.py             # Capability-gated agent dispatch with per-task locking
+│   ├── entry.py               # Board entry schema + validation
+│   ├── protocol.py            # Agent ↔ Daemon message protocol
+│   ├── salience.py            # Entry salience scoring
+│   ├── event_emitter.py       # SSE event abstraction (Redis Pub/Sub + in-memory)
+│   ├── capabilities.py        # Agent capability registry
+│   ├── log_levels.py          # Level normalization (INF→info, WRN→warning, etc.)
+│   ├── triage.py              # Complexity classifier client (calls vLLM)
+│   └── variants/
+│       └── traditional.py     # Cyclic CU → agent selection → board → convergence loop
 ├── models/
-│   └── personas.py         # Agent role definitions + dynamic expert persona generator
+│   └── personas.py            # Agent role definitions + dynamic expert persona generator
 ├── monitoring/
-│   └── health_loop.py      # Background task — polls agent health, publishes to Redis
+│   └── health_loop.py         # Background agent health polling → Redis
 └── routes/
-    ├── submit.py           # POST /submit — async task submission (HTTP 202)
-    ├── tasks.py            # GET /tasks, /tasks/{id}/* — task history from SQLite
-    ├── events.py           # GET /events/{id}, /events/system — SSE endpoints via Redis Pub/Sub
-    └── health.py           # GET /health, /state — dependency health + blackboard snapshot
+    ├── submit.py              # POST /submit — async task submission (HTTP 202)
+    ├── tasks.py               # GET /tasks, /tasks/{id}/* — task/board/cost/log/trace/turns
+    ├── events.py              # GET /events/{id}, /events/system — SSE via Redis Pub/Sub
+    ├── ingest.py              # POST /ingest/traces, /ingest/logs — bearer-auth'd agent ingest
+    ├── artifacts.py           # Artifact ingest + retrieval
+    ├── files.py               # File upload + download + text extraction
+    ├── hitl.py                # HITL: pause/resume/directive/steer/approval
+    └── health.py              # GET /health, /state — dependency health + blackboard snapshot
 ```
 
 #### Key Design Decisions
 
-- **Dual-write pattern**: Every lifecycle event writes to both Redis (for live SSE streaming to the dashboard) and SQLite (for permanent task history). SQLite writes are best-effort — they log warnings but never interrupt a running task.
-- **Lock-per-task**: Each task acquires a Redlock on `orchestrator:{task_id}`. This allows concurrent task execution (future) while preventing duplicate processing.
-- **Fail-fast triage**: If the triage service is unreachable, the daemon defaults to `MEDIUM` complexity — it never under-routes to cheaper models.
-- **Exponential retry on dispatch**: Agent dispatch retries 3 times with exponential backoff (1s, 2s) to handle Hermes cold-start delays.
+- **Cyclic execution**: The traditional variant implements the paper's CU-driven loop. Each round, the CU reads the full board and selects agents with rationale. Agents execute concurrently, write entries to the board, and the cycle repeats until convergence (Decider says done, budget exceeded, or max rounds reached).
+- **Event-sourced board**: `board_store.py` maintains an append-only event log. Board state is derived by replaying events, enabling deterministic snapshots and fork support.
+- **Dual-write pattern**: Every lifecycle event writes to both Redis (for live SSE streaming) and SQLite (for permanent task history). SQLite writes are best-effort — they log warnings but never interrupt a running task.
+- **Lock-per-task**: Each task acquires a Redlock on `orchestrator:{task_id}`, allowing concurrent task execution while preventing duplicate processing.
+- **Capability-gated dispatch**: `gateway.py` checks agent capabilities before dispatch, ensuring only capable agents receive tasks.
+- **Budget ceiling**: The traditional variant tracks cumulative LLM spend and halts execution when `budget_ceiling_usd` is exceeded.
 
 ---
 
 ### 3.2 Agent API Server (`agent/`)
 
-**The hands.** A lightweight FastAPI server deployed to each edge node (Proxmox LXC), bridging the Daemon to the local [Hermes](https://github.com/hypermodeinc/hermes) CLI agent.
+**The hands.** A FastAPI server deployed to each edge node (Proxmox LXC), bridging the Daemon to [Hermes](https://github.com/hypermodeinc/hermes) agents.
 
 | Aspect | Detail |
 |:---|:---|
-| **Language** | Python 3.12+ |
+| **Language** | Python 3.13+ |
 | **Framework** | FastAPI |
 | **Port** | 8000 (per node) |
-| **Deployment** | Copied to `/opt/bmas/api_server.py` on each LXC, runs as a systemd service |
+| **Deployment** | Copied to `/opt/bmas/api_server.py` on each LXC, runs as systemd service |
 
-#### Endpoints
+#### Execution Paths
 
-| Method | Path | Purpose |
-|:---|:---|:---|
-| `GET` | `/health` | Verifies Hermes binary and LiteLLM gateway connectivity |
-| `POST` | `/execute` | Executes a task via `hermes -z` with persona injection |
+1. **Runs API (primary)** — When `HERMES_GATEWAY_URL` is set, the agent uses the Hermes Gateway's `POST /v1/runs` endpoint with SSE streaming. Real-time trace/log data flows back to the daemon via `TraceEmitter` and `LogEmitter`.
+2. **CLI fallback** — When no gateway is configured, falls back to `hermes -z` subprocess execution.
 
-The agent server receives a `TaskRequest` from the Daemon containing `task_id`, `description`, `role_prompt`, and optional `context`. It invokes the Hermes CLI with the persona as a system prompt and returns the result.
+#### Key Features
+
+- **TraceEmitter** — Batches and POSTs structured agent traces (tool calls, content blocks) to `/ingest/traces/{task_id}/{turn_id}` on the daemon
+- **LogEmitter** — Ships structured per-agent log entries (with fields, node ID, turn ID) to `/ingest/logs/{task_id}` on the daemon
+- **SSE parser** — Handles both standard and Hermes Gateway SSE formats
+- **Profile support** — 7 Hermes profiles (planner, expert, critic, conflict_resolver, cleaner, decider, universal) with per-role toolset scoping
 
 ---
 
 ### 3.3 Redis — Blackboard (`redis/`)
 
-**The shared memory.** Redis serves as the blackboard — the central knowledge store through which all agents coordinate without direct communication.
+**The shared memory.** Redis serves as the blackboard — the central knowledge store through which all agents coordinate.
 
 | Aspect | Detail |
 |:---|:---|
@@ -144,14 +165,14 @@ The agent server receives a `TaskRequest` from the Daemon containing `task_id`, 
 
 #### Namespace Schema
 
-All keys use the `bmas:` prefix with hierarchical namespacing:
-
 | Namespace | Key Pattern | Data Type | Purpose |
 |:---|:---|:---|:---|
 | **Public State** | `bmas:public:state` | Hash | Orchestrator phase, iteration count, pause flag |
-| **Public Tasks** | `bmas:public:tasks` | Hash | Task registry — maps task IDs to JSON task objects |
-| **Public Results** | `bmas:public:results` | Hash | Consensus results — written only by the Auditor |
-| **Private Debate** | `bmas:private:{session}:debate` | List | Per-session agent debate entries (wiped after consensus) |
+| **Public Tasks** | `bmas:public:tasks` | Hash | Task registry — maps task IDs to JSON objects |
+| **Public Results** | `bmas:public:results` | Hash | Consensus results — written by Decider |
+| **Board Entries** | `bmas:board:{task}:entries` | Hash | Per-task board entries (entry_id → JSON) |
+| **Board Meta** | `bmas:board:{task}:meta` | Hash | Board metadata (phase, round, variant) |
+| **Private Debate** | `bmas:private:{session}:debate` | List | Per-session debate entries (wiped after consensus) |
 | **Locks** | `bmas:locks:{resource}` | String | Redlock distributed locks (`SET NX PX`) |
 | **Global Logs** | `bmas:logs:{node_id}` | Stream | Durable agent log streams (capped at 1000 entries) |
 | **Task Logs** | `bmas:logs:task:{task_id}` | Stream | Per-task log stream (TTL: 24h) |
@@ -159,17 +180,8 @@ All keys use the `bmas:` prefix with hierarchical namespacing:
 | **Metrics (Tokens)** | `bmas:metrics:tokens` | Hash | Per-model token counters |
 | **HITL Hints** | `bmas:public:hints:{task_id}` | List | Operator hints injected during pause |
 | **Abort Flags** | `bmas:public:abort:{task_id}` | String | Operator abort signals |
-| **Pub/Sub (Task)** | `bmas:events:{task_id}` | Channel | Real-time task events (phase, debate, log, cost, complete) |
+| **Pub/Sub (Task)** | `bmas:events:{task_id}` | Channel | Real-time task events (18 types) |
 | **Pub/Sub (System)** | `bmas:events:system` | Channel | System-wide events (task-started, task-completed) |
-
-#### Why Redis?
-
-| Alternative | Why Not |
-|:---|:---|
-| Filesystem | No atomic operations, no pub/sub, no distributed locks |
-| PostgreSQL | Overkill for ephemeral swarm state; adds latency |
-| etcd | Designed for config, not streaming data |
-| **Redis** | ✅ Atomic ops (Redlock), Streams for durable logs, sub-ms latency, Pub/Sub for SSE |
 
 ---
 
@@ -183,63 +195,34 @@ All keys use the `bmas:` prefix with hierarchical namespacing:
 | **Port** | 4000 |
 | **Config** | Auto-generated from `bmas.yaml` at container startup by `generate_config.py` |
 
-#### Model Routing
-
-```
-Daemon (model="gemini-pro")
-    │
-    ▼
-┌───────────┐
-│  LiteLLM  │──→ gemini-pro       ──→ Gemini 3.1 Pro (cloud)      $$$
-│   :4000   │──→ gemini-flash     ──→ Gemini 3 Flash (cloud)       $$
-│           │──→ gemini-flash-lite ──→ Gemini 3.1 Flash Lite (cloud) $
-│           │──→ edge-node-*      ──→ Local inference (llama.cpp)    $0
-└───────────┘
-```
-
-The Daemon sends model names from `bmas.yaml`'s `routing` section; LiteLLM resolves them to actual backends. Model names and routing are fully configurable — the table above shows an example deployment.
-
-#### Key Settings
-
 | Setting | Value | Rationale |
 |:---|:---|:---|
 | Strategy | `simple-shuffle` | Round-robin across backends in a model group |
 | Retries | 2 with 5s backoff | Handles transient cloud API failures |
 | Timeout | 120s | Accounts for edge node cold starts |
-| `drop_params` | `true` | Silently drops unsupported params (e.g., `guided_choice` sent to Gemini) |
+| `drop_params` | `true` | Silently drops unsupported params |
 
 ---
 
 ### 3.5 Triage — Complexity Classifier (`triage/`)
 
-**The gatekeeper.** Before any paid API call, triage classifies task complexity and routes to the cheapest capable model. Runs only with the `gpu` Docker Compose profile.
+**The gatekeeper.** Classifies task complexity before any paid API call. Routes to the cheapest capable model. Runs only with the `gpu` Docker Compose profile.
 
 | Aspect | Detail |
 |:---|:---|
 | **Image** | `vllm/vllm-openai:latest` |
 | **Port** | 8001 |
 | **Model** | Qwen3-1.7B (bfloat16) |
-| **GPU** | 35% VRAM utilization (~5.6 GB on RTX 5060 Ti) |
+| **GPU** | 35% VRAM utilization |
 
-#### Classification Flow
+| Tier | Model Target | Cost |
+|:---|:---|:---|
+| SIMPLE | Edge node (Gemma 4B) | $0 |
+| LIGHT | Gemini Flash Lite | $ |
+| MEDIUM | Gemini Flash | $$ |
+| COMPLEX | Gemini Pro | $$$ |
 
-```
-User Task → Qwen3-1.7B + guided_choice + /no_think → TIER
-    │
-    ├── SIMPLE  → Edge node (Gemma 4B, $0)
-    ├── LIGHT   → Gemini Flash Lite ($)
-    ├── MEDIUM  → Gemini Flash ($$)
-    └── COMPLEX → Gemini Pro ($$$)
-```
-
-| Decision | Rationale |
-|:---|:---|
-| **Qwen3-1.7B** | Best instruction-following for sub-2B models. Small enough to share GPU. |
-| **`guided_choice`** | vLLM constrained decoding guarantees valid tier labels — no parsing failures |
-| **`/no_think`** | Disables Qwen3's thinking mode — adds latency without improving classification |
-| **MEDIUM fallback** | If triage is unreachable, defaults to MEDIUM — never under-routes |
-
-The classification is validated by a 117-case evaluation suite (`triage/eval/`) covering 4 tiers across 9 complexity dimensions.
+The classification is validated by a 117-case evaluation suite (`triage/eval/`).
 
 ---
 
@@ -259,41 +242,43 @@ The classification is validated by a 117-case evaluation suite (`triage/eval/`) 
 
 | Feature | Technology | Data Source |
 |:---|:---|:---|
-| Task DAG Visualizer | React Flow (`@xyflow/react`) | Daemon `/state` (2s polling) |
-| Live Log Terminals | xterm.js (`@xterm/xterm`) | Redis Streams (SSE) |
-| Operator Controls (HITL) | ActionButton + Toast | Daemon `/hitl/*` |
-| Blackboard Inspector | SplitView | Redis public + private state |
-| Cost Tracker | Recharts + MetricCard | Redis metrics hashes |
-| Skills Explorer | Tabbed Panel | Agent LXCs `/skills` |
-| Hardware Telemetry | Multi-node gauges | Beszel Hub `:8090` |
+| Task Overview | React + Markdown | REST + SSE |
+| Execution Graph (TurnGraph) | React Flow (`@xyflow/react`) | SSE `turn`, `narration` events |
+| Distributed Log Stream | TanStack Virtual + detail drawer | SSE `log` events + REST fallback |
+| Agent Trace Inspector | TanStack Virtual | REST `/tasks/{id}/trace` |
+| Blackboard Board | Timeline / Threads / Graph views | SSE `board_*` events + REST `/tasks/{id}/board` |
+| Mission Cockpit | 4-panel live layout | Composite SSE + board + convergence |
+| Operator Controls (HITL) | ActionButton + directives | POST `/hitl/{action}` |
+| Artifact Browser | File tree + downloads | REST `/tasks/{id}/artifacts` |
+| Cost & Budget | BudgetGauge + breakdown | SSE `cost` events |
+| Skills Explorer | Tabbed panel | REST `/skills` |
+| Hardware Telemetry | Multi-node gauges | REST `/telemetry` (Beszel Hub) |
 
 #### Data Flow
 
-The dashboard never talks to Redis or agents directly from the browser. All API routes are **server-side proxies** in `src/app/api/` that forward to backend services, avoiding CORS issues:
+The dashboard uses **Server-Sent Events (SSE)** for all real-time data. The `useTaskStream.ts` hook manages 18 event types with `requestAnimationFrame` batching and REST hydration for initial state:
 
 ```
-Browser (React 19)
-    │
-    ▼
-Next.js Server (API Routes)
-    │
-    ├──→ Daemon :9000   (state, submit, hitl, tasks, events)
-    ├──→ Redis :6379    (logs SSE, cost metrics, private state)
-    ├──→ Agent LXCs     (skills proxy)
-    └──→ Beszel Hub     (telemetry)
+Daemon (Redis Pub/Sub) ──▶ /api/stream/task/{id} (SSE) ──▶ useTaskStream.ts
+                                                                │
+                     ├──▶ turns[]         → TurnGraph
+                     ├──▶ boardEntries[]  → BlackboardBoard
+                     ├──▶ logs[]          → DistributedLogStream
+                     ├──▶ costEvents[]    → BudgetGauge
+                     ├──▶ traces[]        → AgentTrace
+                     ├──▶ narrations[]    → TurnGraph (coordinator spine)
+                     └──▶ status          → TopBar, StatusBadge
 ```
 
-**Log streaming** uses Server-Sent Events (SSE), not WebSockets. The `/api/logs` endpoint uses a module-level singleton Redis subscriber to prevent connection pool exhaustion — all connected browser tabs share the same subscriber.
-
-The design system is documented in [DESIGN.md](../design/DESIGN.md).
+All API routes are **server-side proxies** in `src/app/api/` that forward to backend services, avoiding CORS issues.
 
 ---
 
-## 4. Task Lifecycle
+## 4. Task Lifecycle (Traditional Variant)
 
-Every task flows through a structured pipeline. The specific flow depends on the triage classification.
+The traditional variant implements the bMAS paper's cyclic execution model:
 
-### 4.1 Standard Flow (SIMPLE / LIGHT / MEDIUM)
+### 4.1 Full Flow
 
 ```
  User submits task
@@ -301,50 +286,73 @@ Every task flows through a structured pipeline. The specific flow depends on the
        ▼
  ┌─────────────┐
  │ 1. TRIAGE   │  Qwen3-1.7B classifies complexity
- │             │  → Routes to cheapest capable model
+ │             │  → Selects model tier (SIMPLE/LIGHT/MEDIUM/COMPLEX)
  └──────┬──────┘
         │
         ▼
- ┌─────────────┐
- │ 2. PLAN     │  Planner agent decomposes into sub-task DAG
- │             │  Writes plan to private debate space
- └──────┬──────┘
-        │
-        ▼
- ┌─────────────┐
- │ 3. EXECUTE  │  Executor agent implements each sub-task
- │             │  Writes results to private debate space
- └──────┬──────┘
-        │
-        ▼
- ┌─────────────┐
- │ 4. AUDIT    │  Auditor reads entire debate
- │             │  Resolves conflicts, produces consensus
- └──────┬──────┘
-        │
-        ▼
- ┌─────────────┐
- │ 5. PUBLISH  │  Consensus written to public blackboard
- │             │  Private debate space wiped
- └─────────────┘
+ ┌──────────────────────────────────────────────────────────┐
+ │ 2. CYCLIC EXECUTION (repeats until convergence)          │
+ │                                                          │
+ │   ┌────────────────────┐                                 │
+ │   │ Control Unit (CU)  │  LLM reads the full board      │
+ │   │                    │  Selects agents for this round  │
+ │   │                    │  Emits routing rationale        │
+ │   └────────┬───────────┘  (narration event)              │
+ │            │                                             │
+ │   ┌────────▼──────────┐                                  │
+ │   │ Agent Execution   │  Selected agents execute in      │
+ │   │                   │  parallel (gateway dispatches    │
+ │   │  Planner          │  to nodes via Runs API / CLI)    │
+ │   │  Expert.*         │                                  │
+ │   │  Critic           │  Each agent reads the board,     │
+ │   │  Conflict Resolver│  writes new entries/events       │
+ │   │  Cleaner          │                                  │
+ │   └────────┬──────────┘                                  │
+ │            │                                             │
+ │   ┌────────▼──────────┐                                  │
+ │   │ Round Accounting  │  Cost rollup, trace ingest,      │
+ │   │                   │  board snapshot persistence       │
+ │   └────────┬──────────┘                                  │
+ │            │                                             │
+ │   ┌────────▼──────────┐                                  │
+ │   │ Convergence Check │  Is the task done?               │
+ │   │                   │  Budget exceeded?                │
+ │   │                   │  Stalled (no progress)?          │
+ │   │                   │  Max rounds reached?             │
+ │   └────────┬──────────┘                                  │
+ │            │                                             │
+ │      NO ───┘──── YES                                     │
+ │     (loop)       │                                       │
+ └──────────────────┼───────────────────────────────────────┘
+                    │
+                    ▼
+ ┌─────────────────────┐
+ │ 3. FINALIZE         │  Decider agent produces consensus result
+ │                     │  Board persisted to SQLite
+ │                     │  Task marked complete via SSE
+ └─────────────────────┘
 ```
 
-Each phase transition:
-1. Updates Redis state (`bmas:public:state`)
-2. Publishes a Pub/Sub event (consumed by SSE endpoints)
-3. Writes sub-task status updates to Redis + SQLite
-4. Checks for operator abort signals
+### 4.2 Agent Roles
 
-### 4.2 Complex Research Flow (COMPLEX)
+| Role | Purpose | When Activated |
+|:---|:---|:---|
+| **Planner** | Decomposes tasks into structured sub-problems | Early rounds, complex tasks |
+| **Expert.*** | Domain-specific expertise (dynamically generated) | Mid rounds, when domain knowledge needed |
+| **Critic** | Challenges assumptions, identifies gaps | After initial solutions on the board |
+| **Conflict Resolver** | Synthesizes conflicting perspectives | When board has contradictions |
+| **Cleaner** | Prunes low-value or redundant entries | When board exceeds `cleaner_entry_threshold` |
+| **Decider** | Produces final consensus judgment | Last round (convergence reached) |
 
-For tasks classified as `COMPLEX`, the orchestrator activates **dynamic expert personas**:
+The Control Unit (CU) selects which roles to activate each round based on the current board state. Roles are not fixed per agent node — the CU assigns roles dynamically.
 
-1. **Expert generation** — Gemini Pro generates 3 domain-specific expert identities from the task description
-2. **Parallel debate** — All 3 agents (assigned to planner/executor/auditor nodes) run in parallel with their expert personas, writing to the private debate space
-3. **Synthesis** — The Auditor persona reads all expert perspectives and produces a unified consensus
-4. **Publish** — Same as standard flow
+### 4.3 Convergence Criteria
 
-If expert persona generation fails (Gemini unreachable or malformed response), the system falls back to 3 hardcoded defaults: Systems Architecture, Domain Analysis, and Quality Assurance.
+A round converges when any of these conditions is met:
+1. **CU judges task complete** — The CU's board assessment signals convergence
+2. **Budget exceeded** — Cumulative LLM spend exceeds `budget_ceiling_usd`
+3. **Stall detection** — No meaningful new entries for `stall_rounds` consecutive rounds
+4. **Max rounds** — `max_rounds` limit reached
 
 ---
 
@@ -355,139 +363,125 @@ If expert persona generation fails (Gemini unreachable or malformed response), t
 Every significant event writes to **two** persistence layers:
 
 ```
-Event (phase change, debate entry, log, cost, result)
+Event (turn, board entry, log, cost, trace, result)
     │
     ├──→ Redis       Real-time blackboard for live dashboard (ephemeral)
-    │                - Pub/Sub for SSE streaming
-    │                - Hashes for state snapshots
+    │                - Pub/Sub for SSE streaming (18 event types)
+    │                - Hashes for board entries and state snapshots
     │                - Streams for log tailing
     │
     └──→ SQLite      Permanent task history (durable)
-                     - Tasks, sub-tasks, debate entries, cost entries, logs
+                     - 12 tables: tasks, sub_tasks, debate, cost_entries,
+                       logs, turns, board_entries, board_events,
+                       agent_traces, task_files, artifacts, ...
                      - Survives Redis eviction and container restarts
 ```
 
-Redis writes are **primary** (must succeed for real-time UI). SQLite writes are **best-effort** (log warnings on failure but never interrupt execution). This means:
+### 5.2 Real-time Event Delivery (SSE)
 
-- The live dashboard always works even if SQLite has issues
-- Task history survives Redis restarts and memory evictions
-- No single point of failure blocks task execution
+| Channel | Pattern | Event Types | Consumers |
+|:---|:---|:---|:---|
+| **Task** | `bmas:events:{task_id}` | status, phase, log, cost, turn, board_entry, board_event, narration, trace, debate, error, hitl, file, artifact, convergence, steer, approval, complete | `/events/{task_id}` |
+| **System** | `bmas:events:system` | task-started, task-completed | `/events/system` |
 
-### 5.2 Real-time Event Delivery
+### 5.3 Agent Ingest Pipeline
 
-The system uses two separate Pub/Sub channel patterns for SSE:
+Agent nodes ship trace and log data back to the daemon in real-time:
 
-| Channel | Pattern | Consumers |
-|:---|:---|:---|
-| **Task events** | `bmas:events:{task_id}` | `/events/{task_id}` SSE endpoint |
-| **System events** | `bmas:events:system` | `/events/system` SSE endpoint |
-
-Task events include: `phase`, `subtask`, `debate`, `log`, `cost`, `error`, `complete`.
-System events include: `task-started`, `task-completed`.
+```
+Agent Node (TraceEmitter / LogEmitter)
+    │
+    ├── POST /ingest/traces/{task_id}/{turn_id}  (bearer auth)
+    │   → daemon writes to agent_traces table + publishes SSE trace event
+    │
+    ├── POST /ingest/logs/{task_id}  (bearer auth)
+    │   → daemon writes to logs table + publishes SSE log event
+    │
+    └── POST /ingest/artifacts/{task_id}/{turn_id}  (bearer auth)
+        → daemon writes to artifacts table + publishes SSE artifact event
+```
 
 ---
 
 ## 6. Configuration Architecture
 
-Everything is driven by a single `bmas.yaml` file, supplemented by `.env` for secrets:
+Everything is driven by `bmas.yaml`, supplemented by `.env` for secrets:
 
 ```
-bmas.yaml                    .env
-    │                          │
-    ├── project (name/desc)    ├── REDIS_PASSWORD
-    ├── control_plane          ├── LITELLM_MASTER_KEY
-    │   ├── host               ├── GEMINI_API_KEY
-    │   └── ports (5)          ├── ANTHROPIC_API_KEY (optional)
-    ├── nodes[] (×3)           ├── OPENAI_API_KEY (optional)
-    │   ├── host/port          ├── HF_TOKEN
-    │   ├── role               ├── BESZEL_EMAIL
-    │   └── inference          └── BESZEL_PASSWORD
+bmas.yaml                        .env
+    │                              │
+    ├── project (name/desc)        ├── REDIS_PASSWORD
+    ├── control_plane              ├── LITELLM_MASTER_KEY
+    │   ├── host                   ├── GEMINI_API_KEY
+    │   └── ports (5)              ├── ANTHROPIC_API_KEY (optional)
+    ├── coordination               ├── OPENAI_API_KEY (optional)
+    │   ├── variant                ├── HF_TOKEN
+    │   ├── view_budget_tokens     ├── BMAS_NODE_KEY
+    │   ├── traditional.*          ├── BESZEL_EMAIL
+    │   ├── role_registry          └── BESZEL_PASSWORD
+    │   └── board settings
+    ├── nodes[] (×3)
+    │   ├── host/port
+    │   ├── role
+    │   └── inference
     ├── triage
-    │   ├── enabled
-    │   ├── model
+    │   ├── enabled/model
     │   └── gpu settings
     ├── models{}
     │   └── provider/model/key
     ├── routing{}
     │   └── complex/medium/light/simple → model
+    ├── storage
+    │   ├── enabled
+    │   ├── user_media_dir
+    │   └── artifacts_dir
     └── monitoring
         └── beszel_hub URL
 ```
-
-At container startup:
-- **Daemon** reads `bmas.yaml` via `config.py`, exports module-level constants (`AGENT_ENDPOINTS`, `LITELLM_URL`, etc.)
-- **LiteLLM** runs `generate_config.py` which translates `bmas.yaml` into LiteLLM's native `config.yaml` format
-- **Dashboard** reads `bmas.yaml` for control plane addresses and node topology
-- **Redis** uses `entrypoint.sh` to inject `REDIS_PASSWORD` into `redis.conf` from `.env`
-- **Triage** receives model/GPU settings via Docker Compose environment variable interpolation
 
 ---
 
 ## 7. Networking & Security
 
-### 7.1 Network Topology
-
-```
-┌──────────────────────────────────────────────────────────┐
-│                    Docker Bridge: bmas                    │
-│                                                          │
-│  redis:6379  litellm:4000  triage:8001  daemon:9000     │
-│  dashboard:9321                                          │
-└─────────────────────────┬────────────────────────────────┘
-                          │  Published ports
-                          │  (mapped to host)
-                          ▼
-┌──────────────────────────────────────────────────────────┐
-│                   LAN (192.168.4.0/24)                   │
-│                                                          │
-│  Control Plane: 192.168.4.240                            │
-│  Agent Node 1:  192.168.4.103  (Inference: .102:8080)   │
-│  Agent Node 2:  192.168.4.112  (Inference: .111:8080)   │
-│  Agent Node 3:  192.168.4.122  (Inference: .121:8080)   │
-│  Beszel Hub:    192.168.4.229:8090                       │
-└──────────────────────────────────────────────────────────┘
-```
-
-### 7.2 Security Boundaries
+### 7.1 Security Boundaries
 
 | Boundary | Mechanism |
 |:---|:---|
 | **Redis** | Password-authenticated (`requirepass`). Bound to all interfaces but LAN-only. |
 | **LiteLLM** | Master key authentication. All model API calls go through it. |
+| **Agent Ingest** | Bearer token authentication (`BMAS_NODE_KEY`) for all `/ingest/*` endpoints |
 | **Cloud APIs** | API keys stored in `.env`, never committed to git. Injected as container environment variables. |
-| **Agent nodes** | No authentication currently. Relies on LAN isolation. |
+| **Agent nodes** | No authentication on `/execute` currently. Relies on LAN isolation. |
 | **Dashboard** | No authentication. Intended for internal/homelab use. |
 | **Triage** | No authentication. GPU profile must be explicitly enabled. |
 
 > [!WARNING]
-> The current security model assumes a trusted LAN. Agent endpoints and the dashboard have no authentication. This is appropriate for homelab deployments but not for multi-tenant or internet-facing use.
+> The current security model assumes a trusted LAN. Agent execution endpoints and the dashboard have no authentication. This is appropriate for homelab deployments but not for multi-tenant or internet-facing use.
 
 ---
 
 ## 8. Agent Role System
 
-The current implementation uses 3 fixed roles with static assignment per node:
+The system uses 7 role profiles, dynamically activated by the Control Unit per round:
 
-| Role | Purpose | Persona |
-|:---|:---|:---|
-| **Planner** | Decomposes complex tasks into sub-task DAGs | Strategic analyst — breaks problems into structured execution plans |
-| **Executor** | Implements sub-tasks (code, research, etc.) | Technical implementer — produces concrete deliverables |
-| **Auditor** | Reviews the debate, resolves conflicts, produces consensus | Quality reviewer — synthesizes agent contributions into a coherent result |
+| Role | Profile | Purpose | Toolset |
+|:---|:---|:---|:---|
+| **Planner** | `planner` | Decomposes complex tasks into structured execution plans | web, browser, terminal, file |
+| **Expert** | `expert` | Domain-specific expertise, dynamically generated per task | full (web, browser, terminal, code_exec, file) |
+| **Critic** | `critic` | Challenges assumptions, identifies gaps in the board | web, browser, file (read-only analysis) |
+| **Conflict Resolver** | `conflict_resolver` | Synthesizes conflicting perspectives on the board | web, browser, file |
+| **Cleaner** | `cleaner` | Prunes low-value or redundant board entries | file only (board content) |
+| **Decider** | `decider` | Produces final consensus judgments | web, file |
+| **Universal** | `universal` | V2 roleless agent for stigmergic variant | full |
 
-Roles are assigned statically in `bmas.yaml` via `nodes[*].role`. Each node runs exactly one role. The Daemon's `config.py` maps roles to HTTP endpoints at startup:
+Profiles are deployed to agent nodes via `scripts/deploy_profiles.sh` and stored in `agent/profiles/`. Each profile is a fully isolated Hermes instance with its own `SOUL.md` (identity), `config.yaml` (toolset), memory, and sessions.
 
-```python
-AGENT_ENDPOINTS = {
-    "planner":  "http://192.168.4.103:8000",
-    "executor": "http://192.168.4.112:8000",
-    "auditor":  "http://192.168.4.122:8000",
-}
-```
-
-For `COMPLEX` tasks, the orchestrator overrides these static personas with dynamically generated expert identities (see §4.2), but the physical node assignment remains the same.
-
-> [!NOTE]
-> The bMAS paper (§3.2) proposes dynamic role assignment where any node can assume any role per-task, plus additional roles (Decider, Critic, Conflict-Resolver, Cleaner). See the [roadmap](../roadmap/control-unit.md) for the implementation plan.
+The CU determines which roles to activate each round by analyzing the current board state. For example:
+- **Round 1**: Planner (decompose the task)
+- **Round 2**: Expert.valuation, Expert.engineering (domain work)
+- **Round 3**: Critic (challenge the experts' work)
+- **Round 4**: Conflict Resolver (synthesize disagreements)
+- **Round 5**: Decider (produce consensus)
 
 ---
 
@@ -502,19 +496,17 @@ The blackboard uses single-instance Redlock for coordination:
 lock_id = uuid4()
 acquired = redis.set(f"bmas:locks:{resource}", lock_id, nx=True, px=ttl_ms)
 
-# Release: Lua script (atomic check-and-delete, prevents releasing someone else's lock)
+# Release: Lua script (atomic check-and-delete)
 if redis.call("get", KEYS[1]) == ARGV[1] then
     return redis.call("del", KEYS[1])
 end
 ```
 
-Lock TTL defaults to 300,000ms (5 minutes), configurable via `LOCK_TTL_MS` environment variable.
+Lock TTL defaults to 300,000ms (5 minutes), configurable via `LOCK_TTL_MS`.
 
-### 9.2 Current Limitations
+### 9.2 Per-Task Locking
 
-- **Single task at a time**: The orchestrator acquires a lock on `orchestrator:{task_id}`, but the current pipeline is sequential — it doesn't process multiple tasks concurrently.
-- **No read-write separation**: All blackboard operations go through a single Redis connection.
-- **Single-instance Redlock**: Sufficient for homelab, but not HA-safe. Would need multi-instance Redlock (via `aioredlock`) for production.
+The gateway (`gateway.py`) acquires per-task locks before dispatching agents, preventing duplicate agent activation within the same round.
 
 ---
 
@@ -522,102 +514,42 @@ Lock TTL defaults to 300,000ms (5 minutes), configurable via `LOCK_TTL_MS` envir
 
 ### 10.1 Health Monitoring
 
-A background `health_loop` in the Daemon periodically polls each agent node's `/health` endpoint and publishes status to Redis. The Dashboard consumes this via the system SSE stream.
+A background `health_loop` polls each agent node's `/health` endpoint and publishes status to Redis. The Dashboard consumes this via the system SSE stream.
 
 ### 10.2 Cost Tracking
 
-Every LLM call's token usage and cost are tracked in Redis (`bmas:metrics:cost`, `bmas:metrics:tokens`) and SQLite (`cost_entries` table). The Dashboard's Cost Tracker renders this as real-time charts.
+Every LLM call's token usage and cost are tracked in Redis (`bmas:metrics:cost`, `bmas:metrics:tokens`) and SQLite (`cost_entries` table). The traditional variant accumulates per-task spend and checks against `budget_ceiling_usd` each round.
 
-### 10.3 Hardware Telemetry
+### 10.3 Structured Logging
 
-The Dashboard proxies hardware metrics from [Beszel Hub](https://github.com/henrygd/beszel) (`:8090`) — CPU, RAM, disk, temperature, uptime, and load for all nodes. This is optional and configured via `monitoring.beszel_hub` in `bmas.yaml`.
+Agent nodes ship structured logs back to the daemon via `/ingest/logs/{task_id}`. Logs include agent role, level, structured fields (JSON), node ID, and turn ID. The `log_levels.py` module normalizes abbreviations (INF→info, WRN→warning, ERR→error, DBG→debug).
 
----
+### 10.4 Hardware Telemetry
 
-## 11. Repository Structure
-
-```
-bmas/
-├── bmas.yaml              # ← Single config file (entire deployment)
-├── .env                   # ← Secrets (API keys, passwords)
-├── docker-compose.yml     # ← Unified control plane (5 services)
-├── docker-compose.dev.yml # ← Dev overrides (hot-reload, volume mounts)
-│
-├── daemon/                # Python FastAPI orchestrator
-│   ├── src/
-│   │   ├── app.py         #   Entry point + lifespan
-│   │   ├── config.py      #   YAML config → module constants
-│   │   ├── database.py    #   SQLite persistence (aiosqlite)
-│   │   ├── core/
-│   │   │   ├── orchestrator.py   # Task lifecycle engine
-│   │   │   ├── blackboard.py     # Redis client (locks, state, events, HITL)
-│   │   │   └── triage.py         # Complexity classifier client
-│   │   ├── models/
-│   │   │   └── personas.py       # Agent role definitions
-│   │   ├── monitoring/
-│   │   │   └── health_loop.py    # Background agent health polling
-│   │   └── routes/
-│   │       ├── submit.py         # POST /submit
-│   │       ├── tasks.py          # GET /tasks, /tasks/{id}/*
-│   │       ├── events.py         # SSE endpoints (task + system)
-│   │       └── health.py         # GET /health, /state
-│   └── tests/
-│
-├── agent/                 # Edge node agent API (deployed to LXCs)
-│   └── api_server.py      #   Hermes ↔ Daemon bridge (:8000)
-│
-├── mission-control/       # Next.js 16 dashboard (:9321)
-│   └── src/
-│       ├── app/            #   App Router pages + API route proxies
-│       ├── components/     #   UI primitives + feature components
-│       ├── hooks/          #   Zustand store + toast state
-│       └── lib/            #   Redis client singleton + design tokens
-│
-├── litellm/               # LiteLLM model gateway (:4000)
-│   ├── generate_config.py  #   bmas.yaml → LiteLLM config.yaml
-│   └── entrypoint.sh      #   Startup: generate config + start proxy
-│
-├── redis/                 # Redis blackboard (:6379)
-│   ├── redis.conf.template #   Config template (password injected at runtime)
-│   └── entrypoint.sh      #   Startup: render config + start server
-│
-├── triage/                # vLLM complexity classifier (:8001)
-│   └── eval/              #   117-case evaluation suite
-│
-├── docs/
-│   ├── architecture/      #   ← You are here
-│   ├── design/            #   Mission Control design system (DESIGN.md)
-│   ├── roadmap/           #   Future enhancements (by category)
-│   ├── QUICKSTART.md      #   Get running in 5 minutes
-│   ├── CONFIGURATION.md   #   Full bmas.yaml reference
-│   ├── NODE_SETUP.md      #   Edge node provisioning guide
-│   └── HERMES_API.md      #   Hermes tool-calling API reference
-│
-├── examples/              # Example configurations + diagrams
-└── scripts/               # Operational utilities (healthcheck.sh)
-```
+The Dashboard proxies hardware metrics from [Beszel Hub](https://github.com/henrygd/beszel) (`:8090`) — CPU, RAM, disk, temperature, uptime, and load for all nodes. Configured via `monitoring.beszel_hub` in `bmas.yaml`.
 
 ---
 
-## 12. Technology Stack
+## 11. Technology Stack
 
 | Layer | Technology | Version | Purpose |
 |:---|:---|:---|:---|
-| **Orchestrator** | Python + FastAPI + Uvicorn | 3.12+ | Task lifecycle, API, dispatch |
-| **Persistence** | SQLite (aiosqlite) | — | Permanent task history |
+| **Orchestrator** | Python + FastAPI + Uvicorn | 3.13+ | Task lifecycle, API, dispatch |
+| **Persistence** | SQLite (aiosqlite) | v2 schema | Permanent task history (12 tables) |
 | **Blackboard** | Redis | 7-alpine | Real-time state, Pub/Sub, Streams, locks |
 | **Model Gateway** | LiteLLM | latest | Unified model routing + cost tracking |
 | **Triage** | vLLM + Qwen3-1.7B | latest | Complexity classification |
-| **Agent Runtime** | Hermes CLI | — | LLM agent execution on edge nodes |
+| **Agent Runtime** | Hermes CLI / Runs API | — | LLM agent execution on edge nodes |
 | **Local Inference** | llama.cpp (llama-server) | — | Free local model inference |
 | **Dashboard** | Next.js 16 + React 19 + TypeScript 5 | 16.2.x | Real-time operations UI |
-| **DAG Rendering** | React Flow (`@xyflow/react`) | 12.x | Task graph visualization |
-| **Terminals** | xterm.js (`@xterm/xterm`) | 6.x | Live agent log streams |
+| **Execution Graph** | React Flow (`@xyflow/react`) | 12.x | Swimlane turn visualization |
+| **Virtualization** | TanStack Virtual (`@tanstack/react-virtual`) | 3.x | Log/trace list performance |
+| **Markdown** | react-markdown + remark-gfm | 10.x | Result rendering |
 | **Charts** | Recharts | 3.x | Cost and token visualizations |
 | **State Management** | Zustand | 5.x | Client-side state |
 | **Styling** | Vanilla CSS (design tokens) | — | Dark-mode-first design system |
 | **Containerization** | Docker Compose | — | Control plane orchestration |
-| **Virtualization** | Proxmox VE (LXC) | — | Edge node infrastructure |
+| **Edge Infrastructure** | Proxmox VE (LXC) | — | Agent node infrastructure |
 | **Monitoring** | Beszel Hub | — | Hardware telemetry |
 
 ---

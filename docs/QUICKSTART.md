@@ -39,6 +39,9 @@ control_plane:
     litellm: 4000
     daemon: 9000
     dashboard: 9321
+
+coordination:
+  variant: traditional        # The cyclic blackboard variant
 ```
 
 If you have edge nodes with Hermes agents, add them under `nodes:`.
@@ -54,6 +57,7 @@ Fill in your secrets:
 REDIS_PASSWORD=your-secure-password
 LITELLM_MASTER_KEY=sk-your-litellm-key
 GEMINI_API_KEY=your-gemini-key
+BMAS_NODE_KEY=your-node-auth-token    # For agent ingest auth
 ```
 
 ## 3. Start the Swarm
@@ -80,11 +84,18 @@ You should see:
 |:---|:---|
 | `bmas-redis` | Up (healthy) |
 | `bmas-litellm` | Up (healthy) |
-| `bmas-daemon` | Up |
-| `bmas-dashboard` | Up |
+| `bmas-daemon` | Up (healthy) |
+| `bmas-dashboard` | Up (healthy) |
 | `bmas-triage` | Up *(only with `--profile gpu`)* |
 
-Open the dashboard:
+Check the daemon health endpoint:
+
+```bash
+curl http://localhost:9000/health
+# {"status":"healthy","redis_connected":true,"sqlite_connected":true,"agents":[...]}
+```
+
+Open Mission Control:
 
 ```
 http://localhost:9321
@@ -92,7 +103,7 @@ http://localhost:9321
 
 ## 5. Submit a Test Task
 
-From the dashboard, type a task in the command bar, or use the API directly:
+From the Mission Control dashboard, type a task in the command bar, or use the API directly:
 
 ```bash
 curl -X POST http://localhost:9000/submit \
@@ -100,8 +111,27 @@ curl -X POST http://localhost:9000/submit \
   -d '{"task": "Explain the architecture of a blackboard multi-agent system"}'
 ```
 
+The response returns a `task_id` you can track:
+
+```json
+{"task_id": "task-a1b2c3d4"}
+```
+
+Open `http://localhost:9321/task/task-a1b2c3d4` to watch the execution in real time — you'll see the execution graph, distributed logs, and blackboard entries update live as agents work.
+
+## 6. Run Local CI (Optional)
+
+Verify everything is correctly integrated:
+
+```bash
+./scripts/check-ci.sh
+# Runs: ruff + mypy + pytest (daemon/agent) + eslint + tsc + build (mission-control)
+```
+
 ## Next Steps
 
 - **Add edge nodes:** See [NODE_SETUP.md](NODE_SETUP.md) for provisioning agents
+- **Tune the variant:** See [CONFIGURATION.md](CONFIGURATION.md) for `coordination.traditional.*` settings (rounds, budget, CU mode)
 - **Multi-provider routing:** See [CONFIGURATION.md](CONFIGURATION.md) for mixing Gemini + Claude + OpenAI
 - **Development:** Use `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` for hot reload
+- **Architecture:** See [architecture/README.md](architecture/README.md) for the full system deep-dive

@@ -24,14 +24,14 @@ control_plane:
 # Your agent + inference nodes. Each node runs a Hermes agent
 # and optionally a local inference server (llama.cpp / vLLM).
 #
-# role: The bMAS role assigned to this node.
-#   • planner  — Decomposes tasks into sub-task DAGs
-#   • executor — Implements sub-tasks (code, research, etc.)
-#   • auditor  — Reviews work, resolves conflicts, writes consensus
+# role: The primary bMAS role for this node. Used for identification
+#   and load-balancing hints. The Control Unit dynamically assigns
+#   roles each round via the role_registry (see coordination section).
+#   Common roles: planner, executor, auditor (or any custom name).
 #
-# NOTE: In future versions, roles will be dynamic — any node can
-# assume any role per-task, matching the original bMAS paper.
-# For now, each node has one fixed role.
+# The role_registry maps blackboard roles (planner, expert, critic,
+# conflict_resolver, cleaner, decider) to Hermes profiles and
+# preferred dispatch hosts. See coordination.role_registry below.
 nodes:
   - name: "node-1"
     host: "10.0.0.101"             # Agent node IP

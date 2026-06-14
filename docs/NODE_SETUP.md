@@ -6,7 +6,7 @@ Each node consists of two components:
 1. **Inference Server** — Runs `llama.cpp` (or vLLM) serving a local model
 2. **Hermes Agent** — Runs the bMAS agent process that receives tasks from the daemon
 
-> **Future:** Automated provisioning via `bmas provision` is planned. See [TODO.md](TODO.md).
+> **Future:** Automated provisioning via `bmas provision` is planned.
 
 ---
 
@@ -15,7 +15,7 @@ Each node consists of two components:
 - Linux host (bare metal, VM, or LXC container)
 - Python 3.11+
 - For inference: GPU with Vulkan support (AMD/NVIDIA/Intel) OR NVIDIA GPU with CUDA
-- Network access to the control plane (Redis, LiteLLM)
+- Network access to the control plane (Redis, LiteLLM, Daemon)
 
 ---
 
@@ -30,7 +30,15 @@ Each logical "node" in `bmas.yaml` typically maps to two hosts:
 │  llama-server       │────▶│  Hermes agent        │
 │  :8080              │     │  :8000               │
 │  (runs the model)   │     │  (processes tasks)   │
-└─────────────────────┘     └─────────────────────┘
+└─────────────────────┘     └──────────┬───────────┘
+                                       │
+                                       │ POST /ingest/traces
+                                       │ POST /ingest/logs
+                                       ▼
+                               ┌───────────────┐
+                               │ Daemon :9000  │
+                               │ (control plane)│
+                               └───────────────┘
 ```
 
 You can also run both on the same machine if resources allow.
@@ -123,8 +131,6 @@ source /opt/hermes-agent/.venv/bin/activate
 pip install hermes-agent  # or clone from your repo
 ```
 
-### Configure the Agent Persona
-
 ### Deploy the Agent API Server
 
 The bMAS repo contains the canonical agent code at `agent/api_server.py`. Copy it to the node:
@@ -138,11 +144,24 @@ scp /opt/bmas/agent/requirements.txt root@NODE_IP:/opt/bmas/requirements.txt
 ssh root@NODE_IP 'cd /opt/bmas && pip install -r requirements.txt'
 ```
 
-Each agent needs environment variables for its role. Set these in the systemd service (see below):
+### Deploy Hermes Profiles
 
-- `NODE_ID` — e.g. `agent-node1`, `agent-node2`, `agent-node3`
-- `LITELLM_MODEL` — the default model to use (typically `medium`)
-- `HERMES_SKILLS_DIR` — path to Hermes skills directory (default: `~/.hermes/skills`)
+Each agent role needs its Hermes profile (planner, expert, critic, etc.). Use the deploy script:
+
+```bash
+# From the control plane
+./scripts/deploy_profiles.sh
+```
+
+Or manually copy profiles to each node:
+
+```bash
+scp -r /opt/bmas/agent/profiles/* root@NODE_IP:~/.hermes/profiles/
+```
+
+### Configure the Systemd Service
+
+Each agent needs environment variables for its role and the daemon ingest connection:
 
 ```bash
 cat > /etc/systemd/system/hermes-agent.service << 'EOF'
@@ -158,6 +177,10 @@ Environment="PATH=/opt/hermes-agent/.venv/bin:/usr/local/bin:/usr/bin"
 Environment="NODE_ID=agent-node1"
 Environment="LITELLM_MODEL=medium"
 Environment="LITELLM_URL=http://<CONTROL_PLANE_IP>:4000/v1"
+Environment="HERMES_GATEWAY_URL=http://localhost:8642"
+Environment="HERMES_GATEWAY_KEY=your-gateway-key"
+Environment="DAEMON_INGEST_URL=http://<CONTROL_PLANE_IP>:9000"
+Environment="BMAS_NODE_KEY=your-node-auth-token"
 ExecStart=/opt/hermes-agent/.venv/bin/uvicorn api_server:app \
   --host 0.0.0.0 --port 8000
 Restart=on-failure
@@ -171,17 +194,26 @@ systemctl daemon-reload
 systemctl enable --now hermes-agent
 ```
 
-> **Note:** Set `NODE_ID` to `agent-node1`, `agent-node2`, or `agent-node3` depending on the node.
+#### Environment Variables
+
+| Variable | Required | Description |
+|:---|:---|:---|
+| `NODE_ID` | ✅ | Unique node identifier (e.g., `agent-node1`) |
+| `LITELLM_URL` | ✅ | LiteLLM gateway URL on the control plane |
+| `LITELLM_MODEL` | ❌ | Default model name (default: `medium`) |
+| `HERMES_GATEWAY_URL` | ❌ | Hermes Gateway URL for Runs API path |
+| `HERMES_GATEWAY_KEY` | ❌ | API key for the Hermes Gateway |
+| `DAEMON_INGEST_URL` | ❌ | Daemon URL for trace/log ingest (e.g., `http://192.168.1.100:9000`) |
+| `BMAS_NODE_KEY` | ❌ | Bearer token for authenticating ingest requests (must match `.env` on control plane) |
+| `SSE_READ_TIMEOUT` | ❌ | SSE stream read timeout in seconds (default: `600`) |
+
+> **Note:** Set `NODE_ID` to a unique value per node (e.g., `agent-node1`, `agent-node2`, `agent-node3`). Set `BMAS_NODE_KEY` to the same value as in your control plane `.env` to enable trace/log shipping.
 
 ### Verify
 
 ```bash
 curl http://localhost:8000/health
-# Should return {"status": "healthy", "node_id": "agent-node1", ...}
-
-# Skills are served by the Hermes Dashboard (port 9119), not the agent API
-curl http://localhost:9119/api/skills/installed
-# Should return installed skills (requires Hermes Dashboard to be running)
+# Should return {"status":"healthy","node_id":"agent-node1",...}
 ```
 
 ---
@@ -195,11 +227,22 @@ nodes:
   - name: "my-new-node"
     host: "192.168.1.101"      # Agent IP
     port: 8000
-    role: executor              # or planner, auditor
+    role: executor              # or planner, auditor, or any custom role
     inference:
       host: "192.168.1.102"    # Inference server IP
       port: 8080
       model: "gemma-4-e4b"
+```
+
+If using the role registry, also add the role mapping:
+
+```yaml
+coordination:
+  role_registry:
+    planner:
+      preferred_host: "192.168.1.101"
+      profile: planner
+      dispatch_port: 8000
 ```
 
 Restart the control plane to pick up the new node:
@@ -209,3 +252,14 @@ docker compose restart daemon dashboard litellm
 ```
 
 The new node should appear in the Mission Control dashboard.
+
+---
+
+## Troubleshooting
+
+| Issue | Solution |
+|:---|:---|
+| Agent health check fails | Verify `LITELLM_URL` is reachable from the agent node |
+| Traces not appearing in dashboard | Check `DAEMON_INGEST_URL` and `BMAS_NODE_KEY` match the control plane `.env` |
+| Hermes profiles not found | Ensure profiles are deployed to `~/.hermes/profiles/` on the agent node |
+| Runs API not working | Set `HERMES_GATEWAY_URL` to the Hermes Gateway address; falls back to CLI otherwise |
