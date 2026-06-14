@@ -3,21 +3,6 @@ import { AGENT_DASHBOARD_HOSTS } from "@/lib/config";
 
 type AgentRole = keyof typeof AGENT_DASHBOARD_HOSTS;
 
-/**
- * Resolve the upstream Hermes Dashboard URL for a skills request.
- *
- * Skills are a Hermes-native feature exposed by the Hermes Dashboard
- * at :9119/api/skills, NOT by the bMAS agent wrapper at :8000.
- */
-function resolveUpstream(
-  node: string | null,
-  path: string,
-): string | null {
-  if (!node || !(node in AGENT_DASHBOARD_HOSTS)) {
-    return null;
-  }
-  return `${AGENT_DASHBOARD_HOSTS[node as AgentRole]}${path}`;
-}
 
 /**
  * Fetch the ephemeral session token from the Hermes Dashboard.

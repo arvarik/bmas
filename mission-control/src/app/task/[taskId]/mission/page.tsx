@@ -15,14 +15,13 @@
 
 import { useMemo, useState, useCallback } from "react";
 import { useTaskData } from "../TaskStreamContext";
-import { BlackboardGraph } from "@/components/features/BlackboardGraph";
+import { BlackboardBoard } from "@/components/features/BlackboardBoard";
 import { AgentMindCard } from "@/components/features/AgentMindCard";
 import { GlobalFirehose } from "@/components/features/GlobalFirehose";
 import { ConvergenceStrip } from "@/components/features/ConvergenceStrip";
 import { BudgetGauge } from "@/components/features/BudgetGauge";
 import { ConsensusMeter } from "@/components/features/ConsensusMeter";
 import { TurnInspector } from "@/components/features/TurnInspector";
-import { Panel } from "@/components/ui/Panel";
 import {
   Eye,
   EyeOff,
@@ -38,6 +37,7 @@ export default function MissionPage() {
   const {
     taskMeta,
     boardEntries,
+    removedEntryIds,
     activeTurns,
     completedTurns,
     traceEvents,
@@ -47,6 +47,7 @@ export default function MissionPage() {
     coordinatorNarrations,
     isLive,
     consensus,
+    phase,
   } = useTaskData();
 
   const [showFirehose, setShowFirehose] = useState(true);
@@ -204,14 +205,17 @@ export default function MissionPage() {
         <div
           className={`mission-cockpit__body ${showFirehose ? "mission-cockpit__body--with-firehose" : ""}`}
         >
-          {/* Center: Blackboard Graph */}
-          <div className="mission-cockpit__center">
-            <Panel title="Blackboard">
-              <BlackboardGraph
-                entries={boardEntries}
-                removedEntryIds={[]}
-              />
-            </Panel>
+          {/* Center: Blackboard command center */}
+          <div className="mission-cockpit__center" style={{ padding: "var(--space-2) var(--space-4)" }}>
+            <BlackboardBoard
+              taskId={taskId}
+              liveEntries={boardEntries}
+              removedEntryIds={removedEntryIds}
+              isLive={isLive}
+              phase={phase}
+              consensus={consensus}
+              variant={taskMeta?.variant ?? "traditional"}
+            />
           </div>
 
           {/* Right Rail: Agent Minds */}

@@ -4,8 +4,13 @@ import { DAEMON_BASE_URL } from "@/lib/config";
 /**
  * GET /api/tasks/[taskId]/board
  *
- * Proxies to daemon's GET /tasks/{taskId}/debate to fetch board entries.
- * Uses the existing /debate endpoint which returns all board entries.
+ * Proxies to the daemon's GET /tasks/{taskId}/board, which returns the
+ * durable Redis board snapshot (no TTL) written by the board-persist hook.
+ * This is available for live AND completed tasks, so the Blackboard view
+ * never loses content on refetch/reload.
+ *
+ * Returns { entries: BoardEntry[], meta: {...} } with full envelope fields
+ * (type, author, body, refs, confidence, salience, status, round, seq).
  */
 export async function GET(
   _request: Request,
@@ -18,13 +23,13 @@ export async function GET(
   }
 
   try {
-    const upstream = await fetch(`${DAEMON_BASE_URL}/tasks/${taskId}/debate`, {
+    const upstream = await fetch(`${DAEMON_BASE_URL}/tasks/${taskId}/board`, {
       signal: AbortSignal.timeout(5_000),
       cache: "no-store",
     });
 
     if (upstream.status === 404) {
-      return NextResponse.json({ entries: [] });
+      return NextResponse.json({ entries: [], meta: {} });
     }
 
     if (!upstream.ok) {

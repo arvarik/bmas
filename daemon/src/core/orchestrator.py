@@ -31,10 +31,30 @@ from config import (
 from config import (
     MODEL_ROUTING as CONFIG_MODEL_ROUTING,
 )
-from core.blackboard import Blackboard
+from core.blackboard import Blackboard, normalize_level
 from core.triage import MODEL_ROUTING, Complexity, TriageResult, TriageRouter
 
 logger = logging.getLogger("bmas.orchestrator")
+
+
+def _infer_level(message: str) -> str:
+    """Infer a canonical log level from a legacy free-text message prefix."""
+    head = (message or "").lstrip()[:12].lower()
+    if head.startswith(("error", "err ", "fatal", "exception", "failed")):
+        return "error"
+    if head.startswith(("warn", "wrn")):
+        return "warning"
+    if head.startswith(("debug", "dbg")):
+        return "debug"
+    return "info"
+
+
+def _summarize(text: str, limit: int = 280) -> str:
+    """One-line preview for a log message header (full text kept in fields)."""
+    if not text:
+        return ""
+    first = " ".join(str(text).split())
+    return first if len(first) <= limit else first[: limit - 1] + "…"
 
 
 class Orchestrator:
@@ -47,21 +67,43 @@ class Orchestrator:
         )
         self.http = httpx.AsyncClient(timeout=120.0)
 
-    async def _safe_log(self, node_id: str, message: str, task_id: str | None = None):
-        """Log to Redis Streams AND SQLite with fallback.
+    async def _safe_log(
+        self,
+        node_id: str,
+        message: str,
+        task_id: str | None = None,
+        level: str | None = None,
+        fields: dict | None = None,
+        node: str | None = None,
+        turn_id: str | None = None,
+    ):
+        """Log a structured entry to Redis Streams AND SQLite with fallback.
 
         Redis write provides live SSE streaming to the dashboard.
         SQLite write provides permanent archival for task history.
         Neither failure interrupts the caller.
+
+        `level` is canonicalized (INFO/WARNING/ERROR/DEBUG). When omitted it is
+        inferred from the message prefix so legacy "WARN:"/"ERROR ..." strings
+        still surface with the right severity. `fields` carries arbitrary
+        structured metadata (reasoning, tool calls, usage, routing rationale,
+        board reads/writes, …) transported verbatim for the detail view.
         """
+        resolved_level = normalize_level(level) if level else _infer_level(message)
         try:
-            await self.bb.publish_log(node_id, message, task_id=task_id)
+            await self.bb.publish_log(
+                node_id, message, task_id=task_id,
+                level=resolved_level, fields=fields, node=node, turn_id=turn_id,
+            )
         except Exception:
             logger.warning(f"Redis log failed | {node_id}: {message}")
 
         if task_id:
             try:
-                await db.insert_log_entry(task_id, node_id, "info", message)
+                await db.insert_log_entry(
+                    task_id, node_id, resolved_level, message,
+                    fields=fields, node=node, turn_id=turn_id,
+                )
             except Exception:
                 logger.warning(f"SQLite log failed | {task_id}: {message}")
 
@@ -180,7 +222,13 @@ class Orchestrator:
                     litellm_model=MODEL_ROUTING.get(Complexity.MEDIUM, "medium"),
                 )
             await self._safe_log("daemon",
-                f"Triage: {triage.complexity.value} → {triage.litellm_model}", task_id=task_id)
+                f"Triage: {triage.complexity.value} → {triage.litellm_model}", task_id=task_id,
+                level="info",
+                fields={
+                    "event": "triage",
+                    "complexity": triage.complexity.value,
+                    "model": triage.litellm_model,
+                })
 
             # Update task with triage result + active variant (SQLite)
             try:
@@ -243,7 +291,7 @@ class Orchestrator:
         CU and AG calls are control-plane LiteLLM calls, never Hermes runs.
         """
         from config import MODEL_PRICING
-        from core.board_store import InMemoryBoardStore
+        from core.board_store import InMemoryBoardStore, make_board_persist_hook
         from core.event_emitter import RedisEventEmitter
         from core.gateway import BoardGateway, salience_recompute_hook
         from core.variants.traditional import TraditionalVariant
@@ -256,9 +304,15 @@ class Orchestrator:
         # flow through Redis Pub/Sub → SSE endpoint → frontend.
         board_store = InMemoryBoardStore()
         event_emitter = RedisEventEmitter(self.bb.redis)
+        # Durable persistence: mirror the in-process snapshot into Redis
+        # (no TTL) after every commit so the board survives for the life
+        # of the task and is retained for completed tasks.
         gateway = BoardGateway(
             board_store, event_emitter,
-            recompute_hooks=[salience_recompute_hook],
+            recompute_hooks=[
+                salience_recompute_hook,
+                make_board_persist_hook(self.bb),
+            ],
         )
 
         # Build node endpoint list
@@ -306,9 +360,18 @@ class Orchestrator:
             }
             await variant.genesis(task)
 
+            roster_actors = variant.roster.all_actors() if variant.roster else []
             await self._safe_log("daemon",
-                f"Genesis complete | roster={len(variant.roster.all_actors()) if variant.roster else 0} agents",
-                task_id=task_id)
+                f"Genesis complete | roster={len(roster_actors)} agents",
+                task_id=task_id, level="info",
+                fields={
+                    "event": "genesis",
+                    "roster": [
+                        {"actor": a, "ability": d} for a, d in roster_actors
+                    ],
+                    "max_rounds": variant.max_rounds,
+                    "budget_ceiling_usd": variant.budget_ceiling,
+                })
 
             # ── Round loop ───────────────────────────────────────────
             for round_no in range(1, variant.max_rounds + 2):  # +2 for safety
@@ -329,8 +392,30 @@ class Orchestrator:
                 if step_result.terminal:
                     await self._safe_log("daemon",
                         f"Terminal at round {round_no}: {step_result.reason}",
-                        task_id=task_id)
+                        task_id=task_id, level="info",
+                        fields={
+                            "event": "terminal",
+                            "round": round_no,
+                            "reason": step_result.reason,
+                        })
                     break
+
+                # Coordinator routing decision: log WHO was selected and WHY,
+                # attributed to the control unit so the rationale is auditable.
+                await self._safe_log(
+                    "control_unit",
+                    f"Round {round_no} routing → {', '.join(step_result.selected) or 'none'}"
+                    + (f" ({step_result.selection_source})" if step_result.selection_source else ""),
+                    task_id=task_id, level="info",
+                    fields={
+                        "event": "routing_decision",
+                        "round": round_no,
+                        "selected": step_result.selected,
+                        "source": step_result.selection_source,
+                        "rationale": step_result.rationale,
+                        "phase": step_result.phase,
+                    },
+                )
 
                 # Dispatch activations concurrently
                 if step_result.activations:
@@ -339,6 +424,8 @@ class Orchestrator:
                         dispatch_tasks.append(
                             self._dispatch_traditional_turn(
                                 variant, task, activation, round_no,
+                                rationale=step_result.rationale,
+                                phase=step_result.phase,
                             )
                         )
                     results = await asyncio.gather(
@@ -373,7 +460,15 @@ class Orchestrator:
                         f"Round {round_no} complete | "
                         f"{len(step_result.activations)} turns, "
                         f"budget=${variant.budget_spent:.4f}",
-                        task_id=task_id)
+                        task_id=task_id, level="info",
+                        fields={
+                            "event": "round_complete",
+                            "round": round_no,
+                            "turns": len(step_result.activations),
+                            "actors": [a.actor for a in step_result.activations],
+                            "budget_spent_usd": round(variant.budget_spent, 6),
+                            "budget_ceiling_usd": variant.budget_ceiling,
+                        })
 
                 # Phase 5: Emit budget event after each round (doc 09 §5)
                 await variant.emit_budget_event(task_id)
@@ -386,6 +481,18 @@ class Orchestrator:
             result = await variant.finalize(
                 task, board, step_result.reason or "unknown",
             )
+
+            # Persist the terminal snapshot + meta durably (no TTL) so the
+            # completed board (incl. final phase/answer_source) is retained.
+            with contextlib.suppress(Exception):
+                from core.entry import entry_to_dict
+                final_snap = await board_store.get_snapshot(task_id)
+                final_meta = await board_store.get_meta(task_id)
+                await self.bb.save_board_snapshot(
+                    task_id,
+                    {eid: entry_to_dict(e) for eid, e in final_snap.items()},
+                    final_meta,
+                )
 
             # Record final answer
             answer = result.get("answer", "")
@@ -436,11 +543,17 @@ class Orchestrator:
         task: dict,
         activation: Any,
         round_no: int,
+        rationale: str | None = None,
+        phase: str | None = None,
     ) -> dict:
         """Dispatch one turn for the traditional variant.
 
         Uses build_turn_payload → _dispatch_agent → parse_agent_response → apply.
         Emits turn_start/turn_end SSE events for WorkerLane + AgentTrace.
+
+        ``rationale``/``phase`` are the Control Unit's routing decision for this
+        round; they are persisted on the turn and echoed on the turn_start SSE
+        event so the Graph tab can show WHY each agent was activated.
         """
         task_id = task["task_id"]
         board = await variant.store.get_snapshot(task_id)
@@ -450,14 +563,44 @@ class Orchestrator:
         payload["model"] = activation.model
         turn_id = payload.get("turn_id", "")
 
+        # Per-agent log: this agent is being activated. Attributed to the
+        # actor (persona) so the Logs tab shows the agent, not the daemon.
+        board_entries_ctx = (payload.get("board") or {}).get("entries", []) \
+            if isinstance(payload.get("board"), dict) else []
+        await self._safe_log(
+            activation.actor,
+            f"Activated for round {round_no} → {activation.role} on {activation.model}",
+            task_id=task_id,
+            level="info",
+            node=activation.node_endpoint,
+            turn_id=turn_id,
+            fields={
+                "event": "turn_dispatch",
+                "actor": activation.actor,
+                "role": activation.role,
+                "profile": activation.profile,
+                "model": activation.model,
+                "node": activation.node_endpoint,
+                "round": round_no,
+                "objective": payload.get("objective"),
+                "budget_remaining_usd": payload.get("budget_remaining_usd"),
+                "board_entries_seen": len(board_entries_ctx),
+                "previous_response_id": payload.get("previous_response_id"),
+                "persona_preview": _summarize(payload.get("role_prompt", ""), 400),
+            },
+        )
+
         # Emit turn_start SSE event for WorkerLane/AgentTrace
         with contextlib.suppress(Exception):  # SSE is best-effort
             await self.bb.publish_event(task_id, "turn_start", {
                 "turn_id": turn_id,
                 "actor": activation.actor,
+                "role": activation.role,
                 "round": round_no,
                 "model": activation.model,
                 "node": activation.node_endpoint,
+                "rationale": rationale,
+                "phase": phase,
             })
 
         # Dispatch to agent node
@@ -476,6 +619,40 @@ class Orchestrator:
                 "previous_response_id": payload.get("previous_response_id"),
             },
             model=activation.model,
+            round_no=round_no,
+            actor=activation.actor,
+            rationale=rationale,
+            phase=phase,
+        )
+
+        # Per-agent log: capture the agent's reasoning / output verbatim so
+        # operators can understand AGENT THINKING. The full text lives in
+        # `fields`; the header is a one-line preview.
+        resp_status = response.get("status", "") if isinstance(response, dict) else ""
+        resp_text = response.get("result", "") if isinstance(response, dict) else str(response)
+        usage = response.get("usage") if isinstance(response, dict) else None
+        log_level = "error" if resp_status in ("failed", "timeout") else "info"
+        await self._safe_log(
+            activation.actor,
+            f"Responded ({resp_status or 'completed'}): {_summarize(resp_text)}",
+            task_id=task_id,
+            level=log_level,
+            node=response.get("node_id") if isinstance(response, dict) else activation.node_endpoint,
+            turn_id=turn_id,
+            fields={
+                "event": "turn_response",
+                "actor": activation.actor,
+                "role": activation.role,
+                "model": activation.model,
+                "round": round_no,
+                "status": resp_status or "completed",
+                "output": resp_text,
+                "output_chars": len(resp_text or ""),
+                "usage": usage,
+                "duration_ms": response.get("duration_ms") if isinstance(response, dict) else None,
+                "trace_count": response.get("trace_count") if isinstance(response, dict) else None,
+                "run_id": response.get("run_id") if isinstance(response, dict) else None,
+            },
         )
 
         # Parse response into board entries
@@ -492,9 +669,53 @@ class Orchestrator:
                 }
                 if entry.get("_action") == "clean":
                     mutation["_action"] = "clean"
+                    removals = entry.get("removals", [])
+                    await self._safe_log(
+                        activation.actor,
+                        f"Board write: cleaned {len(removals)} entry(ies)",
+                        task_id=task_id, level="info",
+                        node=activation.node_endpoint, turn_id=turn_id,
+                        fields={
+                            "event": "board_clean",
+                            "actor": activation.actor,
+                            "round": round_no,
+                            "removals": removals,
+                        },
+                    )
                 else:
                     mutation["entries"] = [entry]
+                    await self._safe_log(
+                        activation.actor,
+                        f"Board write: {entry.get('type', 'finding')} — "
+                        f"{_summarize(entry.get('title') or entry.get('body', ''), 120)}",
+                        task_id=task_id, level="info",
+                        node=activation.node_endpoint, turn_id=turn_id,
+                        fields={
+                            "event": "board_write",
+                            "actor": activation.actor,
+                            "round": round_no,
+                            "entry_type": entry.get("type"),
+                            "title": entry.get("title"),
+                            "body": entry.get("body"),
+                            "refs": entry.get("refs", []),
+                            "confidence": entry.get("confidence"),
+                        },
+                    )
                 await variant.apply(task, [mutation])
+        elif resp_status not in ("failed", "timeout"):
+            # Agent ran but contributed no board entries (declined/no-op).
+            await self._safe_log(
+                activation.actor,
+                "Declined — no board contribution this turn",
+                task_id=task_id, level="debug",
+                node=activation.node_endpoint, turn_id=turn_id,
+                fields={
+                    "event": "turn_declined",
+                    "actor": activation.actor,
+                    "round": round_no,
+                    "status": resp_status or "completed",
+                },
+            )
 
         # Emit turn_end SSE event
         try:
@@ -530,12 +751,21 @@ class Orchestrator:
         self, role: str, task_id: str, description: str, persona: str,
         context: dict | None = None,
         model: str | None = None,
+        round_no: int = 1,
+        actor: str | None = None,
+        rationale: str | None = None,
+        phase: str | None = None,
     ) -> dict:
         """HTTP dispatch to a Hermes agent node for the traditional variant.
 
         Handles endpoint resolution (role registry → AGENT_ENDPOINTS fallback),
         turn tracking in SQLite, 3-attempt retry with backoff, and best-effort
         cost recording via MODEL_PRICING.
+
+        ``round_no``/``actor``/``rationale``/``phase`` enrich the persisted turn
+        record (doc 05 §1) so the Graph tab can reconstruct the real execution:
+        the true round index, the full actor identity (e.g.
+        ``expert.valuation_analyst``), and the Control Unit's routing rationale.
         """
         _reg = ROLE_REGISTRY.get(role, {})
         if _reg and _reg.get("endpoints"):
@@ -558,8 +788,10 @@ class Orchestrator:
 
         try:
             await db.create_turn({
-                "id": turn_id, "task_id": task_id, "round_no": 1,
-                "role": role, "node": url, "model": model, "status": "running",
+                "id": turn_id, "task_id": task_id, "round_no": round_no,
+                "role": role, "actor": actor or role,
+                "node": url, "model": model, "status": "running",
+                "rationale": rationale, "phase": phase,
             })
         except Exception as e:
             logger.warning(f"Turn create failed {task_id}/{turn_id}: {e}")
@@ -611,10 +843,27 @@ class Orchestrator:
                 if attempt < 2:
                     delay = 2 ** attempt
                     await self._safe_log(role,
-                        f"Retry {attempt + 1}/2 after {delay}s: {e}", task_id=task_id)
+                        f"Retry {attempt + 1}/2 after {delay}s: {e}", task_id=task_id,
+                        level="warning", node=url, turn_id=turn_id,
+                        fields={
+                            "event": "dispatch_retry",
+                            "role": role,
+                            "attempt": attempt + 1,
+                            "delay_s": delay,
+                            "node": url,
+                            "error": str(e),
+                        })
                     await asyncio.sleep(delay)
                     continue
-                await self._safe_log(role, f"ERROR after 3 attempts: {e}", task_id=task_id)
+                await self._safe_log(role, f"ERROR after 3 attempts: {e}", task_id=task_id,
+                    level="error", node=url, turn_id=turn_id,
+                    fields={
+                        "event": "dispatch_failed",
+                        "role": role,
+                        "node": url,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                    })
                 with contextlib.suppress(Exception):
                     await db.complete_turn(turn_id, "failed", 0, 0.0)
                 return {"task_id": task_id, "status": "failed", "result": str(e)}

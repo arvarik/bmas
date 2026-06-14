@@ -17,14 +17,17 @@ Event types are variant-namespaced (seam rule 2).
 from __future__ import annotations
 
 import copy
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from core.entry import BoardEntry, entry_from_dict
+from core.entry import BoardEntry, entry_from_dict, entry_to_dict
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
+
+logger = logging.getLogger("bmas.board_store")
 
 # ── Board Event ──────────────────────────────────────────────────────
 
@@ -363,6 +366,38 @@ class InMemoryBoardStore:
                     self._entries[task_id][entry_id].status = new_status
 
             # genesis, entry_rejected, etc. don't modify the snapshot
+
+
+def make_board_persist_hook(
+    blackboard: Any,
+) -> Callable[[str, BoardStore], Awaitable[None]]:
+    """Build a recompute hook that mirrors the snapshot into Redis.
+
+    The traditional variant keeps its working board in an in-process
+    store; this hook fires after every gateway commit batch (seam rule 5)
+    and writes the full materialized snapshot to a durable Redis key with
+    NO expiry, so the board is never lost — for live OR completed tasks.
+
+    Persistence failures are swallowed: durability mirroring must never
+    break the coordination loop.
+    """
+
+    async def _hook(task_id: str, store: BoardStore) -> None:
+        try:
+            snapshot = await store.get_snapshot(task_id)
+            meta = await store.get_meta(task_id)
+            entries = {
+                eid: entry_to_dict(entry)
+                for eid, entry in snapshot.items()
+            }
+            await blackboard.save_board_snapshot(task_id, entries, meta)
+        except Exception:
+            logger.warning(
+                "board persist hook failed for task %s", task_id,
+                exc_info=True,
+            )
+
+    return _hook
 
 
 def fold_events_to_snapshot(

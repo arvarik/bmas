@@ -27,6 +27,7 @@ function formatBytes(bytes: number): string {
 }
 
 function FileIcon({ mime }: { mime: string }) {
+  // eslint-disable-next-line jsx-a11y/alt-text -- Lucide SVG icon, not an HTML img
   if (mime.startsWith("image/")) return <Image size={14} aria-hidden="true" />;
   if (mime === "application/pdf" || mime.startsWith("text/"))
     return <FileText size={14} />;

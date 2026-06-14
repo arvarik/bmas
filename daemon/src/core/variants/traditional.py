@@ -43,6 +43,14 @@ class StepResult:
     terminal: bool
     reason: str | None = None
     activations: list[Activation] = field(default_factory=list)
+    # Coordinator (CU) routing decision metadata for this round (doc 05 §1.2).
+    # Surfaced to the orchestrator so it can both log WHO was selected and WHY,
+    # and persist that rationale/phase on each turn record — which powers the
+    # execution-graph handoff/decision visualization on the Graph tab.
+    selected: list[str] = field(default_factory=list)
+    rationale: str | None = None
+    selection_source: str = "heuristic"
+    phase: str | None = None
 
 
 @dataclass
@@ -183,7 +191,7 @@ class TraditionalVariant:
 
         # 2. AG — generate experts (one LiteLLM call, doc 05 §2.1)
         n_experts = self.experts_per_tier.get(self._tier, 1)
-        experts = await self._generate_experts(query, n_experts, self._tier)
+        experts = await self._generate_experts(query, n_experts, self._tier, task_id)
 
         # 3. Build roster
         self.roster = AgentRoster(
@@ -225,7 +233,7 @@ class TraditionalVariant:
         await self._attach_uploads(task_id, task)
 
     async def _generate_experts(
-        self, query: str, n: int, tier: str,
+        self, query: str, n: int, tier: str, task_id: str | None = None,
     ) -> list[ExpertIdentity]:
         """AG: one LiteLLM call to generate n expert identities (doc 05 §2.1)."""
         if n <= 0:
@@ -233,12 +241,13 @@ class TraditionalVariant:
 
         from models.personas import AG_SYSTEM_PROMPT
 
+        ag_model = self.model_routing.get(tier, "medium")
         try:
             resp = await self.http.post(
                 f"{self.litellm_url}/chat/completions",
                 headers={"Authorization": f"Bearer {self.litellm_key}"},
                 json={
-                    "model": self.model_routing.get(tier, "medium"),
+                    "model": ag_model,
                     "messages": [
                         {"role": "system", "content": AG_SYSTEM_PROMPT.format(n=n)},
                         {"role": "user", "content": f"Task: {query}"},
@@ -249,7 +258,12 @@ class TraditionalVariant:
                 },
             )
             resp.raise_for_status()
-            data = json.loads(resp.json()["choices"][0]["message"]["content"])
+            resp_json = resp.json()
+            # Capture control-plane LLM usage/cost (doc 06 §3.1)
+            await self._record_llm_cost(
+                task_id, resp_json.get("usage"), ag_model, "control_plane:ag",
+            )
+            data = json.loads(resp_json["choices"][0]["message"]["content"])
             raw_experts = data.get("experts", [])[:n]
         except Exception as e:
             logger.warning("AG call failed (%s), using default experts", e)
@@ -370,6 +384,8 @@ class TraditionalVariant:
 
         # Emit coordinator narration event (doc 05 §1.2, doc 13 §3)
         # Gated by flag — when off, no event fires and the UI lane hides entirely.
+        # NOTE: this carries the RAW rationale (None on the heuristic path) to
+        # preserve the documented narration contract.
         if self.coordinator_narration and self.emitter:
             await self.emitter.emit(task_id, "coordinator_narration", {
                 "round": current_round,
@@ -387,12 +403,27 @@ class TraditionalVariant:
         # Build activations with node assignments
         activations = self._to_activations(selected)
 
+        # For the persisted turn / execution-graph, always provide a
+        # human-readable rationale: fall back to a synthesized one mirroring
+        # the deterministic routing rules when the CU gave none. This is kept
+        # separate from the narration event above so its contract is untouched.
+        display_rationale = rationale or self._fallback_rationale(
+            snapshot, current_round, selected,
+        )
+
         logger.info(
             "step | task=%s round=%d selected=%s phase=%s",
             task_id, current_round, [a.actor for a in activations], phase,
         )
 
-        return StepResult(terminal=False, activations=activations)
+        return StepResult(
+            terminal=False,
+            activations=activations,
+            selected=[a.actor for a in activations],
+            rationale=display_rationale,
+            selection_source=source,
+            phase=phase,
+        )
 
     # ── Finalize ─────────────────────────────────────────────────────
 
@@ -620,6 +651,7 @@ class TraditionalVariant:
 
         system = CU_SYSTEM_PROMPT.format(max_concurrent=self.max_concurrent)
 
+        cu_model = self.model_routing.get("light", "medium")
         # Try up to 2 times (1 retry on garbled output)
         for attempt in range(2):
             try:
@@ -627,7 +659,7 @@ class TraditionalVariant:
                     f"{self.litellm_url}/chat/completions",
                     headers={"Authorization": f"Bearer {self.litellm_key}"},
                     json={
-                        "model": self.model_routing.get("light", "medium"),
+                        "model": cu_model,
                         "messages": [
                             {"role": "system", "content": system},
                             {"role": "user", "content": prompt},
@@ -639,7 +671,12 @@ class TraditionalVariant:
                     timeout=30.0,
                 )
                 resp.raise_for_status()
-                raw = resp.json()["choices"][0]["message"]["content"]
+                resp_json = resp.json()
+                # Capture control-plane LLM usage/cost (doc 06 §3.1)
+                await self._record_llm_cost(
+                    task_id, resp_json.get("usage"), cu_model, "control_plane:cu",
+                )
+                raw = resp_json["choices"][0]["message"]["content"]
                 selected, rationale = parse_cu_output(raw, self.roster.actor_names())
                 if selected:
                     return selected, rationale
@@ -650,6 +687,52 @@ class TraditionalVariant:
         # Fallback to deterministic table
         logger.info("CU failed after retries, using deterministic fallback")
         return self._deterministic_fallback(snapshot, current_round), None
+
+    def _fallback_rationale(
+        self,
+        snapshot: dict[str, BoardEntry],
+        current_round: int,
+        selected: list[str],
+    ) -> str:
+        """Synthesize a human-readable routing rationale for the graph.
+
+        Used when the CU did not return a usable rationale (deterministic
+        fallback or garbled LLM output). Mirrors the decision rules in
+        ``_deterministic_fallback`` so the Graph tab can always explain WHY
+        a handoff happened, even on replayed/completed tasks (doc 05 §1.2).
+        """
+        names = ", ".join(selected) if selected else "no agents"
+        if current_round <= 1:
+            return (
+                f"Discovery round: seeded the board by activating the planner "
+                f"and all domain experts ({names})."
+            )
+
+        open_entries = [e for e in snapshot.values() if e.status == "open"]
+        has_unaddressed_critique = any(e.type == "critique" for e in open_entries)
+        has_conflict = any(e.type == "conflict" for e in open_entries)
+
+        if "conflict_resolver" in selected and has_conflict:
+            return (
+                "Open conflict detected between board entries — routed to the "
+                "conflict_resolver to mediate."
+            )
+        if "cleaner" in selected:
+            return (
+                f"Board grew past the cleaner threshold "
+                f"({len(open_entries)} open entries) — routed to the cleaner to prune."
+            )
+        if "decider" in selected and len(selected) == 1:
+            return (
+                "No open critiques or conflicts remain — routed to the decider "
+                "to judge sufficiency and post a solution."
+            )
+        if has_unaddressed_critique:
+            return (
+                f"Unaddressed critiques on the board — routed back to the critiqued "
+                f"authors ({names}) to rebut or revise."
+            )
+        return f"Heuristic routing for round {current_round}: activated {names}."
 
     def _deterministic_fallback(
         self,
@@ -727,6 +810,7 @@ class TraditionalVariant:
             return self._best_finding(snapshot)
 
         query = task["query"]
+        task_id = task["task_id"]
         board_text = self._serialize_board_for_cu(snapshot)
 
         # Collect one answer per agent identity (bare LiteLLM calls)
@@ -734,7 +818,7 @@ class TraditionalVariant:
         tasks = []
 
         for actor, _ in self.roster.all_actors():
-            tasks.append(self._sole_answer(actor, query, board_text))
+            tasks.append(self._sole_answer(actor, query, board_text, task_id))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for (actor, _), result in zip(self.roster.all_actors(), results, strict=False):
@@ -751,17 +835,18 @@ class TraditionalVariant:
         return winner
 
     async def _sole_answer(
-        self, actor: str, query: str, board_text: str,
+        self, actor: str, query: str, board_text: str, task_id: str | None = None,
     ) -> str:
         """One bare LiteLLM call per agent for SolE answer collection."""
         from models.personas import SOLE_SYSTEM_PROMPT
 
+        sole_model = self.model_routing.get("light", "medium")
         try:
             resp = await self.http.post(
                 f"{self.litellm_url}/chat/completions",
                 headers={"Authorization": f"Bearer {self.litellm_key}"},
                 json={
-                    "model": self.model_routing.get("light", "medium"),
+                    "model": sole_model,
                     "messages": [
                         {"role": "system", "content": SOLE_SYSTEM_PROMPT},
                         {"role": "user", "content": (
@@ -777,7 +862,12 @@ class TraditionalVariant:
                 timeout=30.0,
             )
             resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"]
+            resp_json = resp.json()
+            # Capture control-plane LLM usage/cost (doc 06 §3.1)
+            await self._record_llm_cost(
+                task_id, resp_json.get("usage"), sole_model, "control_plane:sole",
+            )
+            return resp_json["choices"][0]["message"]["content"]
         except Exception as e:
             raise RuntimeError(f"SolE call failed for {actor}: {e}") from e
 
@@ -1228,6 +1318,77 @@ class TraditionalVariant:
     def track_cost(self, cost_usd: float) -> None:
         """Update the running budget total."""
         self.budget_spent += cost_usd
+
+    async def _record_llm_cost(
+        self,
+        task_id: str | None,
+        usage: dict | None,
+        model: str,
+        phase: str,
+    ) -> None:
+        """Capture token usage + cost from a control-plane LiteLLM call.
+
+        The CU/AG/SolE calls are real billable LiteLLM completions whose
+        `usage` field was previously discarded — the daemon is the sole
+        authority on dollar cost (doc 06 §3.1). This records a per-call
+        cost entry, accumulates the running budget, and emits a `cost`
+        SSE event so the live UI updates. Best-effort: never blocks the
+        loop on a pricing miss or DB/SSE failure.
+        """
+        if not task_id or not usage or not isinstance(usage, dict):
+            return
+
+        import config as _config
+        import database as db
+
+        MODEL_PRICING = getattr(_config, "MODEL_PRICING", {})
+
+        # LiteLLM may report the resolved alias on the response; prefer it,
+        # falling back to the alias we requested (both match MODEL_PRICING).
+        resolved_model = usage.get("model") or model
+        pricing = MODEL_PRICING.get(resolved_model) or MODEL_PRICING.get(model) or {}
+        price_model = resolved_model if resolved_model in MODEL_PRICING else model
+
+        in_tok = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
+        out_tok = int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
+        if in_tok == 0 and out_tok == 0:
+            return
+
+        cost = 0.0
+        if pricing:
+            cost = round(
+                in_tok * float(pricing.get("input_cost_per_token", 0))
+                + out_tok * float(pricing.get("output_cost_per_token", 0)),
+                8,
+            )
+        self.budget_spent += cost
+
+        with contextlib.suppress(Exception):
+            await db.insert_cost_entry_v2(
+                task_id=task_id,
+                model=price_model,
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+                cost_usd=cost,
+                phase=phase,
+                node_id="control_plane",
+                turn_id=None,
+                provider=None,
+                price_source=str(pricing.get("source", "bmas.yaml")) if pricing else "missing",
+                joules_estimate=0.0,
+            )
+
+        if self.emitter:
+            with contextlib.suppress(Exception):
+                await self.emitter.emit(task_id, "cost", {
+                    "model": price_model,
+                    "input_tokens": in_tok,
+                    "output_tokens": out_tok,
+                    "cost_usd": cost,
+                    "node_id": "control_plane",
+                    "phase": phase,
+                    "price_source": str(pricing.get("source", "bmas.yaml")) if pricing else "missing",
+                })
 
     # ── Cleanup ──────────────────────────────────────────────────────
 

@@ -58,6 +58,12 @@ export interface LogEntry {
   level: string;
   message: string;
   timestamp: string;
+  /** Originating node endpoint/id, when known. */
+  node?: string;
+  /** Correlating turn id, when known. */
+  turn_id?: string;
+  /** Arbitrary structured payload for the detail view. */
+  fields?: Record<string, unknown> | null;
 }
 
 // ── Phase 4 Types (doc 08/09) ─────────────────────────────────────────
@@ -90,6 +96,11 @@ export interface TurnRecord {
   tokens_out?: number;
   cost_usd?: number;
   model?: string;
+  // Graph-tab enrichment (doc 05 §1): base role, target node endpoint, and the
+  // Control Unit's routing rationale for the round that activated this turn.
+  role?: string;
+  node?: string;
+  rationale?: string | null;
 }
 
 export interface TraceEvent {
@@ -283,11 +294,15 @@ export function useTaskStream(taskId: string): TaskStreamData {
             computedTotalTokens += modelTokens;
             computedTotalCost += modelCost;
           }
-          // Prefer top-level totals from daemon; fall back to computed
-          const totalCost = rawCost.total_cost_usd ?? rawCost.total_cost ?? computedTotalCost;
-          const totalTokens = rawCost.total_tokens ?? rawCost.total_input_tokens != null
-            ? (rawCost.total_input_tokens ?? 0) + (rawCost.total_output_tokens ?? 0)
-            : computedTotalTokens;
+          // Prefer top-level totals from daemon; fall back to computed.
+          // The daemon cost summary exposes `total_cost_usd` / `total_tokens`.
+          const totalCost =
+            rawCost.total_cost_usd ?? rawCost.total_cost ?? computedTotalCost;
+          const totalTokens =
+            rawCost.total_tokens ??
+            (rawCost.total_input_tokens != null
+              ? (rawCost.total_input_tokens ?? 0) + (rawCost.total_output_tokens ?? 0)
+              : computedTotalTokens);
           costData = {
             total_cost: totalCost,
             total_tokens: totalTokens,
@@ -329,6 +344,7 @@ export function useTaskStream(taskId: string): TaskStreamData {
           const rawTurns = Array.isArray(turnsData) ? turnsData : turnsData.turns ?? [];
           hydratedTurns = rawTurns.map((raw: Record<string, unknown>) => ({
             turn_id: (raw.turn_id ?? raw.id ?? "") as string,
+            task_id: (raw.task_id ?? taskId) as string,
             actor: (raw.actor ?? raw.role ?? "unknown") as string,
             round_no: (raw.round_no ?? raw.round ?? 0) as number,
             phase: (raw.phase ?? "completed") as string,
@@ -339,6 +355,9 @@ export function useTaskStream(taskId: string): TaskStreamData {
             tokens_out: (raw.tokens_out ?? raw.output_tokens) as number | undefined,
             cost_usd: raw.cost_usd as number | undefined,
             model: raw.model as string | undefined,
+            role: (raw.role ?? undefined) as string | undefined,
+            node: (raw.node ?? undefined) as string | undefined,
+            rationale: (raw.rationale ?? null) as string | null,
           }));
         } catch {
           // Turn data is non-critical
@@ -582,6 +601,9 @@ export function useTaskStream(taskId: string): TaskStreamData {
           status: "active",
           started_at: raw.started_at ?? new Date().toISOString(),
           model: raw.model as string | undefined,
+          role: (raw.role ?? undefined) as string | undefined,
+          node: (raw.node ?? undefined) as string | undefined,
+          rationale: (raw.rationale ?? null) as string | null,
         };
         setData((prev) => ({
           ...prev,

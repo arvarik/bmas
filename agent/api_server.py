@@ -332,6 +332,46 @@ def translate(
         }
 
 
+def _log_hermes_event(log: "LogEmitter", event_name: str, data: dict) -> None:
+    """Translate a Hermes SSE event into a structured agent log line.
+
+    Surfaces agent THINKING and BEHAVIOR — reasoning, tool calls/results, and
+    errors — as structured log records (full content in fields, never
+    truncated) attributed to this agent.
+    """
+    try:
+        if event_name == "reasoning.available":
+            text = str(data.get("text", ""))
+            if text.strip():
+                log.log(f"Reasoning: {text[:160]}", level="info",
+                        event="reasoning", text=text)
+        elif event_name == "tool.started":
+            tool = data.get("name", data.get("tool", "unknown"))
+            args = data.get("arguments", data.get("args", {}))
+            log.log(f"Tool call → {tool}", level="info",
+                    event="tool_call", tool=tool, args=args)
+        elif event_name == "tool.completed":
+            tool = data.get("name", data.get("tool", "unknown"))
+            result = data.get("result", data.get("output", ""))
+            ok = not data.get("error", False)
+            log.log(
+                f"Tool result ← {tool} ({'ok' if ok else 'error'})",
+                level="info" if ok else "warning",
+                event="tool_result", tool=tool, ok=ok,
+                result=result if isinstance(result, (str, int, float, bool)) else json.dumps(result),
+            )
+        elif event_name in ("approval.request", "approval.responded"):
+            log.log(f"Approval {event_name.split('.')[1]}: {data.get('action', 'unknown')}",
+                    level="warning", event="approval",
+                    action=data.get("action"), args=data.get("args", {}))
+        elif event_name in ("run.failed", "run.cancelled"):
+            log.log(f"Run {event_name.split('.')[1]}: {data.get('error', '')}",
+                    level="error", event="run_error", error=data.get("error", ""))
+    except Exception:
+        # Logging must never disrupt the run.
+        pass
+
+
 # ── Trace Emitter ──────────────────────────────────────────────────────────
 
 class TraceEmitter:
@@ -388,6 +428,112 @@ class TraceEmitter:
     @property
     def all_traces(self) -> list[dict]:
         return self._all_traces
+
+
+# ── Structured Log Emitter ───────────────────────────────────────────────
+
+class LogEmitter:
+    """Emits structured, per-agent log records to the daemon's log collector.
+
+    Each agent node owns its own logs (doc 04 seam rule 3): we POST structured
+    records to the daemon's /ingest/logs/{task_id} endpoint so they flow into
+    the same Redis stream + SQLite archive as daemon logs and show up,
+    attributed to this agent/persona, in the Mission Control Logs tab.
+
+    Records are buffered and flushed in batches; nothing here ever blocks or
+    raises into the run path. Logs are also echoed to the local Python logger
+    so container stdout stays useful.
+    """
+
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        task_id: str,
+        role: str,
+        turn_id: str,
+        request_id: str,
+    ) -> None:
+        self.client = client
+        self.task_id = task_id
+        self.role = role
+        self.turn_id = turn_id
+        self.request_id = request_id
+        self.buffer: list[dict] = []
+        self._enabled = bool(DAEMON_INGEST_URL and BMAS_NODE_KEY)
+
+    def log(self, message: str, level: str = "info", **fields) -> None:
+        """Buffer a structured log record (full message + arbitrary fields)."""
+        rec = {
+            "agent_role": self.role,
+            "level": level,
+            "message": message,
+            "node": NODE_ID,
+            "turn_id": self.turn_id,
+            "request_id": self.request_id,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "fields": {"node": NODE_ID, "turn_id": self.turn_id, **fields},
+        }
+        self.buffer.append(rec)
+        # Mirror to container stdout for local debugging.
+        getattr(logger, level if level in ("info", "warning", "error", "debug") else "info")(
+            f"[{self.request_id}] {self.role}: {message}"
+        )
+
+    async def flush(self) -> None:
+        """POST buffered log records to the daemon collector (best-effort)."""
+        if not self.buffer:
+            return
+        batch = self.buffer[:]
+        self.buffer.clear()
+        if not self._enabled:
+            return
+        try:
+            resp = await self.client.post(
+                f"{DAEMON_INGEST_URL}/ingest/logs/{self.task_id}",
+                json=batch,
+                headers={"Authorization": f"Bearer {BMAS_NODE_KEY}"},
+                timeout=10.0,
+            )
+            if resp.status_code != 200:
+                logger.warning(
+                    f"Log ingest returned {resp.status_code}: {resp.text[:200]}"
+                )
+        except Exception as e:
+            logger.warning(f"Log ingest failed: {e}")
+
+
+async def _post_logs_oneshot(
+    task_id: str, role: str, turn_id: str, request_id: str, records: list[tuple],
+) -> None:
+    """Post a batch of (message, level, fields) log records with a fresh client.
+
+    Used by the subprocess fallback path where no long-lived client exists.
+    Best-effort — never raises.
+    """
+    if not (DAEMON_INGEST_URL and BMAS_NODE_KEY) or not records:
+        return
+    payload = [
+        {
+            "agent_role": role,
+            "level": level,
+            "message": message,
+            "node": NODE_ID,
+            "turn_id": turn_id,
+            "request_id": request_id,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "fields": {"node": NODE_ID, "turn_id": turn_id, **(fields or {})},
+        }
+        for (message, level, fields) in records
+    ]
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(
+                f"{DAEMON_INGEST_URL}/ingest/logs/{task_id}",
+                json=payload,
+                headers={"Authorization": f"Bearer {BMAS_NODE_KEY}"},
+            )
+    except Exception as e:
+        logger.warning(f"One-shot log ingest failed: {e}")
 
 
 # ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -478,6 +624,16 @@ async def _run_via_api(
         # Phase 3a: Log profile for traceability. Per-profile gateway
         # dispatch is Phase 3b; for now the default gateway processes
         # all profiles (role identity is in the instructions/SOUL).
+        log = LogEmitter(client, task_id, role, turn_id, request_id)
+        log.log(
+            f"Starting run | model={model} profile={profile or 'default'}",
+            level="info",
+            event="run_submit",
+            model=model,
+            profile=profile or "default",
+            session_id=run_payload["session_id"],
+            objective=description[:500],
+        )
         logger.info(
             f"[{request_id}] POST /v1/runs | model={model} "
             f"session={run_payload['session_id']} profile={profile or 'default'}"
@@ -492,11 +648,17 @@ async def _run_via_api(
             resp.raise_for_status()
         except Exception as e:
             logger.error(f"[{request_id}] Failed to submit run: {e}")
+            log.log(f"Run submission failed: {e}", level="error",
+                    event="run_submit_failed", error=str(e))
+            await log.flush()
             return TaskStatus.failed, f"Run submission failed: {e}", None, 0, None
 
         run_data = resp.json()
         run_id = run_data.get("run_id", run_data.get("id", "unknown"))
         logger.info(f"[{request_id}] Run created: {run_id}")
+        log.log(f"Run created: {run_id}", level="info",
+                event="run_created", run_id=run_id)
+        await log.flush()  # surface early logs live
 
         # 2. Consume the SSE event stream
         emitter = TraceEmitter(client, task_id, turn_id)
@@ -540,6 +702,7 @@ async def _run_via_api(
                             )
                             trace_seq += 1
                             await emitter.emit(bmas_trace)
+                            _log_hermes_event(log, event_name, event_data)
 
                             if event_name == "run.completed":
                                 final_output = str(event_data.get("output", ""))
@@ -547,6 +710,8 @@ async def _run_via_api(
                             elif event_name in ("run.failed", "run.cancelled"):
                                 final_output = event_data.get("error", f"Run {event_name}")
                                 status = TaskStatus.failed
+                        # Stream logs alongside traces for live visibility.
+                        await log.flush()
 
                 # Process any trailing events
                 if line_buffer:
@@ -630,6 +795,19 @@ async def _run_via_api(
             f"[{request_id}] Run {run_id} {status.value} | "
             f"traces={emitter.trace_count} output_len={len(final_output)}"
         )
+        log.log(
+            f"Run {status.value} | {len(final_output)} chars, "
+            f"{emitter.trace_count} traces",
+            level="error" if status in (TaskStatus.failed, TaskStatus.timeout) else "info",
+            event="run_completed",
+            run_id=run_id,
+            status=status.value,
+            output=final_output,
+            output_chars=len(final_output),
+            usage=final_usage,
+            trace_count=emitter.trace_count,
+        )
+        await log.flush()
 
         return status, final_output, final_usage, emitter.trace_count, run_id
 
@@ -711,6 +889,12 @@ async def _run_hermes(
             },
         )
 
+        await _post_logs_oneshot(task_id, role, turn_id, request_id, [
+            (f"Executing (fallback) | profile={profile or 'default'} timeout={timeout}s",
+             "info", {"event": "run_submit", "profile": profile or "default",
+                      "objective": description[:500], "mode": "hermes-z"}),
+        ])
+
         try:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout
@@ -719,6 +903,10 @@ async def _run_hermes(
             proc.kill()
             await proc.wait()
             logger.warning(f"[{request_id}] Task timed out after {timeout}s")
+            await _post_logs_oneshot(task_id, role, turn_id, request_id, [
+                (f"Run timed out after {timeout}s", "error",
+                 {"event": "run_error", "timeout_s": timeout}),
+            ])
             return TaskStatus.timeout, f"Task timed out after {timeout}s", None, 0, None
 
         output = stdout.decode("utf-8", errors="replace").strip()
@@ -729,6 +917,10 @@ async def _run_hermes(
                 f"[{request_id}] hermes exited with code {proc.returncode} | "
                 f"stderr={errors[:500]}"
             )
+            await _post_logs_oneshot(task_id, role, turn_id, request_id, [
+                (f"Run failed | exit code {proc.returncode}", "error",
+                 {"event": "run_error", "exit_code": proc.returncode, "stderr": errors}),
+            ])
             return TaskStatus.failed, errors or f"Exit code {proc.returncode}", None, 0, None
 
         # Emit synthetic traces (doc 06 §8: coarse trace rather than nothing)
@@ -787,6 +979,11 @@ async def _run_hermes(
                 logger.warning(f"[{request_id}] Synthetic trace ingest failed: {e}")
 
         logger.info(f"[{request_id}] Task completed (fallback) | output_len={len(output)}")
+        await _post_logs_oneshot(task_id, role, turn_id, request_id, [
+            (f"Run completed | {len(output)} chars", "info",
+             {"event": "run_completed", "status": "completed",
+              "output": output, "output_chars": len(output)}),
+        ])
 
         # Sync any files hermes created in outputs/ back to daemon (doc 17 §6)
         outputs_dir = workspace / "outputs"
