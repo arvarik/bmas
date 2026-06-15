@@ -550,7 +550,7 @@
 .overview__stage-arrow{color:var(--text-tertiary);flex-shrink:0}
 
 /* Stats row */
-.overview__stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:var(--space-3)}
+.overview__stats{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3)}
 
 /* Metric toggle — interactive expand indicator */
 .overview__metric-toggle{cursor:pointer;flex:1;border-radius:var(--radius-md);border:1px solid transparent;transition:border-color 200ms ease,background 200ms ease}

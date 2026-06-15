@@ -10,7 +10,7 @@
  *
  */
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, Fragment } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import ReactMarkdown from "react-markdown";
@@ -751,12 +751,10 @@ function TimeDisplay({
             value={totalMs ? fmtDuration(totalMs) : "—"}
           />
         </div>
-        {maxConcurrent > 1 && (
-          <MetricCard
+        <MetricCard
             label="Peak Parallelism"
-            value={`${maxConcurrent} agents`}
+            value={`${maxConcurrent} agent${maxConcurrent !== 1 ? "s" : ""}`}
           />
-        )}
       </div>
 
       {expanded && timeline.length > 0 && (
@@ -784,21 +782,24 @@ function TimeDisplay({
           >
             Agent Timeline
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "auto 1fr auto",
+              gap: "6px var(--space-2)",
+              alignItems: "center",
+            }}
+          >
             {actors.map((actor) => {
               const actorTurns = timeline.filter((t) => t.actor === actor);
               const color = authorColor(actor);
               const label = actor.split(".").pop() ?? actor;
               return (
-                <div key={actor} style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                <Fragment key={actor}>
                   <span
                     style={{
                       fontSize: "10px",
                       color: "var(--text-tertiary)",
-                      width: 80,
-                      flexShrink: 0,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                       textTransform: "capitalize",
                     }}
@@ -808,7 +809,6 @@ function TimeDisplay({
                   </span>
                   <div
                     style={{
-                      flex: 1,
                       height: 14,
                       position: "relative",
                       background: "var(--surface-active)",
@@ -845,32 +845,32 @@ function TimeDisplay({
                       fontSize: "10px",
                       fontFamily: "var(--font-mono)",
                       color: "var(--text-tertiary)",
-                      width: 50,
                       textAlign: "right",
-                      flexShrink: 0,
+                      whiteSpace: "nowrap",
                     }}
                   >
                     {fmtDuration(actorTurns.reduce((s, t) => s + t.duration, 0))}
                   </span>
-                </div>
+                </Fragment>
               );
             })}
-          </div>
 
-          {/* Time axis labels */}
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              marginTop: 4,
-              marginLeft: 88,
-              fontSize: "9px",
-              color: "var(--text-tertiary)",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            <span>0s</span>
-            <span>{fmtDuration(span)}</span>
+            {/* Time axis labels — spans under the Gantt bar column only */}
+            <span />
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                marginTop: 2,
+                fontSize: "9px",
+                color: "var(--text-tertiary)",
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              <span>0s</span>
+              <span>{fmtDuration(span)}</span>
+            </div>
+            <span />
           </div>
         </div>
       )}
