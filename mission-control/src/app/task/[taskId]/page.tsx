@@ -1150,13 +1150,31 @@ export default function TaskOverviewPage() {
     completedTurns, activeTurns, boardEntries, coordinatorNarrations, consensus,
   } = useTaskData();
 
+  // Infer model from turns or cost data if it's missing from the initial task state
+  const allTurns = useMemo(() => [...completedTurns, ...activeTurns], [completedTurns, activeTurns]);
+  const inferredModel = useMemo(() => {
+    if (taskMeta?.model && taskMeta.model !== "unknown") return taskMeta.model;
+    const turnModel = allTurns.find((t) => t.model && t.model !== "unknown")?.model;
+    if (turnModel) return turnModel;
+    if (cost?.by_model) {
+      const models = Object.keys(cost.by_model).filter((m) => m !== "unknown");
+      if (models.length > 0) return models[0];
+    }
+    return undefined;
+  }, [taskMeta?.model, allTurns, cost?.by_model]);
+
+  const patchedTaskMeta = useMemo(() => {
+    if (!taskMeta) return taskMeta;
+    return { ...taskMeta, model: inferredModel ?? taskMeta.model };
+  }, [taskMeta, inferredModel]);
+
   // ── Running: live progress + HITL ─────────────────────────────────
   if (isLive) {
     return (
       <LiveRunningView
         phase={phase}
         subTasks={subTasks}
-        taskMeta={taskMeta}
+        taskMeta={patchedTaskMeta}
         cost={cost}
         taskId={taskId as string}
         completedTurns={completedTurns}
@@ -1173,7 +1191,7 @@ export default function TaskOverviewPage() {
     return <CompletedView
       result={result}
       subTasks={subTasks}
-      taskMeta={taskMeta}
+      taskMeta={patchedTaskMeta}
       cost={cost}
       taskId={taskId as string}
       completedTurns={completedTurns}
