@@ -13,6 +13,8 @@ import React, { useMemo, useState, useCallback } from "react";
 import { authorColor } from "@/lib/design-tokens";
 import type { TurnRecord, TraceEvent, BoardEntry, RejectedEntry } from "@/hooks/useTaskStream";
 import { ToolCallCard } from "./ToolCallCard";
+import { bodyPreview } from "./board/boardModel";
+import { typeMeta } from "./board/boardModel";
 import { X, CheckCircle, XCircle } from "lucide-react";
 
 const DAEMON_URL = process.env.NEXT_PUBLIC_DAEMON_URL ?? "http://192.168.4.240:9000";
@@ -227,16 +229,41 @@ export function TurnInspector({
                   </div>
                 </div>
               )}
+              {/* CU routing rationale */}
+              {turn?.rationale && (
+                <div style={{
+                  marginTop: "var(--space-3)",
+                  padding: "var(--space-2) var(--space-3)",
+                  borderRadius: "var(--radius-sm)",
+                  background: "hsl(217 92% 55%/0.06)",
+                  border: "1px solid hsl(217 92% 55%/0.12)",
+                  fontSize: "var(--text-xs)",
+                  color: "var(--text-secondary)",
+                  lineHeight: "var(--leading-relaxed)",
+                }}>
+                  <div style={{ fontWeight: "var(--weight-semibold)", marginBottom: 2, color: "var(--accent-primary)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>Coordinator Rationale</div>
+                  {turn.rationale}
+                </div>
+              )}
               {createdEntries.length > 0 && (
                 <div style={{ marginTop: "var(--space-3)" }}>
                   <div style={{ fontWeight: "var(--weight-semibold)", fontSize: "var(--text-xs)", marginBottom: "var(--space-1)" }}>Board Entries Created</div>
-                  {createdEntries.map((e) => (
-                    <div key={e.id} style={{ fontSize: "var(--text-xs)", padding: "4px 0", borderBottom: "1px solid var(--border-subtle)" }}>
-                      <span style={{ fontWeight: "var(--weight-medium)", color: "var(--text-secondary)" }}>{e.type}</span>
-                      {" — "}
-                      <span style={{ color: "var(--text-tertiary)" }}>{e.title || e.body.slice(0, 100)}</span>
-                    </div>
-                  ))}
+                  {createdEntries.map((e) => {
+                    const em = typeMeta(e.type);
+                    const EIcon = em.icon;
+                    return (
+                      <div key={e.id} style={{ fontSize: "var(--text-xs)", padding: "6px 0", borderBottom: "1px solid var(--border-subtle)", display: "flex", flexDirection: "column", gap: 2 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <EIcon size={11} style={{ color: em.color, flexShrink: 0 }} />
+                          <span style={{ fontWeight: "var(--weight-medium)", color: em.color }}>{em.label}</span>
+                          {e.title && <span style={{ color: "var(--text-secondary)" }}> — {e.title}</span>}
+                        </div>
+                        <div style={{ color: "var(--text-tertiary)", lineHeight: "var(--leading-relaxed)", paddingLeft: 15 }}>
+                          {bodyPreview(e.body, 180)}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -314,7 +341,7 @@ export function TurnInspector({
                 <span style={{ width: 6, height: 6, borderRadius: "var(--radius-full)", background: "var(--status-success)", flexShrink: 0 }} />
                 <span style={{ fontWeight: "var(--weight-medium)" }}>{e.type}</span>
                 <span style={{ color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {e.title || e.body.slice(0, 60)}
+                  {e.title || bodyPreview(e.body, 80)}
                 </span>
               </div>
             ))}

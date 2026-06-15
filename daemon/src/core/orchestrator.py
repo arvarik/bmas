@@ -417,23 +417,57 @@ class Orchestrator:
                     },
                 )
 
-                # Dispatch activations concurrently
+                # Dispatch activations — decider runs AFTER all others
+                # so it can see the critic's board writes (doc 05 §1.1).
                 if step_result.activations:
-                    dispatch_tasks = []
-                    for activation in step_result.activations:
-                        dispatch_tasks.append(
+                    # Split into non-decider and decider groups
+                    non_decider = [a for a in step_result.activations
+                                   if a.actor != "decider"]
+                    decider = [a for a in step_result.activations
+                               if a.actor == "decider"]
+
+                    all_activations = []
+                    all_results = []
+
+                    # Phase 1: dispatch non-decider agents concurrently
+                    if non_decider:
+                        dispatch_tasks = [
                             self._dispatch_traditional_turn(
                                 variant, task, activation, round_no,
                                 rationale=step_result.rationale,
                                 phase=step_result.phase,
                             )
+                            for activation in non_decider
+                        ]
+                        phase1_results = await asyncio.gather(
+                            *dispatch_tasks, return_exceptions=True,
                         )
-                    results = await asyncio.gather(
-                        *dispatch_tasks, return_exceptions=True,
-                    )
+                        all_activations.extend(non_decider)
+                        all_results.extend(phase1_results)
+
+                    # Phase 2: dispatch decider AFTER non-decider agents finish
+                    if decider:
+                        if non_decider:
+                            logger.info(
+                                "Decider deferred until after %d non-decider agents | task=%s round=%d",
+                                len(non_decider), task_id, round_no,
+                            )
+                        dispatch_tasks = [
+                            self._dispatch_traditional_turn(
+                                variant, task, activation, round_no,
+                                rationale=step_result.rationale,
+                                phase=step_result.phase,
+                            )
+                            for activation in decider
+                        ]
+                        phase2_results = await asyncio.gather(
+                            *dispatch_tasks, return_exceptions=True,
+                        )
+                        all_activations.extend(decider)
+                        all_results.extend(phase2_results)
 
                     # Process results and track cost
-                    for activation, result in zip(step_result.activations, results, strict=False):
+                    for activation, result in zip(all_activations, all_results, strict=False):
                         if isinstance(result, Exception):
                             logger.warning(
                                 f"Turn failed for {activation.actor}: {result}"

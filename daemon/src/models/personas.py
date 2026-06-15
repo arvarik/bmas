@@ -222,6 +222,10 @@ Rules:
 - Select from the available roster ONLY (names listed below)
 - Select 1 to {max_concurrent} agents per round
 - Select the decider ONLY when the board plausibly contains enough to answer
+- NEVER select the decider alongside the critic — the decider must run AFTER
+  critics have posted their critiques so it can see all uncontested findings.
+  If critique is needed, select only the critic this round; if the board is
+  ready for a decision, select only the decider.
 - If critiques are open without rebuttals, select the critiqued author(s)
 - If the board is cluttered (many entries), consider selecting the cleaner
 - The rationale is for the operator's benefit — be concise but informative

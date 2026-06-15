@@ -352,6 +352,17 @@ export function prettyAuthor(author: string): string {
 }
 
 /**
+ * Unescape literal two-character escape sequences (\\n → newline, \\t → tab,
+ * \\" → quote) that the daemon sometimes stores in board entry bodies.
+ */
+function unescapeLiteralSequences(s: string): string {
+  return s
+    .replace(/\\n/g, "\n")
+    .replace(/\\t/g, "\t")
+    .replace(/\\"/g, '"');
+}
+
+/**
  * Normalize a board entry body that may be JSON-encoded, markdown-fenced JSON,
  * or already plain text / markdown. Returns human-readable text suitable for
  * both card previews and full-body rendering.
@@ -360,10 +371,18 @@ export function normalizeBody(raw: string): string {
   if (!raw) return "";
   const trimmed = raw.trim();
 
-  // 1. Markdown-fenced JSON: ```json\n{...}\n```
+  // 1a. Markdown-fenced JSON: ```json\n{...}\n```
   const fenceMatch = trimmed.match(/^```(?:json)?\s*\n([\s\S]+?)\n```\s*$/);
   if (fenceMatch) {
     const extracted = extractReadableFromJson(fenceMatch[1]);
+    if (extracted) return extracted;
+  }
+
+  // 1b. Fence with literal escapes: ```json\\n[...\\n]\\n```
+  const litFenceMatch = trimmed.match(/^```(?:json)?\\n([\s\S]+?)\\n```\s*$/);
+  if (litFenceMatch) {
+    const unescaped = unescapeLiteralSequences(litFenceMatch[1]);
+    const extracted = extractReadableFromJson(unescaped);
     if (extracted) return extracted;
   }
 
@@ -381,7 +400,16 @@ export function normalizeBody(raw: string): string {
 /** Try to parse a JSON string and extract human-readable content from it. */
 function extractReadableFromJson(jsonStr: string): string | null {
   let parsed: unknown;
-  try { parsed = JSON.parse(jsonStr); } catch { return null; }
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    // Retry with unescaped literal sequences (daemon sometimes double-escapes)
+    try {
+      parsed = JSON.parse(unescapeLiteralSequences(jsonStr));
+    } catch {
+      return null;
+    }
+  }
 
   if (Array.isArray(parsed)) {
     // Array of board entries — extract body from the most useful one (solution > last)
@@ -403,7 +431,11 @@ function extractBodyFromObject(obj: unknown): string | null {
   // Common body field names used by the daemon
   for (const key of ["body", "content", "text", "message", "description", "summary"]) {
     if (typeof rec[key] === "string" && (rec[key] as string).trim()) {
-      const body = (rec[key] as string).trim();
+      let body = (rec[key] as string).trim();
+      // Unescape any remaining literal sequences in the body text
+      if (body.includes("\\n") || body.includes("\\t")) {
+        body = unescapeLiteralSequences(body);
+      }
       // If there's also a title, prepend it
       if (typeof rec.title === "string" && rec.title.trim()) {
         return `**${rec.title.trim()}**\n\n${body}`;
