@@ -22,7 +22,7 @@ import { MetricCard } from "@/components/ui/MetricCard";
 import {
   Activity, Check, Circle, AlertTriangle, Pause, Play, XCircle,
   Send, ArrowRight, ChevronDown, ChevronRight, Clock, Users,
-  Layers, Zap, Radio, MessageSquare,
+  Layers, Zap, Radio, MessageSquare, Cpu, Cloud,
 } from "lucide-react";
 import type { StatusType } from "@/lib/design-tokens";
 import { authorColor } from "@/lib/design-tokens";
@@ -176,6 +176,42 @@ function stageLabelForRole(role: string): string {
   return base.charAt(0).toUpperCase() + base.slice(1).replace(/_/g, " ");
 }
 
+// ── Model display helpers ─────────────────────────────────────────────
+
+/** Human-readable model labels for internal aliases. */
+const MODEL_LABELS: Record<string, { label: string; isLocal: boolean }> = {
+  "edge-node-1": { label: "Gemma 4 E4B", isLocal: true },
+  "edge-node-2": { label: "Gemma 4 E4B", isLocal: true },
+  "edge-node-3": { label: "Gemma 4 E4B", isLocal: true },
+  "gemini-pro":  { label: "Gemini Pro", isLocal: false },
+  "gemini-flash": { label: "Gemini Flash", isLocal: false },
+  "gemini-flash-lite": { label: "Gemini Flash Lite", isLocal: false },
+};
+
+function prettyModel(model: string | undefined): { label: string; isLocal: boolean } {
+  if (!model) return { label: "Unknown", isLocal: false };
+  const known = MODEL_LABELS[model];
+  if (known) return known;
+  // Fallback: if it starts with "edge-" assume local
+  if (model.startsWith("edge-")) return { label: model, isLocal: true };
+  // Otherwise show the raw alias, assume cloud
+  return { label: model.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()), isLocal: false };
+}
+
+/** Compact model badge showing local/cloud icon + name */
+function ModelBadge({ model }: { model?: string }) {
+  const info = prettyModel(model);
+  const Icon = info.isLocal ? Cpu : Cloud;
+  return (
+    <span className="overview__model-badge" data-local={info.isLocal}>
+      <Icon size={11} />
+      <span>{info.isLocal ? "Local" : "Cloud"}</span>
+      <span className="overview__model-badge-sep">·</span>
+      <span className="overview__model-badge-name">{info.label}</span>
+    </span>
+  );
+}
+
 /**
  * Build the process summary from the *actual* stages that occurred.
  *
@@ -211,7 +247,7 @@ function buildProcessStages(
     label: "Triage",
     status: triageStatus,
     detail: taskMeta?.complexity
-      ? `${taskMeta.complexity} complexity — routes to appropriate model tier`
+      ? `${taskMeta.complexity} complexity → ${prettyModel(taskMeta.model).label}${prettyModel(taskMeta.model).isLocal ? " (local)" : ""}`
       : undefined,
   });
 
@@ -564,7 +600,7 @@ function CostDisplay({ cost }: { cost: CostData | null }) {
             <CostBreakdownTable
               title="By Model"
               rows={modelEntries.map(([model, data]) => ({
-                label: model,
+                label: prettyModel(model).label + (prettyModel(model).isLocal ? " ⚡" : ""),
                 cost: data.cost,
                 tokens: data.tokens,
               }))}
@@ -967,6 +1003,12 @@ function LiveRunningView({
           <LiveStat icon={Layers} label="Round" value={currentRound === 0 ? "Genesis" : `R${currentRound}`} />
           <LiveStat icon={MessageSquare} label="Board Entries" value={`${boardEntries.length}`} />
           <LiveStat
+            icon={prettyModel(taskMeta?.model).isLocal ? Cpu : Cloud}
+            label="Model"
+            value={prettyModel(taskMeta?.model).label}
+            detail={prettyModel(taskMeta?.model).isLocal ? "Local inference" : "Cloud API"}
+          />
+          <LiveStat
             icon={Zap}
             label="Tokens"
             value={totalTokens > 0 ? totalTokens.toLocaleString() : "—"}
@@ -1225,6 +1267,13 @@ function CompletedView({
           <ResultRenderer content={result} />
         </div>
       </div>
+
+      {/* Model badge */}
+      {taskMeta?.model && (
+        <div style={{ marginBottom: "var(--space-3)" }}>
+          <ModelBadge model={taskMeta.model} />
+        </div>
+      )}
 
       {/* Process summary — derived from the actual stages/turns that ran */}
       <div className="overview__pipeline-section">

@@ -523,7 +523,25 @@ async def update_task_status(
 async def complete_task(
     task_id: str, result_summary: str, result_json: str
 ) -> None:
-    """Mark a task as completed with its result."""
+    """Mark a task as completed with its result.
+
+    Extracts ``rounds_completed``, ``terminated_by``, and ``answer_source``
+    from *result_json* and persists them to the dedicated v2 columns so
+    they are queryable without parsing the JSON blob.
+    """
+    # Parse terminal metadata from result JSON
+    rounds_used = None
+    terminated_by = None
+    answer_source = None
+    if result_json:
+        try:
+            result_data = json.loads(result_json)
+            rounds_used = result_data.get("rounds_completed")
+            terminated_by = result_data.get("terminated_by")
+            answer_source = result_data.get("answer_source")
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     async with _connect() as db:
         # Fetch started_at to compute duration
         cursor = await db.execute(
@@ -545,9 +563,13 @@ async def complete_task(
             "result_summary = ?, "
             "result_json = ?, "
             "completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
-            "duration_ms = ? "
+            "duration_ms = ?, "
+            "rounds_used = ?, "
+            "terminated_by = ?, "
+            "answer_source = ? "
             "WHERE id = ?",
-            (result_summary, result_json, duration_ms, task_id),
+            (result_summary, result_json, duration_ms,
+             rounds_used, terminated_by, answer_source, task_id),
         )
         await db.commit()
 
