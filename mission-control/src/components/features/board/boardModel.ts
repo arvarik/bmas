@@ -351,9 +351,85 @@ export function prettyAuthor(author: string): string {
     .join(" ");
 }
 
+/**
+ * Normalize a board entry body that may be JSON-encoded, markdown-fenced JSON,
+ * or already plain text / markdown. Returns human-readable text suitable for
+ * both card previews and full-body rendering.
+ */
+export function normalizeBody(raw: string): string {
+  if (!raw) return "";
+  const trimmed = raw.trim();
+
+  // 1. Markdown-fenced JSON: ```json\n{...}\n```
+  const fenceMatch = trimmed.match(/^```(?:json)?\s*\n([\s\S]+?)\n```\s*$/);
+  if (fenceMatch) {
+    const extracted = extractReadableFromJson(fenceMatch[1]);
+    if (extracted) return extracted;
+  }
+
+  // 2. Bare JSON object or array
+  if ((trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+      (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+    const extracted = extractReadableFromJson(trimmed);
+    if (extracted) return extracted;
+  }
+
+  // 3. Already plain text / markdown — return as-is
+  return trimmed;
+}
+
+/** Try to parse a JSON string and extract human-readable content from it. */
+function extractReadableFromJson(jsonStr: string): string | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(jsonStr); } catch { return null; }
+
+  if (Array.isArray(parsed)) {
+    // Array of board entries — extract body from the most useful one (solution > last)
+    const solution = parsed.find(
+      (e) => typeof e === "object" && e !== null && (e as Record<string, unknown>).type === "solution"
+    ) ?? parsed[parsed.length - 1];
+    return extractBodyFromObject(solution);
+  }
+
+  return extractBodyFromObject(parsed);
+}
+
+/** Extract the body/content text from a parsed JSON object. */
+function extractBodyFromObject(obj: unknown): string | null {
+  if (typeof obj === "string") return obj;
+  if (typeof obj !== "object" || obj === null) return null;
+  const rec = obj as Record<string, unknown>;
+
+  // Common body field names used by the daemon
+  for (const key of ["body", "content", "text", "message", "description", "summary"]) {
+    if (typeof rec[key] === "string" && (rec[key] as string).trim()) {
+      const body = (rec[key] as string).trim();
+      // If there's also a title, prepend it
+      if (typeof rec.title === "string" && rec.title.trim()) {
+        return `**${rec.title.trim()}**\n\n${body}`;
+      }
+      return body;
+    }
+  }
+
+  // Fallback: pretty-print the object as key-value pairs
+  const entries = Object.entries(rec).filter(
+    ([, v]) => v !== null && v !== undefined && v !== "",
+  );
+  if (entries.length === 0) return null;
+  return entries
+    .map(([k, v]) => {
+      const label = k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      const val = typeof v === "string" ? v : JSON.stringify(v);
+      return `**${label}:** ${val}`;
+    })
+    .join("\n");
+}
+
 /** Strip the structured-markup noise some agents emit so previews read well. */
 export function bodyPreview(body: string, max = 240): string {
-  const cleaned = body
+  const normalized = normalizeBody(body);
+  const cleaned = normalized
     .replace(/^#{1,6}\s+/gm, "")
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/`([^`]+)`/g, "$1")

@@ -4,21 +4,24 @@
  * AgentMindCard — Per-agent live reasoning card for Mission cockpit.
  *
  * Shows the latest reasoning stream, current tool indicator,
- * token meter, cost chip, and status (active/idle/pending approval).
+ * token meter, cost chip, status (active/idle/pending approval),
+ * board entries created, rounds participated, and model info.
  *
  * @module Phase 5 (doc 13 §2)
  */
 
 import { useMemo } from "react";
 import { authorColor, STATUS_COLORS } from "@/lib/design-tokens";
-import type { TraceEvent, TurnRecord, ApprovalRequest } from "@/hooks/useTaskStream";
-import { Cpu, Pause, CheckCircle2, Circle } from "lucide-react";
+import type { TraceEvent, TurnRecord, ApprovalRequest, BoardEntry } from "@/hooks/useTaskStream";
+import { Cpu, Pause, CheckCircle2, Circle, MessageSquare, Layers, Zap } from "lucide-react";
 
 interface AgentMindCardProps {
   actor: string;
   traceEvents: TraceEvent[];
   activeTurns: TurnRecord[];
+  completedTurns?: TurnRecord[];
   approvalRequests: ApprovalRequest[];
+  boardEntries?: BoardEntry[];
   onClick?: () => void;
   compact?: boolean;
 }
@@ -27,7 +30,9 @@ export function AgentMindCard({
   actor,
   traceEvents,
   activeTurns,
+  completedTurns = [],
   approvalRequests,
+  boardEntries = [],
   onClick,
   compact = false,
 }: AgentMindCardProps) {
@@ -35,7 +40,7 @@ export function AgentMindCard({
 
   // Latest trace events for this actor
   const actorTraces = useMemo(
-    () => traceEvents.filter((t) => t.actor === actor).slice(-10),
+    () => traceEvents.filter((t) => t.actor === actor).slice(-20),
     [traceEvents, actor],
   );
 
@@ -47,12 +52,12 @@ export function AgentMindCard({
     (r) => r.actor === actor,
   );
 
-  // Latest reasoning line
+  // Latest reasoning line — show more context
   const latestReasoning = useMemo(() => {
     for (let i = actorTraces.length - 1; i >= 0; i--) {
       const t = actorTraces[i];
       if (t.type === "reasoning" || t.type === "thinking") {
-        return t.content?.slice(0, 200) ?? "";
+        return t.content?.slice(0, 400) ?? "";
       }
     }
     return "";
@@ -78,6 +83,54 @@ export function AgentMindCard({
     }
     return total;
   }, [actorTraces]);
+
+  // Board entries by this actor
+  const actorEntries = useMemo(
+    () => boardEntries.filter((e) => e.author === actor),
+    [boardEntries, actor],
+  );
+
+  // Entry type breakdown
+  const entryTypeCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of actorEntries) {
+      counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
+    }
+    return counts;
+  }, [actorEntries]);
+
+  // Turns for this actor (completed)
+  const actorCompletedTurns = useMemo(
+    () => completedTurns.filter((t) => t.actor === actor),
+    [completedTurns, actor],
+  );
+
+  // Rounds participated
+  const rounds = useMemo(() => {
+    const set = new Set<number>();
+    for (const t of [...actorCompletedTurns, ...activeTurns.filter(t => t.actor === actor)]) {
+      if (t.round_no > 0) set.add(t.round_no);
+    }
+    return set;
+  }, [actorCompletedTurns, activeTurns, actor]);
+
+  // Cost for this actor
+  const actorCost = useMemo(() => {
+    let total = 0;
+    for (const t of actorCompletedTurns) {
+      total += t.cost_usd ?? 0;
+    }
+    return total;
+  }, [actorCompletedTurns]);
+
+  // Model from latest turn
+  const model = useMemo(() => {
+    const turns = [...actorCompletedTurns, ...activeTurns.filter(t => t.actor === actor)];
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].model) return turns[i].model;
+    }
+    return null;
+  }, [actorCompletedTurns, activeTurns, actor]);
 
   // Display name
   const displayName = actor.includes(".")
@@ -139,6 +192,9 @@ export function AgentMindCard({
           </span>
         </div>
         <div className="agent-mind-card__badges">
+          {model && (
+            <span className="agent-mind-card__model">{model}</span>
+          )}
           {tokenCount > 0 && (
             <span className="agent-mind-card__tokens">
               {tokenCount.toLocaleString()} tok
@@ -147,7 +203,39 @@ export function AgentMindCard({
         </div>
       </div>
 
-      {/* Reasoning stream */}
+      {/* Stats row — board entries, rounds, cost */}
+      <div className="agent-mind-card__stats">
+        {actorEntries.length > 0 && (
+          <span className="agent-mind-card__stat" title="Board entries created by this agent">
+            <MessageSquare size={10} />
+            <span>{actorEntries.length} {actorEntries.length === 1 ? "entry" : "entries"}</span>
+            {entryTypeCounts.size > 0 && (
+              <span className="agent-mind-card__stat-breakdown">
+                ({[...entryTypeCounts.entries()]
+                  .map(([type, count]) => `${count} ${type}`)
+                  .join(", ")})
+              </span>
+            )}
+          </span>
+        )}
+        {rounds.size > 0 && (
+          <span className="agent-mind-card__stat" title="Rounds this agent participated in">
+            <Layers size={10} />
+            <span>{rounds.size === 1 ? `R${[...rounds][0]}` : `R${Math.min(...rounds)}–${Math.max(...rounds)}`}</span>
+            <span className="agent-mind-card__stat-detail">
+              · {actorCompletedTurns.length + (isActive ? 1 : 0)} turn{actorCompletedTurns.length + (isActive ? 1 : 0) !== 1 ? "s" : ""}
+            </span>
+          </span>
+        )}
+        {actorCost > 0 && (
+          <span className="agent-mind-card__stat" title="Cost for this agent">
+            <Zap size={10} />
+            <span>${actorCost.toFixed(4)}</span>
+          </span>
+        )}
+      </div>
+
+      {/* Reasoning stream — expanded to 4 lines */}
       {latestReasoning && (
         <div className="agent-mind-card__reasoning">
           {latestReasoning}

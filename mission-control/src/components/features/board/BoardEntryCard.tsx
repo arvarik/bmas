@@ -10,12 +10,13 @@
 
 import React from "react";
 import { authorColor } from "@/lib/design-tokens";
+import { RichContent } from "@/components/ui/RichContent";
 import {
   type MergedBoardEntry,
   typeMeta,
   salienceColor,
   prettyAuthor,
-  bodyPreview,
+  normalizeBody,
 } from "./boardModel";
 
 interface BoardEntryCardProps {
@@ -162,21 +163,23 @@ export function BoardEntryCard({ entry, selected, compact, onSelect }: BoardEntr
         </div>
       )}
 
-      {/* Body preview */}
-      {!compact && (
+      {/* Body preview — normalized + rendered as rich content */}
+      {!compact && entry.body && (
         <div
+          className="bb-entry-card__body"
           style={{
             fontSize: "var(--text-xs)",
-            color: "var(--text-secondary)",
-            lineHeight: "var(--leading-sm)",
-            display: "-webkit-box",
-            WebkitLineClamp: 3,
-            WebkitBoxOrient: "vertical",
+            lineHeight: 1.5,
             overflow: "hidden",
-            whiteSpace: "pre-wrap",
+            maxHeight: "4.5em",
+            maskImage: "linear-gradient(to bottom, black 60%, transparent 100%)",
+            WebkitMaskImage: "linear-gradient(to bottom, black 60%, transparent 100%)",
           }}
         >
-          {bodyPreview(entry.body)}
+          <RichContent
+            content={normalizeBody(entry.body)}
+            forceMarkdown
+          />
         </div>
       )}
 
