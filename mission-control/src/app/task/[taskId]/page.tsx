@@ -883,15 +883,16 @@ function TimeDisplay({
 // ── Elapsed Timer Hook ────────────────────────────────────────────────
 
 function useElapsed(startIso: string | undefined, isLive: boolean): string {
-  const [now, setNow] = useState(Date.now());
+  const [elapsed, setElapsed] = useState("");
   useEffect(() => {
     if (!isLive || !startIso) return;
-    const iv = setInterval(() => setNow(Date.now()), 1000);
+    const start = new Date(startIso).getTime();
+    const tick = () => setElapsed(fmtDuration(Math.max(0, Date.now() - start)));
+    tick();
+    const iv = setInterval(tick, 1000);
     return () => clearInterval(iv);
   }, [isLive, startIso]);
-  if (!startIso) return "—";
-  const ms = now - new Date(startIso).getTime();
-  return fmtDuration(Math.max(0, ms));
+  return elapsed || "—";
 }
 
 // ── Live Running View ─────────────────────────────────────────────────
@@ -1107,9 +1108,6 @@ export default function TaskOverviewPage() {
     completedTurns, activeTurns, boardEntries, coordinatorNarrations, consensus,
   } = useTaskData();
 
-  const completedCount = subTasks.filter((st) => st.status === "completed").length;
-  const totalCount = subTasks.length;
-
   // ── Running: live progress + HITL ─────────────────────────────────
   if (isLive) {
     return (
@@ -1201,7 +1199,7 @@ function CompletedView({
   subTasks,
   taskMeta,
   cost,
-  taskId,
+  taskId: _taskId,
   completedTurns,
 }: {
   result: string;
@@ -1213,7 +1211,7 @@ function CompletedView({
 }) {
   const stages = buildProcessStages(subTasks, completedTurns, taskMeta);
 
-  const durationText = taskMeta?.duration_ms
+  const _durationText = taskMeta?.duration_ms
     ? fmtDuration(taskMeta.duration_ms)
     : undefined;
 
