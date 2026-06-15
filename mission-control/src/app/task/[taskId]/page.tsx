@@ -17,14 +17,12 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTaskData } from "./TaskStreamContext";
 import { Panel } from "@/components/ui/Panel";
-import { StatusBadge } from "@/components/ui/StatusBadge";
 import { MetricCard } from "@/components/ui/MetricCard";
 import {
   Activity, Check, Circle, AlertTriangle, Pause, Play, XCircle,
   Send, ArrowRight, ChevronDown, ChevronRight, Clock, Users,
   Layers, Zap, Radio, MessageSquare, Cpu, Cloud,
 } from "lucide-react";
-import type { StatusType } from "@/lib/design-tokens";
 import { authorColor } from "@/lib/design-tokens";
 import type { CostData, TurnRecord, CoordinatorNarration } from "@/hooks/useTaskStream";
 
@@ -124,15 +122,6 @@ function InputPromptBox({ prompt }: { prompt?: string }) {
     </div>
   );
 }
-
-// ── Status mapping ───────────────────────────────────────────────────
-
-const STATUS_MAP: Record<string, StatusType> = {
-  pending: "pending",
-  running: "running",
-  completed: "success",
-  failed: "error",
-};
 
 // ── Process summary stages (derived from real turn data) ──────────────
 
@@ -1161,7 +1150,7 @@ export default function TaskOverviewPage() {
       if (models.length > 0) return models[0];
     }
     return undefined;
-  }, [taskMeta?.model, allTurns, cost?.by_model]);
+  }, [taskMeta, allTurns, cost]);
 
   const patchedTaskMeta = useMemo(() => {
     if (!taskMeta) return taskMeta;
@@ -1193,7 +1182,6 @@ export default function TaskOverviewPage() {
       subTasks={subTasks}
       taskMeta={patchedTaskMeta}
       cost={cost}
-      taskId={taskId as string}
       completedTurns={completedTurns}
     />;
   }
@@ -1259,21 +1247,15 @@ function CompletedView({
   subTasks,
   taskMeta,
   cost,
-  taskId: _taskId,
   completedTurns,
 }: {
   result: string;
   subTasks: ReturnType<typeof useTaskData>["subTasks"];
   taskMeta: ReturnType<typeof useTaskData>["taskMeta"];
   cost: CostData | null;
-  taskId: string;
   completedTurns: TurnRecord[];
 }) {
   const stages = buildProcessStages(subTasks, completedTurns, taskMeta);
-
-  const _durationText = taskMeta?.duration_ms
-    ? fmtDuration(taskMeta.duration_ms)
-    : undefined;
 
   return (
     <div className="view-container overview">

@@ -203,7 +203,6 @@ export default function MissionPage() {
               isLive={isLive}
               phase={phase}
               consensus={consensus}
-              variant={taskMeta?.variant ?? "traditional"}
             />
           </div>
 

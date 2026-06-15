@@ -48,7 +48,6 @@ interface BlackboardBoardProps {
   isLive: boolean;
   phase?: string | null;
   consensus?: ConsensusState | null;
-  variant?: string;
 }
 
 export function BlackboardBoard({
@@ -58,7 +57,6 @@ export function BlackboardBoard({
   isLive,
   phase,
   consensus,
-  variant = "traditional",
 }: BlackboardBoardProps) {
   const { entries, synced } = useBoardEntries(taskId, liveEntries, removedEntryIds, isLive);
 
