@@ -17,14 +17,10 @@ import { useMemo, useState, useCallback } from "react";
 import { useTaskData } from "../TaskStreamContext";
 import { BlackboardBoard } from "@/components/features/BlackboardBoard";
 import { AgentMindCard } from "@/components/features/AgentMindCard";
-import { GlobalFirehose } from "@/components/features/GlobalFirehose";
-import { ConvergenceStrip } from "@/components/features/ConvergenceStrip";
 import { BudgetGauge } from "@/components/features/BudgetGauge";
 import { ConsensusMeter } from "@/components/features/ConsensusMeter";
 import { TurnInspector } from "@/components/features/TurnInspector";
 import {
-  Eye,
-  EyeOff,
   Pause,
   Play,
   MessageSquarePlus,
@@ -50,7 +46,7 @@ export default function MissionPage() {
     phase,
   } = useTaskData();
 
-  const [showFirehose, setShowFirehose] = useState(true);
+
   const [selectedActor, setSelectedActor] = useState<string | null>(null);
   const [showDirectiveInput, setShowDirectiveInput] = useState(false);
   const [directiveText, setDirectiveText] = useState("");
@@ -163,14 +159,7 @@ export default function MissionPage() {
                 onClick={() => setShowDirectiveInput(!showDirectiveInput)}
                 title="Inject directive"
               >
-                <MessageSquarePlus size={14} />
-              </button>
-              <button
-                className="mission-cockpit__btn"
-                onClick={() => setShowFirehose(!showFirehose)}
-                title={showFirehose ? "Hide firehose" : "Show firehose"}
-              >
-                {showFirehose ? <EyeOff size={14} /> : <Eye size={14} />}
+              <MessageSquarePlus size={14} />
               </button>
             </>
           )}
@@ -203,7 +192,7 @@ export default function MissionPage() {
       {/* ── Main Content ────────────────────────────────────────── */}
       <div className="mission-cockpit__scroll-area">
         <div
-          className={`mission-cockpit__body ${showFirehose ? "mission-cockpit__body--with-firehose" : ""}`}
+          className="mission-cockpit__body"
         >
           {/* Center: Blackboard command center */}
           <div className="mission-cockpit__center" style={{ padding: "var(--space-2) var(--space-4)" }}>
@@ -243,24 +232,10 @@ export default function MissionPage() {
               ))}
             </div>
           </div>
-
-          {/* Far Right: Global Firehose */}
-          {showFirehose && (
-            <div className="mission-cockpit__firehose">
-              <GlobalFirehose events={traceEvents} />
-            </div>
-          )}
         </div>
       </div>
 
-      {/* ── Convergence Strip — always visible at bottom ─────────── */}
-      <div className="mission-cockpit__convergence">
-        <ConvergenceStrip
-          entries={boardEntries}
-          budgetState={budgetState}
-          narrations={coordinatorNarrations}
-        />
-      </div>
+
 
       {/* ── Turn Inspector Modal ──────────────────────────────────── */}
       {selectedActor && (

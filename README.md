@@ -1,14 +1,31 @@
-# Stigmergic
+<p align="center">
+  <img src="mission-control/public/ant-head.png" alt="Stigmergic Swarm Logo" width="128" height="128" />
+</p>
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
-[![CI](https://github.com/arvarik/bmas/actions/workflows/ci.yml/badge.svg)](https://github.com/arvarik/bmas/actions/workflows/ci.yml)
-[![Python 3.13+](https://img.shields.io/badge/Python-3.13+-3776AB?logo=python&logoColor=white)](https://python.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://typescriptlang.org)
-[![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white)](https://nextjs.org)
-[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
-[![Redis](https://img.shields.io/badge/Redis-7--alpine-DC382D?logo=redis&logoColor=white)](redis/)
-[![LiteLLM](https://img.shields.io/badge/LiteLLM-Gateway-orange)](litellm/)
-[![vLLM](https://img.shields.io/badge/vLLM-Triage-purple)](triage/)
+<h1 align="center">Stigmergic</h1>
+
+<p align="center">
+  <strong>Biomimetic Multi-Agent Swarm (bMAS) Orchestration System</strong>
+</p>
+
+<p align="center">
+  <a href="#features">Features</a> •
+  <a href="#architecture">Architecture</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#documentation">Documentation</a>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License: AGPL-3.0" /></a>
+  <a href="https://github.com/arvarik/bmas/actions/workflows/ci.yml"><img src="https://github.com/arvarik/bmas/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.13+-3776AB?logo=python&logoColor=white" alt="Python 3.13+" /></a>
+  <a href="https://typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-6.x-3178C6?logo=typescript&logoColor=white" alt="TypeScript 6.x" /></a>
+  <a href="https://nextjs.org"><img src="https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white" alt="Next.js 16" /></a>
+  <a href="docker-compose.yml"><img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white" alt="Docker" /></a>
+  <a href="redis/"><img src="https://img.shields.io/badge/Redis-7--alpine-DC382D?logo=redis&logoColor=white" alt="Redis" /></a>
+  <a href="litellm/"><img src="https://img.shields.io/badge/LiteLLM-Gateway-orange" alt="LiteLLM" /></a>
+  <a href="triage/"><img src="https://img.shields.io/badge/vLLM-Triage-purple" alt="vLLM" /></a>
+</p>
 
 **A distributed AI swarm built on the Blackboard Multi-Agent System (bMAS) architecture.** Stigmergic coordinates multiple LLM-powered agents through a shared blackboard with an LLM-driven Control Unit that dynamically selects agents per round — achieving structured, multi-round debate and consensus.
 

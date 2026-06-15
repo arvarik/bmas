@@ -48,6 +48,9 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [isOffline, setIsOffline] = useState(() =>
+    typeof navigator !== "undefined" ? !navigator.onLine : false
+  );
 
   // ── System health (replaces useBlackboard.startPolling) ───────────
   const system = useSystemStream();
@@ -103,6 +106,45 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
     return () => mq.removeEventListener("change", handler);
   }, []);
 
+  // ── PWA Offline listener ──────────────────────────────────────────
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  // ── Dynamic Tab Title (running tasks) ─────────────────────────────
+  const runningTasks = taskHistory.tasks.filter((t) => t.status === "running").length;
+  useEffect(() => {
+    const defaultTitle = "bMAS — Mission Control";
+    if (runningTasks > 0) {
+      document.title = `(${runningTasks}) ${defaultTitle}`;
+    } else {
+      document.title = defaultTitle;
+    }
+  }, [runningTasks]);
+
+  // ── Register PWA Service Worker ───────────────────────────────────
+  useEffect(() => {
+    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+      navigator.serviceWorker
+        .register("/sw.js")
+        .then((reg) => {
+          console.log("bMAS Swarm Service Worker registered:", reg.scope);
+        })
+        .catch((err) => {
+          console.error("bMAS Swarm Service Worker registration failed:", err);
+        });
+    }
+  }, []);
+
   // ── Global keyboard shortcuts ─────────────────────────────────────
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -140,6 +182,13 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
             currentView={currentView}
             onMenuToggle={handleToggleMobileDrawer}
           />
+
+          {isOffline && (
+            <div className="offline-banner">
+              <span className="offline-banner__dot" />
+              Offline Mode — Viewing cached swarm data
+            </div>
+          )}
 
           <div className="app-shell__body">
             {/* Mobile backdrop */}

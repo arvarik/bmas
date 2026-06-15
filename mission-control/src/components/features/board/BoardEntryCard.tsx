@@ -184,7 +184,7 @@ export function BoardEntryCard({ entry, selected, compact, onSelect }: BoardEntr
       <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
         {/* salience heat bar */}
         <div
-          title={`Salience ${(entry.salience * 100).toFixed(0)}%`}
+          title={`Salience ${(entry.salience * 100).toFixed(0)}% — How relevant this entry is to the debate (based on confidence, recency, citations, and open critiques)`}
           style={{ display: "flex", alignItems: "center", gap: 5, flex: 1, minWidth: 0 }}
         >
           <span style={{ fontSize: "10px", color: "var(--text-tertiary)", flexShrink: 0 }}>SAL</span>
@@ -212,7 +212,7 @@ export function BoardEntryCard({ entry, selected, compact, onSelect }: BoardEntr
 
         {/* confidence */}
         <span
-          title={`Confidence ${(entry.confidence * 100).toFixed(0)}%`}
+          title={`Confidence ${(entry.confidence * 100).toFixed(0)}% — The agent's self-assessed certainty in this entry`}
           style={{
             fontSize: "10px",
             fontFamily: "var(--font-mono)",

@@ -692,12 +692,13 @@ async def update_task_cost_totals(task_id: str) -> None:
 
 
 async def get_task_cost_summary(task_id: str) -> dict:
-    """Aggregated cost breakdown by model and by phase.
+    """Aggregated cost breakdown by model, phase, and actor.
 
     Returns: {
         total_cost_usd, total_tokens,
         by_model: [{model, input_tokens, output_tokens, cost_usd}],
-        by_phase: [{phase, cost_usd, tokens}]
+        by_phase: [{phase, cost_usd, tokens}],
+        by_actor: [{actor, cost_usd, tokens, turns}]
     }
     """
     async with _connect() as conn:
@@ -718,6 +719,17 @@ async def get_task_cost_summary(task_id: str) -> dict:
             "FROM cost_entries WHERE task_id = ? GROUP BY phase",
             (task_id,),
         )
+        # By actor (join cost_entries → turns via turn_id)
+        actor_rows = await conn.execute_fetchall(
+            "SELECT COALESCE(t.actor, 'control_plane') as actor, "
+            "  SUM(c.cost_usd) as cost_usd, "
+            "  SUM(c.input_tokens + c.output_tokens) as tokens, "
+            "  COUNT(DISTINCT c.turn_id) as turns "
+            "FROM cost_entries c "
+            "LEFT JOIN turns t ON c.turn_id = t.id AND c.task_id = t.task_id "
+            "WHERE c.task_id = ? GROUP BY actor ORDER BY cost_usd DESC",
+            (task_id,),
+        )
         # Totals
         cursor = await conn.execute(
             "SELECT COALESCE(SUM(cost_usd), 0.0) as total_cost, "
@@ -732,6 +744,7 @@ async def get_task_cost_summary(task_id: str) -> dict:
             "total_tokens": totals["total_tokens"] if totals else 0,
             "by_model": [dict(r) for r in model_rows],
             "by_phase": [dict(r) for r in phase_rows],
+            "by_actor": [dict(r) for r in actor_rows],
         }
 
 

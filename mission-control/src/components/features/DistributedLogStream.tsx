@@ -28,6 +28,7 @@ import React, {
   useRef, useState, useEffect, useCallback, useMemo, memo,
 } from "react";
 import { authorColor } from "@/lib/design-tokens";
+import { RichContent } from "@/components/ui/RichContent";
 import { Search, X, ChevronDown, Copy, Check, Layers } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -202,7 +203,13 @@ function FieldValue({ value }: { value: unknown }): React.ReactElement {
 }
 
 function FieldTree({ fields }: { fields: Record<string, unknown> }): React.ReactElement {
-  const entries = Object.entries(fields).filter(([, v]) => v !== undefined);
+  const entries = Object.entries(fields).filter(([, v]) => {
+    if (v === undefined || v === null) return false;
+    if (v === "") return false;
+    if (v === 0) return false;
+    if (Array.isArray(v) && v.length === 0) return false;
+    return true;
+  });
   if (entries.length === 0) {
     return <div className="dls-detail__empty">No structured fields.</div>;
   }
@@ -289,7 +296,11 @@ function LogDetail({ line, onClose }: { line: LogLine; onClose: () => void }) {
 
         <div className="dls-detail__section">
           <div className="dls-detail__section-title">Message</div>
-          <pre className="dls-detail__message">{line.message}</pre>
+          <RichContent
+            content={line.message}
+            className="dls-detail__message-rich"
+            maxHeight="400px"
+          />
         </div>
 
         <div className="dls-detail__section">

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback } from "react";
 
 export interface MetricCardProps {
-  label: string;
+  label: React.ReactNode;
   value: string | number;
   previousValue?: number;
   format?: "currency" | "number" | "percent";

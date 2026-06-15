@@ -206,6 +206,15 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
       <div className="landing__container">
         {/* ── Hero ──────────────────────────────────────────────── */}
         <div className="landing__hero">
+          <div className="landing__logo-container">
+            <img
+              src="/ant-head.png"
+              alt="bMAS Swarm Logo"
+              className="landing__logo animate-float"
+              width={96}
+              height={96}
+            />
+          </div>
           <h1 className="landing__title">{projectName}</h1>
           <p className="landing__subtitle">
             What should the swarm work on?

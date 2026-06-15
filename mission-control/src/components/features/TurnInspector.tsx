@@ -129,7 +129,7 @@ export function TurnInspector({
           position: "fixed",
           inset: 0,
           background: "hsl(0 0% 0% / 0.4)",
-          zIndex: 90,
+          zIndex: 900,
           cursor: "pointer",
         }}
       />
@@ -145,7 +145,7 @@ export function TurnInspector({
           width: "min(460px, 90vw)",
           background: "var(--surface-raised)",
           borderLeft: "1px solid var(--border-default)",
-          zIndex: 91,
+          zIndex: 901,
           display: "flex",
           flexDirection: "column",
           animation: "toast-enter 200ms ease-out",
@@ -206,8 +206,39 @@ export function TurnInspector({
         {/* Trace timeline */}
         <div style={{ flex: 1, overflow: "auto", padding: "var(--space-3)" }}>
           {turnTraces.length === 0 ? (
-            <div style={{ color: "var(--text-tertiary)", textAlign: "center", padding: "var(--space-6)" }}>
-              No trace data for this turn.
+            <div style={{ color: "var(--text-tertiary)", padding: "var(--space-4)" }}>
+              <div style={{ textAlign: "center", marginBottom: "var(--space-3)", fontSize: "var(--text-sm)" }}>
+                No granular trace data for this turn.
+              </div>
+              {turn && (
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>
+                  <div style={{ fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>Turn Summary</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <div>Actor: <span style={{ textTransform: "capitalize" }}>{turn.actor.replace(/_/g, " ")}</span></div>
+                    <div>Phase: {turn.phase}</div>
+                    <div>Status: {turn.status}</div>
+                    {turn.model && <div>Model: {turn.model}</div>}
+                    {turn.started_at && <div>Started: {new Date(turn.started_at).toLocaleTimeString()}</div>}
+                    {turn.ended_at && <div>Ended: {new Date(turn.ended_at).toLocaleTimeString()}</div>}
+                    {(turn.tokens_in != null || turn.tokens_out != null) && (
+                      <div>Tokens: {((turn.tokens_in ?? 0) + (turn.tokens_out ?? 0)).toLocaleString()}</div>
+                    )}
+                    {turn.cost_usd != null && <div>Cost: ${turn.cost_usd.toFixed(4)}</div>}
+                  </div>
+                </div>
+              )}
+              {createdEntries.length > 0 && (
+                <div style={{ marginTop: "var(--space-3)" }}>
+                  <div style={{ fontWeight: "var(--weight-semibold)", fontSize: "var(--text-xs)", marginBottom: "var(--space-1)" }}>Board Entries Created</div>
+                  {createdEntries.map((e) => (
+                    <div key={e.id} style={{ fontSize: "var(--text-xs)", padding: "4px 0", borderBottom: "1px solid var(--border-subtle)" }}>
+                      <span style={{ fontWeight: "var(--weight-medium)", color: "var(--text-secondary)" }}>{e.type}</span>
+                      {" — "}
+                      <span style={{ color: "var(--text-tertiary)" }}>{e.title || e.body.slice(0, 100)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             turnTraces.map((trace) => {
