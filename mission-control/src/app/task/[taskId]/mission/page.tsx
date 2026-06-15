@@ -222,7 +222,9 @@ export default function MissionPage() {
                   actor={actor}
                   traceEvents={traceEvents}
                   activeTurns={activeTurns}
+                  completedTurns={completedTurns}
                   approvalRequests={approvalRequests}
+                  boardEntries={boardEntries}
                   onClick={() =>
                     setSelectedActor(
                       selectedActor === actor ? null : actor,

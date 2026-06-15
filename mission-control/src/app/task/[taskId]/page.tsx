@@ -10,7 +10,7 @@
  *
  */
 
-import { useState, useCallback, useRef, useEffect, Fragment } from "react";
+import { useState, useCallback, useRef, useEffect, Fragment, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import ReactMarkdown from "react-markdown";
@@ -21,11 +21,12 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { MetricCard } from "@/components/ui/MetricCard";
 import {
   Activity, Check, Circle, AlertTriangle, Pause, Play, XCircle,
-  Send, ArrowRight, ChevronDown, ChevronRight, Clock,
+  Send, ArrowRight, ChevronDown, ChevronRight, Clock, Users,
+  Layers, Zap, Radio, MessageSquare,
 } from "lucide-react";
 import type { StatusType } from "@/lib/design-tokens";
 import { authorColor } from "@/lib/design-tokens";
-import type { CostData, TurnRecord } from "@/hooks/useTaskStream";
+import type { CostData, TurnRecord, CoordinatorNarration } from "@/hooks/useTaskStream";
 
 // ── Input Prompt Box (collapsible) ───────────────────────────────────
 
@@ -879,92 +880,249 @@ function TimeDisplay({
 }
 
 
+// ── Elapsed Timer Hook ────────────────────────────────────────────────
+
+function useElapsed(startIso: string | undefined, isLive: boolean): string {
+  const [elapsed, setElapsed] = useState("");
+  useEffect(() => {
+    if (!isLive || !startIso) return;
+    const start = new Date(startIso).getTime();
+    const tick = () => setElapsed(fmtDuration(Math.max(0, Date.now() - start)));
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [isLive, startIso]);
+  return elapsed || "—";
+}
+
+// ── Live Running View ─────────────────────────────────────────────────
+
+interface LiveRunningViewProps {
+  phase: string | null;
+  subTasks: ReturnType<typeof useTaskData>["subTasks"];
+  taskMeta: ReturnType<typeof useTaskData>["taskMeta"];
+  cost: CostData | null;
+  taskId: string;
+  completedTurns: TurnRecord[];
+  activeTurns: TurnRecord[];
+  boardEntries: ReturnType<typeof useTaskData>["boardEntries"];
+  coordinatorNarrations: CoordinatorNarration[];
+  consensus: ReturnType<typeof useTaskData>["consensus"];
+}
+
+function LiveRunningView({
+  phase,
+  subTasks,
+  taskMeta,
+  cost,
+  taskId,
+  completedTurns,
+  activeTurns,
+  boardEntries,
+  coordinatorNarrations,
+  consensus,
+}: LiveRunningViewProps) {
+  const allTurns = useMemo(() => [...completedTurns, ...activeTurns], [completedTurns, activeTurns]);
+  const elapsed = useElapsed(taskMeta?.created_at, true);
+
+  // Derived live stats
+  const activeActors = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of activeTurns) set.add(t.actor);
+    return set;
+  }, [activeTurns]);
+
+  const currentRound = useMemo(() => {
+    let max = 0;
+    for (const t of allTurns) max = Math.max(max, t.round_no);
+    return max;
+  }, [allTurns]);
+
+  const totalTokens = cost?.total_tokens ?? 0;
+  const totalCost = cost?.total_cost ?? 0;
+  const latestNarration = coordinatorNarrations.length > 0
+    ? coordinatorNarrations[coordinatorNarrations.length - 1]
+    : null;
+
+  return (
+    <div className="view-container overview">
+      <InputPromptBox prompt={taskMeta?.full_input} />
+
+      {/* ── Live Dashboard ──────────────────────────────────────────── */}
+      <div className="overview__live-dashboard">
+        <div className="overview__live-header">
+          <Radio size={14} style={{ color: "hsl(142, 71%, 45%)", animation: "pulse 2s infinite" }} />
+          <span className="overview__live-label">Live</span>
+          <span className="overview__live-phase">{phase ?? "Initializing…"}</span>
+        </div>
+
+        <div className="overview__live-grid">
+          <LiveStat icon={Clock} label="Elapsed" value={elapsed} accent />
+          <LiveStat
+            icon={Users}
+            label="Active Agents"
+            value={`${activeActors.size}`}
+            detail={activeActors.size > 0 ? [...activeActors].map(a => a.split(".").pop()).join(", ") : undefined}
+          />
+          <LiveStat icon={Layers} label="Round" value={currentRound === 0 ? "Genesis" : `R${currentRound}`} />
+          <LiveStat icon={MessageSquare} label="Board Entries" value={`${boardEntries.length}`} />
+          <LiveStat
+            icon={Zap}
+            label="Tokens"
+            value={totalTokens > 0 ? totalTokens.toLocaleString() : "—"}
+          />
+          <LiveStat
+            icon={Activity}
+            label="Cost"
+            value={totalCost > 0 ? `$${totalCost.toFixed(4)}` : "—"}
+          />
+        </div>
+
+        {/* Consensus indicator */}
+        {consensus && consensus.signal > 0 && (
+          <div className="overview__live-consensus">
+            <span className="overview__live-consensus-label">Consensus</span>
+            <div className="overview__live-consensus-bar">
+              <div
+                className="overview__live-consensus-fill"
+                style={{ width: `${Math.min(consensus.signal * 100, 100)}%` }}
+              />
+            </div>
+            <span className="overview__live-consensus-value">
+              {Math.round(consensus.signal * 100)}%
+            </span>
+          </div>
+        )}
+
+        {/* Coordinator narration */}
+        {latestNarration && latestNarration.rationale && (
+          <div className="overview__live-narration">
+            <span className="overview__live-narration-badge">R{latestNarration.round}</span>
+            <span className="overview__live-narration-text">{latestNarration.rationale}</span>
+          </div>
+        )}
+      </div>
+
+      {/* ── Process Pipeline (live) ─────────────────────────────────── */}
+      <div className="overview__pipeline-section">
+        <h4 className="overview__section-label">Process Pipeline</h4>
+        <div className="overview__stages">
+          {buildProcessStages(subTasks, allTurns, taskMeta).map((s, i, arr) => (
+            <div key={s.key} className="overview__stage-row">
+              <div className={`overview__stage overview__stage--${s.status}`}>
+                <div className="overview__stage-head">
+                  <span className="overview__stage-icon">{getPhaseIcon(s.status)}</span>
+                  <span className="overview__stage-label">{s.label}</span>
+                </div>
+                {s.detail && (
+                  <span className="overview__stage-detail">{s.detail}</span>
+                )}
+              </div>
+              {i < arr.length - 1 && (
+                <ArrowRight size={13} className="overview__stage-arrow" />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Active Agents ───────────────────────────────────────────── */}
+      {activeActors.size > 0 && (
+        <div className="overview__active-agents">
+          <h4 className="overview__section-label">Active Agents</h4>
+          <div className="overview__active-agents-grid">
+            {[...activeActors].map((actor) => {
+              const turn = activeTurns.find(t => t.actor === actor);
+              const color = authorColor(actor);
+              const displayName = actor.includes(".")
+                ? actor.split(".")[1].replace(/_/g, " ")
+                : actor.replace(/_/g, " ");
+              return (
+                <div key={actor} className="overview__active-agent-card" style={{ borderLeftColor: color }}>
+                  <div className="overview__active-agent-header">
+                    <span className="overview__active-agent-dot" style={{ background: color }} />
+                    <span className="overview__active-agent-name">{displayName}</span>
+                    {turn?.model && (
+                      <span className="overview__active-agent-model">{turn.model}</span>
+                    )}
+                  </div>
+                  <div className="overview__active-agent-meta">
+                    {turn && <span>R{turn.round_no} · {turn.phase}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* HITL Controls */}
+      <HITLControls taskId={taskId} />
+
+      {/* Running cost breakdown */}
+      <CostDisplay cost={cost} />
+    </div>
+  );
+}
+
+function LiveStat({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  accent,
+}: {
+  icon: React.ComponentType<{ size?: number; style?: React.CSSProperties }>;
+  label: string;
+  value: string;
+  detail?: string;
+  accent?: boolean;
+}) {
+  return (
+    <div className="overview__live-stat">
+      <div className="overview__live-stat-top">
+        <Icon size={13} style={{ color: accent ? "var(--accent-primary)" : "var(--text-tertiary)", flexShrink: 0 }} />
+        <span className="overview__live-stat-label">{label}</span>
+      </div>
+      <span
+        className="overview__live-stat-value"
+        style={accent ? { color: "var(--accent-primary)" } : undefined}
+      >
+        {value}
+      </span>
+      {detail && (
+        <span className="overview__live-stat-detail">{detail}</span>
+      )}
+    </div>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────
+
 
 export default function TaskOverviewPage() {
   const { taskId } = useParams();
   const router = useRouter();
-  const { phase, subTasks, result, error, isLive, taskMeta, cost, completedTurns, activeTurns } = useTaskData();
-
-  const completedCount = subTasks.filter((st) => st.status === "completed").length;
-  const totalCount = subTasks.length;
+  const {
+    phase, subTasks, result, error, isLive, taskMeta, cost,
+    completedTurns, activeTurns, boardEntries, coordinatorNarrations, consensus,
+  } = useTaskData();
 
   // ── Running: live progress + HITL ─────────────────────────────────
   if (isLive) {
     return (
-      <div className="view-container overview">
-        <InputPromptBox prompt={taskMeta?.full_input} />
-        <Panel
-          title="Live Progress"
-          subtitle={`Phase: ${phase ?? "Awaiting…"}`}
-        >
-          <div className="overview__progress">
-            {/* Progress bar */}
-            {totalCount > 0 && (
-              <div className="overview__progress-section">
-                <div className="overview__progress-label">
-                  {completedCount} of {totalCount} sub-tasks completed
-                </div>
-                <div className="overview__progress-bar">
-                  <div
-                    className="overview__progress-fill"
-                    style={{
-                      width: `${totalCount > 0 ? (completedCount / totalCount) * 100 : 0}%`,
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Sub-task list */}
-            {subTasks.map((st) => (
-              <div key={st.id} className="overview__subtask">
-                <StatusBadge status={STATUS_MAP[st.status] ?? "pending"} />
-                <span className="overview__subtask-label">{st.label}</span>
-                <span className="overview__subtask-agent">{st.agent}</span>
-              </div>
-            ))}
-
-            {totalCount === 0 && (
-              <div className="overview__awaiting">
-                <Activity size={20} />
-                <span>Awaiting swarm response…</span>
-              </div>
-            )}
-          </div>
-        </Panel>
-
-        {/* HITL Controls */}
-        <HITLControls taskId={taskId as string} />
-
-        {/* Running cost */}
-        <CostDisplay cost={cost} />
-
-        {/* Live process summary from turns */}
-        {(completedTurns.length > 0 || activeTurns.length > 0) && (
-          <div className="overview__pipeline-section">
-            <h4 className="overview__section-label">Process Summary</h4>
-            <div className="overview__stages">
-              {buildProcessStages(subTasks, [...completedTurns, ...activeTurns], taskMeta).map((s, i, arr) => (
-                <div key={s.key} className="overview__stage-row">
-                  <div className={`overview__stage overview__stage--${s.status}`}>
-                    <div className="overview__stage-head">
-                      <span className="overview__stage-icon">{getPhaseIcon(s.status)}</span>
-                      <span className="overview__stage-label">{s.label}</span>
-                    </div>
-                    {s.detail && (
-                      <span className="overview__stage-detail">{s.detail}</span>
-                    )}
-                  </div>
-                  {i < arr.length - 1 && (
-                    <ArrowRight size={13} className="overview__stage-arrow" />
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+      <LiveRunningView
+        phase={phase}
+        subTasks={subTasks}
+        taskMeta={taskMeta}
+        cost={cost}
+        taskId={taskId as string}
+        completedTurns={completedTurns}
+        activeTurns={activeTurns}
+        boardEntries={boardEntries}
+        coordinatorNarrations={coordinatorNarrations}
+        consensus={consensus}
+      />
     );
   }
 
@@ -1041,7 +1199,7 @@ function CompletedView({
   subTasks,
   taskMeta,
   cost,
-  taskId,
+  taskId: _taskId,
   completedTurns,
 }: {
   result: string;
@@ -1053,7 +1211,7 @@ function CompletedView({
 }) {
   const stages = buildProcessStages(subTasks, completedTurns, taskMeta);
 
-  const durationText = taskMeta?.duration_ms
+  const _durationText = taskMeta?.duration_ms
     ? fmtDuration(taskMeta.duration_ms)
     : undefined;
 

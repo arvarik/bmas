@@ -16,6 +16,7 @@ import {
   typeMeta,
   salienceColor,
   prettyAuthor,
+  normalizeBody,
 } from "./boardModel";
 
 interface BoardEntryDetailProps {
@@ -163,10 +164,11 @@ export function BoardEntryDetail({ entry, allEntries, onClose, onSelect }: Board
           </div>
         )}
 
-        {/* Full body — rich markdown rendering */}
+        {/* Full body — normalized + rich markdown rendering */}
         <RichContent
-          content={entry.body || "(no body)"}
+          content={normalizeBody(entry.body || "(no body)")}
           className="bb-detail__body"
+          forceMarkdown
         />
 
         {/* Refs out */}
