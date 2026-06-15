@@ -12,7 +12,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
+
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTaskData } from "./TaskStreamContext";
@@ -21,10 +21,108 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { MetricCard } from "@/components/ui/MetricCard";
 import {
   Activity, Check, Circle, AlertTriangle, Pause, Play, XCircle,
-  Send, ArrowRight, ChevronDown, ChevronRight,
+  Send, ArrowRight, ChevronDown, ChevronRight, Clock,
 } from "lucide-react";
 import type { StatusType } from "@/lib/design-tokens";
+import { authorColor } from "@/lib/design-tokens";
 import type { CostData, TurnRecord } from "@/hooks/useTaskStream";
+
+// ── Input Prompt Box (collapsible) ───────────────────────────────────
+
+const PROMPT_COLLAPSE_LINES = 3;
+const PROMPT_COLLAPSE_CHARS = 200;
+
+function InputPromptBox({ prompt }: { prompt?: string }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!prompt) return null;
+
+  const isLong = prompt.length > PROMPT_COLLAPSE_CHARS || prompt.split("\n").length > PROMPT_COLLAPSE_LINES;
+
+  return (
+    <div
+      className="overview__prompt-box"
+      style={{
+        padding: "var(--space-3) var(--space-4)",
+        borderRadius: "var(--radius-md)",
+        background: "var(--surface-overlay)",
+        border: "1px solid var(--border-subtle)",
+        marginBottom: "var(--space-4)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "var(--space-2)",
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: "10px",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              color: "var(--text-tertiary)",
+              marginBottom: "var(--space-1)",
+              fontWeight: "var(--weight-semibold)",
+            }}
+          >
+            Input Prompt
+          </div>
+          <div
+            style={{
+              fontSize: "var(--text-sm)",
+              color: "var(--text-secondary)",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              lineHeight: 1.5,
+              ...(isLong && !expanded
+                ? {
+                    maxHeight: `${PROMPT_COLLAPSE_LINES * 1.5}em`,
+                    overflow: "hidden",
+                    maskImage: "linear-gradient(to bottom, black 60%, transparent 100%)",
+                    WebkitMaskImage: "linear-gradient(to bottom, black 60%, transparent 100%)",
+                  }
+                : {}),
+            }}
+          >
+            {prompt}
+          </div>
+        </div>
+      </div>
+      {isLong && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            color: "var(--accent-primary)",
+            fontSize: "var(--text-xs)",
+            fontWeight: "var(--weight-medium)",
+            padding: "var(--space-1) 0 0",
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+          }}
+        >
+          {expanded ? (
+            <>
+              <ChevronDown size={12} style={{ transform: "rotate(180deg)" }} />
+              Show less
+            </>
+          ) : (
+            <>
+              <ChevronDown size={12} />
+              Show more
+            </>
+          )}
+        </button>
+      )}
+    </div>
+  );
+}
 
 // ── Status mapping ───────────────────────────────────────────────────
 
@@ -58,6 +156,19 @@ const ROLE_STAGE_LABELS: Record<string, string> = {
   decider: "Decision",
 };
 
+/** Map internal phase codes to human-readable names */
+const PHASE_LABELS: Record<string, string> = {
+  "control_plane:ag": "Agent Generator",
+  "control_plane:cu": "Control Unit",
+  "control_plane": "Control Plane",
+  "trace": "Agent Execution",
+  "triage": "Triage",
+};
+
+function prettyPhase(phase: string): string {
+  return PHASE_LABELS[phase] ?? phase.replace(/_/g, " ");
+}
+
 function stageLabelForRole(role: string): string {
   const base = role.split(".")[0];
   if (ROLE_STAGE_LABELS[base]) return ROLE_STAGE_LABELS[base];
@@ -75,28 +186,37 @@ function stageLabelForRole(role: string): string {
  */
 function buildProcessStages(
   subTasks: ReturnType<typeof useTaskData>["subTasks"],
-  completedTurns: TurnRecord[],
+  allTurns: TurnRecord[],
   taskMeta: ReturnType<typeof useTaskData>["taskMeta"],
 ): ProcessStage[] {
   const stages: ProcessStage[] = [];
   const taskDone = taskMeta?.status === "completed";
   const taskFailed = taskMeta?.status === "failed";
+  const isRunning = taskMeta?.status === "running";
 
-  // 1. Triage
+  // 1. Triage — completed once any turn exists (meaning the orchestrator
+  //    has passed triage and entered the round loop).
   const triage = subTasks.find(
     (s) => s.id.includes("triage") || s.label.toLowerCase().includes("triage"),
   );
+  const triageStatus: ProcessStage["status"] =
+    (triage?.status === "completed" || allTurns.length > 0)
+      ? "completed"
+      : isRunning
+        ? "running"
+        : taskDone ? "completed" : "pending";
   stages.push({
     key: "triage",
     label: "Triage",
-    status: (triage?.status as ProcessStage["status"])
-      ?? (taskDone ? "completed" : "pending"),
-    detail: taskMeta?.complexity ? `${taskMeta.complexity} complexity` : undefined,
+    status: triageStatus,
+    detail: taskMeta?.complexity
+      ? `${taskMeta.complexity} complexity — routes to appropriate model tier`
+      : undefined,
   });
 
   // 2. Stages from real turns, grouped by base role
   const groups = new Map<string, TurnRecord[]>();
-  for (const t of completedTurns) {
+  for (const t of allTurns) {
     const base = (t.actor || "agent").split(".")[0];
     const arr = groups.get(base) ?? [];
     arr.push(t);
@@ -113,12 +233,12 @@ function buildProcessStages(
     const rounds = [...new Set(turns.map((t) => t.round_no).filter((n) => n > 0))];
     const parts: string[] = [`${turns.length} turn${turns.length === 1 ? "" : "s"}`];
     if (rounds.length === 1) parts.push(`round ${rounds[0]}`);
-    else if (rounds.length > 1) parts.push(`rounds ${Math.min(...rounds)}–${Math.max(...rounds)}`);
+    else if (rounds.length > 1) parts.push(`rounds ${Math.min(...rounds)}\u2013${Math.max(...rounds)}`);
     stages.push({
       key: `role-${role}`,
       label: stageLabelForRole(role),
       status: anyFailed ? "failed" : anyActive ? "running" : "completed",
-      detail: parts.join(" · "),
+      detail: parts.join(" \u00b7 "),
     });
   }
 
@@ -356,9 +476,10 @@ function PlainResultCard({ content }: { content: string }) {
   );
 }
 
-// ── Cost display helper ───────────────────────────────────────────────
+// ── Cost display helper (interactive breakdowns) ──────────────────────
 
 function CostDisplay({ cost }: { cost: CostData | null }) {
+  const [expanded, setExpanded] = useState<"cost" | "tokens" | null>(null);
   if (!cost) {
     return (
       <div className="overview__stats">
@@ -367,20 +488,403 @@ function CostDisplay({ cost }: { cost: CostData | null }) {
       </div>
     );
   }
+
+  const modelEntries = Object.entries(cost.by_model);
+  const phaseEntries = cost.by_phase ?? [];
+  const actorEntries = cost.by_actor ?? [];
+
   return (
-    <div className="overview__stats">
-      <MetricCard label="Total Cost" value={cost.total_cost} format="currency" />
-      <MetricCard label="Tokens" value={cost.total_tokens} format="number" />
+    <div>
+      <div className="overview__stats">
+        <div
+          className={`overview__metric-toggle ${expanded === "cost" ? "overview__metric-toggle--active" : ""}`}
+          onClick={() => setExpanded(expanded === "cost" ? null : "cost")}
+        >
+          <MetricCard
+            label={
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                Total Cost
+                <ChevronDown
+                  size={11}
+                  style={{
+                    transition: "transform 200ms ease",
+                    transform: expanded === "cost" ? "rotate(180deg)" : "rotate(0deg)",
+                    opacity: 0.5,
+                  }}
+                />
+              </span>
+            }
+            value={cost.total_cost}
+            format="currency"
+          />
+        </div>
+        <div
+          className={`overview__metric-toggle ${expanded === "tokens" ? "overview__metric-toggle--active" : ""}`}
+          onClick={() => setExpanded(expanded === "tokens" ? null : "tokens")}
+        >
+          <MetricCard
+            label={
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                Tokens
+                <ChevronDown
+                  size={11}
+                  style={{
+                    transition: "transform 200ms ease",
+                    transform: expanded === "tokens" ? "rotate(180deg)" : "rotate(0deg)",
+                    opacity: 0.5,
+                  }}
+                />
+              </span>
+            }
+            value={cost.total_tokens}
+            format="number"
+          />
+        </div>
+      </div>
+
+      {expanded && (
+        <div
+          className="overview__breakdown-panel"
+          style={{
+            padding: "var(--space-3)",
+            borderRadius: "var(--radius-md)",
+            background: "var(--surface-overlay)",
+            border: "1px solid var(--border-subtle)",
+            marginTop: "var(--space-2)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "var(--space-3)",
+            fontSize: "var(--text-xs)",
+            animation: "slide-down 200ms ease",
+          }}
+        >
+          {/* By Model */}
+          {modelEntries.length > 0 && (
+            <CostBreakdownTable
+              title="By Model"
+              rows={modelEntries.map(([model, data]) => ({
+                label: model,
+                cost: data.cost,
+                tokens: data.tokens,
+              }))}
+              showField={expanded}
+            />
+          )}
+
+          {/* By Actor */}
+          {actorEntries.length > 0 && (
+            <CostBreakdownTable
+              title="By Actor"
+              rows={actorEntries.map((a) => ({
+                label: a.actor.replace(/_/g, " "),
+                cost: a.cost_usd,
+                tokens: a.tokens,
+                extra: `${a.turns} turn${a.turns === 1 ? "" : "s"}`,
+              }))}
+              showField={expanded}
+            />
+          )}
+
+          {/* By Phase */}
+          {phaseEntries.length > 0 && (
+            <CostBreakdownTable
+              title="By Phase"
+              rows={phaseEntries.map((p) => ({
+                label: prettyPhase(p.phase ?? "unknown"),
+                cost: p.cost_usd,
+                tokens: p.tokens,
+              }))}
+              showField={expanded}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
+
+function CostBreakdownTable({
+  title,
+  rows,
+  showField,
+}: {
+  title: string;
+  rows: { label: string; cost: number; tokens: number; extra?: string }[];
+  showField: "cost" | "tokens";
+}) {
+  const sorted = [...rows].sort((a, b) =>
+    showField === "cost" ? b.cost - a.cost : b.tokens - a.tokens,
+  );
+  return (
+    <div>
+      <div
+        style={{
+          fontWeight: "var(--weight-semibold)",
+          color: "var(--text-tertiary)",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          fontSize: "10px",
+          marginBottom: "var(--space-1)",
+        }}
+      >
+        {title}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        {sorted.map((row) => (
+          <div
+            key={row.label}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              padding: "3px 0",
+              borderBottom: "1px solid var(--border-subtle)",
+            }}
+          >
+            <span
+              style={{
+                flex: 1,
+                color: "var(--text-secondary)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                textTransform: "capitalize",
+              }}
+            >
+              {row.label}
+            </span>
+            {showField === "cost" ? (
+              <span style={{ fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", color: "var(--text-primary)" }}>
+                ${row.cost.toFixed(4)}
+              </span>
+            ) : (
+              <span style={{ fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", color: "var(--text-primary)" }}>
+                {row.tokens.toLocaleString()}
+              </span>
+            )}
+            {row.extra && (
+              <span style={{ color: "var(--text-tertiary)", fontStyle: "italic" }}>{row.extra}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Time display helper (duration breakdown + parallel timeline) ───────
+
+function TimeDisplay({
+  turns,
+  totalMs,
+}: {
+  turns: TurnRecord[];
+  totalMs?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!totalMs && turns.length === 0) return null;
+
+  // Build timeline data from turns
+  const timeline = turns
+    .filter((t) => t.started_at)
+    .map((t) => {
+      const start = new Date(t.started_at).getTime();
+      const end = t.ended_at ? new Date(t.ended_at).getTime() : start;
+      return {
+        actor: t.actor,
+        role: (t.role ?? t.actor.split(".")[0]),
+        start,
+        end,
+        duration: end - start,
+        round: t.round_no,
+      };
+    })
+    .filter((t) => !isNaN(t.start) && t.duration >= 0)
+    .sort((a, b) => a.start - b.start);
+
+  const globalStart = timeline.length > 0 ? Math.min(...timeline.map((t) => t.start)) : 0;
+  const globalEnd = timeline.length > 0 ? Math.max(...timeline.map((t) => t.end)) : 0;
+  const span = globalEnd - globalStart || 1;
+
+  // Group by actor for swim lanes
+  const actors = [...new Set(timeline.map((t) => t.actor))];
+
+  // Compute parallel overlap
+  let maxConcurrent = 1;
+  if (timeline.length > 1) {
+    const events: { time: number; delta: number }[] = [];
+    for (const t of timeline) {
+      events.push({ time: t.start, delta: 1 });
+      events.push({ time: t.end, delta: -1 });
+    }
+    events.sort((a, b) => a.time - b.time || a.delta - b.delta);
+    let concurrent = 0;
+    for (const e of events) {
+      concurrent += e.delta;
+      maxConcurrent = Math.max(maxConcurrent, concurrent);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: "var(--space-2)" }}>
+      <div className="overview__stats">
+        <div
+          className={`overview__metric-toggle ${expanded ? "overview__metric-toggle--active" : ""}`}
+          onClick={() => setExpanded(!expanded)}
+        >
+          <MetricCard
+            label={
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <Clock size={11} style={{ opacity: 0.5 }} />
+                Duration
+                <ChevronDown
+                  size={11}
+                  style={{
+                    transition: "transform 200ms ease",
+                    transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
+                    opacity: 0.5,
+                  }}
+                />
+              </span>
+            }
+            value={totalMs ? fmtDuration(totalMs) : "—"}
+          />
+        </div>
+        {maxConcurrent > 1 && (
+          <MetricCard
+            label="Peak Parallelism"
+            value={`${maxConcurrent} agents`}
+          />
+        )}
+      </div>
+
+      {expanded && timeline.length > 0 && (
+        <div
+          className="overview__breakdown-panel"
+          style={{
+            padding: "var(--space-3)",
+            borderRadius: "var(--radius-md)",
+            background: "var(--surface-overlay)",
+            border: "1px solid var(--border-subtle)",
+            marginTop: "var(--space-2)",
+            animation: "slide-down 200ms ease",
+          }}
+        >
+          {/* Gantt-style timeline */}
+          <div
+            style={{
+              fontWeight: "var(--weight-semibold)",
+              color: "var(--text-tertiary)",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              fontSize: "10px",
+              marginBottom: "var(--space-2)",
+            }}
+          >
+            Agent Timeline
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {actors.map((actor) => {
+              const actorTurns = timeline.filter((t) => t.actor === actor);
+              const color = authorColor(actor);
+              const label = actor.split(".").pop() ?? actor;
+              return (
+                <div key={actor} style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                  <span
+                    style={{
+                      fontSize: "10px",
+                      color: "var(--text-tertiary)",
+                      width: 80,
+                      flexShrink: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      textTransform: "capitalize",
+                    }}
+                    title={actor}
+                  >
+                    {label}
+                  </span>
+                  <div
+                    style={{
+                      flex: 1,
+                      height: 14,
+                      position: "relative",
+                      background: "var(--surface-active)",
+                      borderRadius: 3,
+                      overflow: "hidden",
+                    }}
+                  >
+                    {actorTurns.map((t, i) => {
+                      const left = ((t.start - globalStart) / span) * 100;
+                      const width = Math.max(((t.end - t.start) / span) * 100, 1);
+                      return (
+                        <div
+                          key={i}
+                          title={`${actor} R${t.round} — ${fmtDuration(t.duration)}`}
+                          style={{
+                            position: "absolute",
+                            left: `${left}%`,
+                            width: `${width}%`,
+                            top: 1,
+                            bottom: 1,
+                            background: color,
+                            borderRadius: 2,
+                            opacity: 0.85,
+                            transition: "opacity 150ms ease",
+                          }}
+                          onMouseEnter={(e) => { (e.target as HTMLElement).style.opacity = "1"; }}
+                          onMouseLeave={(e) => { (e.target as HTMLElement).style.opacity = "0.85"; }}
+                        />
+                      );
+                    })}
+                  </div>
+                  <span
+                    style={{
+                      fontSize: "10px",
+                      fontFamily: "var(--font-mono)",
+                      color: "var(--text-tertiary)",
+                      width: 50,
+                      textAlign: "right",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {fmtDuration(actorTurns.reduce((s, t) => s + t.duration, 0))}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Time axis labels */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginTop: 4,
+              marginLeft: 88,
+              fontSize: "9px",
+              color: "var(--text-tertiary)",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            <span>0s</span>
+            <span>{fmtDuration(span)}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 // ── Component ─────────────────────────────────────────────────────────
 
 export default function TaskOverviewPage() {
   const { taskId } = useParams();
   const router = useRouter();
-  const { phase, subTasks, result, error, isLive, taskMeta, cost, completedTurns } = useTaskData();
+  const { phase, subTasks, result, error, isLive, taskMeta, cost, completedTurns, activeTurns } = useTaskData();
 
   const completedCount = subTasks.filter((st) => st.status === "completed").length;
   const totalCount = subTasks.length;
@@ -389,6 +893,7 @@ export default function TaskOverviewPage() {
   if (isLive) {
     return (
       <div className="view-container overview">
+        <InputPromptBox prompt={taskMeta?.full_input} />
         <Panel
           title="Live Progress"
           subtitle={`Phase: ${phase ?? "Awaiting…"}`}
@@ -434,6 +939,31 @@ export default function TaskOverviewPage() {
 
         {/* Running cost */}
         <CostDisplay cost={cost} />
+
+        {/* Live process summary from turns */}
+        {(completedTurns.length > 0 || activeTurns.length > 0) && (
+          <div className="overview__pipeline-section">
+            <h4 className="overview__section-label">Process Summary</h4>
+            <div className="overview__stages">
+              {buildProcessStages(subTasks, [...completedTurns, ...activeTurns], taskMeta).map((s, i, arr) => (
+                <div key={s.key} className="overview__stage-row">
+                  <div className={`overview__stage overview__stage--${s.status}`}>
+                    <div className="overview__stage-head">
+                      <span className="overview__stage-icon">{getPhaseIcon(s.status)}</span>
+                      <span className="overview__stage-label">{s.label}</span>
+                    </div>
+                    {s.detail && (
+                      <span className="overview__stage-detail">{s.detail}</span>
+                    )}
+                  </div>
+                  {i < arr.length - 1 && (
+                    <ArrowRight size={13} className="overview__stage-arrow" />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -529,6 +1059,7 @@ function CompletedView({
 
   return (
     <div className="view-container overview">
+      <InputPromptBox prompt={taskMeta?.full_input} />
       {/* Result hero */}
       <div className="overview__result-card">
         <h3 className="overview__result-title">Result</h3>
@@ -560,39 +1091,9 @@ function CompletedView({
         </div>
       </div>
 
-      {/* Stats bar — always shown, dash when data unavailable */}
-      <div className="overview__stats">
-        {cost ? (
-          <>
-            <MetricCard label="Total Cost" value={cost.total_cost} format="currency" />
-            <MetricCard label="Tokens" value={cost.total_tokens} format="number" />
-          </>
-        ) : (
-          <>
-            <MetricCard label="Total Cost" value="—" />
-            <MetricCard label="Tokens" value="—" />
-          </>
-        )}
-        {durationText && (
-          <MetricCard label="Duration" value={durationText} />
-        )}
-      </div>
-
-      {/* CTAs */}
-      <div className="overview__ctas">
-        <Link
-          href={`/task/${taskId}/blackboard`}
-          className="overview__cta"
-        >
-          View Full Debate →
-        </Link>
-        <Link
-          href={`/task/${taskId}/dag`}
-          className="overview__cta"
-        >
-          View Graph →
-        </Link>
-      </div>
+      {/* Stats bar — interactive breakdown on click */}
+      <CostDisplay cost={cost} />
+      <TimeDisplay turns={completedTurns} totalMs={taskMeta?.duration_ms} />
     </div>
   );
 }

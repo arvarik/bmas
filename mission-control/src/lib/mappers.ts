@@ -100,6 +100,7 @@ export function mapTaskMeta(task: Record<string, unknown>): TaskMeta {
     created_at: (task.created_at as string) ?? "",
     completed_at: task.completed_at as string | undefined,
     duration_ms: task.duration_ms as number | undefined,
+    full_input: task.full_input as string | undefined,
   };
 }
 

@@ -21,11 +21,8 @@
  */
 
 import React, { useMemo, useState } from "react";
-import dynamic from "next/dynamic";
 import {
   LayoutList,
-  MessagesSquare,
-  Network,
   Search,
   Filter,
   Inbox,
@@ -35,24 +32,14 @@ import type { BoardEntry, ConsensusState } from "@/hooks/useTaskStream";
 import {
   useBoardEntries,
   groupEntries,
-  buildThreads,
-  threadSize,
   typeMeta,
   prettyAuthor,
   TYPE_ORDER,
   type GroupMode,
 } from "./board/boardModel";
 import { BoardEntryCard } from "./board/BoardEntryCard";
-import { DebateThread } from "./board/DebateThread";
 import { BoardEntryDetail } from "./board/BoardEntryDetail";
 
-// Graph view reuses the existing React-Flow visualization (lazy — heavy dep).
-const BlackboardGraph = dynamic(
-  () => import("./BlackboardGraph").then((m) => m.BlackboardGraph),
-  { ssr: false },
-);
-
-type ViewMode = "timeline" | "threads" | "graph";
 
 interface BlackboardBoardProps {
   taskId: string;
@@ -75,7 +62,6 @@ export function BlackboardBoard({
 }: BlackboardBoardProps) {
   const { entries, synced } = useBoardEntries(taskId, liveEntries, removedEntryIds, isLive);
 
-  const [view, setView] = useState<ViewMode>("timeline");
   const [groupMode, setGroupMode] = useState<GroupMode>("round");
   const [typeFilter, setTypeFilter] = useState<Set<string>>(new Set());
   const [authorFilter, setAuthorFilter] = useState<Set<string>>(new Set());
@@ -110,10 +96,9 @@ export function BlackboardBoard({
   }, [entries, showRemoved, typeFilter, authorFilter, search]);
 
   const groups = useMemo(
-    () => (view === "timeline" ? groupEntries(filtered, groupMode) : []),
-    [view, filtered, groupMode],
+    () => groupEntries(filtered, groupMode),
+    [filtered, groupMode],
   );
-  const threads = useMemo(() => (view === "threads" ? buildThreads(filtered) : []), [view, filtered]);
 
   const selected = useMemo(
     () => entries.find((e) => e.id === selectedId) ?? null,
@@ -188,30 +173,20 @@ export function BlackboardBoard({
           flexShrink: 0,
         }}
       >
-        {/* row 1: view switch + group mode + search */}
+        {/* row 1: group mode + search */}
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>
+          <LayoutList size={14} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />
           <Segmented
             options={[
-              { key: "timeline", label: "Timeline", icon: LayoutList },
-              { key: "threads", label: "Threads", icon: MessagesSquare },
-              { key: "graph", label: "Graph", icon: Network },
+              { key: "round", label: "Round" },
+              { key: "type", label: "Type" },
+              { key: "author", label: "Author" },
             ]}
-            value={view}
-            onChange={(v) => setView(v as ViewMode)}
+            value={groupMode}
+            onChange={(v) => setGroupMode(v as GroupMode)}
+            subtle
           />
 
-          {view === "timeline" && (
-            <Segmented
-              options={[
-                { key: "round", label: "Round" },
-                { key: "type", label: "Type" },
-                { key: "author", label: "Author" },
-              ]}
-              value={groupMode}
-              onChange={(v) => setGroupMode(v as GroupMode)}
-              subtle
-            />
-          )}
 
           <span style={{ flex: 1 }} />
 
@@ -336,22 +311,9 @@ export function BlackboardBoard({
       <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
         {empty ? (
           <EmptyBoard synced={synced} isLive={isLive} />
-        ) : view === "graph" ? (
-          <div style={{ position: "absolute", inset: 0 }}>
-            <BlackboardGraph
-              entries={filtered as unknown as BoardEntry[]}
-              removedEntryIds={filtered.filter((e) => e.status === "removed").map((e) => e.id)}
-              variant={variant}
-              onNodeClick={(id) => setSelectedId(id)}
-            />
-          </div>
         ) : (
           <div style={{ position: "absolute", inset: 0, overflowY: "auto", padding: "var(--space-3) var(--space-1)" }}>
-            {view === "timeline" ? (
-              <TimelineView groups={groups} selectedId={selectedId} onSelect={setSelectedId} groupMode={groupMode} />
-            ) : (
-              <ThreadsView threads={threads} selectedId={selectedId} onSelect={setSelectedId} />
-            )}
+            <TimelineView groups={groups} selectedId={selectedId} onSelect={setSelectedId} groupMode={groupMode} />
             {filtered.length === 0 && (
               <div style={{ textAlign: "center", color: "var(--text-tertiary)", padding: "var(--space-8)", fontSize: "var(--text-sm)" }}>
                 No entries match the current filters.
@@ -443,28 +405,6 @@ function GroupHeader({
         </span>
       )}
       <div style={{ flex: 1, height: 1, background: "var(--border-subtle)" }} />
-    </div>
-  );
-}
-
-// ── Threads view ────────────────────────────────────────────────────────
-
-function ThreadsView({
-  threads,
-  selectedId,
-  onSelect,
-}: {
-  threads: ReturnType<typeof buildThreads>;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-}) {
-  // Surface threads with the most debate activity first.
-  const ordered = [...threads].sort((a, b) => threadSize(b) - threadSize(a) || a.entry.seq - b.entry.seq);
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
-      {ordered.map((t) => (
-        <DebateThread key={t.entry.id} node={t} selectedId={selectedId} onSelect={onSelect} />
-      ))}
     </div>
   );
 }

@@ -27,10 +27,50 @@ const jetbrainsMono = JetBrains_Mono({
 
 export async function generateMetadata(): Promise<Metadata> {
   return {
-    title: `bMAS — ${PROJECT_NAME}`,
+    title: {
+      default: `${PROJECT_NAME} — Mission Control`,
+      template: `%s | ${PROJECT_NAME}`,
+    },
     description: PROJECT_DESCRIPTION,
+    keywords: [
+      "bMAS",
+      "Multi-Agent Swarm",
+      "Biomimetic AI",
+      "Stigmergy",
+      "Decentralized AI Swarm",
+      "Autonomous Agents",
+      "Blackboard Architecture",
+    ],
+    authors: [{ name: "bMAS Swarm Development Team" }],
+    creator: "bMAS Swarm",
+    metadataBase: new URL("https://stigmergic.bmas.ai"),
+    alternates: {
+      canonical: "/",
+    },
+    openGraph: {
+      title: `${PROJECT_NAME} — Mission Control`,
+      description: PROJECT_DESCRIPTION,
+      url: "https://stigmergic.bmas.ai",
+      siteName: PROJECT_NAME,
+      locale: "en_US",
+      type: "website",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: `${PROJECT_NAME} — Mission Control`,
+      description: PROJECT_DESCRIPTION,
+    },
+    icons: {
+      icon: [
+        { url: "/icon.png", type: "image/png" },
+      ],
+      apple: [
+        { url: "/apple-icon.png", sizes: "180x180", type: "image/png" },
+      ],
+    },
   };
 }
+
 
 // ── Root Layout ──────────────────────────────────────────────────────
 

@@ -97,7 +97,12 @@ function TaskHeader({
           />
         )}
         {taskMeta?.complexity && (
-          <span className="task-header__badge">{taskMeta.complexity}</span>
+          <span
+            className="task-header__badge"
+            title={`Triage complexity: ${taskMeta.complexity} — The AI router classified this prompt's difficulty to select the appropriate model tier`}
+          >
+            {taskMeta.complexity}
+          </span>
         )}
         {taskMeta?.variant && (
           <span

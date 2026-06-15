@@ -125,6 +125,8 @@ export interface CostData {
   total_cost: number;
   total_tokens: number;
   by_model: Record<string, { cost: number; tokens: number }>;
+  by_phase?: { phase: string; cost_usd: number; tokens: number }[];
+  by_actor?: { actor: string; cost_usd: number; tokens: number; turns: number }[];
 }
 
 // Phase 5: HITL Types (doc 05 §6, doc 12 §5.1)
@@ -161,6 +163,7 @@ export interface TaskMeta {
   created_at: string;
   completed_at?: string;
   duration_ms?: number;
+  full_input?: string;
 }
 
 export interface ConsensusState {
@@ -307,6 +310,8 @@ export function useTaskStream(taskId: string): TaskStreamData {
             total_cost: totalCost,
             total_tokens: totalTokens,
             by_model: byModel,
+            by_phase: Array.isArray(rawCost.by_phase) ? rawCost.by_phase : undefined,
+            by_actor: Array.isArray(rawCost.by_actor) ? rawCost.by_actor : undefined,
           };
         } catch {
           // Cost data is non-critical
@@ -641,17 +646,29 @@ export function useTaskStream(taskId: string): TaskStreamData {
     });
 
     // ── Phase 4: trace — buffer + rAF flush ─────────────────────────
+    // Traces may arrive in two formats:
+    // 1. Daemon-internal: { actor, content, turn_id, ... }
+    // 2. Agent ingest passthrough: { role, data: { text, tool, args }, trace_id, ts, ... }
     es.addEventListener("trace", (ev: MessageEvent) => {
       try {
         const raw = JSON.parse(ev.data);
+        // Extract content: prefer direct content, then data.text, then JSON of data
+        const dataObj = raw.data ?? {};
+        let content = raw.content ?? raw.message ?? "";
+        if (!content && typeof dataObj === "object") {
+          if (dataObj.text) content = dataObj.text;
+          else if (dataObj.tool) content = `${dataObj.tool}(${JSON.stringify(dataObj.args ?? {}).slice(0, 200)})`;
+          else if (Object.keys(dataObj).length > 0) content = JSON.stringify(dataObj).slice(0, 300);
+        }
         const trace: TraceEvent = {
-          id: raw.id ?? `trace-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: raw.id ?? raw.trace_id ?? `trace-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           turn_id: raw.turn_id ?? "",
-          actor: raw.actor ?? raw.agent_role ?? "unknown",
+          actor: raw.actor ?? raw.role ?? raw.agent_role ?? "unknown",
           type: raw.type ?? raw.trace_type ?? "reasoning",
-          content: raw.content ?? raw.message ?? "",
+          content,
           seq: raw.seq ?? 0,
           timestamp: raw.timestamp ?? raw.ts ?? new Date().toISOString(),
+          run_id: raw.run_id as string | undefined,
         };
         traceBufRef.current.push(trace);
         scheduleFlush();

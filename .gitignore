@@ -76,6 +76,8 @@ yarn-error.log*
 coverage/
 .nyc_output/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 htmlcov/
 
 # ── Eval Results (per-run benchmark output) ────────────────────────
@@ -85,3 +87,15 @@ eval/results/ab_*.md
 eval/results/failure_*.jsonl
 pr10.diff
 mission-control/public/ci-verify-input.json
+
+# ── Editor, Agent, & Local Temporary Files ────────────────────────
+.agent/
+.agents/
+.obsidian/
+*.log
+*.local.yaml
+*.local.yml
+docs/proposals/
+docs/roadmap/
+
+

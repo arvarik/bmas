@@ -9,6 +9,8 @@
 import React, { useMemo } from "react";
 import { X } from "lucide-react";
 import { authorColor } from "@/lib/design-tokens";
+import { RichContent } from "@/components/ui/RichContent";
+import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import {
   type MergedBoardEntry,
   typeMeta,
@@ -127,8 +129,24 @@ export function BoardEntryDetail({ entry, allEntries, onClose, onSelect }: Board
 
         {/* Salience + confidence meters */}
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-          <Meter label="Salience" value={entry.salience} color={salienceColor(entry.salience)} />
-          <Meter label="Confidence" value={entry.confidence} color="var(--accent-primary)" />
+          <Meter
+            label="Salience"
+            value={entry.salience}
+            color={salienceColor(entry.salience)}
+            tooltip={{
+              title: "Salience",
+              content: `How relevant this entry is to the current debate. Computed from: confidence (40%), recency (20%), citations by other entries (30%), minus unrebutted critiques (30%). Current score: ${(entry.salience * 100).toFixed(0)}%.`,
+            }}
+          />
+          <Meter
+            label="Confidence"
+            value={entry.confidence}
+            color="var(--accent-primary)"
+            tooltip={{
+              title: "Confidence",
+              content: `The author agent's self-assessed certainty in this entry's content. 1.0 = fully confident, 0.0 = speculative. Current score: ${(entry.confidence * 100).toFixed(0)}%.`,
+            }}
+          />
         </div>
 
         {/* Title */}
@@ -145,18 +163,11 @@ export function BoardEntryDetail({ entry, allEntries, onClose, onSelect }: Board
           </div>
         )}
 
-        {/* Full body */}
-        <div
-          style={{
-            fontSize: "var(--text-sm)",
-            color: "var(--text-secondary)",
-            lineHeight: "var(--leading-base)",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-          }}
-        >
-          {entry.body || "(no body)"}
-        </div>
+        {/* Full body — rich markdown rendering */}
+        <RichContent
+          content={entry.body || "(no body)"}
+          className="bb-detail__body"
+        />
 
         {/* Refs out */}
         {refsOut.length > 0 && (
@@ -192,11 +203,32 @@ function Chip({ children, color }: { children: React.ReactNode; color?: string }
   );
 }
 
-function Meter({ label, value, color }: { label: string; value: number; color: string }) {
+function Meter({ label, value, color, tooltip }: {
+  label: string;
+  value: number;
+  color: string;
+  tooltip?: { title: string; content: string };
+}) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-      <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", width: 76, flexShrink: 0 }}>
+      <span style={{
+        fontSize: "var(--text-xs)",
+        color: "var(--text-tertiary)",
+        width: 76,
+        flexShrink: 0,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 2,
+      }}>
         {label}
+        {tooltip && (
+          <InfoTooltip
+            title={tooltip.title}
+            content={tooltip.content}
+            size={11}
+            position="right"
+          />
+        )}
       </span>
       <div
         style={{
