@@ -382,6 +382,25 @@ class TraditionalVariant:
         # Clamp to max_concurrent
         selected = selected[:self.max_concurrent]
 
+        # ── Paper §3.2 guard: decider MUST run alone ─────────────────
+        # The decider must see ALL board writes (including critiques)
+        # before judging. If the CU co-selected decider with other agents,
+        # strip it — the next round's CU call will re-select it once the
+        # other agents have finished writing.
+        if "decider" in selected and len(selected) > 1:
+            logger.info(
+                "Decider exclusion guard | task=%s round=%d — "
+                "CU co-selected decider with %s; deferring decider to next round",
+                task_id, current_round,
+                [a for a in selected if a != "decider"],
+            )
+            selected = [a for a in selected if a != "decider"]
+            rationale = (
+                (rationale or "")
+                + " [Decider deferred: must run alone per paper §3.2"
+                  " so it can see all prior board writes.]"
+            ).strip()
+
         # Emit coordinator narration event (doc 05 §1.2, doc 13 §3)
         # Gated by flag — when off, no event fires and the UI lane hides entirely.
         # NOTE: this carries the RAW rationale (None on the heuristic path) to

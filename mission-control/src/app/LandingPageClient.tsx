@@ -20,7 +20,7 @@ import { useTaskHistory } from "@/hooks/useTaskHistory";
 import { useSystemStream } from "@/hooks/useSystemStream";
 import { usePendingTask } from "@/contexts/PendingTaskContext";
 import { useToast } from "@/hooks/useToast";
-import { ArrowUp, Zap, DollarSign, BarChart3, Paperclip } from "lucide-react";
+import { ArrowUp, Zap, DollarSign, BarChart3, Paperclip, Cpu, Cloud } from "lucide-react";
 import { VariantSelect } from "@/components/features/VariantSelect";
 
 // ── Example tasks ─────────────────────────────────────────────────────
@@ -339,6 +339,21 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
                   <TaskStatusDot status={t.status} />
                   <span className="landing__recent-id">{t.id}</span>
                   <span className="landing__recent-label">{t.label}</span>
+                  {t.model_used && (
+                    <span
+                      className="landing__recent-model"
+                      title={
+                        t.model_used.startsWith("edge-")
+                          ? `Local inference (${t.model_used})`
+                          : `Cloud API (${t.model_used})`
+                      }
+                    >
+                      {t.model_used.startsWith("edge-")
+                        ? <Cpu size={11} />
+                        : <Cloud size={11} />
+                      }
+                    </span>
+                  )}
                   <span className="landing__recent-time">
                     {formatRelativeTime(t.created_at)}
                   </span>
