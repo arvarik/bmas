@@ -1,8 +1,7 @@
 """A/B harness — same dataset, swap only coordination.variant, emit side-by-side report.
 
-See docs/proposals/10-migration-and-rollout.md Phase E bullet 3:
-  "same dataset, swap only coordination.variant: traditional vs patchboard now;
-   patchboard and stigmergic later. Emit a side-by-side report."
+Same dataset, swap only coordination.variant: traditional vs patchboard now;
+patchboard and stigmergic later. Emit a side-by-side report.
 
 Design: the daemon reads coordination.variant at startup. The A/B harness therefore
 runs each arm as a separate benchmark pass, verifying the daemon's active variant

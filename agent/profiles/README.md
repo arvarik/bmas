@@ -1,6 +1,6 @@
 # bMAS Agent Profiles
 
-> **Spec**: [doc 12 §2.5–3](../docs/proposals/12-hermes-and-node-topology.md)
+> **Reference**: See the [Architecture docs](../docs/architecture/README.md) and [Han & Zhang (2025)](https://arxiv.org/abs/2507.01701).
 
 Hermes **profiles** implement the persona library from the [LbMAS paper](https://arxiv.org/abs/2507.01701). Each profile is a fully isolated Hermes instance with its own `SOUL.md` (role identity), `config.yaml` (toolset scoping), memory, skills, and sessions.
 
@@ -18,7 +18,7 @@ Hermes **profiles** implement the persona library from the [LbMAS paper](https:/
 
 ### What is NOT a profile
 
-- **The CU scheduler** — it's the `TraditionalVariant` in the daemon (Python), not a Hermes agent. See [doc 12 §2.1](../docs/proposals/12-hermes-and-node-topology.md#21-should-the-control-unit-be-a-profile-mostly-no).
+- **The CU scheduler** — it's the `TraditionalVariant` in the daemon (Python), not a Hermes agent.
 - **Expert specializations** — experts share ONE `expert` profile. Domain identity is injected per-task via `AGENTS.md`, not by creating `expert_security`, `expert_perf`, etc.
 
 ## File Structure
@@ -49,7 +49,7 @@ agent/profiles/
     └── config.yaml
 ```
 
-## Three-Layer Identity Model (doc 12 §3)
+## Three-Layer Identity Model
 
 | Layer | File | Scope | Example |
 |:--|:--|:--|:--|

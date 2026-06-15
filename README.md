@@ -219,9 +219,7 @@ bmas/
 │   ├── CONFIGURATION.md   #   Full config reference
 │   ├── NODE_SETUP.md      #   Edge node provisioning guide
 │   ├── architecture/      #   System architecture deep-dive
-│   ├── design/            #   Mission Control UI specification
-│   ├── proposals/         #   Design proposals (01–17)
-│   └── roadmap/           #   Future enhancements (by category)
+│   └── design/            #   Mission Control UI specification
 │
 ├── scripts/               # Operational utilities
 │   ├── check-ci.sh        #   Local CI mirror (ruff + mypy + pytest + eslint + tsc + build)
@@ -243,8 +241,6 @@ bmas/
 | [Configuration](docs/CONFIGURATION.md) | Full `bmas.yaml` reference |
 | [Node Setup](docs/NODE_SETUP.md) | Provisioning edge nodes |
 | [Design System](docs/design/DESIGN.md) | Mission Control UI specification |
-| [Proposals](docs/proposals/README.md) | Design proposals (01–17) |
-| [Roadmap](docs/roadmap/README.md) | Future enhancements (by category) |
 
 ### Component READMEs
 

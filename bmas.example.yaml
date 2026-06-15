@@ -146,7 +146,7 @@ routing:
 
 # ── Coordination (Blackboard Migration) ───────────────────────────
 # Controls the coordination paradigm used for multi-agent tasks.
-# See docs/proposals/05-control-unit.md §3.
+# See docs/CONFIGURATION.md for full reference.
 coordination:
   variant: traditional               # traditional | patchboard | stigmergic
   blackboard_v2: true                 # Gates the new board substrate independently of variant
@@ -164,7 +164,7 @@ coordination:
     coordinator_narration: false
     sole_similarity: auto           # auto | exact | embedding | judge
 
-  # ── Role Registry (doc 12 §2.5) ──────────────────────────────────
+  # ── Role Registry ────────────────────────────────────────────────────────
   # Maps blackboard roles to Hermes profiles and preferred hosts.
   # preferred_host: null → load-balanced across all nodes.
   # profile: Hermes profile name (in ~/.hermes/profiles/<profile>/).
@@ -200,16 +200,16 @@ coordination:
       dispatch_port: 8000
 
   board:
-    max_entry_chars: 8000           # Max body length; larger content → artifacts (doc 17 §6)
+    max_entry_chars: 8000           # Max body length; larger content → artifacts
     max_title_len: 200              # Max title length for indexing
-    salience_weights:               # doc 04 §7 — deterministic importance signal
+    salience_weights:               # Deterministic importance signal
       confidence: 0.4
       recency: 0.2
       refs_in: 0.3
       penalty: 0.3
 
 # ── Storage (Files & Artifacts) ───────────────────────────────────
-# File upload and artifact storage. See docs/proposals/17-files-and-artifacts.md §2.
+# File upload and artifact storage.
 storage:
   enabled: false
   user_media_dir: "/opt/bmas-data/uploads"

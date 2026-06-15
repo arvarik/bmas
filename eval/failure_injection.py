@@ -1,9 +1,7 @@
 """Failure-injection tooling — drop/partition a node mid-task for resilience testing.
 
-See docs/proposals/10-migration-and-rollout.md Phase E bullet 4 and
-docs/proposals/15-novelty-and-research-directions.md §4 (the killer experiment):
-  "Stigmergy predicts robustness to agent loss. Kill a node mid-task and
-   measure degradation in each regime."
+Stigmergy predicts robustness to agent loss. Kill a node mid-task and
+measure degradation in each regime.
 
 This tool performs DESTRUCTIVE operations on cluster nodes (stopping services,
 adding firewall rules). It is gated behind --confirm-destructive and logs

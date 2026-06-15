@@ -5,8 +5,6 @@ Usage:
   python -m eval.cli ab --dataset gsm8k --variant-a traditional --variant-b patchboard
   python -m eval.cli report --file-a results/run_a_summary.json --file-b results/run_b_summary.json
   python -m eval.cli inject-failure --node node-1 --mode kill --confirm-destructive
-
-See docs/proposals/10-migration-and-rollout.md Phase E.
 """
 
 from __future__ import annotations

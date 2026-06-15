@@ -1,9 +1,9 @@
-[🏠 Index](../README.md) | [📋 Roadmap](../roadmap/README.md) | [🎨 Design System](../design/DESIGN.md)
+[🏠 Index](../README.md) | [🎨 Design System](../design/DESIGN.md)
 
 # bMAS — System Architecture
 
 > [!NOTE]
-> This document describes the **current** architecture as implemented in the traditional coordination variant. For future variants (stigmergic, patchboard) and the bMAS paper's full vision, see the [Roadmap](../roadmap/README.md).
+> This document describes the **current** architecture as implemented in the traditional coordination variant.
 
 ## 1. Overview
 

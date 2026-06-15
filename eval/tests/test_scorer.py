@@ -6,8 +6,6 @@ Covers:
   - MMLU: letter extraction (explicit pattern, parenthesized, bold, start-of-line),
     case normalization, no-answer, wrong-answer
   - Aggregate: accuracy computation, per-subject breakdown, empty dataset
-
-See docs/proposals/10-migration-and-rollout.md Phase E.
 """
 
 import pytest

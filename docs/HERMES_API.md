@@ -667,7 +667,7 @@ curl http://<node_ip>:8642/v1/chat/completions \
 > [!IMPORTANT] Profile selection is process-scoped, not per-run
 > Live source inspection of `gateway/platforms/api_server.py` (2026-06-08) shows `POST /v1/runs` accepts `input`, optional `session_id`, `instructions`, `conversation_history`, `previous_response_id`, and `model`. It does **not** accept a per-request `profile` field. A gateway process is scoped to the active Hermes profile (`HERMES_HOME` / `hermes --profile`), so bMAS cannot assume one `:8642` gateway multiplexes all profiles. To run role-specific profiles through the Runs API, either run one gateway per profile/port, use a bMAS bridge that invokes `hermes --profile`, or verify and implement an upstream profile-selection mechanism before building dispatch around it.
 
-**Runs API** (long-form sessions with SSE progress) — **the primary bMAS integration point** (see [proposal doc 06](proposals/06-agent-traces.md)):
+**Runs API** (long-form sessions with SSE progress) — **the primary bMAS integration point**:
 
 | Method | Path | Description |
 |:--|:--|:--|
@@ -692,7 +692,7 @@ curl http://<node_ip>:8642/v1/chat/completions \
 | `run.cancelled` | — | terminal stop (via `/stop`) |
 
 > [!WARNING]
-> Earlier revisions of this doc listed OpenAI-style names (`hermes.tool.progress`, `chat.completion.chunk`, `response.output_text.delta`, `function_call`, `function_call_output`). **Those are not what the Runs-API SSE emits.** The list above is the verified contract; the daemon/agent `translate()` step ([proposal doc 06 §3](proposals/06-agent-traces.md#3-rearchitected-agent-server)) must map these names.
+> Earlier revisions of this doc listed OpenAI-style names (`hermes.tool.progress`, `chat.completion.chunk`, `response.output_text.delta`, `function_call`, `function_call_output`). **Those are not what the Runs-API SSE emits.** The list above is the verified contract; the daemon/agent `translate()` step must map these names.
 
 > [!IMPORTANT] `usage` carries tokens but **not cost** (verified live)
 > A live `run.completed` returns `usage: {input_tokens, output_tokens, total_tokens}` and **no `cost_usd`** for the LiteLLM-backed `custom`/`gemini` provider. (The agent's own `/api/analytics/*` `estimated_cost`/`actual_cost` also read `0`.) **Dollar cost must be computed by the bMAS daemon** from token counts × a per-model price table (or read from LiteLLM's response cost), **not** taken from the Hermes `usage` payload. Also note even a trivial prompt ("17+25") consumed **~16k input tokens** because the full system prompt + skills + memory are loaded each run — relevant to the cost model and to the "pass the index, not the whole board" hygiene.
@@ -808,14 +808,14 @@ hermes gateway install --system --force --run-as-user root
 |:--|:--|:--|
 | Hermes version | **v0.15.1** (2026.5.29) on all 3 nodes (389 commits behind upstream) | none required for V1; `hermes update` is optional |
 | **Gateway / Runs API (`:8642`)** | ✅ **active + enabled**, listening `0.0.0.0:8642`, `API_SERVER_ENABLED=true` on all 3 nodes | done — Phase-1 prerequisite cleared |
-| **bMAS bridge (`:8000`)** | ✅ active (`hermes -z` one-shot) via `hermes-agent.service` | replace with Runs-API agent ([doc 06](proposals/06-agent-traces.md)) |
+| **bMAS bridge (`:8000`)** | ✅ active (`hermes -z` one-shot) via `hermes-agent.service` | replace with Runs-API agent |
 | **Dashboard (`:9119`)** | ✅ active on all 3 nodes | none — Skills/Memory UI proxies usable |
-| `usage.cost_usd` | ❌ **not returned** by `/v1/runs` (tokens only); provider analytics show cost `0` | compute dollars daemon-side ([doc 06 §3.1](proposals/06-agent-traces.md#31-updated-taskresponse-schema)) |
-| Profiles | `~/.hermes/profiles/` **absent** on all 3 nodes — single default profile; `/v1/runs` has no verified per-request profile selector | create role profiles, then choose a verified dispatch mechanism (per-profile gateways/ports or a local `hermes --profile` bridge) — [doc 12 §2.5](proposals/12-hermes-and-node-topology.md#25-the-agents-on-3-hosts-answer-yes-via-profiles) |
-| `SOUL.md` | one generic "Distributed Agent Node" identity, identical across nodes | move to **per-role SOUL.md** — [doc 12 §3](proposals/12-hermes-and-node-topology.md#3-soulmd-per-role-replace-the-single-generic-soul) |
+| `usage.cost_usd` | ❌ **not returned** by `/v1/runs` (tokens only); provider analytics show cost `0` | compute dollars daemon-side |
+| Profiles | `~/.hermes/profiles/` **absent** on all 3 nodes — single default profile; `/v1/runs` has no verified per-request profile selector | create role profiles, then choose a verified dispatch mechanism (per-profile gateways/ports or a local `hermes --profile` bridge) |
+| `SOUL.md` | one generic "Distributed Agent Node" identity, identical across nodes | move to **per-role SOUL.md** (see agent/profiles/) |
 | Skills | 24 installed | wire procedural memory into bMAS context |
-| Crons | `features.jobs_admin: false`; `GET /api/jobs` lists jobs, but admin writes are unverified | reserved for stigmergic pull-mode; provision via CLI/`config.yaml` unless job admin is live-tested — [doc 16 §4](proposals/16-variant-stigmergic.md#4-pull-mode-activation) |
+| Crons | `features.jobs_admin: false`; `GET /api/jobs` lists jobs, but admin writes are unverified | reserved for stigmergic pull-mode; provision via CLI/`config.yaml` unless job admin is live-tested |
 | Model / tools | provider `gemini`/`custom`; `web` + `browser` (camofox) + `compression` configured | scope toolsets per role-profile |
 
 > [!IMPORTANT]
-> The deployed `agent/api_server.py` is still the `hermes -z` one-shot bridge — it discards all intermediate agent output and returns no `usage`. This is the root cause of bMAS having no agent traces and a dead cost path. Replacing it with the Runs API ([doc 06](proposals/06-agent-traces.md)) is the highest-leverage, independently-shippable fix.
+> The deployed `agent/api_server.py` is still the `hermes -z` one-shot bridge — it discards all intermediate agent output and returns no `usage`. This is the root cause of bMAS having no agent traces and a dead cost path. Replacing it with the Runs API is the highest-leverage, independently-shippable fix.

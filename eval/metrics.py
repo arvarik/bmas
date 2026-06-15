@@ -1,8 +1,7 @@
 """Per-run metrics capture — the table that goes in the writeup.
 
-See docs/proposals/10-migration-and-rollout.md Phase E bullet 2:
-  accuracy, tokens, $, latency, rounds-to-termination,
-  terminated-by breakdown, and joules_estimate.
+Tracks: accuracy, tokens, $, latency, rounds-to-termination,
+terminated-by breakdown, and joules_estimate.
 
 One row per task; one summary per benchmark.
 """

@@ -18,7 +18,7 @@
 #   - Hermes Agent installed on each node (hermes CLI available)
 #   - This script must be run from the bMAS repo root (/opt/bmas)
 #
-# Spec: docs/proposals/12-hermes-and-node-topology.md §2.5–3
+# See agent/profiles/README.md for full documentation.
 # ────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -59,7 +59,7 @@ fi
 
 echo ""
 echo "┌───────────────────────────────────────────────┐"
-echo "│  bMAS Profile Deployment (doc 12 §2.5)        │"
+echo "│  bMAS Profile Deployment                     │"
 echo "└───────────────────────────────────────────────┘"
 echo "  Profiles: ${PROFILES[*]}"
 echo "  Nodes:    ${NODES[*]}"

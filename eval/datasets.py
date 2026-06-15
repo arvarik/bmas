@@ -6,9 +6,6 @@ Currently supports fixture mode only:
 
 Download mode (full datasets from HuggingFace via plain HTTP) is planned
 but not yet implemented — see download_dataset() stub below.
-
-See docs/proposals/10-migration-and-rollout.md Phase E bullet 1
-and docs/proposals/15-novelty-and-research-directions.md §3.4.
 """
 
 from __future__ import annotations

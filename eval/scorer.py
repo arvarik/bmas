@@ -2,8 +2,6 @@
 
 GSM8K: numeric answer extraction (last number convention).
 MMLU: letter answer extraction (A/B/C/D).
-
-See docs/proposals/10-migration-and-rollout.md Phase E bullet 1.
 """
 
 from __future__ import annotations

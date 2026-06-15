@@ -2,8 +2,6 @@
 
 Submits each question via POST /submit, polls GET /tasks/{id} until terminal,
 captures the full response including cost/token/latency metadata.
-
-See docs/proposals/10-migration-and-rollout.md Phase E bullet 1.
 """
 
 from __future__ import annotations
