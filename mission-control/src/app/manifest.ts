@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Biomimetic Multi-Agent Swarm (bMAS)",
+    name: "Blackboard Multi-Agent Swarm (bMAS)",
     short_name: "bMAS",
     description: "A decentralized swarm of autonomous agents collaborating to execute tasks based on stigmergy and local interactions.",
     start_url: "/",

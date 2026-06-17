@@ -98,4 +98,8 @@ mission-control/public/ci-verify-input.json
 docs/proposals/
 docs/roadmap/
 
+# ── Ad-hoc Scripts (personal utilities, not project-relevant) ─────
+scripts/generate_icons.py
+scripts/rebuild.sh
+
 
