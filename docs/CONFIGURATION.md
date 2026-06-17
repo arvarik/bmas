@@ -37,7 +37,7 @@ Defines the machine running the Docker Compose stack.
 | `ports.litellm` | int | ✅ | — | LiteLLM proxy port. |
 | `ports.triage` | int | ❌ | `8001` | Triage vLLM port. |
 | `ports.daemon` | int | ✅ | — | Daemon API port. |
-| `ports.dashboard` | int | ✅ | — | Mission Control dashboard port. |
+| `ports.dashboard` | int | ❌ | `9321` | Mission Control dashboard port. |
 
 ```yaml
 control_plane:
@@ -177,7 +177,7 @@ Controls the coordination paradigm used for multi-agent tasks.
 | Field | Type | Required | Default | Description |
 |:---|:---|:---|:---|:---|
 | `variant` | string | ✅ | — | Active variant: `traditional`, `patchboard`, or `stigmergic`. |
-| `blackboard_v2` | bool | ❌ | `true` | Enables the v2 board substrate (entries + events). |
+| `blackboard_v2` | bool | ❌ | `false` | Enables the v2 board substrate (entries + events). |
 | `view_budget_tokens` | int | ❌ | `12000` | Full-board token budget; budgeted view mode above this. |
 | `round_execution` | string | ❌ | `concurrent` | `concurrent` (parallel agents) or `sequential` (paper-exact). |
 

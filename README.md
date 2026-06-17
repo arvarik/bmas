@@ -5,14 +5,15 @@
 <h1 align="center">Stigmergic</h1>
 
 <p align="center">
-  <strong>Biomimetic Multi-Agent Swarm (bMAS) Orchestration System</strong>
+  <strong>Blackboard Multi-Agent Swarm (bMAS) Orchestration System</strong>
 </p>
 
 <p align="center">
-  <a href="#features">Features</a> •
-  <a href="#architecture">Architecture</a> •
+  <a href="#how-it-works">How It Works</a> •
+  <a href="#see-it-in-action">See It In Action</a> •
   <a href="#quick-start">Quick Start</a> •
-  <a href="#documentation">Documentation</a>
+  <a href="#documentation">Documentation</a> •
+  <a href="#components">Components</a>
 </p>
 
 <p align="center">
@@ -22,61 +23,59 @@
   <a href="https://typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-6.x-3178C6?logo=typescript&logoColor=white" alt="TypeScript 6.x" /></a>
   <a href="https://nextjs.org"><img src="https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white" alt="Next.js 16" /></a>
   <a href="docker-compose.yml"><img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white" alt="Docker" /></a>
-  <a href="redis/"><img src="https://img.shields.io/badge/Redis-7--alpine-DC382D?logo=redis&logoColor=white" alt="Redis" /></a>
-  <a href="litellm/"><img src="https://img.shields.io/badge/LiteLLM-Gateway-orange" alt="LiteLLM" /></a>
-  <a href="triage/"><img src="https://img.shields.io/badge/vLLM-Triage-purple" alt="vLLM" /></a>
 </p>
 
-**A distributed AI swarm built on the Blackboard Multi-Agent System (bMAS) architecture.** Stigmergic coordinates multiple LLM-powered agents through a shared blackboard with an LLM-driven Control Unit that dynamically selects agents per round — achieving structured, multi-round debate and consensus.
+---
+
+**A distributed AI swarm built on the Blackboard Multi-Agent System (bMAS) architecture.** Stigmergic coordinates multiple LLM-powered agents through a shared blackboard with an LLM-driven Control Unit that dynamically selects agents per round and achieves structured, multi-round debate and consensus.
 
 > *Named after [stigmergy](https://en.wikipedia.org/wiki/Stigmergy) — the mechanism by which individual agents coordinate through shared environmental signals (the blackboard) rather than direct communication.*
 
-## Features
+<p align="center">
+  <img src="docs/screenshots/bmas-hero.png" alt="Stigmergic — Landing Page" width="720" />
+</p>
 
-- **Cyclic blackboard orchestration** — Control Unit selects agents per round; agents read/write a shared board; rounds repeat until convergence (not a fixed pipeline)
-- **Dynamic agent roles** — Planner, Critic, Conflict Resolver, Cleaner, Decider, and domain-specific Experts — all discovered and activated dynamically
-- **Multi-provider model routing** — Route tasks to Gemini, Claude, OpenAI, or local models based on complexity tiers
-- **Intelligent triage** — Local Qwen3-1.7B classifier automatically routes tasks to the cheapest capable model
-- **Execution graph** — Swimlane visualization of agent turns grouped by round, with coordinator routing rationale
-- **Structured distributed logging** — Per-agent log streams with full structured payloads, level/agent filtering, and detail drawers
-- **Blackboard command center** — Timeline, thread, and graph views of board entries with salience heat, debate threading, and type/author grouping
-- **Mission cockpit** — Live 4-panel command center: blackboard graph, agent mind cards, global firehose, convergence strip
-- **Human-in-the-loop** — Pause/resume at round boundaries, inject directives, abort tasks, approve/reject agent actions
-- **Real-time cost tracking** — Per-model token usage and USD cost with budget ceilings and live gauges
-- **Single config file** — Define your entire deployment in `bmas.yaml`
-- **Docker-first** — `docker compose up` and you're running
+## How It Works
 
-## Architecture
+**Orchestration** — A Control Unit reads the shared blackboard each round, selects which agents to activate, and those agents execute concurrently by writing findings, plans, and critiques back to the board. Rounds repeat until the swarm reaches consensus, hits a budget ceiling, or exhausts max rounds. Domain-specific experts are generated dynamically per task, not pre-configured.
 
-```
-┌─────────────────── Control Plane (Docker Compose) ───────────────────┐
-│                                                                       │
-│  ┌─────────┐  ┌──────────┐  ┌─────────┐  ┌────────┐  ┌───────────┐ │
-│  │  Redis   │  │ LiteLLM  │  │ Triage  │  │ Daemon │  │ Mission   │ │
-│  │ Board    │  │ Gateway  │  │ (GPU)   │  │ Orch.  │  │ Control   │ │
-│  │ :6379    │  │ :4000    │  │ :8001   │  │ :9000  │  │ :9321     │ │
-│  └─────────┘  └──────────┘  └─────────┘  └────────┘  └───────────┘ │
-└───────────────────────────────────────────────────────────────────────┘
-         │              │                        │
-         │       ┌──────┴──────┐          ┌──────┴──────┐
-         │       │ Cloud APIs  │          │ Agent Nodes │
-         │       │ Gemini/etc  │          │ Hermes+SSE  │
-         │       └─────────────┘          └─────────────┘
+**Observability** — Real-time execution graphs, distributed log streams across all agents, a blackboard command center, and per-model cost tracking are all visible in a live dashboard built with Next.js and Server-Sent Events.
 
-               ┌─────── Per Round ─────────┐
-               │                            │
-               │   Control Unit selects     │
-               │   agents from board state  │
-               │         │                  │
-               │    ┌────┴────┐             │
-               │    │ Agents  │ read/write  │
-               │    │ execute │ the board   │
-               │    └────┬────┘             │
-               │         │                  │
-               │   Board updated;           │
-               │   loop until convergence   │
-               └────────────────────────────┘
-```
+**Operations** — Pause at round boundaries, inject directives, steer which agents run next, and set budget ceilings. A local Qwen3-1.7B classifier routes every task to the cheapest capable model before any paid API call. One YAML file configures the entire deployment. Just `docker compose up` and you're running.
+
+## See It In Action
+
+### Execution Graph
+
+Swimlane visualization showing agent turns grouped by round. Each node reveals what the agent did, why the Control Unit selected it, and what it cost.
+
+<p align="center">
+  <img src="docs/screenshots/bmas-graph.png" alt="Execution Graph — swimlane view of rounds and agent turns" width="900" />
+</p>
+
+### Distributed Log Stream
+
+Unified chronological log across all agents with per-role filtering. Click any entry to expand structured fields — actor, model, round, output, and duration.
+
+<p align="center">
+  <img src="docs/screenshots/bmas-logs.png" alt="Distributed Log Stream — per-agent filtering with structured detail drawer" width="900" />
+</p>
+
+### Blackboard Command Center
+
+The shared knowledge store. Timeline of board entries with salience heat, entry types, and debate threading. Agent Minds shows each agent's model and contribution count.
+
+<p align="center">
+  <img src="docs/screenshots/bmas-board.png" alt="Blackboard Command Center — board entries and agent minds" width="900" />
+</p>
+
+### Cost & Performance
+
+Per-model token breakdown, cost tracking, and an agent timeline showing when each role was active across rounds.
+
+<p align="center">
+  <img src="docs/screenshots/bmas-stats.png" alt="Cost tracking — token usage, cost breakdown, and agent timeline" width="900" />
+</p>
 
 ## Quick Start
 
@@ -96,171 +95,54 @@ docker compose --profile gpu up -d  # with GPU (enables triage)
 open http://localhost:9321
 ```
 
-See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full guide.
-
-## Configuration
-
-Everything is configured through a single `bmas.yaml` file:
-
-```yaml
-project:
-  name: "My Swarm"
-
-control_plane:
-  host: "localhost"
-  ports: { redis: 6379, litellm: 4000, daemon: 9000, dashboard: 9321 }
-
-coordination:
-  variant: traditional              # traditional | stigmergic
-  traditional:
-    max_rounds: 8
-    budget_ceiling_usd: 1.00
-    cu_mode: llm                    # llm | heuristic
-    coordinator_narration: true
-
-nodes:
-  - name: "node-1"
-    host: "192.168.1.101"
-    port: 8000
-    role: planner
-    inference: { host: "192.168.1.102", port: 8080, model: "gemma-4-e4b" }
-
-models:
-  gemini-pro: { provider: gemini, model: "gemini-3.1-pro-preview", api_key_env: GEMINI_API_KEY }
-
-routing:
-  complex: gemini-pro
-  medium: gemini-pro
-  light: gemini-pro
-  simple: local
-```
-
-See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full reference and [examples/](examples/) for sample configs.
-
-## Repository Structure
-
-```
-bmas/
-├── bmas.example.yaml      # Reference configuration
-├── .env.example           # Secrets template
-├── docker-compose.yml     # Unified control plane (5 services)
-├── docker-compose.dev.yml # Dev overrides (hot-reload, volume mounts)
-│
-├── agent/                 # Edge node agent API (deployed to LXCs)
-│   ├── api_server.py      #   Hermes ↔ Daemon bridge (Runs API + CLI fallback)
-│   ├── profiles/          #   Per-role Hermes profiles (planner, critic, expert, ...)
-│   └── tests/             #   SSE parser + event translation tests
-│
-├── daemon/                # Python FastAPI orchestrator
-│   └── src/
-│       ├── app.py         #   API entry point (:9000)
-│       ├── config.py      #   Loads bmas.yaml at startup
-│       ├── database.py    #   SQLite persistence (v2 schema, 12 tables)
-│       ├── auth.py        #   Bearer token authentication for node ingest
-│       ├── core/
-│       │   ├── orchestrator.py   # Task lifecycle + multi-round dispatch
-│       │   ├── blackboard.py     # Redis state + durable board snapshots
-│       │   ├── board_store.py    # Event-sourced board (entries + events)
-│       │   ├── gateway.py        # Capability-gated agent dispatch
-│       │   ├── entry.py          # Board entry schema + validation
-│       │   ├── protocol.py       # Agent ↔ Daemon message protocol
-│       │   ├── salience.py       # Entry salience scoring
-│       │   ├── event_emitter.py  # SSE event abstraction
-│       │   ├── log_levels.py     # Level normalization (INF→info, etc.)
-│       │   ├── triage.py         # Complexity classification client
-│       │   └── variants/
-│       │       └── traditional.py  # Cyclic CU → agents → board loop
-│       └── routes/
-│           ├── submit.py         # POST /submit
-│           ├── tasks.py          # GET /tasks, /tasks/{id}/*
-│           ├── events.py         # SSE endpoints (task + system)
-│           ├── ingest.py         # POST /ingest/traces, /ingest/logs
-│           ├── artifacts.py      # GET /tasks/{id}/artifacts
-│           ├── files.py          # GET /tasks/{id}/files
-│           ├── hitl.py           # POST /tasks/{id}/pause|resume|directive
-│           └── health.py         # GET /health
-│
-├── mission-control/       # Next.js 16 dashboard (:9321)
-│   └── src/
-│       ├── app/
-│       │   ├── page.tsx           # Landing page — task list + submit
-│       │   ├── task/[taskId]/     # Task-scoped pages (7 tabs)
-│       │   │   ├── page.tsx       #   Overview — process summary + result
-│       │   │   ├── dag/           #   Execution Graph — TurnGraph (swimlane)
-│       │   │   ├── logs/          #   Distributed Log Stream + Agent Trace
-│       │   │   ├── blackboard/    #   Blackboard Board command center
-│       │   │   ├── mission/       #   Mission Cockpit (4-panel live view)
-│       │   │   └── artifacts/     #   Artifact browser + downloads
-│       │   └── api/               # 20+ API route handlers (server-side proxies)
-│       ├── components/
-│       │   ├── features/          # 18 feature components
-│       │   │   ├── TurnGraph.tsx       # Swimlane execution graph (React Flow)
-│       │   │   ├── DistributedLogStream.tsx  # Unified chronological logs
-│       │   │   ├── BlackboardBoard.tsx # Board command center
-│       │   │   ├── AgentTrace.tsx      # Structured turn trace viewer
-│       │   │   └── ...                 # + 14 more feature components
-│       │   ├── ui/                # Design system primitives (9 components)
-│       │   └── layout/            # App shell (TopBar)
-│       ├── hooks/
-│       │   ├── useTaskStream.ts   # SSE hook — 18 event types, rAF batching
-│       │   ├── useSystemStream.ts # System-level SSE (task lifecycle)
-│       │   └── useTaskHistory.ts  # REST task list fetching
-│       └── lib/
-│           ├── config.ts          # Server-side config loader
-│           ├── mappers.ts         # SSE → component data transforms
-│           └── design-tokens.ts   # Programmatic design token access
-│
-├── litellm/               # LiteLLM model gateway (:4000)
-├── redis/                 # Redis blackboard (:6379)
-├── triage/                # Complexity classifier (:8001)
-│
-├── docs/                  # Documentation
-│   ├── QUICKSTART.md      #   Get started in 5 minutes
-│   ├── CONFIGURATION.md   #   Full config reference
-│   ├── NODE_SETUP.md      #   Edge node provisioning guide
-│   ├── architecture/      #   System architecture deep-dive
-│   └── design/            #   Mission Control UI specification
-│
-├── scripts/               # Operational utilities
-│   ├── check-ci.sh        #   Local CI mirror (ruff + mypy + pytest + eslint + tsc + build)
-│   ├── deploy_profiles.sh #   Deploy Hermes profiles to agent nodes
-│   └── healthcheck.sh     #   Post-deploy service health check
-│
-└── examples/              # Example configurations
-    ├── stigmergic/        #   Reference deployment (3-node homelab)
-    ├── minimal-cloud.yaml #   Cloud-only, no GPU required
-    └── multi-provider.yaml#   Gemini + Claude + OpenAI routing
-```
+See [Quick Start Guide](docs/QUICKSTART.md) for the full walkthrough.
 
 ## Documentation
 
 | Document | Description |
 |:---|:---|
-| [Architecture](docs/architecture/README.md) | System architecture & component deep-dive |
 | [Quick Start](docs/QUICKSTART.md) | Get running in 5 minutes |
 | [Configuration](docs/CONFIGURATION.md) | Full `bmas.yaml` reference |
-| [Node Setup](docs/NODE_SETUP.md) | Provisioning edge nodes |
+| [Architecture](docs/architecture/README.md) | System architecture & component deep-dive |
+| [Node Setup](docs/NODE_SETUP.md) | Provisioning edge nodes with inference + agents |
 | [Design System](docs/design/DESIGN.md) | Mission Control UI specification |
+| [Hermes API](docs/HERMES_API.md) | Hermes Dashboard & Gateway API reference |
 
-### Component READMEs
+## Components
 
-| Component | README |
+The project is organized into six deployable components, each with its own README:
+
+| Component | Description |
 |:---|:---|
-| Agent | [agent/README.md](agent/README.md) |
-| Daemon | [daemon/README.md](daemon/README.md) |
-| Mission Control | [mission-control/README.md](mission-control/README.md) |
-| LiteLLM | [litellm/README.md](litellm/README.md) |
-| Redis | [redis/README.md](redis/README.md) |
-| Triage | [triage/README.md](triage/README.md) |
+| [`daemon/`](daemon/README.md) | **The brain.** Python FastAPI orchestrator — manages task lifecycle, cyclic blackboard execution, agent dispatch, and dual-write persistence (Redis + SQLite). |
+| [`mission-control/`](mission-control/README.md) | **The eyes.** Next.js 16 real-time dashboard — execution graphs, distributed logs, blackboard command center, cost tracking, and HITL controls. |
+| [`agent/`](agent/README.md) | **The hands.** FastAPI server deployed to each edge node — bridges the Daemon to Hermes agents via the Runs API with real-time trace and log shipping. |
+| [`redis/`](redis/README.md) | **The shared memory.** Redis 8 serves as the blackboard — the central knowledge store through which all agents coordinate via Pub/Sub, Streams, and Redlock. |
+| [`litellm/`](litellm/README.md) | **The router.** Unified OpenAI-compatible gateway that abstracts all model backends behind routing, cost tracking, and retry logic. |
+| [`triage/`](triage/README.md) | **The gatekeeper.** Local Qwen3-1.7B complexity classifier (vLLM) that routes tasks to the cheapest capable model before any paid API call. |
 
-## Paper
+Additional directories:
 
-This project is an implementation of the Blackboard Multi-Agent System (bMAS) architecture proposed in:
+| Directory | Description |
+|:---|:---|
+| [`examples/`](examples/) | Sample configurations — multi-node homelab, minimal cloud, multi-provider routing |
+| [`scripts/`](scripts/) | Operational utilities — CI checks, profile deployment, health checks |
+| [`eval/`](eval/) | Evaluation harness — A/B testing, accuracy scoring, failure injection |
+| [`docs/`](docs/) | All documentation — architecture, design system, guides |
+
+## Papers
+
+This project implements and extends multi-agent coordination architectures from published research:
 
 > **Han, B. & Zhang, S. (2025).** *Exploring Advanced LLM Multi-Agent Systems Based on Blackboard Architecture.*
 > [arXiv:2507.01701](https://arxiv.org/abs/2507.01701)
 
-The paper introduces a framework where LLM agents coordinate through a shared blackboard with an LLM-driven control unit that dynamically selects agents per round — achieving competitive performance with state-of-the-art multi-agent systems while consuming fewer tokens. Stigmergic implements this architecture with the **traditional** coordination variant.
+The foundational architecture. LLM agents coordinate through a shared blackboard with an LLM-driven control unit that dynamically selects agents per round — achieving competitive performance with state-of-the-art multi-agent systems while consuming fewer tokens. Stigmergic implements this as the **traditional** coordination variant.
+
+> **Zhang, S., Shi, W. & Wang, H. (2026).** *PatchBoard: Schema-Grounded State Mutation for Reliable and Auditable LLM Multi-Agent Collaboration.*
+> [arXiv:2605.29313](https://arxiv.org/abs/2605.29313)
+
+A complementary coordination paradigm where agents emit validated JSON-Patch mutations against a schema-grounded state tree through a deterministic kernel — achieving 84.6% task success (vs. 30.8% for LangGraph) with zero committed-state contamination under fault injection. Stigmergic implements this as the **PatchBoard** coordination variant.
 
 ## License
 

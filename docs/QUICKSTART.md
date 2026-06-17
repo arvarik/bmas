@@ -57,7 +57,7 @@ Fill in your secrets:
 REDIS_PASSWORD=your-secure-password
 LITELLM_MASTER_KEY=sk-your-litellm-key
 GEMINI_API_KEY=your-gemini-key
-BMAS_NODE_KEY=your-node-auth-token    # For agent ingest auth
+BMAS_NODE_KEY=                        # Generate with: openssl rand -hex 32
 ```
 
 ## 3. Start the Swarm

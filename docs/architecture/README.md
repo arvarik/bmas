@@ -157,7 +157,7 @@ daemon/src/
 
 | Aspect | Detail |
 |:---|:---|
-| **Image** | `redis:7-alpine` |
+| **Image** | `redis:8-alpine` |
 | **Port** | 6379 |
 | **Memory** | 1 GB `maxmemory` (2 GB container limit) |
 | **Persistence** | RDB snapshots every 60s if ≥100 keys changed |
@@ -536,7 +536,7 @@ The Dashboard proxies hardware metrics from [Beszel Hub](https://github.com/henr
 |:---|:---|:---|:---|
 | **Orchestrator** | Python + FastAPI + Uvicorn | 3.13+ | Task lifecycle, API, dispatch |
 | **Persistence** | SQLite (aiosqlite) | v2 schema | Permanent task history (12 tables) |
-| **Blackboard** | Redis | 7-alpine | Real-time state, Pub/Sub, Streams, locks |
+| **Blackboard** | Redis | 8-alpine | Real-time state, Pub/Sub, Streams, locks |
 | **Model Gateway** | LiteLLM | latest | Unified model routing + cost tracking |
 | **Triage** | vLLM + Qwen3-1.7B | latest | Complexity classification |
 | **Agent Runtime** | Hermes CLI / Runs API | — | LLM agent execution on edge nodes |
@@ -557,4 +557,5 @@ The Dashboard proxies hardware metrics from [Beszel Hub](https://github.com/henr
 ## References
 
 - **Han, B. & Zhang, S. (2025).** *Exploring Advanced LLM Multi-Agent Systems Based on Blackboard Architecture.* [arXiv:2507.01701](https://arxiv.org/abs/2507.01701) — The foundational paper for the bMAS architecture.
+- **Zhang, S., Shi, W. & Wang, H. (2026).** *PatchBoard: Schema-Grounded State Mutation for Reliable and Auditable LLM Multi-Agent Collaboration.* [arXiv:2605.29313](https://arxiv.org/abs/2605.29313) — The PatchBoard coordination variant.
 - [Stigmergy (Wikipedia)](https://en.wikipedia.org/wiki/Stigmergy) — The coordination mechanism this system is named after.

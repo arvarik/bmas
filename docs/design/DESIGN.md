@@ -1,8 +1,8 @@
-[🏠 Index](../README.md) | [📋 Context](../examples/stigmergic/CONTEXT.md)
+[🏠 Index](../README.md) | [📋 Context](../../examples/stigmergic/CONTEXT.md)
 
 # Mission Control — Design System
 
-> [!ABSTRACT] Purpose
+> [!NOTE] Purpose
 > This document is the **single source of truth** for Mission Control's visual language. Every component, every screen, every interaction should reference this spec to maintain enterprise-grade consistency. This is not a component library — it is the design contract that any implementation (human or AI) must follow.
 >
 > **Inspiration benchmarks:** Notion (information density + clean hierarchy), Airbnb (typography + whitespace mastery), Linear (real-time ops dashboard), Vercel (dark-mode polish).
@@ -192,7 +192,7 @@ Shadows are used **sparingly** — only for floating elements (modals, popovers,
 
 ## 5. Component Patterns
 
-These are the **reusable primitives** that every feature component must be composed from. Building feature components directly from raw HTML/Tailwind (without using these primitives) violates the design contract.
+These are the **reusable primitives** that every feature component must be composed from. Building feature components directly from raw HTML/CSS (without using these primitives) violates the design contract.
 
 ### 5.1 Panel
 
@@ -240,9 +240,9 @@ Wrapper for the xterm.js terminal instances. Gives each terminal an identity.
 - **Body:** xterm.js fills remaining height. Border: 1px `--border-default`. Border radius bottom: `--radius-xl`.
 - **Border-top accent:** 2px solid line in the agent's identity color across the full width.
 
-### 5.5 DebateList
+### 5.5 DebateThread
 
-Used by the Blackboard/Debate tab. Chronological list of debate entries from the agent deliberation process. Replaces the old SplitView (Public/Private Redis split).
+Used by the Blackboard/Mission tab. Chronological list of debate entries from the agent deliberation process.
 
 - **Layout:** Vertical list of debate entries, newest at the bottom. Each entry shows: agent role identity (colored dot + name), content (text/markdown), timestamp.
 - **Agent identity:** 8px circle dot in the agent's `--agent-{role}` color + role name in `--text-sm`.
@@ -307,10 +307,10 @@ Mission Control uses a **task-centric architecture** — the sidebar shows task 
 │ ✓ task-b │                                       │
 │ ✗ task-c │  B) Task Detail (route: /task/[id])    │
 │──────────│     ┌─ Header: label, status, cost ─┐ │
-│ YESTERDAY│     │ [Overview][DAG][Logs][Board][$$]│ │
+│ YESTERDAY│     │ [Overview][Board][Graph][Logs] │ │
 │ ✓ task-d │     ├─────────────────────────────────┤ │
 │──────────│     │  Tab content fills this area    │ │
-│ ─System─ │     │  (DAG, Logs, Blackboard, Cost)  │ │
+│ ─System─ │     │  (Board, Graph, Logs, Artifacts)│ │
 │ 📡 Infra │     └─────────────────────────────────┘ │
 │ ✨ Skills│                                       │
 │──────────│                                       │
@@ -342,16 +342,16 @@ Replaced from feature-navigation to **task-history sidebar**.
 
 The main area renders Next.js App Router pages based on the URL:
 
-| Route | Content |
-|:---|:---|
-| `/` | Landing page — conversational task input with auto-resize textarea, inline send button, and recent task history cards |
-| `/task/[taskId]` | Task overview — result display, sub-task progress, live phase indicator |
-| `/task/[taskId]/dag` | DAG visualization — React Flow canvas showing task decomposition graph |
-| `/task/[taskId]/logs` | Log terminals — 3-column (or tabbed on mobile) xterm.js terminals filtered by agent role |
-| `/task/[taskId]/blackboard` | Debate history — chronological list of agent debate entries with typing indicators |
-| `/task/[taskId]/cost` | Cost breakdown — per-phase and per-model cost tables with MetricCard heroes |
-| `/infra` | Infrastructure telemetry — Beszel Hub metrics for all nodes |
-| `/skills` | Skills explorer — per-agent skill lists with view/delete actions |
+| Route | Tab Label | Content |
+|:---|:---|:---|
+| `/` | — | Landing page — conversational task input with auto-resize textarea, inline send button, and recent task history cards |
+| `/task/[taskId]` | Overview | Task overview — result display (rendered markdown), sub-task progress, convergence strip, and live phase indicator |
+| `/task/[taskId]/mission` | Blackboard | Mission cockpit — 4-panel live layout with blackboard board (timeline/threads/graph views), agent minds, budget gauge, convergence meter, and HITL controls |
+| `/task/[taskId]/dag` | Graph | Execution graph — React Flow canvas with swimlane visualization of agent turns grouped by round |
+| `/task/[taskId]/logs` | Logs | Distributed log stream — unified chronological log across all agents with per-role filtering and structured detail drawer |
+| `/task/[taskId]/artifacts` | Artifacts | Artifact browser — file tree + downloads for agent-produced output files |
+| `/infra` | — | Infrastructure telemetry — Beszel Hub metrics for all nodes |
+| `/skills` | — | Skills explorer — per-agent skill lists with view/delete actions |
 
 All `/task/[taskId]/*` pages share a **task detail layout** (`task/[taskId]/layout.tsx`) that renders the task header + tab navigation and hosts the `TaskStreamContext.Provider` for SSE data distribution. Tab switches are instantaneous DOM swaps — the SSE connection persists in the layout.
 
@@ -456,11 +456,12 @@ src/
 │   ├── task/
 │   │   └── [taskId]/
 │   │       ├── layout.tsx            # Task detail layout: header + tabs + TaskStreamContext.Provider
+│   │       ├── TaskStreamContext.tsx  # Distributes SSE data from useTaskStream to tab pages
 │   │       ├── page.tsx              # Overview tab (default)
-│   │       ├── dag/page.tsx          # DAG visualization
-│   │       ├── logs/page.tsx         # Log terminals (3 columns)
-│   │       ├── blackboard/page.tsx   # Debate history
-│   │       └── cost/page.tsx         # Cost breakdown
+│   │       ├── mission/page.tsx      # Blackboard — 4-panel live cockpit
+│   │       ├── dag/page.tsx          # Graph — execution graph (React Flow)
+│   │       ├── logs/page.tsx         # Logs — distributed log stream
+│   │       └── artifacts/page.tsx    # Artifacts — file tree + downloads
 │   ├── infra/page.tsx                # Infrastructure telemetry
 │   └── skills/page.tsx               # Skills explorer
 ├── components/
@@ -469,17 +470,40 @@ src/
 │   │   ├── StatusBadge.tsx
 │   │   ├── MetricCard.tsx
 │   │   ├── TerminalPane.tsx
+│   │   ├── TaskSidebar.tsx           # Task history sidebar + system nav
 │   │   ├── ActionButton.tsx
 │   │   ├── Skeleton.tsx
 │   │   ├── EmptyState.tsx
+│   │   ├── InfoTooltip.tsx
+│   │   ├── RichContent.tsx
 │   │   └── Toast.tsx
-│   ├── TopBar.tsx                    # "use client" — daemon status, cost ticker
-│   ├── TaskSidebar.tsx               # "use client" — task history, system nav
-│   ├── DAGVisualizer.tsx             # Feature: React Flow canvas
-│   ├── LogTerminal.tsx               # Feature: xterm.js + TerminalPane
-│   └── DebateList.tsx                # Feature: debate entries + typing indicator
+│   ├── layout/
+│   │   └── TopBar.tsx                # "use client" — daemon status, cost ticker
+│   └── features/                     # Feature components composed from ui/ primitives
+│       ├── TurnGraph.tsx             # Execution graph — React Flow swimlane canvas
+│       ├── DistributedLogStream.tsx  # Log stream — TanStack Virtual with detail drawer
+│       ├── BlackboardBoard.tsx       # Board — timeline/threads/graph views
+│       ├── BlackboardGraph.tsx       # Board graph — visual entry relationships
+│       ├── BudgetGauge.tsx           # Cost tracking gauge
+│       ├── ConsensusMeter.tsx        # Convergence progress meter
+│       ├── ConvergenceStrip.tsx      # Round-by-round convergence indicator
+│       ├── AgentTrace.tsx            # Agent trace inspector
+│       ├── AgentMindCard.tsx         # Agent model/contribution card
+│       ├── ArtifactBrowser.tsx       # Artifact file tree + downloads
+│       ├── AttachmentRail.tsx        # File attachment display
+│       ├── SkillsExplorer.tsx        # Per-agent skill lists
+│       ├── Telemetry.tsx             # Hardware telemetry gauges
+│       ├── VariantSelect.tsx         # Coordination variant selector
+│       ├── TurnInspector.tsx         # Turn detail drawer
+│       ├── WorkerLane.tsx            # Per-worker execution lane
+│       ├── GlobalFirehose.tsx        # Cross-task log stream
+│       ├── ReplayScrubber.tsx        # Temporal replay controls
+│       ├── ToolCallCard.tsx          # Tool call detail card
+│       └── board/
+│           ├── BoardEntryCard.tsx    # Individual board entry card
+│           ├── BoardEntryDetail.tsx  # Expanded entry view
+│           └── DebateThread.tsx      # Threaded debate entries
 ├── contexts/
-│   ├── TaskStreamContext.tsx          # Distributes SSE data from useTaskStream to tab pages
 │   └── PendingTaskContext.tsx         # Optimistic UI: ephemeral submitted-text context
 ├── hooks/
 │   ├── useTaskStream.ts              # SSE hook for /api/stream/task/[taskId] (logs, phase, debate, etc.)
@@ -493,7 +517,7 @@ src/
 > Feature components (DAG, Logs, Debate, etc.) must **not** directly use raw CSS for layout, backgrounds, or spacing. They compose from the `ui/` primitives, which themselves use the token system. This creates one layer of indirection that makes future redesigns possible without touching feature logic.
 
 > [!IMPORTANT] SSE Data Flow
-> The `useTaskStream` hook is called **once** in `task/[taskId]/layout.tsx` and distributed via `TaskStreamContext.Provider`. Individual tab pages consume data via `useTaskData()` — they never create their own `EventSource` connections. This prevents the "tab switch tear" where SSE reconnects cause 200-500ms flickers.
+> The `useTaskStream` hook is called **once** in `task/[taskId]/layout.tsx` and distributed via `TaskStreamContext.Provider` (co-located at `task/[taskId]/TaskStreamContext.tsx`). Individual tab pages consume data via `useTaskData()` — they never create their own `EventSource` connections. This prevents the "tab switch tear" where SSE reconnects cause 200-500ms flickers.
 
 ---
 

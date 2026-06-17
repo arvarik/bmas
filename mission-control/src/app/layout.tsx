@@ -35,7 +35,7 @@ export async function generateMetadata(): Promise<Metadata> {
     keywords: [
       "bMAS",
       "Multi-Agent Swarm",
-      "Biomimetic AI",
+      "Blackboard AI",
       "Stigmergy",
       "Decentralized AI Swarm",
       "Autonomous Agents",
