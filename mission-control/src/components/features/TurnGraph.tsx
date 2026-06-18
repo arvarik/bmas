@@ -44,7 +44,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { authorColor } from "@/lib/design-tokens";
-import type { TurnRecord, CoordinatorNarration } from "@/hooks/useTaskStream";
+import type { TurnRecord, CoordinatorNarration, RosterEntry } from "@/hooks/useTaskStream";
 import {
   Activity,
   CheckCircle,
@@ -86,7 +86,9 @@ const ROLE_MEANING: Record<string, string> = {
   operator: "Human operator directive injected into the board.",
 };
 
-function roleMeaning(role: string): string {
+function roleMeaning(role: string, actorAbility?: string): string {
+  // For experts, prefer the AG-generated ability description over the generic fallback.
+  if (role === "expert" && actorAbility) return actorAbility;
   return ROLE_MEANING[role] ?? "Agent activated by the coordinator.";
 }
 
@@ -188,7 +190,8 @@ interface LaneData {
 }
 
 function LaneLabelNode({ data }: { data: LaneData }) {
-  const color = authorColor(data.role);
+  // Use full actor string for color so each expert gets a distinct hue.
+  const color = authorColor(data.actor);
   return (
     <div
       style={{
@@ -199,7 +202,7 @@ function LaneLabelNode({ data }: { data: LaneData }) {
         padding: "6px 8px",
         borderRight: `2px solid ${color}55`,
       }}
-      title={roleMeaning(data.role)}
+      title={data.actor}
     >
       <span
         style={{
@@ -462,7 +465,10 @@ function buildGraph(
   const rounds = [...new Set(vms.map((v) => v.round))].sort((a, b) => a - b);
   const roundIndex = new Map(rounds.map((r, i) => [r, i]));
 
-  // Lanes (rows) — order actors by first (round, startedAt) appearance
+  // Lanes (rows) — each UNIQUE actor gets its own lane.
+  // For experts (actor = "expert.foo_bar"), this means each expert slug
+  // appears as its own dedicated swim-lane rather than all collapsing
+  // into a single shared "expert" row.
   const firstSeen = new Map<string, number>();
   vms.forEach((v, i) => {
     if (!firstSeen.has(v.actor)) firstSeen.set(v.actor, i);
@@ -635,12 +641,19 @@ function DetailRow({ icon: Icon, label, value }: { icon: typeof Cpu; label: stri
   );
 }
 
-function DetailPanel({ selection, onClose }: { selection: Selection; onClose: () => void }) {
+function DetailPanel({ selection, roster, onClose }: { selection: Selection; roster: RosterEntry[]; onClose: () => void }) {
+  // Look up ability for expert actors from the AG-generated roster.
+  // Hook must be called before any conditional returns (React hooks rules).
+  const actorAbility: string | undefined = useMemo(() => {
+    if (!selection || selection.kind !== "turn" || selection.data.role !== "expert") return undefined;
+    return roster.find((r) => r.actor === selection.data.actor)?.ability;
+  }, [selection, roster]);
+
   if (!selection) return null;
 
   const headerColor =
     selection.kind === "turn"
-      ? authorColor(selection.data.role)
+      ? authorColor(selection.data.actor)
       : "hsl(217, 91%, 60%)";
 
   return (
@@ -706,7 +719,7 @@ function DetailPanel({ selection, onClose }: { selection: Selection; onClose: ()
               <span style={{ textTransform: "capitalize" }}>{selection.data.role.replace(/_/g, " ")}</span>
             } />
             <p style={{ fontSize: 11.5, color: "var(--text-secondary)", lineHeight: 1.45, margin: 0 }}>
-              {roleMeaning(selection.data.role)}
+              {roleMeaning(selection.data.role, actorAbility)}
             </p>
             <DetailRow icon={Activity} label="Status" value={
               <span style={{ textTransform: "capitalize" }}>{selection.data.status}</span>
@@ -864,9 +877,11 @@ interface TurnGraphProps {
   completedTurns: TurnRecord[];
   isLive: boolean;
   narrations?: CoordinatorNarration[];
+  /** AG-generated expert roster for the detail panel ability descriptions. */
+  roster?: RosterEntry[];
 }
 
-export function TurnGraph({ activeTurns, completedTurns, isLive, narrations = [] }: TurnGraphProps) {
+export function TurnGraph({ activeTurns, completedTurns, isLive, narrations = [], roster = [] }: TurnGraphProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const allTurns = useMemo(() => {
@@ -938,8 +953,9 @@ export function TurnGraph({ activeTurns, completedTurns, isLive, narrations = []
         <MiniMap
           nodeColor={(n) => {
             if (n.type === "coordinator") return "hsl(217,91%,60%)";
-            const d = n.data as { role?: string };
-            return authorColor(d.role ?? "unknown");
+            // Use full actor string for color so each expert has a distinct hue.
+            const d = n.data as { actor?: string; role?: string };
+            return authorColor(d.actor ?? d.role ?? "unknown");
           }}
           maskColor="hsl(222 47% 6% / 0.85)"
           style={{ background: "hsl(222 36% 10%)" }}
@@ -948,7 +964,7 @@ export function TurnGraph({ activeTurns, completedTurns, isLive, narrations = []
         />
       </ReactFlow>
       <Legend />
-      <DetailPanel selection={selection} onClose={() => setSelectedId(null)} />
+      <DetailPanel selection={selection} roster={roster} onClose={() => setSelectedId(null)} />
     </div>
   );
 }

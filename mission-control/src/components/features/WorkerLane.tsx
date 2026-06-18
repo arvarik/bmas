@@ -125,7 +125,11 @@ export function WorkerLane({
                   whiteSpace: "nowrap",
                 }}
               >
-                {actor.replace(/_/g, " ")}
+                {/** Strip "expert." / "worker." prefix and titlecase the slug. */}
+                {(actor.includes(".")
+                  ? actor.split(".").slice(1).join(".")
+                  : actor
+                ).replace(/_/g, " ")}
               </span>
               {isActive && trace && (
                 <span

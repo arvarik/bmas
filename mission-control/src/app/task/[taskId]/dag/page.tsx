@@ -33,7 +33,7 @@ const TurnGraph = dynamic(
 );
 
 export default function DAGPage() {
-  const { activeTurns, completedTurns, isLive, coordinatorNarrations } = useTaskData();
+  const { activeTurns, completedTurns, isLive, coordinatorNarrations, roster } = useTaskData();
 
   const totalTurns = activeTurns.length + completedTurns.length;
   const rounds = new Set(
@@ -61,6 +61,7 @@ export default function DAGPage() {
               completedTurns={completedTurns}
               isLive={isLive}
               narrations={coordinatorNarrations}
+              roster={roster}
             />
           </Panel>
         </div>

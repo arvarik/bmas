@@ -121,6 +121,12 @@ export interface RejectedEntry {
   timestamp: string;
 }
 
+/** One entry in the AG-generated expert roster stored in board meta. */
+export interface RosterEntry {
+  actor: string;
+  ability: string;
+}
+
 export interface CostData {
   total_cost: number;
   total_tokens: number;
@@ -194,6 +200,8 @@ export interface TaskStreamData {
   isPaused: boolean;
   budgetState: BudgetState | null;
   coordinatorNarrations: CoordinatorNarration[];
+  /** AG-generated expert roster (actor slug → ability description). */
+  roster: RosterEntry[];
 }
 
 // ── Empty / initial state ─────────────────────────────────────────────
@@ -219,6 +227,7 @@ const INITIAL_STREAM_DATA: TaskStreamData = {
   isPaused: false,
   budgetState: null,
   coordinatorNarrations: [],
+  roster: [],
 };
 
 // Field mapping helpers are imported from @/lib/mappers.
@@ -369,6 +378,30 @@ export function useTaskStream(taskId: string): TaskStreamData {
         }
       }
 
+      // Extract roster from board meta if available
+      let hydratedRoster: RosterEntry[] = [];
+      if (boardRes?.ok) {
+        try {
+          // boardRes was already consumed above — re-parse from the same data
+          // We stored boardData earlier; re-fetch is the safest approach here.
+          const boardMeta = await fetch(`/api/tasks/${taskId}/board`, { cache: "no-store" })
+            .then((r) => r.ok ? r.json() : null)
+            .catch(() => null);
+          if (boardMeta?.meta?.roster) {
+            const raw: unknown[] = boardMeta.meta.roster;
+            hydratedRoster = raw
+              .filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null)
+              .map((r) => ({
+                actor: (r.actor ?? "") as string,
+                ability: (r.ability ?? "") as string,
+              }))
+              .filter((r) => r.actor);
+          }
+        } catch {
+          // Roster is non-critical
+        }
+      }
+
       setData((prev) => ({
         ...prev,
         taskMeta: task ? mapTaskMeta(task) : prev.taskMeta,
@@ -378,6 +411,7 @@ export function useTaskStream(taskId: string): TaskStreamData {
         cost: costData ?? prev.cost,
         boardEntries: hydratedBoard.length > 0 ? hydratedBoard : prev.boardEntries,
         completedTurns: hydratedTurns.length > 0 ? hydratedTurns : prev.completedTurns,
+        roster: hydratedRoster.length > 0 ? hydratedRoster : prev.roster,
         isLive: false,
       }));
     } catch {
@@ -457,9 +491,20 @@ export function useTaskStream(taskId: string): TaskStreamData {
     es.addEventListener("log", (ev: MessageEvent) => {
       try {
         const raw = JSON.parse(ev.data);
+        // Intercept the genesis log event which carries the roster
+        let rosterUpdate: RosterEntry[] | undefined;
+        try {
+          const fields = typeof raw.fields === "string" ? JSON.parse(raw.fields) : (raw.fields ?? {});
+          if (fields?.event === "genesis" && Array.isArray(fields.roster)) {
+            rosterUpdate = (fields.roster as Record<string, unknown>[])
+              .filter((r) => typeof r.actor === "string" && r.actor)
+              .map((r) => ({ actor: r.actor as string, ability: (r.ability ?? "") as string }));
+          }
+        } catch { /* fields parsing is best-effort */ }
         setData((prev) => ({
           ...prev,
           logs: [...prev.logs, mapLog(raw, prev.logs.length)],
+          ...(rosterUpdate && rosterUpdate.length > 0 ? { roster: rosterUpdate } : {}),
         }));
       } catch {}
     });

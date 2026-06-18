@@ -260,6 +260,16 @@ function buildProcessStages(
     const parts: string[] = [`${turns.length} turn${turns.length === 1 ? "" : "s"}`];
     if (rounds.length === 1) parts.push(`round ${rounds[0]}`);
     else if (rounds.length > 1) parts.push(`rounds ${Math.min(...rounds)}\u2013${Math.max(...rounds)}`);
+    // For expert groups, also list the unique expert names (readable slug format)
+    if (role === "expert") {
+      const expertActors = [...new Set(turns.map((t) => t.actor).filter((a) => a.includes(".")))];
+      if (expertActors.length > 0) {
+        const names = expertActors.map((a) =>
+          a.split(".").slice(1).join(".").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+        );
+        parts.push(names.join(", "));
+      }
+    }
     stages.push({
       key: `role-${role}`,
       label: stageLabelForRole(role),
