@@ -33,6 +33,7 @@ import {
   FileCode2,
   Megaphone,
   StickyNote,
+  Archive,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -72,6 +73,7 @@ export const TYPE_META: Record<string, EntryTypeMeta> = {
   attachment: { label: "Attachment", icon: Paperclip, color: "hsl(220, 12%, 55%)" },
   plan: { label: "Plan", icon: ListTree, color: "hsl(265, 60%, 66%)" },
   finding: { label: "Finding", icon: Lightbulb, color: "hsl(175, 60%, 48%)" },
+  condensed_finding: { label: "Condensed", icon: Archive, color: "hsl(190, 20%, 50%)" },
   critique: { label: "Critique", icon: AlertTriangle, color: "hsl(350, 72%, 62%)", debate: true },
   rebuttal: { label: "Rebuttal", icon: MessageSquareReply, color: "hsl(199, 80%, 58%)", debate: true },
   conflict: { label: "Conflict", icon: GitMerge, color: "hsl(32, 88%, 58%)", debate: true },
@@ -90,6 +92,7 @@ export const TYPE_ORDER: string[] = [
   "directive",
   "plan",
   "finding",
+  "condensed_finding",
   "critique",
   "rebuttal",
   "conflict",

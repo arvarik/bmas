@@ -398,6 +398,10 @@ TRADITIONAL_CONFIG: dict[str, object] = {
     "max_concurrent_activations": _trad_int("max_concurrent_activations", 3),
     "experts_per_tier": {k: int(v) for k, v in _experts_raw.items()},
     "cleaner_entry_threshold": _trad_int("cleaner_entry_threshold", 12),
+    "cleaner_token_threshold": _trad_int("cleaner_token_threshold", 8000),
+    "cleaner_retention_weights": _trad.get("cleaner_retention_weights", {
+        "salience": 2.0, "confidence": 1.0, "recency": 0.1, "size_penalty": 0.01
+    }),
     "stall_rounds": _trad_int("stall_rounds", 2),
     "cu_mode": _trad_cu_mode,
     "coordinator_narration": bool(_trad.get("coordinator_narration", False)),

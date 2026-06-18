@@ -143,6 +143,11 @@ class TraditionalVariant:
             "experts_per_tier", {"simple": 0, "light": 1, "medium": 2, "complex": 3}
         )
         self.cleaner_threshold: int = int(config.get("cleaner_entry_threshold", 12))
+        self.cleaner_token_threshold: int = int(config.get("cleaner_token_threshold", 8000))
+        self.cleaner_retention_weights: dict[str, float] = config.get(
+            "cleaner_retention_weights", 
+            {"salience": 2.0, "confidence": 1.0, "recency": 0.1, "size_penalty": 0.01}
+        )
         self.stall_rounds: int = int(config.get("stall_rounds", 2))
         self.cu_mode: str = str(config.get("cu_mode", "llm"))
         self.coordinator_narration: bool = bool(config.get("coordinator_narration", False))
@@ -403,25 +408,33 @@ class TraditionalVariant:
                 )
             # Not yet at threshold — continue but note the stall
 
-        # ── 2. CU selection (one bare LiteLLM call, doc 05 §1.1) ─────
-
-        rationale: str | None = None
-        source: str = "heuristic"
-
-        if self.cu_mode == "heuristic_first":
-            selected = self._deterministic_fallback(snapshot, current_round)
-        else:
-            selected, rationale = await self._cu_select(
-                task_id, task["query"], snapshot, current_round, meta,
-            )
-            source = "llm" if selected else "heuristic"
-
-        if not selected:
-            # No agents selected — treat as stall
-            self._stall_counter += 1
-            selected = self._deterministic_fallback(snapshot, current_round)
+        # ── 1.5 Board Pressure Guard (Deterministic Cleaner) ─────────
+        open_entries = [e for e in snapshot.values() if e.status == "open"]
+        total_tokens = sum(len(e.body) // 4 for e in open_entries)
+        
+        if total_tokens > self.cleaner_token_threshold:
+            selected = ["cleaner"]
+            rationale = f"Board exceeded token threshold ({total_tokens} > {self.cleaner_token_threshold}) — forced cleaner invocation."
             source = "heuristic"
+        else:
+            # ── 2. CU selection (one bare LiteLLM call, doc 05 §1.1) ─────
             rationale = None
+            source = "heuristic"
+    
+            if self.cu_mode == "heuristic_first":
+                selected = self._deterministic_fallback(snapshot, current_round)
+            else:
+                selected, rationale = await self._cu_select(
+                    task_id, task["query"], snapshot, current_round, meta,
+                )
+                source = "llm" if selected else "heuristic"
+    
+            if not selected:
+                # No agents selected — treat as stall
+                self._stall_counter += 1
+                selected = self._deterministic_fallback(snapshot, current_round)
+                source = "heuristic"
+                rationale = None
 
         # Clamp to max_concurrent
         selected = selected[:self.max_concurrent]
@@ -558,7 +571,13 @@ class TraditionalVariant:
             role_prompt = ROLE_PERSONAS.get(actor, "")
 
         # Serialize board for prompt
-        board_data = self._serialize_board(board)
+        if actor == "cleaner":
+            eviction_candidates = self._get_eviction_candidates(board)
+            objective_entry = next((e for e in board.values() if getattr(e, "type", None) == "objective"), None)
+            subset = [e for e in [objective_entry] + eviction_candidates if e]
+            board_data = {"mode": "condense", "entries": [entry_to_dict(e) for e in subset]}
+        else:
+            board_data = self._serialize_board(board)
 
         return {
             "task_id": task_id,
@@ -584,30 +603,18 @@ class TraditionalVariant:
         raw: Any,
         known_ids: set[str] | None = None,
     ) -> list[dict]:
-        """Parse agent response into proposed board entries.
-
-        Delegates to ``core.response_parser.parse_entries`` which handles:
-        - entries_v1 JSON arrays and single entry objects
-        - Bundled entries (planner/critic posting multiple ideas in one body)
-        - Refs embedded in prose (``**Refs**: [e-3, e-4]``) rather than the
-          structured ``refs`` JSON field
-        - Wrong entry types (finding → rebuttal promotion)
-        - Decider wrapping output in a JSON code fence
-        - Flat confidence defaults with hedging heuristic
-        - Cleaner (action:clean) and decline (action:decline) pass-throughs
-
-        ``known_ids`` is the set of entry IDs currently on the board.  Pass it
-        to enable ref validation (only IDs that exist on the board are kept).
-        Pass None to accept any ``e-N`` pattern without validation (e.g. tests).
-        """
+        """Parse agent response into proposed board entries."""
+        results = []
         # Cleaner / decline short-circuit (preserve existing contract)
         if isinstance(raw, dict):
-            if raw.get("action") == "clean":
-                return [{"_action": "clean", "removals": raw.get("removals", [])}]
+            if raw.get("action") in ("clean", "condense"):
+                results.append({"_action": "clean", "removals": raw.get("removals", [])})
             if raw.get("action") == "decline":
                 return []
 
-        return parse_entries(raw, actor, known_ids=known_ids)
+        parsed = parse_entries(raw, actor, known_ids=known_ids)
+        results.extend(parsed)
+        return results
 
     # ── Apply ────────────────────────────────────────────────────────
 
@@ -781,6 +788,58 @@ class TraditionalVariant:
                 f"authors ({names}) to rebut or revise."
             )
         return f"Heuristic routing for round {current_round}: activated {names}."
+
+    def _get_eviction_candidates(self, snapshot: dict[str, BoardEntry] | dict[str, Any], max_candidates: int = 5) -> list[BoardEntry]:
+        """Calculate Retention Value and return the bottom N eviction candidates."""
+        open_entries = []
+        for e in snapshot.values():
+            status = getattr(e, "status", e.get("status", "")) if isinstance(e, dict) else getattr(e, "status", "")
+            if status == "open":
+                open_entries.append(e)
+                
+        protected_ids = set()
+        
+        # 1. Protect critical entries
+        for e in open_entries:
+            etype = getattr(e, "type", e.get("type", "")) if isinstance(e, dict) else getattr(e, "type", "")
+            if etype in ("objective", "directive", "plan", "critique", "conflict", "solution"):
+                eid = getattr(e, "id", e.get("id")) if isinstance(e, dict) else getattr(e, "id", None)
+                protected_ids.add(eid)
+                refs = getattr(e, "refs", e.get("refs", [])) if isinstance(e, dict) else getattr(e, "refs", [])
+                if refs:
+                    for ref in refs:
+                        protected_ids.add(ref)
+                    
+        candidates = []
+        for e in open_entries:
+            eid = getattr(e, "id", e.get("id")) if isinstance(e, dict) else getattr(e, "id", None)
+            if eid in protected_ids:
+                continue
+                
+            w_sal = self.cleaner_retention_weights.get("salience", 2.0)
+            w_conf = self.cleaner_retention_weights.get("confidence", 1.0)
+            w_rec = self.cleaner_retention_weights.get("recency", 0.1)
+            w_size = self.cleaner_retention_weights.get("size_penalty", 0.01)
+            
+            body = getattr(e, "body", e.get("body", "")) if isinstance(e, dict) else getattr(e, "body", "")
+            salience = getattr(e, "salience", e.get("salience", 0.0)) if isinstance(e, dict) else getattr(e, "salience", 0.0)
+            confidence = getattr(e, "confidence", e.get("confidence", 0.5)) if isinstance(e, dict) else getattr(e, "confidence", 0.5)
+            round_no = getattr(e, "round", e.get("round", 0)) if isinstance(e, dict) else getattr(e, "round", 0)
+            
+            body_str = str(body) if body is not None else ""
+            sal_val = float(salience) if salience is not None else 0.0
+            conf_val = float(confidence) if confidence is not None else 0.5
+            round_val = int(round_no) if round_no is not None else 0
+            
+            # RV = (Salience * W_sal) + (Confidence * W_conf) + (Round * W_rec) - (Tokens * W_size)
+            tokens = len(body_str) // 4
+            rv = (sal_val * w_sal) + (conf_val * w_conf) + (round_val * w_rec) - (tokens * w_size)
+            
+            candidates.append((rv, e))
+            
+        # Sort by RV ascending
+        candidates.sort(key=lambda x: x[0])
+        return [c[1] for c in candidates[:max_candidates]]
 
     def _deterministic_fallback(
         self,

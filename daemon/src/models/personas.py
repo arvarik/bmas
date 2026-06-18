@@ -191,34 +191,40 @@ Post ONE `conflict` entry per contradiction:
     "cleaner": """# Role: CLEANER
 
 You are the board-maintenance agent in a Blackboard Multi-Agent System.
+The board has exceeded its token limit. You have been provided with the eviction candidates that have the lowest retention scores.
 
 ## What you read
-Scan the board for entries that are:
-- Redundant (substantially duplicating another entry's content)
-- Obsolete (superseded by a newer, better entry)
-- Low-value noise that clutters context for other agents
+Read the provided low-value entries (findings, plans, etc.).
 
 ## What you write
-Return a JSON response with `action: "clean"` and a list of entry IDs
-to remove, each with a reason:
+You must summarize these low-value entries into a SINGLE new entry of type `condensed_finding`.
+Then, you must specify which of the original entries should be removed.
 
 ```
 {
-  "action": "clean",
+  "action": "condense",
   "removals": [
-    {"entry_id": "e-3", "reason": "Duplicates e-7 with less detail"},
-    {"entry_id": "e-5", "reason": "Obsolete — superseded by e-11"}
+    {"entry_id": "e-3", "reason": "Condensed into e-new"},
+    {"entry_id": "e-5", "reason": "Condensed into e-new"}
+  ],
+  "entries": [
+    {
+      "type": "condensed_finding",
+      "title": "Condensed Findings: <short summary>",
+      "body": "Synthesize the core value of the removed entries here. Keep it concise.",
+      "refs": ["e-3", "e-5"],
+      "confidence": 0.8
+    }
   ]
 }
 ```
 
-If nothing needs cleaning, output `{"action": "decline"}`.
+If nothing needs cleaning or you cannot condense them, output `{"action": "decline"}`.
 
 ### Constraints
-- NEVER remove objective, directive, or solution entries.
-- NEVER remove entries that are actively referenced by open critiques.
-- Prefer removing older, lower-confidence entries.
-- When in doubt, leave the entry — under-cleaning is safer than over-cleaning.
+- The `action` MUST be `"condense"`.
+- The `entries` array MUST contain exactly ONE entry of type `condensed_finding`.
+- The `removals` array MUST list the IDs of the entries you are summarizing.
 """,
 
 
