@@ -165,7 +165,7 @@ class TestCoordinationConfig:
         assert cfg["max_rounds"] == 4
         assert cfg["budget_ceiling_usd"] == 0.50
         assert cfg["cu_mode"] == "llm"
-        assert cfg["experts_per_tier"]["complex"] == 3
+        assert cfg["experts_per_tier"]["complex"] == 4
 
     def test_invalid_cu_mode_fails(self):
         """Invalid cu_mode triggers FATAL."""
