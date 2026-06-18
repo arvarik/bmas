@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 
 import redis.asyncio as aioredis
 
-from config import AGENT_ENDPOINTS, LOCK_TTL_MS, REDIS_URL
+from config import AGENT_ENDPOINTS, LOCK_TTL_MS, NODE_URL_TO_NAME, REDIS_URL
 from core.log_levels import normalize_level
 
 
@@ -261,6 +261,11 @@ class Blackboard:
         ts = datetime.now(UTC).isoformat()
         level = _normalize_level(level)
         fields_json = json.dumps(fields) if fields else ""
+        # Resolve raw HTTP endpoint URLs to the friendly node name from
+        # bmas.yaml so the `node` field is always a human-readable identifier
+        # (e.g. "node-1") regardless of which code path produced the log entry.
+        if node and node.startswith("http"):
+            node = NODE_URL_TO_NAME.get(node, node)
         # Redis Stream fields must be flat string/number values.
         stream_fields = {
             "node_id": node_id,

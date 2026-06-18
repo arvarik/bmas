@@ -159,6 +159,10 @@ _nodes = _cfg.get("nodes", [])
 AGENT_ENDPOINTS: dict[str, str] = {}
 # Role-to-node mapping (for UI colors, inference, etc.)
 NODES_BY_ROLE: dict[str, dict] = {}
+# Reverse map: HTTP endpoint URL → friendly node name from bmas.yaml
+# Used to normalise the `node` field in log streams so logs always show a
+# stable human-readable name (e.g. "node-1") rather than a raw URL.
+NODE_URL_TO_NAME: dict[str, str] = {}
 # Default role colors
 _DEFAULT_COLORS = {
     "planner": "#a78bfa",
@@ -181,11 +185,16 @@ for node in _nodes:
             f"Invalid port for node '{role}': {node.get('port')}",
             "Port must be an integer (e.g. 8000).",
         )
-    AGENT_ENDPOINTS[role] = f"http://{host}:{port}"
+    url = f"http://{host}:{port}"
+    AGENT_ENDPOINTS[role] = url
+    # Map the URL to whatever 'name' is set in bmas.yaml (falls back to role)
+    node_name = str(node.get("name", role))
+    NODE_URL_TO_NAME[url] = node_name
     node.setdefault("color", _DEFAULT_COLORS.get(role, "#94a3b8"))
     NODES_BY_ROLE[role] = node
     has_inference = "+ inference" if node.get("inference") else ""
     _ok(f"Node '{role}' → {host}:{port} {has_inference}")
+
 
 if not AGENT_ENDPOINTS:
     _warn("No agent nodes configured in bmas.yaml. The daemon cannot dispatch tasks.")
@@ -363,7 +372,7 @@ if _trad_sole_sim not in _VALID_SOLE_SIMILARITY:
     )
 
 # Validate experts_per_tier shape
-_experts_raw = _trad.get("experts_per_tier", {"simple": 0, "light": 1, "medium": 2, "complex": 3})
+_experts_raw = _trad.get("experts_per_tier", {"simple": 0, "light": 1, "medium": 2, "complex": 4})
 if not isinstance(_experts_raw, dict):
     _fatal(
         "coordination.traditional.experts_per_tier must be a mapping",

@@ -29,7 +29,8 @@ from typing import Any
 import httpx
 
 from core.capabilities import capabilities_for_role
-from core.entry import BoardEntry, entry_to_dict, envelope_fallback
+from core.entry import BoardEntry, entry_to_dict
+from core.response_parser import parse_entries
 from core.variants import register_variant
 
 logger = logging.getLogger("bmas.traditional")
@@ -294,8 +295,11 @@ class TraditionalVariant:
              "ability": "Identifies systemic factors and second-order effects"},
             {"name": "Evidence Reviewer", "slug": "evidence_reviewer",
              "ability": "Verifies claims against available evidence and data"},
+            {"name": "Root Cause Analyst", "slug": "root_cause_analyst",
+             "ability": "Traces failure chains to their underlying structural causes"},
         ]
         return defaults[:n]
+
 
     async def _attach_uploads(self, task_id: str, task: dict) -> None:
         """Create attachment entries for uploaded files (doc 17 §4)."""
@@ -534,51 +538,36 @@ class TraditionalVariant:
     # ── Parse Agent Response ─────────────────────────────────────────
 
     def parse_agent_response(
-        self, task: Any, actor: str, raw: Any,
+        self,
+        task: Any,
+        actor: str,
+        raw: Any,
+        known_ids: set[str] | None = None,
     ) -> list[dict]:
         """Parse agent response into proposed board entries.
 
-        Supports entries_v1 JSON and falls back to envelope_fallback
-        for free-text responses (doc 04 §3).
-        """
-        if isinstance(raw, dict):
-            # Check for structured entries
-            entries = raw.get("entries", [])
-            if entries and isinstance(entries, list):
-                return entries
+        Delegates to ``core.response_parser.parse_entries`` which handles:
+        - entries_v1 JSON arrays and single entry objects
+        - Bundled entries (planner/critic posting multiple ideas in one body)
+        - Refs embedded in prose (``**Refs**: [e-3, e-4]``) rather than the
+          structured ``refs`` JSON field
+        - Wrong entry types (finding → rebuttal promotion)
+        - Decider wrapping output in a JSON code fence
+        - Flat confidence defaults with hedging heuristic
+        - Cleaner (action:clean) and decline (action:decline) pass-throughs
 
-            # Check for cleaner action
+        ``known_ids`` is the set of entry IDs currently on the board.  Pass it
+        to enable ref validation (only IDs that exist on the board are kept).
+        Pass None to accept any ``e-N`` pattern without validation (e.g. tests).
+        """
+        # Cleaner / decline short-circuit (preserve existing contract)
+        if isinstance(raw, dict):
             if raw.get("action") == "clean":
                 return [{"_action": "clean", "removals": raw.get("removals", [])}]
-
-            # Check for decline
             if raw.get("action") == "decline":
                 return []
 
-            # Free-text in result field
-            result_text = raw.get("result", "")
-            if result_text:
-                proposed = envelope_fallback(result_text, actor)
-                return [{
-                    "type": proposed.type,
-                    "title": proposed.title,
-                    "body": proposed.body,
-                    "refs": proposed.refs,
-                    "confidence": proposed.confidence,
-                }]
-
-        # String response
-        if isinstance(raw, str) and raw.strip():
-            proposed = envelope_fallback(raw, actor)
-            return [{
-                "type": proposed.type,
-                "title": proposed.title,
-                "body": proposed.body,
-                "refs": proposed.refs,
-                "confidence": proposed.confidence,
-            }]
-
-        return []
+        return parse_entries(raw, actor, known_ids=known_ids)
 
     # ── Apply ────────────────────────────────────────────────────────
 
@@ -1275,19 +1264,43 @@ class TraditionalVariant:
     def _infer_phase(
         self, snapshot: dict[str, BoardEntry], current_round: int,
     ) -> str:
-        """Infer the board phase from entry composition."""
+        """Infer the board phase from entry composition.
+
+        Phases:
+          Discovery   — round 1, board has only objective / plan entries.
+          Debate      — at least one open critique has NOT yet been addressed
+                        (no other open entry references it).
+          Convergence — a solution exists, OR all open critiques have been
+                        addressed by at least one referencing entry (rebuttal,
+                        finding, or otherwise) — board is ready for the decider.
+        """
         open_entries = [e for e in snapshot.values() if e.status == "open"]
 
-        has_critiques = any(e.type == "critique" for e in open_entries)
         has_solutions = any(e.type == "solution" for e in open_entries)
-
         if has_solutions:
             return "Convergence"
-        if has_critiques:
-            return "Debate"
+
+        critiques = [e for e in open_entries if e.type == "critique"]
+
+        if critiques:
+            # Collect all entry IDs that other open entries reference.
+            # A critique is "addressed" when at least one non-critique open
+            # entry (e.g. rebuttal, finding) lists that critique's id in refs.
+            addressed_ids: set[str] = set()
+            for e in open_entries:
+                if e.type != "critique":
+                    addressed_ids.update(e.refs)
+
+            unaddressed = [c for c in critiques if c.id not in addressed_ids]
+            if unaddressed:
+                return "Debate"
+            # All critiques have been responded to — board is converging.
+            return "Convergence"
+
         if current_round <= 1:
             return "Discovery"
         return "Debate"
+
 
     # ── Board Serialization ──────────────────────────────────────────
 

@@ -689,8 +689,11 @@ class Orchestrator:
             },
         )
 
-        # Parse response into board entries
-        entries = variant.parse_agent_response(task, activation.actor, response)
+        # Parse response into board entries.
+        # Pass known_ids so the parser can validate ref mentions against the
+        # actual board state (only IDs that exist are promoted from prose refs).
+        known_ids = set(board.keys()) if isinstance(board, dict) else None
+        entries = variant.parse_agent_response(task, activation.actor, response, known_ids=known_ids)
 
         # Apply through gateway (if agent contributed anything)
         if entries:
