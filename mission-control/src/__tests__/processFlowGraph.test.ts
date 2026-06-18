@@ -15,14 +15,12 @@ function makeTurn(overrides: Partial<TurnRecord> & { actor: string; round_no: nu
   return {
     turn_id: `turn-${Math.random().toString(36).slice(2)}`,
     task_id: "task-test",
-    round_no: overrides.round_no,
-    role: overrides.role ?? (overrides.actor.includes(".") ? "expert" : overrides.actor),
-    actor: overrides.actor,
-    status: overrides.status ?? "completed",
+    role: overrides.actor.includes(".") ? "expert" : overrides.actor,
     node: "http://node-1:8000",
     model: "gemini-pro",
-    started_at: new Date(Date.now() + overrides.round_no * 10000).toISOString(),
-    ended_at: new Date(Date.now() + overrides.round_no * 10000 + 5000).toISOString(),
+    started_at: new Date(Date.now() + (overrides.round_no ?? 0) * 10000).toISOString(),
+    ended_at: new Date(Date.now() + (overrides.round_no ?? 0) * 10000 + 5000).toISOString(),
+    status: "completed",
     ...overrides,
   } as TurnRecord;
 }
@@ -102,7 +100,7 @@ describe("buildFlowGraph", () => {
       makeTurn({ actor: "planner", round_no: 1, phase: "discovery" }),
     ];
     const narrations: CoordinatorNarration[] = [
-      { round: 1, rationale: "Start the analysis.", model: "gemini-pro" },
+      { round: 1, rationale: "Start the analysis.", selected: ["planner"], source: "control_unit", timestamp: "2024-01-01T10:00:00Z" },
     ];
     const { nodes } = buildFlowGraph(turns, narrations);
     expect(nodes[0].rationale).toBe("Start the analysis.");
