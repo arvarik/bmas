@@ -11,8 +11,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ src/
 COPY tests/ tests/
 
-# Source package is the Python path
-ENV PYTHONPATH=/app/src
+# Source package is the Python path; suppress .pyc generation so stale
+# cache files never shadow updated source when using volume mounts.
+ENV PYTHONPATH=/app/src \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
 EXPOSE 9000
 
