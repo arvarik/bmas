@@ -13,13 +13,13 @@
  */
 
 import React, {
-  useMemo, useState, useRef, useEffect, useCallback, forwardRef,
+  useMemo, useState, useRef, useEffect, useCallback, forwardRef, useId,
 } from "react";
 import { authorColor } from "@/lib/design-tokens";
 import type { TurnRecord, CoordinatorNarration } from "@/hooks/useTaskStream";
 import {
   Check, Activity, XCircle, Clock, Info,
-  Cpu, RotateCcw,
+  Cpu, RotateCcw, Timer,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -28,10 +28,11 @@ interface RoundNode {
   round: number;
   phase: string;
   actors: string[];
-  status: "completed" | "running" | "failed" | "pending";
+  status: "completed" | "running" | "active" | "failed" | "pending";
   turnCount: number;
   rationale?: string;
   durationMs?: number;
+  startedAt?: string;  // ISO timestamp — used for live elapsed timer
 }
 
 interface GraphEdge {
@@ -61,6 +62,9 @@ const PHASE_COLORS: Record<string, string> = {
   resolution:  "hsl(142, 71%, 48%)",
   cleanup:     "hsl(220, 12%, 55%)",
   triage:      "hsl(38, 92%, 56%)",
+  // Live fallbacks — active turns may arrive without a final phase
+  active:      "hsl(217, 60%, 55%)",
+  unknown:     "hsl(220, 15%, 50%)",
 };
 
 function phaseColor(phase: string): string {
@@ -149,8 +153,9 @@ export function buildFlowGraph(
 
     return {
       round: r, phase, actors,
-      status: anyFailed ? "failed" : anyActive ? "running" : "completed",
+      status: anyFailed ? "failed" : anyActive ? "active" : "completed",
       turnCount: rTurns.length, rationale, durationMs,
+      startedAt: starts.length ? new Date(Math.min(...starts)).toISOString() : undefined,
     };
   });
 
@@ -182,15 +187,18 @@ export function buildFlowGraph(
 // ── SVG edge canvas ────────────────────────────────────────────────────────────
 
 function EdgeCanvas({
-  edges, pos, svgW, svgH,
+  edges, pos, svgW, svgH, markerId,
 }: {
   edges: GraphEdge[];
   pos: Map<number, NodePos>;
   svgW: number;
   svgH: number;
+  markerId: string;
 }) {
   if (pos.size === 0 || svgW === 0) return null;
 
+  const fwdId = `${markerId}-fwd`;
+  const cycId = `${markerId}-cyc`;
   const paths: React.ReactNode[] = [];
 
   for (const edge of edges) {
@@ -207,7 +215,7 @@ function EdgeCanvas({
         <path key={`f${edge.from}-${edge.to}`}
           d={`M${x1},${y1} C${cx1},${y1} ${cx2},${y2} ${x2},${y2}`}
           fill="none" stroke="hsl(217,20%,32%)" strokeWidth={1.5}
-          markerEnd="url(#arr-fwd)"
+          markerEnd={`url(#${fwdId})`}
         />,
       );
     } else {
@@ -220,7 +228,7 @@ function EdgeCanvas({
           <path
             d={`M${x1},${y1} Q${midX},${arcY} ${x2},${y2}`}
             fill="none" stroke="hsl(265,55%,62%)" strokeWidth={1.5}
-            strokeDasharray="5 3" markerEnd="url(#arr-cyc)" opacity={0.75}
+            strokeDasharray="5 3" markerEnd={`url(#${cycId})`} opacity={0.75}
           />
           {edge.label && (
             <text x={midX} y={arcY + 12} textAnchor="middle"
@@ -238,10 +246,10 @@ function EdgeCanvas({
     <svg style={{ position: "absolute", inset: 0, width: svgW, height: svgH,
       pointerEvents: "none", overflow: "visible" }}>
       <defs>
-        <marker id="arr-fwd" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+        <marker id={fwdId} markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
           <path d="M0,0 L0,7 L7,3.5 z" fill="hsl(217,20%,32%)" />
         </marker>
-        <marker id="arr-cyc" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+        <marker id={cycId} markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
           <path d="M0,0 L0,7 L7,3.5 z" fill="hsl(265,55%,62%)" />
         </marker>
       </defs>
@@ -249,6 +257,27 @@ function EdgeCanvas({
     </svg>
   );
 }
+
+// ── Live elapsed timer hook ────────────────────────────────────────────────────
+
+function useLiveElapsed(startedAt: string | undefined, active: boolean): string | null {
+  const [elapsed, setElapsed] = useState<number | null>(null);
+  useEffect(() => {
+    // Only start timer when active and we have a timestamp.
+    // Never call setState synchronously in the effect body.
+    if (!active || !startedAt) return;
+    const base = +new Date(startedAt);
+    const tick = () => setElapsed(Date.now() - base);
+    // Fire once quickly then every second (async — not synchronous setState)
+    const firstId = setTimeout(tick, 16);
+    const id = setInterval(tick, 1000);
+    return () => { clearTimeout(firstId); clearInterval(id); };
+  }, [active, startedAt]);
+  // Gate on active so stale elapsed values don't show after a round completes
+  return active && elapsed !== null ? fmtMs(elapsed) : null;
+}
+
+
 
 // ── Round card ─────────────────────────────────────────────────────────────────
 
@@ -264,18 +293,21 @@ const RoundCard = forwardRef<HTMLButtonElement, RoundCardProps>(
     const pc = phaseColor(node.phase);
     const experts = node.actors.filter((a) => a.includes("."));
     const named   = node.actors.filter((a) => !a.includes("."));
-    // Always show all actors individually — no "N experts" collapse
     const allActors = [...named, ...experts];
 
-    // Short rationale snippet for in-card display (first sentence or 90 chars)
+    // Short rationale snippet for in-card display
     const rationaleSnippet = node.rationale
       ? (node.rationale.split(/[.!?]/)[0] ?? "").trim().slice(0, 90)
       : null;
 
+    // Live elapsed counter for running rounds
+    const isRunning = node.status === "running" || node.status === "active";
+    const elapsed = useLiveElapsed(node.startedAt, isRunning);
+
     return (
       <button
         ref={ref}
-        className={`pfg-card ${isSelected ? "pfg-card--sel" : ""}`}
+        className={`pfg-card ${isSelected ? "pfg-card--sel" : ""} ${isRunning ? "pfg-card--running" : ""}`}
         style={{ "--pfg-accent": pc } as React.CSSProperties}
         onClick={onSelect}
         aria-label={`Round ${node.round} — ${prettyPhase(node.phase)}`}
@@ -296,13 +328,13 @@ const RoundCard = forwardRef<HTMLButtonElement, RoundCardProps>(
           </span>
           <span className="pfg-card__status">
             {node.status === "completed" && <Check    size={11} style={{ color: "hsl(142,71%,48%)" }} />}
-            {node.status === "running"   && <Activity size={11} style={{ color: "hsl(217,91%,60%)", animation: "pulse 2s infinite" }} />}
+            {isRunning                   && <Activity size={11} style={{ color: "hsl(217,91%,60%)", animation: "pulse 2s infinite" }} />}
             {node.status === "failed"    && <XCircle  size={11} style={{ color: "hsl(0,84%,60%)" }} />}
             {node.status === "pending"   && <Clock    size={11} style={{ color: "hsl(220,15%,50%)" }} />}
           </span>
         </div>
 
-        {/* All agents — shown individually, wrapped */}
+        {/* All agents */}
         <div className="pfg-card__agents">
           {allActors.map((a) => (
             <span key={a} className="pfg-card__chip"
@@ -316,7 +348,7 @@ const RoundCard = forwardRef<HTMLButtonElement, RoundCardProps>(
           ))}
         </div>
 
-        {/* Rationale snippet — only if card is wide enough to use it */}
+        {/* Rationale snippet */}
         {rationaleSnippet && (
           <div className="pfg-card__rationale-snippet">
             {rationaleSnippet}{node.rationale && node.rationale.length > 90 ? "…" : ""}
@@ -328,11 +360,16 @@ const RoundCard = forwardRef<HTMLButtonElement, RoundCardProps>(
           <span className="pfg-card__stat">
             <Cpu size={8} />{node.turnCount} turn{node.turnCount !== 1 ? "s" : ""}
           </span>
-          {node.durationMs != null && (
+          {/* Show live elapsed for running rounds, stored duration for completed */}
+          {isRunning && elapsed ? (
+            <span className="pfg-card__stat" style={{ color: "hsl(217,91%,60%)" }}>
+              <Timer size={8} />{elapsed}
+            </span>
+          ) : node.durationMs != null ? (
             <span className="pfg-card__stat">
               <Clock size={8} />{fmtMs(node.durationMs)}
             </span>
-          )}
+          ) : null}
           {node.rationale && (
             <span className="pfg-card__more-hint">
               <Info size={8} /> details
@@ -473,6 +510,10 @@ export function ProcessFlowGraph({
   const layout = useMemo(() => buildFlowGraph(turns, narrations), [turns, narrations]);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
 
+  // Unique ID for SVG markers — prevents marker bleeding when multiple graphs exist
+  const uid = useId().replace(/:/g, "");
+  const markerId = `pfg-${uid}`;
+
   const wrapRef  = useRef<HTMLDivElement>(null);
   const cardRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
 
@@ -480,6 +521,15 @@ export function ProcessFlowGraph({
   const [svgW, setSvgW] = useState(0);
   const [svgH, setSvgH] = useState(0);
   const [containerRect, setContainerRect] = useState<DOMRect | null>(null);
+
+  // Reset selected card when a new round appears (e.g. live streaming)
+  const prevNodeCount = useRef(layout.nodes.length);
+  useEffect(() => {
+    if (layout.nodes.length !== prevNodeCount.current) {
+      prevNodeCount.current = layout.nodes.length;
+      setSelectedIdx(null);
+    }
+  }, [layout.nodes.length]);
 
   const measure = useCallback(() => {
     const wrap = wrapRef.current;
@@ -500,11 +550,14 @@ export function ProcessFlowGraph({
   }, []);
 
   useEffect(() => {
-    // Small delay so cards have computed their flex widths first
-    const raf = requestAnimationFrame(measure);
+    // Double-RAF: first RAF lets flex layout compute, second captures final positions
+    const raf1 = requestAnimationFrame(() => {
+      const raf2 = requestAnimationFrame(measure);
+      return () => cancelAnimationFrame(raf2);
+    });
     const ro = new ResizeObserver(measure);
     if (wrapRef.current) ro.observe(wrapRef.current);
-    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+    return () => { cancelAnimationFrame(raf1); ro.disconnect(); };
   }, [measure, layout.nodes.length]);
 
   if (layout.nodes.length === 0) {
@@ -526,8 +579,8 @@ export function ProcessFlowGraph({
       <div className="pfg-wrap" ref={wrapRef}
         style={{ minHeight: hasCycles ? svgH : undefined }}>
 
-        {/* SVG edge layer */}
-        <EdgeCanvas edges={layout.edges} pos={pos} svgW={svgW} svgH={svgH} />
+        {/* SVG edge layer — unique marker IDs per instance */}
+        <EdgeCanvas edges={layout.edges} pos={pos} svgW={svgW} svgH={svgH} markerId={markerId} />
 
         {/* Cards row — fills full width, each card gets equal flex share */}
         <div className="pfg-row">
@@ -543,7 +596,6 @@ export function ProcessFlowGraph({
               isSelected={selectedIdx === idx}
               onSelect={() => {
                 setSelectedIdx(selectedIdx === idx ? null : idx);
-                // Remeasure so the overlay positions correctly
                 requestAnimationFrame(measure);
               }}
             />

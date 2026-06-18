@@ -929,6 +929,9 @@ export function TurnGraph({ activeTurns, completedTurns, isLive, narrations = []
     return <EmptyGraph isLive={isLive} />;
   }
 
+  // Hide minimap on mobile — it's not usable on narrow screens and blocks touch interaction
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
+
   return (
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
       <ReactFlow
@@ -940,8 +943,8 @@ export function TurnGraph({ activeTurns, completedTurns, isLive, narrations = []
         onPaneClick={onPaneClick}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
-        minZoom={0.2}
+        fitViewOptions={{ padding: isMobile ? 0.1 : 0.2 }}
+        minZoom={0.15}
         maxZoom={2}
         colorMode="dark"
         proOptions={{ hideAttribution: true }}
@@ -950,18 +953,20 @@ export function TurnGraph({ activeTurns, completedTurns, isLive, narrations = []
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="hsl(220 36% 20%)" />
         <Controls showInteractive={false} />
-        <MiniMap
-          nodeColor={(n) => {
-            if (n.type === "coordinator") return "hsl(217,91%,60%)";
-            // Use full actor string for color so each expert has a distinct hue.
-            const d = n.data as { actor?: string; role?: string };
-            return authorColor(d.actor ?? d.role ?? "unknown");
-          }}
-          maskColor="hsl(222 47% 6% / 0.85)"
-          style={{ background: "hsl(222 36% 10%)" }}
-          pannable
-          zoomable
-        />
+        {!isMobile && (
+          <MiniMap
+            nodeColor={(n) => {
+              if (n.type === "coordinator") return "hsl(217,91%,60%)";
+              // Use full actor string for color so each expert has a distinct hue.
+              const d = n.data as { actor?: string; role?: string };
+              return authorColor(d.actor ?? d.role ?? "unknown");
+            }}
+            maskColor="hsl(222 47% 6% / 0.85)"
+            style={{ background: "hsl(222 36% 10%)" }}
+            pannable
+            zoomable
+          />
+        )}
       </ReactFlow>
       <Legend />
       <DetailPanel selection={selection} roster={roster} onClose={() => setSelectedId(null)} />
