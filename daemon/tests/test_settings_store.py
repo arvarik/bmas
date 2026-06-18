@@ -5,11 +5,11 @@ Tests for the runtime settings store.
 
 import asyncio
 import copy
-import pytest
 
 # We need to mock config imports before importing settings_store
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
 
 # Minimal mock config values
 MOCK_MODEL_ROUTING = {
@@ -58,7 +58,6 @@ def mock_config():
         )
     }):
         # Reset singleton between tests
-        import importlib
         import sys
         if "settings_store" in sys.modules:
             del sys.modules["settings_store"]

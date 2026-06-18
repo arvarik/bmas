@@ -28,9 +28,6 @@ from config import (
     TRADITIONAL_CONFIG,
     TRIAGE_URL,
 )
-from config import (
-    MODEL_ROUTING as CONFIG_MODEL_ROUTING,
-)
 from core.blackboard import Blackboard, normalize_level
 from core.triage import MODEL_ROUTING, Complexity, TriageResult, TriageRouter
 
@@ -330,6 +327,7 @@ class Orchestrator:
                 These are merged on top of the session settings_store values.
         """
         import copy as _copy
+
         from config import MODEL_PRICING
         from core.board_store import InMemoryBoardStore, make_board_persist_hook
         from core.event_emitter import RedisEventEmitter

@@ -202,7 +202,7 @@ class SettingsStore:
         async with self._lock:
             self._ensure_seeded()
 
-        from config import NODES_BY_ROLE, RAW_CONFIG
+        from config import RAW_CONFIG
 
         raw_models = RAW_CONFIG.get("models", {})
         available_models = [
