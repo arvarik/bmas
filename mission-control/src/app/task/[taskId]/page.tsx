@@ -25,6 +25,8 @@ import {
 } from "lucide-react";
 import { authorColor } from "@/lib/design-tokens";
 import type { CostData, TurnRecord, CoordinatorNarration } from "@/hooks/useTaskStream";
+import { ProcessFlowGraph } from "@/components/features/ProcessFlowGraph";
+
 
 // ── Input Prompt Box (collapsible) ───────────────────────────────────
 
@@ -1044,27 +1046,14 @@ function LiveRunningView({
         )}
       </div>
 
-      {/* ── Process Pipeline (live) ─────────────────────────────────── */}
+      {/* ── Process Pipeline (live directed graph) ──────────────── */}
       <div className="overview__pipeline-section">
-        <h4 className="overview__section-label">Process Pipeline</h4>
-        <div className="overview__stages">
-          {buildProcessStages(subTasks, allTurns, taskMeta).map((s, i, arr) => (
-            <div key={s.key} className="overview__stage-row">
-              <div className={`overview__stage overview__stage--${s.status}`}>
-                <div className="overview__stage-head">
-                  <span className="overview__stage-icon">{getPhaseIcon(s.status)}</span>
-                  <span className="overview__stage-label">{s.label}</span>
-                </div>
-                {s.detail && (
-                  <span className="overview__stage-detail">{s.detail}</span>
-                )}
-              </div>
-              {i < arr.length - 1 && (
-                <ArrowRight size={13} className="overview__stage-arrow" />
-              )}
-            </div>
-          ))}
-        </div>
+        <h4 className="overview__section-label">Execution Flow</h4>
+        <ProcessFlowGraph
+          turns={[...completedTurns, ...activeTurns]}
+          narrations={coordinatorNarrations}
+          isLive={true}
+        />
       </div>
 
       {/* ── Active Agents ───────────────────────────────────────────── */}
@@ -1193,6 +1182,7 @@ export default function TaskOverviewPage() {
       taskMeta={patchedTaskMeta}
       cost={cost}
       completedTurns={completedTurns}
+      coordinatorNarrations={coordinatorNarrations}
     />;
   }
 
@@ -1258,15 +1248,15 @@ function CompletedView({
   taskMeta,
   cost,
   completedTurns,
+  coordinatorNarrations = [],
 }: {
   result: string;
   subTasks: ReturnType<typeof useTaskData>["subTasks"];
   taskMeta: ReturnType<typeof useTaskData>["taskMeta"];
   cost: CostData | null;
   completedTurns: TurnRecord[];
+  coordinatorNarrations?: CoordinatorNarration[];
 }) {
-  const stages = buildProcessStages(subTasks, completedTurns, taskMeta);
-
   return (
     <div className="view-container overview">
       <InputPromptBox prompt={taskMeta?.full_input} />
@@ -1285,27 +1275,14 @@ function CompletedView({
         </div>
       )}
 
-      {/* Process summary — derived from the actual stages/turns that ran */}
+      {/* Process summary — directed execution graph */}
       <div className="overview__pipeline-section">
-        <h4 className="overview__section-label">Process Summary</h4>
-        <div className="overview__stages">
-          {stages.map((s, i) => (
-            <div key={s.key} className="overview__stage-row">
-              <div className={`overview__stage overview__stage--${s.status}`}>
-                <div className="overview__stage-head">
-                  <span className="overview__stage-icon">{getPhaseIcon(s.status)}</span>
-                  <span className="overview__stage-label">{s.label}</span>
-                </div>
-                {s.detail && (
-                  <span className="overview__stage-detail">{s.detail}</span>
-                )}
-              </div>
-              {i < stages.length - 1 && (
-                <ArrowRight size={13} className="overview__stage-arrow" />
-              )}
-            </div>
-          ))}
-        </div>
+        <h4 className="overview__section-label">Execution Flow</h4>
+        <ProcessFlowGraph
+          turns={completedTurns}
+          narrations={coordinatorNarrations}
+          isLive={false}
+        />
       </div>
 
       {/* Stats bar — interactive breakdown on click */}
