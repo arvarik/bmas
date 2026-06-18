@@ -1,9 +1,28 @@
 import { NextResponse } from "next/server";
 import { DAEMON_SUBMIT_URL } from "@/lib/config";
 
+interface TaskRoutingOverride {
+  simple?: string;
+  light?: string;
+  medium?: string;
+  complex?: string;
+}
+
+interface TaskRoleEntryOverride {
+  preferred_host?: string | null;
+  profile?: string;
+  dispatch_port?: number;
+}
+
+interface TaskOverrides {
+  routing?: TaskRoutingOverride;
+  role_registry?: Record<string, TaskRoleEntryOverride>;
+}
+
 interface SubmitPayload {
   task: string;
   variant?: string;
+  overrides?: TaskOverrides;
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -23,6 +42,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       body: JSON.stringify({
         task: body.task.trim(),
         ...(body.variant ? { variant: body.variant } : {}),
+        ...(body.overrides ? { overrides: body.overrides } : {}),
       }),
       signal: AbortSignal.timeout(5_000), // daemon responds immediately (HTTP 202)
     });

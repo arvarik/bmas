@@ -100,17 +100,37 @@ class TriageRouter:
         self.litellm_key = litellm_key
         self.client = httpx.AsyncClient(timeout=30.0)
 
-    async def classify(self, task_description: str) -> TriageResult:
+    async def classify(
+        self,
+        task_description: str,
+        routing_override: dict[str, str] | None = None,
+    ) -> TriageResult:
         """Classify task complexity using the local triage model with guided_choice.
 
         If triage is disabled in bmas.yaml, returns the default_complexity
         tier without making any API call.
+
+        Args:
+            task_description: The raw user task text to classify.
+            routing_override: Optional dict mapping tier names (e.g. 'medium') to
+                model aliases. When provided, overrides the static MODEL_ROUTING table
+                for this classification. Supports both full and partial overrides.
         """
+        # Build effective routing: static defaults → optional override
+        effective_routing = dict(MODEL_ROUTING)  # copy to avoid mutation
+        if routing_override:
+            for tier_str, model in routing_override.items():
+                try:
+                    cplx = Complexity(tier_str.lower())
+                    effective_routing[cplx] = model
+                except ValueError:
+                    pass  # ignore unknown tier names
+
         if not TRIAGE_ENABLED:
             complexity = Complexity(TRIAGE_DEFAULT_COMPLEXITY)
             return TriageResult(
                 complexity=complexity,
-                litellm_model=MODEL_ROUTING[complexity],
+                litellm_model=effective_routing.get(complexity, MODEL_ROUTING.get(complexity, "medium")),
             )
 
         response = await self.client.post(
@@ -137,7 +157,7 @@ class TriageRouter:
         complexity = Complexity(label.lower())
         return TriageResult(
             complexity=complexity,
-            litellm_model=MODEL_ROUTING[complexity],
+            litellm_model=effective_routing.get(complexity, MODEL_ROUTING.get(complexity, "medium")),
         )
 
     async def route_and_execute(
@@ -157,7 +177,7 @@ class TriageRouter:
             json={
                 "model": triage.litellm_model,
                 "messages": messages,
-                "max_tokens": 2048,
+                "max_tokens": 65536,  # Full Gemini output limit — prevent truncation bugs
             },
         )
         response.raise_for_status()

@@ -18,6 +18,7 @@ import {
   Plus,
   Server,
   Bot,
+  Settings,
   PanelLeftClose,
   PanelLeftOpen,
   ChevronDown,
@@ -262,6 +263,15 @@ export function TaskSidebar({
         >
           <Server size={16} />
           {!collapsed && <span>Infrastructure</span>}
+        </Link>
+
+        <Link
+          href="/settings"
+          className={`task-sidebar__system-item ${pathname === "/settings" ? "task-sidebar__system-item--active" : ""}`}
+          title={collapsed ? "Settings" : undefined}
+        >
+          <Settings size={16} />
+          {!collapsed && <span>Settings</span>}
         </Link>
       </div>
 

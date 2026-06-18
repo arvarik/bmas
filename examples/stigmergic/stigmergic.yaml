@@ -86,19 +86,19 @@ models:
     provider: gemini
     model: "gemini-3.1-pro-preview"
     api_key_env: GEMINI_API_KEY
-    max_tokens: 8192
+    max_tokens: 65536
 
   gemini-flash:
     provider: gemini
-    model: "gemini-3-flash-preview"
+    model: "gemini-3.5-flash"
     api_key_env: GEMINI_API_KEY
-    max_tokens: 4096
+    max_tokens: 65536
 
   gemini-flash-lite:
     provider: gemini
     model: "gemini-3.1-flash-lite-preview"
     api_key_env: GEMINI_API_KEY
-    max_tokens: 2048
+    max_tokens: 65536
 
   # Example: Adding Anthropic alongside Gemini
   # claude-sonnet:

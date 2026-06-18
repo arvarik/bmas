@@ -15,7 +15,7 @@ from config import PROJECT_NAME
 from core.orchestrator import Orchestrator
 from database import init_db
 from monitoring.health_loop import system_health_loop
-from routes import artifacts, events, files, health, hitl, ingest, submit, tasks
+from routes import artifacts, events, files, health, hitl, ingest, settings, submit, tasks
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,3 +63,4 @@ app.include_router(ingest.router)
 app.include_router(files.router)
 app.include_router(artifacts.router)
 app.include_router(hitl.router)
+app.include_router(settings.router)
