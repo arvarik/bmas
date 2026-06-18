@@ -185,9 +185,13 @@ export function ComplexityRoutingEditor({
     setLocalRouting(routing);
   }, [routing]);
 
+  // Helpers to map backend "edge-node-1" alias to frontend "local" and vice versa
+  const normalize = useCallback((val: string) => (val.startsWith("edge-node-") ? "local" : val), []);
+  const denormalize = useCallback((val: string) => (val === "local" ? "edge-node-1" : val), []);
+
   // Count modified tiers vs. server-authoritative routing
   const dirtyTiers = COMPLEXITY_ROWS.filter(
-    (r) => (localRouting[r.tier] ?? "") !== (routing[r.tier] ?? "")
+    (r) => normalize(localRouting[r.tier] ?? "") !== normalize(routing[r.tier] ?? "")
   );
   const dirtyCount = dirtyTiers.length;
 
@@ -196,9 +200,9 @@ export function ComplexityRoutingEditor({
   }, [dirtyCount, onDirtyChange]);
 
   const handleChange = useCallback((tier: string, model: string) => {
-    setLocalRouting((prev) => ({ ...prev, [tier]: model }));
+    setLocalRouting((prev) => ({ ...prev, [tier]: denormalize(model) }));
     setSaveStatus("idle");
-  }, []);
+  }, [denormalize]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -295,9 +299,9 @@ export function ComplexityRoutingEditor({
 
         <div className="settings-routing-grid" role="list">
           {COMPLEXITY_ROWS.map((row) => {
-            const currentModel = localRouting[row.tier] ?? "";
-            const serverModel = routing[row.tier] ?? "";
-            const defaultModel = defaultRouting[row.tier] ?? "";
+            const currentModel = normalize(localRouting[row.tier] ?? "");
+            const serverModel = normalize(routing[row.tier] ?? "");
+            const defaultModel = normalize(defaultRouting[row.tier] ?? "");
             const isOverriddenVsServer = currentModel !== serverModel;
             const isOverriddenVsDefault = serverModel !== defaultModel;
             const modelInfo = availableModels.find((m) => m.alias === currentModel);
