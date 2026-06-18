@@ -171,8 +171,21 @@ class Orchestrator:
                         "agent_role": st.get("agent_role", "unknown"),
                     })
 
-    async def process_task(self, user_task: str, task_id: str | None = None) -> dict:
-        """Main entry point: triage → plan → execute → audit → publish."""
+    async def process_task(
+        self,
+        user_task: str,
+        task_id: str | None = None,
+        *,
+        overrides: dict | None = None,
+    ) -> dict:
+        """Main entry point: triage → plan → execute → audit → publish.
+
+        Args:
+            user_task: The raw user task description.
+            task_id: Optional pre-assigned task ID (created by submit endpoint).
+            overrides: Optional per-task settings overrides (session-only, not persisted).
+                Keys: 'routing' (dict[tier, model]), 'role_registry' (dict[role, entry]).
+        """
         session_id = str(uuid.uuid4())[:8]
         if task_id is None:
             task_id = f"task-{session_id}"
@@ -203,6 +216,13 @@ class Orchestrator:
             await self._set_phase("triage", 1, task_id=task_id)
             await self._safe_log("daemon", f"Processing: {task_id}", task_id=task_id)
 
+            # Log per-task overrides if provided
+            if overrides:
+                await self._safe_log("daemon",
+                    f"Per-task overrides applied: {list(overrides.keys())}",
+                    task_id=task_id, level="info",
+                    fields={"event": "task_overrides", "overrides": overrides})
+
             # Publish initial task state so the UI can show it
             await self._publish_task_state(task_id, user_task[:80], "running", [
                 {"id": f"{task_id}-triage",  "label": "Triage classification", "status": "running",  "agent_role": "planner",  "depends_on": []},
@@ -211,15 +231,22 @@ class Orchestrator:
                 {"id": f"{task_id}-audit",   "label": "Audit & consensus",     "status": "pending",  "agent_role": "auditor",  "depends_on": [f"{task_id}-exec"]},
             ])
 
-            # 2. Triage complexity (fail-fast: default to MEDIUM if triage is unreachable)
+            # 2. Triage complexity
+            # Build effective routing: session overrides merged with per-task overrides
+            from settings_store import get_store as _get_store
+            _store = _get_store()
+            effective_routing = await _store.get_routing()  # session-level overrides
+            if overrides and overrides.get("routing"):
+                effective_routing.update(overrides["routing"])  # per-task on top
+
             try:
-                triage = await self.triage.classify(user_task)
+                triage = await self.triage.classify(user_task, routing_override=effective_routing)
             except Exception as e:
                 await self._safe_log("daemon",
                     f"WARN: Triage unavailable ({e}), defaulting to MEDIUM", task_id=task_id)
                 triage = TriageResult(
                     complexity=Complexity.MEDIUM,
-                    litellm_model=MODEL_ROUTING.get(Complexity.MEDIUM, "medium"),
+                    litellm_model=effective_routing.get("medium", MODEL_ROUTING.get(Complexity.MEDIUM, "medium")),
                 )
             await self._safe_log("daemon",
                 f"Triage: {triage.complexity.value} → {triage.litellm_model}", task_id=task_id,
@@ -252,6 +279,7 @@ class Orchestrator:
             # 3. Run the blackboard coordination loop
             return await self._run_traditional(
                 task_id, session_id, user_task, triage,
+                overrides=overrides,
             )
 
         except Exception as e:
@@ -282,19 +310,32 @@ class Orchestrator:
     # ── Traditional Variant Integration (doc 05) ──────────────────────
 
     async def _run_traditional(
-        self, task_id: str, session_id: str, user_task: str, triage: TriageResult,
+        self,
+        task_id: str,
+        session_id: str,
+        user_task: str,
+        triage: TriageResult,
+        *,
+        overrides: dict | None = None,
     ) -> dict:
         """Run the paper's cyclic blackboard loop (doc 05).
 
         The orchestrator owns lifecycle (lock, abort, events, SQLite).
         The TraditionalVariant owns the loop (genesis, step, finalize).
         CU and AG calls are control-plane LiteLLM calls, never Hermes runs.
+
+        Args:
+            overrides: Optional per-task overrides dict with keys:
+                'routing' (dict[str, str]) and/or 'role_registry' (dict[str, dict]).
+                These are merged on top of the session settings_store values.
         """
+        import copy as _copy
         from config import MODEL_PRICING
         from core.board_store import InMemoryBoardStore, make_board_persist_hook
         from core.event_emitter import RedisEventEmitter
         from core.gateway import BoardGateway, salience_recompute_hook
         from core.variants.traditional import TraditionalVariant
+        from settings_store import get_store as _get_store
 
         await self._safe_log("daemon",
             f"Traditional variant | tier={triage.complexity.value}", task_id=task_id)
@@ -318,6 +359,22 @@ class Orchestrator:
         # Build node endpoint list
         node_endpoints = list({ep for ep in AGENT_ENDPOINTS.values()})
 
+        # ── Effective settings: session overrides → per-task overrides ──
+        _store = _get_store()
+        # Routing: session store provides the base, per-task overrides on top
+        effective_routing = await _store.get_routing()
+        if overrides and overrides.get("routing"):
+            effective_routing.update(overrides["routing"])
+
+        # Role registry: session store provides the base, per-task overrides on top
+        effective_registry = await _store.get_role_registry()
+        if overrides and overrides.get("role_registry"):
+            for role_name, role_patch in overrides["role_registry"].items():
+                existing = effective_registry.get(role_name, {})
+                merged = _copy.deepcopy(existing)
+                merged.update(role_patch)
+                effective_registry[role_name] = merged
+
         variant = TraditionalVariant(
             gateway=gateway,
             board_store=board_store,
@@ -327,8 +384,8 @@ class Orchestrator:
             litellm_url=LITELLM_URL,
             litellm_key=LITELLM_KEY,
             node_endpoints=node_endpoints,
-            role_registry=dict(ROLE_REGISTRY),
-            model_routing=dict(CONFIG_MODEL_ROUTING),
+            role_registry=effective_registry,
+            model_routing=effective_routing,
         )
 
         try:

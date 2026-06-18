@@ -50,6 +50,7 @@ cd "$REPO_ROOT/mission-control"
 run_check "Dashboard: npm ci"  npm ci
 run_check "Dashboard: eslint"  npm run lint
 run_check "Dashboard: tsc"     npx tsc --noEmit
+run_check "Dashboard: tests"   npm run test:run
 run_check "Dashboard: build"   npm run build
 
 # ── Summary ────────────────────────────────────────────────────────────────────

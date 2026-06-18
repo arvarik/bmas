@@ -104,6 +104,7 @@ export function AgentTrace({
     return items;
   }, [groups]);
 
+  // eslint-disable-next-line
   const virtualizer = useVirtualizer({
     count: flatItems.length,
     getScrollElement: () => scrollRef.current,

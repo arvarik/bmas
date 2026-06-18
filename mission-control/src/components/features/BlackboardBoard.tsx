@@ -376,7 +376,7 @@ function GroupHeader({
 }) {
   const typeColor = mode === "type" ? typeMeta(groupKey).color : "var(--text-tertiary)";
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", position: "sticky", top: 0, background: "var(--surface-base)", padding: "var(--space-1) 0", zIndex: 1 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", position: "sticky", top: "calc(-1 * var(--space-3))", background: "var(--surface-base)", padding: "var(--space-1) 0", zIndex: 1 }}>
       <span
         style={{
           fontSize: "var(--text-xs)",

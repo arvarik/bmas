@@ -153,7 +153,7 @@ export function buildFlowGraph(
 
     return {
       round: r, phase, actors,
-      status: anyFailed ? "failed" : anyActive ? "active" : "completed",
+      status: anyFailed ? "failed" : anyActive ? "running" : "completed",
       turnCount: rTurns.length, rationale, durationMs,
       startedAt: starts.length ? new Date(Math.min(...starts)).toISOString() : undefined,
     };
