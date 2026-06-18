@@ -243,6 +243,7 @@ class TraditionalVariant:
         from models.personas import AG_SYSTEM_PROMPT
 
         ag_model = self.model_routing.get(tier, "medium")
+        fallback_reason: str | None = None
         try:
             resp = await self.http.post(
                 f"{self.litellm_url}/chat/completions",
@@ -253,7 +254,11 @@ class TraditionalVariant:
                         {"role": "system", "content": AG_SYSTEM_PROMPT.format(n=n)},
                         {"role": "user", "content": f"Task: {query}"},
                     ],
-                    "max_tokens": 512,
+                    # 2048 output tokens: gemini-pro thinking mode burns ~500
+                    # reasoning tokens before producing any output, so 512 was
+                    # always truncating the JSON mid-array.  2048 gives headroom
+                    # for 4 experts × ~200 tokens each plus the JSON wrapper.
+                    "max_tokens": 2048,
                     "temperature": 0.4,
                     "response_format": {"type": "json_object"},
                 },
@@ -264,11 +269,46 @@ class TraditionalVariant:
             await self._record_llm_cost(
                 task_id, resp_json.get("usage"), ag_model, "control_plane:ag",
             )
-            data = json.loads(resp_json["choices"][0]["message"]["content"])
+            choice = resp_json["choices"][0]
+            finish_reason = choice.get("finish_reason", "stop")
+            raw_content = choice["message"]["content"]
+
+            # Guard against truncated JSON: if the model hit the token limit
+            # the JSON will be incomplete and json.loads will raise.  Detect
+            # this early so the except block can log a meaningful reason.
+            if finish_reason == "length":
+                usage = resp_json.get("usage", {})
+                raise ValueError(
+                    f"AG response truncated (finish_reason=length): "
+                    f"completion_tokens={usage.get('completion_tokens')}, "
+                    f"reasoning_tokens={usage.get('completion_tokens_details', {}).get('reasoning_tokens')}. "
+                    f"Increase max_tokens or switch to a non-thinking model for the AG call."
+                )
+
+            data = json.loads(raw_content)
             raw_experts = data.get("experts", [])[:n]
+            if not raw_experts:
+                raise ValueError(
+                    f"AG returned empty experts list. "
+                    f"Raw content preview: {raw_content[:200]!r}"
+                )
         except Exception as e:
+            fallback_reason = str(e)
             logger.warning("AG call failed (%s), using default experts", e)
             raw_experts = self._default_experts(n)
+
+            # Emit a visible ag_fallback event to the task stream so the operator
+            # can diagnose why generic experts appeared in Mission Control.
+            if task_id and self.emitter:
+                try:
+                    await self.emitter.emit(task_id, "ag_fallback", {
+                        "model": ag_model,
+                        "tier": tier,
+                        "error": fallback_reason,
+                        "fallback_experts": [ex["slug"] for ex in raw_experts],
+                    })
+                except Exception as emit_err:
+                    logger.debug("Failed to emit ag_fallback event: %s", emit_err)
 
         # Assign models with pool diversity (doc 05 §2.1)
         experts = []
