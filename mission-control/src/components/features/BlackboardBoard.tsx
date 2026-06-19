@@ -28,7 +28,8 @@ import {
   Inbox,
 } from "lucide-react";
 import { authorColor } from "@/lib/design-tokens";
-import type { BoardEntry, ConsensusState } from "@/hooks/useTaskStream";
+import type { BoardEntry, ConsensusState, TurnRecord } from "@/hooks/useTaskStream";
+import { MultiSelectDropdown } from "@/components/ui/MultiSelectDropdown";
 import {
   useBoardEntries,
   groupEntries,
@@ -48,6 +49,7 @@ interface BlackboardBoardProps {
   isLive: boolean;
   phase?: string | null;
   consensus?: ConsensusState | null;
+  allTurns?: TurnRecord[];
 }
 
 export function BlackboardBoard({
@@ -57,11 +59,13 @@ export function BlackboardBoard({
   isLive,
   phase,
   consensus,
+  allTurns = [],
 }: BlackboardBoardProps) {
   const { entries, synced } = useBoardEntries(taskId, liveEntries, removedEntryIds, isLive);
 
   const [groupMode, setGroupMode] = useState<GroupMode>("round");
   const [typeFilter, setTypeFilter] = useState<Set<string>>(new Set());
+  const [modelFilter, setModelFilter] = useState<Set<string>>(new Set());
   const [authorFilter, setAuthorFilter] = useState<Set<string>>(new Set());
   const [showRemoved, setShowRemoved] = useState(false);
   const [search, setSearch] = useState("");
@@ -70,16 +74,37 @@ export function BlackboardBoard({
   // ── Derived stats (over the full board) ─────────────────────────────
   const stats = useMemo(() => {
     const typeCounts = new Map<string, number>();
-    const authors = new Set<string>();
+    const modelCounts = new Map<string, number>();
+    const entryMeta = new Map<string, { model: string }>();
+    const authors = new Map<string, number>();
     let open = 0;
+
     for (const e of entries) {
+      const turn = allTurns.find((t) => t.actor === e.author && (t.round_no === e.round || e.round === 0));
+      const entryModel = e.type === "objective" ? "Input" : (turn?.model || "Unknown");
+      entryMeta.set(e.id, { model: entryModel });
+
       typeCounts.set(e.type, (typeCounts.get(e.type) ?? 0) + 1);
-      authors.add(e.author);
+      modelCounts.set(entryModel, (modelCounts.get(entryModel) ?? 0) + 1);
+      authors.set(e.author, (authors.get(e.author) ?? 0) + 1);
+
       if (e.status === "open") open += 1;
     }
+
+    // Ensure all models from allTurns are at least present in modelCounts with 0 entries
+    // so they appear in the filter dropdown.
+    for (const turn of allTurns) {
+      if (turn.model && !modelCounts.has(turn.model)) {
+        modelCounts.set(turn.model, 0);
+      }
+    }
+    if (!modelCounts.has("Input")) {
+      modelCounts.set("Input", 0);
+    }
+
     const maxRound = entries.reduce((m, e) => Math.max(m, e.round), 0);
-    return { typeCounts, authors: [...authors].sort(), open, total: entries.length, maxRound };
-  }, [entries]);
+    return { typeCounts, modelCounts, entryMeta, authors, open, total: entries.length, maxRound };
+  }, [entries, allTurns]);
 
   // ── Filter pipeline ──────────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -88,10 +113,14 @@ export function BlackboardBoard({
       if (!showRemoved && e.status === "removed") return false;
       if (typeFilter.size && !typeFilter.has(e.type)) return false;
       if (authorFilter.size && !authorFilter.has(e.author)) return false;
+      
+      const meta = stats.entryMeta.get(e.id);
+      if (modelFilter.size && meta && !modelFilter.has(meta.model)) return false;
+
       if (q && !(`${e.title} ${e.body}`.toLowerCase().includes(q))) return false;
       return true;
     });
-  }, [entries, showRemoved, typeFilter, authorFilter, search]);
+  }, [entries, showRemoved, typeFilter, modelFilter, authorFilter, search, stats.entryMeta]);
 
   const groups = useMemo(
     () => groupEntries(filtered, groupMode),
@@ -186,9 +215,6 @@ export function BlackboardBoard({
           />
 
 
-          <span style={{ flex: 1 }} />
-
-          {/* search */}
           <div
             style={{
               display: "flex",
@@ -198,9 +224,11 @@ export function BlackboardBoard({
               borderRadius: "var(--radius-md)",
               background: "var(--surface-overlay)",
               border: "1px solid var(--border-subtle)",
+              flex: 2,
+              minWidth: "250px",
             }}
           >
-            <Search size={13} style={{ color: "var(--text-tertiary)" }} />
+            <Search size={13} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -211,78 +239,65 @@ export function BlackboardBoard({
                 outline: "none",
                 color: "var(--text-primary)",
                 fontSize: "var(--text-xs)",
-                width: 120,
+                width: "100%",
               }}
             />
           </div>
         </div>
 
-        {/* row 2: type + author filters + status toggle */}
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>
+        {/* row 2: dropdown filters + status toggle */}
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap", zIndex: 10 }}>
           <Filter size={12} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />
-          {presentTypes.map((t) => {
-            const m = typeMeta(t);
-            const Icon = m.icon;
-            const active = typeFilter.has(t);
-            const on = typeFilter.size === 0 || active;
-            return (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setTypeFilter((s) => toggle(s, t))}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 5,
-                  padding: "3px 9px",
-                  borderRadius: "var(--radius-full)",
-                  border: `1px solid ${active ? m.color : "var(--border-subtle)"}`,
-                  background: active ? "var(--surface-hover)" : "transparent",
-                  color: on ? "var(--text-secondary)" : "var(--text-tertiary)",
-                  cursor: "pointer",
-                  fontSize: "var(--text-xs)",
-                  opacity: on ? 1 : 0.5,
-                }}
-              >
-                <Icon size={12} style={{ color: m.color }} />
-                {m.label}
-                <span style={{ color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", fontSize: "10px" }}>
-                  {stats.typeCounts.get(t)}
+          
+          <MultiSelectDropdown
+            label="Phase"
+            options={presentTypes.map((t) => {
+              const m = typeMeta(t);
+              const Icon = m.icon;
+              return {
+                value: t,
+                label: (
+                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <Icon size={12} style={{ color: m.color }} />
+                    {m.label}
+                  </span>
+                ),
+                count: stats.typeCounts.get(t),
+              };
+            })}
+            selected={typeFilter}
+            onChange={setTypeFilter}
+            color="hsl(217, 91%, 62%)"
+          />
+
+          <MultiSelectDropdown
+            label="Agent"
+            options={[...stats.authors.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([a, count]) => ({
+              value: a,
+              label: (
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "var(--radius-full)", background: authorColor(a) }} />
+                  {prettyAuthor(a)}
                 </span>
-              </button>
-            );
-          })}
+              ),
+              count,
+            }))}
+            selected={authorFilter}
+            onChange={setAuthorFilter}
+            color="hsl(265, 60%, 66%)"
+          />
 
-          <span style={{ width: 1, height: 16, background: "var(--border-default)", margin: "0 2px" }} />
-
-          {stats.authors.map((a) => {
-            const active = authorFilter.has(a);
-            const on = authorFilter.size === 0 || active;
-            return (
-              <button
-                key={a}
-                type="button"
-                onClick={() => setAuthorFilter((s) => toggle(s, a))}
-                title={a}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 5,
-                  padding: "3px 9px",
-                  borderRadius: "var(--radius-full)",
-                  border: `1px solid ${active ? authorColor(a) : "var(--border-subtle)"}`,
-                  background: active ? "var(--surface-hover)" : "transparent",
-                  color: "var(--text-secondary)",
-                  cursor: "pointer",
-                  fontSize: "var(--text-xs)",
-                  opacity: on ? 1 : 0.5,
-                }}
-              >
-                <span style={{ width: 7, height: 7, borderRadius: "var(--radius-full)", background: authorColor(a) }} />
-                {prettyAuthor(a)}
-              </button>
-            );
-          })}
+          <MultiSelectDropdown
+            label="Model"
+            options={[...stats.modelCounts.entries()].map(([val, count]) => ({
+              value: val,
+              label: val === "Input" ? "Input" : val.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+              count,
+            }))}
+            selected={modelFilter}
+            onChange={setModelFilter}
+            color="hsl(32, 88%, 58%)"
+          />
 
           <span style={{ flex: 1 }} />
 
@@ -311,7 +326,7 @@ export function BlackboardBoard({
           <EmptyBoard synced={synced} isLive={isLive} />
         ) : (
           <div style={{ position: "absolute", inset: 0, overflowY: "auto", padding: "var(--space-3) var(--space-1)" }}>
-            <TimelineView groups={groups} selectedId={selectedId} onSelect={setSelectedId} groupMode={groupMode} />
+            <TimelineView groups={groups} selectedId={selectedId} onSelect={setSelectedId} groupMode={groupMode} entryMeta={stats.entryMeta} />
             {filtered.length === 0 && (
               <div style={{ textAlign: "center", color: "var(--text-tertiary)", padding: "var(--space-8)", fontSize: "var(--text-sm)" }}>
                 No entries match the current filters.
@@ -341,11 +356,13 @@ function TimelineView({
   selectedId,
   onSelect,
   groupMode,
+  entryMeta,
 }: {
   groups: ReturnType<typeof groupEntries>;
   selectedId: string | null;
   onSelect: (id: string) => void;
   groupMode: GroupMode;
+  entryMeta: Map<string, { model: string }>;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
@@ -354,7 +371,7 @@ function TimelineView({
           <GroupHeader label={g.label} sublabel={g.sublabel} mode={groupMode} groupKey={g.key} />
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
             {g.entries.map((e) => (
-              <BoardEntryCard key={e.id} entry={e} selected={selectedId === e.id} onSelect={onSelect} />
+              <BoardEntryCard key={e.id} entry={e} selected={selectedId === e.id} onSelect={onSelect} model={entryMeta.get(e.id)?.model} />
             ))}
           </div>
         </section>

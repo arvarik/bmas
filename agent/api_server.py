@@ -620,7 +620,9 @@ async def _run_via_api(
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         # 1. Submit the run
-        headers = {"Authorization": f"Bearer {HERMES_GATEWAY_KEY}"}
+        headers = {}
+        if HERMES_GATEWAY_KEY:
+            headers["Authorization"] = f"Bearer {HERMES_GATEWAY_KEY}"
         # Phase 3a: Log profile for traceability. Per-profile gateway
         # dispatch is Phase 3b; for now the default gateway processes
         # all profiles (role identity is in the instructions/SOUL).

@@ -108,63 +108,6 @@ export default function MissionPage() {
 
   return (
     <div className="mission-cockpit">
-      {/* ── Top Bar ────────────────────────────────────────────────── */}
-      <div className="mission-cockpit__topbar">
-        <div className="mission-cockpit__topbar-left">
-          <Radio
-            size={14}
-            style={{
-              color: isLive ? "hsl(142, 71%, 45%)" : "hsl(220, 15%, 50%)",
-              animation: isLive ? "pulse 2s infinite" : "none",
-            }}
-          />
-          <span className="mission-cockpit__status">
-            {isLive ? "Live" : "Replay"}
-          </span>
-          {isPaused && (
-            <span className="mission-cockpit__paused-chip">⏸ Paused</span>
-          )}
-          {coordinatorNarrations.length > 0 && (
-            <span className="mission-cockpit__narration">
-              R{coordinatorNarrations[coordinatorNarrations.length - 1].round}:{" "}
-              {coordinatorNarrations[coordinatorNarrations.length - 1].rationale?.slice(0, 80) ?? "Selecting agents…"}
-            </span>
-          )}
-        </div>
-
-        <div className="mission-cockpit__topbar-right">
-          {budgetState && (
-            <BudgetGauge
-              spent={budgetState.spent}
-              ceiling={budgetState.ceiling}
-              size={48}
-              strokeWidth={4}
-              compact
-            />
-          )}
-          <ConsensusMeter consensus={consensus} isLive={isLive} />
-
-          {/* HITL controls */}
-          {isLive && (
-            <>
-              <button
-                className="mission-cockpit__btn"
-                onClick={handleTogglePause}
-                title={isPaused ? "Resume" : "Pause at round boundary"}
-              >
-                {isPaused ? <Play size={14} /> : <Pause size={14} />}
-              </button>
-              <button
-                className="mission-cockpit__btn"
-                onClick={() => setShowDirectiveInput(!showDirectiveInput)}
-                title="Inject directive"
-              >
-              <MessageSquarePlus size={14} />
-              </button>
-            </>
-          )}
-        </div>
-      </div>
 
       {/* Directive input bar */}
       {showDirectiveInput && (
@@ -203,6 +146,7 @@ export default function MissionPage() {
               isLive={isLive}
               phase={phase}
               consensus={consensus}
+              allTurns={[...activeTurns, ...completedTurns]}
             />
           </div>
 

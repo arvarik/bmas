@@ -24,9 +24,10 @@ interface BoardEntryCardProps {
   selected?: boolean;
   compact?: boolean;
   onSelect?: (id: string) => void;
+  model?: string;
 }
 
-export function BoardEntryCard({ entry, selected, compact, onSelect }: BoardEntryCardProps) {
+export function BoardEntryCard({ entry, selected, compact, onSelect, model }: BoardEntryCardProps) {
   const meta = typeMeta(entry.type);
   const Icon = meta.icon;
   const aColor = authorColor(entry.author);
@@ -128,6 +129,24 @@ export function BoardEntryCard({ entry, selected, compact, onSelect }: BoardEntr
             }}
           >
             {entry.status}
+          </span>
+        )}
+
+        {/* model badge */}
+        {model && (
+          <span
+            style={{
+              fontSize: "10px",
+              fontFamily: "var(--font-mono)",
+              color: "var(--text-tertiary)",
+              background: "var(--surface-base)",
+              padding: "1px 6px",
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid var(--border-subtle)",
+              flexShrink: 0,
+            }}
+          >
+            {model.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
           </span>
         )}
 

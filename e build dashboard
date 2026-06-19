@@ -1,0 +1,159 @@
+[1mdiff --git a/mission-control/src/components/features/BlackboardBoard.tsx b/mission-control/src/components/features/BlackboardBoard.tsx[m
+[1mindex 4c33a66..7ab1e78 100644[m
+[1m--- a/mission-control/src/components/features/BlackboardBoard.tsx[m
+[1m+++ b/mission-control/src/components/features/BlackboardBoard.tsx[m
+[36m@@ -28,7 +28,8 @@[m [mimport {[m
+   Inbox,[m
+ } from "lucide-react";[m
+ import { authorColor } from "@/lib/design-tokens";[m
+[31m-import type { BoardEntry, ConsensusState } from "@/hooks/useTaskStream";[m
+[32m+[m[32mimport type { BoardEntry, ConsensusState, TurnRecord } from "@/hooks/useTaskStream";[m
+[32m+[m[32mimport { MultiSelectDropdown } from "@/components/ui/MultiSelectDropdown";[m
+ import {[m
+   useBoardEntries,[m
+   groupEntries,[m
+[36m@@ -48,6 +49,7 @@[m [minterface BlackboardBoardProps {[m
+   isLive: boolean;[m
+   phase?: string | null;[m
+   consensus?: ConsensusState | null;[m
+[32m+[m[32m  allTurns?: TurnRecord[];[m
+ }[m
+ [m
+ export function BlackboardBoard({[m
+[36m@@ -57,11 +59,13 @@[m [mexport function BlackboardBoard({[m
+   isLive,[m
+   phase,[m
+   consensus,[m
+[32m+[m[32m  allTurns = [],[m
+ }: BlackboardBoardProps) {[m
+   const { entries, synced } = useBoardEntries(taskId, liveEntries, removedEntryIds, isLive);[m
+ [m
+   const [groupMode, setGroupMode] = useState<GroupMode>("round");[m
+   const [typeFilter, setTypeFilter] = useState<Set<string>>(new Set());[m
+[32m+[m[32m  const [modelFilter, setModelFilter] = useState<Set<string>>(new Set());[m
+   const [authorFilter, setAuthorFilter] = useState<Set<string>>(new Set());[m
+   const [showRemoved, setShowRemoved] = useState(false);[m
+   const [search, setSearch] = useState("");[m
+[36m@@ -70,16 +74,37 @@[m [mexport function BlackboardBoard({[m
+   // ── Derived stats (over the full board) ─────────────────────────────[m
+   const stats = useMemo(() => {[m
+     const typeCounts = new Map<string, number>();[m
+[31m-    const authors = new Set<string>();[m
+[32m+[m[32m    const modelCounts = new Map<string, number>();[m
+[32m+[m[32m    const entryMeta = new Map<string, { model: string }>();[m
+[32m+[m[32m    const authors = new Map<string, number>();[m
+     let open = 0;[m
+[32m+[m
+     for (const e of entries) {[m
+[32m+[m[32m      const turn = allTurns.find((t) => t.actor === e.author && (t.round_no === e.round || e.round === 0));[m
+[32m+[m[32m      const entryModel = e.type === "objective" ? "Input" : (turn?.model || "Unknown");[m
+[32m+[m[32m      entryMeta.set(e.id, { model: entryModel });[m
+[32m+[m
+       typeCounts.set(e.type, (typeCounts.get(e.type) ?? 0) + 1);[m
+[31m-      authors.add(e.author);[m
+[32m+[m[32m      modelCounts.set(entryModel, (modelCounts.get(entryModel) ?? 0) + 1);[m
+[32m+[m[32m      authors.set(e.author, (authors.get(e.author) ?? 0) + 1);[m
+[32m+[m
+       if (e.status === "open") open += 1;[m
+     }[m
+[32m+[m
+[32m+[m[32m    // Ensure all models from allTurns are at least present in modelCounts with 0 entries[m
+[32m+[m[32m    // so they appear in the filter dropdown.[m
+[32m+[m[32m    for (const turn of allTurns) {[m
+[32m+[m[32m      if (turn.model && !modelCounts.has(turn.model)) {[m
+[32m+[m[32m        modelCounts.set(turn.model, 0);[m
+[32m+[m[32m      }[m
+[32m+[m[32m    }[m
+[32m+[m[32m    if (!modelCounts.has("Input")) {[m
+[32m+[m[32m      modelCounts.set("Input", 0);[m
+[32m+[m[32m    }[m
+[32m+[m
+     const maxRound = entries.reduce((m, e) => Math.max(m, e.round), 0);[m
+[31m-    return { typeCounts, authors: [...authors].sort(), open, total: entries.length, maxRound };[m
+[31m-  }, [entries]);[m
+[32m+[m[32m    return { typeCounts, modelCounts, entryMeta, authors, open, total: entries.length, maxRound };[m
+[32m+[m[32m  }, [entries, allTurns]);[m
+ [m
+   // ── Filter pipeline ──────────────────────────────────────────────────[m
+   const filtered = useMemo(() => {[m
+[36m@@ -88,10 +113,14 @@[m [mexport function BlackboardBoard({[m
+       if (!showRemoved && e.status === "removed") return false;[m
+       if (typeFilter.size && !typeFilter.has(e.type)) return false;[m
+       if (authorFilter.size && !authorFilter.has(e.author)) return false;[m
+[32m+[m[41m      [m
+[32m+[m[32m      const meta = stats.entryMeta.get(e.id);[m
+[32m+[m[32m      if (modelFilter.size && meta && !modelFilter.has(meta.model)) return false;[m
+[32m+[m
+       if (q && !(`${e.title} ${e.body}`.toLowerCase().includes(q))) return false;[m
+       return true;[m
+     });[m
+[31m-  }, [entries, showRemoved, typeFilter, authorFilter, search]);[m
+[32m+[m[32m  }, [entries, showRemoved, typeFilter, modelFilter, authorFilter, search, stats.entryMeta]);[m
+ [m
+   const groups = useMemo([m
+     () => groupEntries(filtered, groupMode),[m
+[36m@@ -186,9 +215,6 @@[m [mexport function BlackboardBoard({[m
+           />[m
+ [m
+ [m
+[31m-          <span style={{ flex: 1 }} />[m
+[31m-[m
+[31m-          {/* search */}[m
+           <div[m
+             style={{[m
+               display: "flex",[m
+[36m@@ -198,9 +224,10 @@[m [mexport function BlackboardBoard({[m
+               borderRadius: "var(--radius-md)",[m
+               background: "var(--surface-overlay)",[m
+               border: "1px solid var(--border-subtle)",[m
+[32m+[m[32m              flex: 1,[m
+             }}[m
+           >[m
+[31m-            <Search size={13} style={{ color: "var(--text-tertiary)" }} />[m
+[32m+[m[32m            <Search size={13} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />[m
+             <input[m
+               value={search}[m
+               onChange={(e) => setSearch(e.target.value)}[m
+[36m@@ -211,78 +238,65 @@[m [mexport function BlackboardBoard({[m
+                 outline: "none",[m
+                 color: "var(--text-primary)",[m
+                 fontSize: "var(--text-xs)",[m
+[31m-                width: 120,[m
+[32m+[m[32m                width: "100%",[m
+               }}[m
+             />[m
+           </div>[m
+         </div>[m
+ [m
+[31m-        {/* row 2: type + author filters + status toggle */}[m
+[31m-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>[m
+[32m+[m[32m        {/* row 2: dropdown filters + status toggle */}[m
+[32m+[m[32m        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap", zIndex: 10 }}>[m
+           <Filter size={12} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />[m
+[31m-          {presentTypes.map((t) => {[m
+[31m-            const m = typeMeta(t);[m
+[31m-            const Icon = m.icon;[m
+[31m-            const active = typeFilter.has(t);[m
+[31m-            const on = typeFilter.size === 0 || active;[m
+[31m-            return ([m
+[31m-              <button[m
+[31m-                key={t}[m
+[31m-                type="button"[m
+[31m-                onClick={() => setTypeFilter((s) => toggle(s, t))}[m
+[31m-                style={{[m
+[31m-                  display: "inline-flex",[m
+[31m-                  alignItems: "center",[m
+[31m-                  gap: 5,[m
+[31m-                  padding: "3px 9px",[m
+[31m-                  borderRadius: "var(--radius-full)",[m
+[31m-                  border: `1px solid ${active ? m.color : "var(--border-subtle)"}`,[m
+[31m-                  background: active ? "var(--surface-hover)" : "transparent",[m
+[31m-                  color: on ? "var(--text-secondary)" : "var(--text-tertiary)",[m
+[31m-                  cursor: "pointer",[m
+[31m-                  fontSize: "var(--text-xs)",[m
+[31m-                  opacity: on ? 1 : 0.5,[m
+[31m-                }}[m
+[31m-              >[m
+[31m-                <Icon size={12} style={{ color: m.color }} />[m
+[31m-                {m.label}[m
+[31m-                <span style={{ color: "var(--text-tertiary)", fontFamily: "var(--fo
