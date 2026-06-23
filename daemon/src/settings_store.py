@@ -90,12 +90,13 @@ class SettingsStore:
                 )
 
             # Validate model aliases:
-            # Accept: model aliases from bmas.yaml, 'local', 'edge-node-N' internal aliases,
-            # and the current default values (which may be 'edge-node-1' etc.)
-            from config import RAW_CONFIG
+            # Accept: model aliases from bmas.yaml, 'local', 'edge-node-N' individual aliases,
+            # and the current default values (which may be 'local' etc.)
+            from config import EDGE_NODE_MODELS, RAW_CONFIG
             available_models = set(RAW_CONFIG.get("models", {}).keys()) | {"local"}
-            # Also accept edge-node-N aliases (internal resolution of "local" in yaml)
-            # and any values currently in the routing table (e.g. seeded defaults)
+            # Accept individual edge-node-N aliases for direct targeting
+            available_models |= set(EDGE_NODE_MODELS)
+            # Accept any values currently in the routing table (e.g. seeded defaults)
             available_models |= {v for v in (self._defaults_routing or {}).values()}
             available_models |= {v for v in (self._routing or {}).values()}
 

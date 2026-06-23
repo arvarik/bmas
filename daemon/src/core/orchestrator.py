@@ -21,6 +21,7 @@ import database as db
 from config import (
     AGENT_ENDPOINTS,
     COORDINATION_VARIANT,
+    EDGE_NODE_MODELS,
     LITELLM_KEY,
     LITELLM_URL,
     MODEL_PRICING,
@@ -384,6 +385,7 @@ class Orchestrator:
             node_endpoints=node_endpoints,
             role_registry=effective_registry,
             model_routing=effective_routing,
+            edge_node_models=EDGE_NODE_MODELS,
         )
 
         try:

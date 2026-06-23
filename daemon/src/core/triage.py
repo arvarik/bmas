@@ -64,8 +64,9 @@ Respond with ONLY the tier name. /no_think
 _THINK_RE = re.compile(r"<think>.*?</think>", flags=re.DOTALL)
 
 # Build MODEL_ROUTING from the config file's routing section.
-# The config stores {"simple": "edge-node-1", "medium": "gemini-flash", ...}
-# and we convert to {Complexity.SIMPLE: "edge-node-1", ...}
+# The config stores {"simple": "local", "medium": "gemini-flash", ...}
+# and we convert to {Complexity.SIMPLE: "local", ...}
+# "local" is a sentinel resolved at dispatch time via round-robin.
 MODEL_ROUTING = {
     Complexity(tier): model
     for tier, model in _CONFIG_ROUTING.items()

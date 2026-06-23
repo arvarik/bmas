@@ -128,6 +128,7 @@ class TraditionalVariant:
         role_registry: dict[str, dict],
         model_routing: dict[str, str],
         model_pools: dict[str, list[str]] | None = None,
+        edge_node_models: list[str] | None = None,
     ) -> None:
         self.gateway = gateway
         self.store = board_store
@@ -163,6 +164,13 @@ class TraditionalVariant:
         self.role_registry = role_registry
         self.model_routing = model_routing
         self.model_pools = model_pools or {}
+
+        # Edge inference round-robin state.
+        # When model_routing resolves to "local", _resolve_edge_model()
+        # cycles through edge_node_models so consecutive LLM calls hit
+        # different inference GPUs instead of always targeting edge-node-1.
+        self._edge_models: list[str] = edge_node_models or ["edge-node-1"]
+        self._edge_rr_counter: int = 0
 
         # Per-task state (set during genesis)
         self.roster: AgentRoster | None = None
@@ -247,7 +255,7 @@ class TraditionalVariant:
 
         from models.personas import AG_SYSTEM_PROMPT
 
-        ag_model = self.model_routing.get(tier, "medium")
+        ag_model = self._resolve_model(self.model_routing.get(tier, "medium"))
         fallback_reason: str | None = None
         try:
             resp = await self.http.post(
@@ -706,7 +714,7 @@ class TraditionalVariant:
 
         system = CU_SYSTEM_PROMPT.format(max_concurrent=self.max_concurrent)
 
-        cu_model = self.model_routing.get("light", "medium")
+        cu_model = self._resolve_model(self.model_routing.get("light", "medium"))
         # Try up to 2 times (1 retry on garbled output)
         for attempt in range(2):
             try:
@@ -947,7 +955,7 @@ class TraditionalVariant:
         """One bare LiteLLM call per agent for SolE answer collection."""
         from models.personas import SOLE_SYSTEM_PROMPT
 
-        sole_model = self.model_routing.get("light", "medium")
+        sole_model = self._resolve_model(self.model_routing.get("light", "medium"))
         try:
             resp = await self.http.post(
                 f"{self.litellm_url}/chat/completions",
@@ -1331,14 +1339,14 @@ class TraditionalVariant:
             endpoints = reg.get("endpoints", list(self.node_endpoints))
 
             # Expert model from roster
-            model = self.model_routing.get(self._tier, "medium")
+            model = self._resolve_model(self.model_routing.get(self._tier, "medium"))
             if actor.startswith("expert.") and self.roster:
                 slug = actor.split(".", 1)[1]
                 expert = next(
                     (e for e in self.roster.experts if e.slug == slug), None
                 )
                 if expert:
-                    model = expert.model
+                    model = self._resolve_model(expert.model)
 
             # Pick endpoint: prefer unused hosts, then round-robin
             endpoint = endpoints[0]
@@ -1443,6 +1451,33 @@ class TraditionalVariant:
                 f"{entry.title or entry.body[:80]}"
             )
         return "\n".join(lines)
+
+    # ── Edge Model Resolution ────────────────────────────────────────
+
+    def _resolve_model(self, model: str) -> str:
+        """Resolve a model alias, distributing 'local' across edge nodes.
+
+        When `model` is the "local" sentinel, picks the next edge-node-N
+        alias via round-robin so consecutive LLM calls are spread across
+        all inference GPUs.  Non-local aliases pass through unchanged.
+        """
+        if model == "local":
+            return self._resolve_edge_model()
+        return model
+
+    def _resolve_edge_model(self) -> str:
+        """Round-robin across edge inference node model aliases.
+
+        Returns "edge-node-1", "edge-node-2", ... cycling through all
+        available inference nodes.  The counter persists across rounds
+        within a single task so distribution is even over the task's
+        lifetime, not just within a single round.
+        """
+        if not self._edge_models:
+            return "edge-node-1"  # safety fallback
+        model = self._edge_models[self._edge_rr_counter % len(self._edge_models)]
+        self._edge_rr_counter += 1
+        return model
 
     # ── Cost Tracking ────────────────────────────────────────────────
 

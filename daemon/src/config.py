@@ -235,6 +235,15 @@ _routing = _cfg.get("routing", {})
 # "local" is a special value that maps to edge inference nodes.
 MODEL_ROUTING: dict[str, str] = {}
 _inference_nodes = [n for n in _nodes if n.get("inference")]
+
+# Build the ordered list of edge-node model aliases for round-robin
+# dispatch. Each inference-capable node gets "edge-node-{i}" (1-indexed)
+# matching the aliases generated in litellm/generate_config.py.
+EDGE_NODE_MODELS: list[str] = [
+    f"edge-node-{i}" for i in range(1, len(_inference_nodes) + 1)
+]
+INFERENCE_NODE_COUNT: int = len(_inference_nodes)
+
 for tier in ["simple", "light", "medium", "complex"]:
     target = _routing.get(tier)
     if not target:
@@ -248,9 +257,11 @@ for tier in ["simple", "light", "medium", "complex"]:
                 f"routing.{tier} is 'local' but no nodes have an 'inference' block",
                 "Add inference settings to at least one node, or route to a cloud model.",
             )
-        # Route to the first edge node with inference configured.
-        # LiteLLM will load-balance across all edge-node-N aliases.
-        MODEL_ROUTING[tier] = "edge-node-1"
+        # Preserve "local" as a sentinel so downstream code can resolve
+        # it at dispatch time via round-robin across all inference nodes
+        # (EDGE_NODE_MODELS). Previously this hardcoded "edge-node-1",
+        # which sent ALL inference to a single GPU.
+        MODEL_ROUTING[tier] = "local"
         _ok(f"  {tier:>8} → local (edge inference, {len(_inference_nodes)} node(s))")
     else:
         if target not in _models:

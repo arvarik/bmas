@@ -185,9 +185,12 @@ export function ComplexityRoutingEditor({
     setLocalRouting(routing);
   }, [routing]);
 
-  // Helpers to map backend "edge-node-1" alias to frontend "local" and vice versa
+  // Helpers to normalize model aliases for display.
+  // The backend now stores "local" directly (not "edge-node-1"), so
+  // denormalize is identity. normalize still handles legacy "edge-node-*"
+  // values from pre-fix routing data.
   const normalize = useCallback((val: string) => (val.startsWith("edge-node-") ? "local" : val), []);
-  const denormalize = useCallback((val: string) => (val === "local" ? "edge-node-1" : val), []);
+  const denormalize = useCallback((val: string) => val, []);
 
   // Count modified tiers vs. server-authoritative routing
   const dirtyTiers = COMPLEXITY_ROWS.filter(

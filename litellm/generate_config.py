@@ -43,7 +43,15 @@ def parse_cloud_models(cfg: dict) -> list[dict]:
 
 
 def parse_edge_nodes(cfg: dict) -> list[dict]:
-    """Parse edge inference node definitions from bmas.yaml."""
+    """Parse edge inference node definitions from bmas.yaml.
+
+    Each node is registered under two LiteLLM model_name entries:
+      1. "edge-node-{i}" — individual alias for direct targeting
+      2. "edge-local"    — shared group for round-robin load balancing
+    LiteLLM's router load-balances across all deployments that share
+    the same model_name, so multiple "edge-local" entries enable
+    automatic distribution of inference calls.
+    """
     model_list = []
     nodes = cfg.get("nodes", [])
 
@@ -56,17 +64,28 @@ def parse_edge_nodes(cfg: dict) -> list[dict]:
         inf_port = inference.get("port", 8080)
         inf_model = inference.get("model", "local-model")
 
+        litellm_params = {
+            "model": f"openai/{inf_model}",
+            "api_base": f"http://{inf_host}:{inf_port}/v1",
+            "api_key": "not-needed",
+            "max_tokens": 2048,
+        }
+        model_info = {
+            "description": f"Edge node {node.get('name', i)} ({node.get('role', 'unknown')})",
+        }
+
+        # Individual alias (for direct targeting / debugging)
         model_list.append({
             "model_name": f"edge-node-{i}",
-            "litellm_params": {
-                "model": f"openai/{inf_model}",
-                "api_base": f"http://{inf_host}:{inf_port}/v1",
-                "api_key": "not-needed",
-                "max_tokens": 2048,
-            },
-            "model_info": {
-                "description": f"Edge node {node.get('name', i)} ({node.get('role', 'unknown')})",
-            },
+            "litellm_params": dict(litellm_params),
+            "model_info": dict(model_info),
+        })
+
+        # Shared group alias (for load-balanced routing)
+        model_list.append({
+            "model_name": "edge-local",
+            "litellm_params": dict(litellm_params),
+            "model_info": dict(model_info),
         })
 
     return model_list
@@ -100,8 +119,9 @@ def build_routing_aliases(cfg: dict) -> dict:
 
     for tier, target in routing.items():
         if target == "local":
-            # Route to edge-node-1 (LiteLLM load-balances if multiple exist)
-            aliases[tier] = "edge-node-1"
+            # Route to the shared edge-local group — LiteLLM will
+            # round-robin across all nodes registered under this name.
+            aliases[tier] = "edge-local"
         else:
             aliases[tier] = target
 

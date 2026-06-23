@@ -54,6 +54,7 @@ def mock_config():
             MODEL_ROUTING=copy.deepcopy(MOCK_MODEL_ROUTING),
             ROLE_REGISTRY=copy.deepcopy(MOCK_ROLE_REGISTRY),
             RAW_CONFIG=MOCK_RAW_CONFIG,
+            EDGE_NODE_MODELS=["edge-node-1"],
             NODES_BY_ROLE={},
         )
     }):
