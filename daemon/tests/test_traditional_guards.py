@@ -6,6 +6,7 @@ No LLM, no Redis — pure logic tests against in-memory board state.
 
 import time
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -37,8 +38,6 @@ def _make_entry(
         updated_at=datetime.now(UTC).isoformat(),
     )
 
-
-from unittest.mock import AsyncMock
 
 def _make_variant(**overrides) -> TraditionalVariant:
     """Create a variant with no external deps (all set to None/mock)."""
