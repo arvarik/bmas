@@ -231,13 +231,25 @@ class TestCapabilityRejection:
         assert len(entries) == 0
 
     @pytest.mark.asyncio
-    async def test_maintenance_cannot_post_content(self, gateway, event_emitter):
-        """Board maintenance posting content → rejected."""
+    async def test_maintenance_can_post_finding(self, gateway, event_emitter):
+        """Board maintenance posting finding → committed."""
         entries = await gateway.append(
             task_id="task-1",
             actor="cleaner",
             capabilities=["board_maintenance"],
-            proposed=[make_proposed_entry()],
+            proposed=[make_proposed_entry(type="finding")],
+            turn_id="turn-1",
+        )
+        assert len(entries) == 1
+
+    @pytest.mark.asyncio
+    async def test_maintenance_cannot_post_solution(self, gateway, event_emitter):
+        """Board maintenance posting solution → rejected."""
+        entries = await gateway.append(
+            task_id="task-1",
+            actor="cleaner",
+            capabilities=["board_maintenance"],
+            proposed=[make_solution_entry()],
             turn_id="turn-1",
         )
         assert len(entries) == 0

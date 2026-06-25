@@ -33,16 +33,16 @@ if _TESTS_DIR not in sys.path:
 # Insert BEFORE any test or route tries `import config`
 
 _fake_config = types.ModuleType("config")
-_fake_config.STORAGE_ENABLED = False
-_fake_config.STORAGE_USER_MEDIA_DIR = "/tmp/bmas-test-uploads"
-_fake_config.STORAGE_ARTIFACTS_DIR = "/tmp/bmas-test-output"
-_fake_config.STORAGE_MAX_UPLOAD_MB = 50
-_fake_config.STORAGE_MAX_TASK_OUTPUT_MB = 500
-_fake_config.STORAGE_ALLOWED_TYPES = {"pdf", "txt", "md", "csv", "json", "png", "jpg", "docx"}
-_fake_config.STORAGE_PDF_EXTRACTION = "pymupdf"
-_fake_config.STORAGE_EXTRACTION_MAX_CHARS = 60000
-_fake_config.BMAS_NODE_KEY = ""
-_fake_config.STORAGE_CONFIG = {
+_fake_config.STORAGE_ENABLED = False  # type: ignore
+_fake_config.STORAGE_USER_MEDIA_DIR = "/tmp/bmas-test-uploads"  # type: ignore
+_fake_config.STORAGE_ARTIFACTS_DIR = "/tmp/bmas-test-output"  # type: ignore
+_fake_config.STORAGE_MAX_UPLOAD_MB = 50  # type: ignore
+_fake_config.STORAGE_MAX_TASK_OUTPUT_MB = 500  # type: ignore
+_fake_config.STORAGE_ALLOWED_TYPES = {"pdf", "txt", "md", "csv", "json", "png", "jpg", "docx"}  # type: ignore
+_fake_config.STORAGE_PDF_EXTRACTION = "pymupdf"  # type: ignore
+_fake_config.STORAGE_EXTRACTION_MAX_CHARS = 60000  # type: ignore
+_fake_config.BMAS_NODE_KEY = ""  # type: ignore
+_fake_config.STORAGE_CONFIG = {  # type: ignore
     "enabled": False,
     "user_media_dir": "/tmp/bmas-test-uploads",
     "artifacts_dir": "/tmp/bmas-test-output",
@@ -54,9 +54,9 @@ _fake_config.STORAGE_CONFIG = {
 }
 
 # Phase 3b: Traditional variant config values (needed by orchestrator imports)
-_fake_config.COORDINATION_VARIANT = "traditional"
-_fake_config.BLACKBOARD_V2 = False
-_fake_config.TRADITIONAL_CONFIG = {
+_fake_config.COORDINATION_VARIANT = "traditional"  # type: ignore
+_fake_config.BLACKBOARD_V2 = False  # type: ignore
+_fake_config.TRADITIONAL_CONFIG = {  # type: ignore
     "max_rounds": 4,
     "max_duration_s": 1800,
     "budget_ceiling_usd": 0.50,
@@ -68,9 +68,9 @@ _fake_config.TRADITIONAL_CONFIG = {
     "coordinator_narration": False,
     "sole_similarity": "auto",
 }
-_fake_config.ROLE_REGISTRY = {}
-_fake_config.MODEL_ROUTING = {"simple": "local", "light": "test-light", "medium": "test-medium", "complex": "test-pro"}
-_fake_config.MODEL_POOLS = {}
+_fake_config.ROLE_REGISTRY = {}  # type: ignore
+_fake_config.MODEL_ROUTING = {"simple": "local", "light": "test-light", "medium": "test-medium", "complex": "test-pro"}  # type: ignore
+_fake_config.MODEL_POOLS = {}  # type: ignore
 
 # Inject BEFORE any real import can trigger sys.exit
 sys.modules["config"] = _fake_config

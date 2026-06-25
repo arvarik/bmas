@@ -389,38 +389,54 @@ class TraditionalVariant:
         if solution:
             return StepResult(terminal=True, reason="solution")
 
+        # If decider was forced last round, terminate now
+        if meta.get("decider_forced"):
+            return StepResult(
+                terminal=True,
+                reason=meta.get("terminal_reason", "forced_decider_finished")
+            )
+
+        force_decider = False
+        term_reason = None
+
         # Guard: max rounds
         if current_round > self.max_rounds:
-            return StepResult(terminal=True, reason="max_rounds")
-
+            force_decider = True
+            term_reason = "max_rounds"
+        
         # Guard: budget ceiling
         self.budget_spent = float(meta.get("budget_spent", 0.0))
-        if self.budget_spent >= self.budget_ceiling:
-            return StepResult(terminal=True, reason="budget")
+        if not force_decider and self.budget_spent >= self.budget_ceiling:
+            force_decider = True
+            term_reason = "budget"
 
         # Guard: duration cap
         elapsed = time.monotonic() - self.genesis_time
-        if elapsed >= self.max_duration_s:
-            return StepResult(terminal=True, reason="duration")
+        if not force_decider and elapsed >= self.max_duration_s:
+            force_decider = True
+            term_reason = "duration"
 
         # Guard: stall breaker
-        if self._is_stalled(snapshot, current_round):
+        if not force_decider and self._is_stalled(snapshot, current_round):
             logger.info(
                 "Stall detected at round %d (stall_counter=%d)",
                 current_round, self._stall_counter,
             )
             if self._stall_counter >= self.stall_rounds:
-                # Force one decider activation then halt
-                return StepResult(
-                    terminal=True, reason="stalled",
-                )
+                force_decider = True
+                term_reason = "stalled"
             # Not yet at threshold — continue but note the stall
 
         # ── 1.5 Board Pressure Guard (Deterministic Cleaner) ─────────
         open_entries = [e for e in snapshot.values() if e.status == "open"]
         total_tokens = sum(len(e.body) // 4 for e in open_entries)
         
-        if total_tokens > self.cleaner_token_threshold:
+        if force_decider:
+            selected = ["decider"]
+            rationale = f"Task termination reached ({term_reason}) — forcing decider to synthesize final solution."
+            source = "heuristic"
+            await self.gateway.set_meta(task_id, decider_forced=True, terminal_reason=term_reason)
+        elif total_tokens > self.cleaner_token_threshold:
             selected = ["cleaner"]
             rationale = f"Board exceeded token threshold ({total_tokens} > {self.cleaner_token_threshold}) — forced cleaner invocation."
             source = "heuristic"
@@ -772,7 +788,11 @@ class TraditionalVariant:
             )
 
         open_entries = [e for e in snapshot.values() if e.status == "open"]
-        has_unaddressed_critique = any(e.type == "critique" for e in open_entries)
+        addressed_refs = {ref for e in open_entries if e.type != "critique" for ref in e.refs}
+        has_unaddressed_critique = any(
+            e.type == "critique" and e.id not in addressed_refs
+            for e in open_entries
+        )
         has_conflict = any(e.type == "conflict" for e in open_entries)
 
         if "conflict_resolver" in selected and has_conflict:
@@ -880,15 +900,13 @@ class TraditionalVariant:
         critiques = [
             e for e in open_entries.values() if e.type == "critique"
         ]
-        rebuttals = [
-            e for e in open_entries.values() if e.type == "rebuttal"
-        ]
-        rebutted_refs = set()
-        for r in rebuttals:
-            rebutted_refs.update(r.refs)
+        addressed_refs = set()
+        for e in open_entries.values():
+            if e.type != "critique":
+                addressed_refs.update(e.refs)
 
         unaddressed_critiques = [
-            c for c in critiques if c.id not in rebutted_refs
+            c for c in critiques if c.id not in addressed_refs
         ]
         if unaddressed_critiques:
             # Find the authors of the critiqued entries
@@ -1120,6 +1138,7 @@ class TraditionalVariant:
                         activation=activation,
                         round_no=private_round,
                         space=space,
+                        apply_to_board=False,
                     )
 
                     # Parse and apply entries to private space

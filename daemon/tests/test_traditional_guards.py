@@ -38,6 +38,8 @@ def _make_entry(
     )
 
 
+from unittest.mock import AsyncMock
+
 def _make_variant(**overrides) -> TraditionalVariant:
     """Create a variant with no external deps (all set to None/mock)."""
     config = {
@@ -51,15 +53,18 @@ def _make_variant(**overrides) -> TraditionalVariant:
         "cu_mode": "llm",
         "sole_similarity": "auto",
     }
+    
+    mock_gateway = AsyncMock()
+    
     return TraditionalVariant(
-        gateway=None,
+        gateway=mock_gateway,
         board_store=None,
         event_emitter=None,
         triage=None,
         config=config,
         litellm_url="",
         litellm_key="",
-        node_endpoints=[],
+        node_endpoints=["http://localhost:8000"],
         role_registry={},
         model_routing={},
     )
@@ -209,51 +214,54 @@ class TestGuardOrdering:
 
     @pytest.mark.asyncio
     async def test_budget_guard(self):
-        """step() returns terminal when budget is exceeded."""
+        """step() forces decider when budget is exceeded."""
         from core.board_store import InMemoryBoardStore
         v = _make_variant(budget_ceiling_usd=0.10)
         v.store = InMemoryBoardStore()
-
+    
         task_id = "test-task"
         await v.store.set_meta(task_id, round=0, budget_spent=0.15)
         v.genesis_time = time.monotonic()
-
+    
         task = {"task_id": task_id, "query": "Test"}
         result = await v.step(task, None)
-        assert result.terminal is True
-        assert result.reason == "budget"
+        assert result.terminal is False
+        assert len(result.activations) == 1
+        assert result.activations[0].actor == "decider"
 
     @pytest.mark.asyncio
     async def test_max_rounds_guard(self):
-        """step() returns terminal when max_rounds is exceeded."""
+        """step() forces decider when max_rounds is exceeded."""
         from core.board_store import InMemoryBoardStore
         v = _make_variant(max_rounds=2)
         v.store = InMemoryBoardStore()
-
+    
         task_id = "test-task"
         await v.store.set_meta(task_id, round=2, budget_spent=0.0)
         v.genesis_time = time.monotonic()
-
+    
         task = {"task_id": task_id, "query": "Test"}
         result = await v.step(task, None)
-        assert result.terminal is True
-        assert result.reason == "max_rounds"
+        assert result.terminal is False
+        assert len(result.activations) == 1
+        assert result.activations[0].actor == "decider"
 
     @pytest.mark.asyncio
     async def test_duration_guard(self):
-        """step() returns terminal when max_duration_s is exceeded."""
+        """step() forces decider when max_duration_s is exceeded."""
         from core.board_store import InMemoryBoardStore
         v = _make_variant(max_duration_s=1)
         v.store = InMemoryBoardStore()
-
+    
         task_id = "test-task"
         await v.store.set_meta(task_id, round=0, budget_spent=0.0)
         v.genesis_time = time.monotonic() - 100  # 100s ago
-
+    
         task = {"task_id": task_id, "query": "Test"}
         result = await v.step(task, None)
-        assert result.terminal is True
-        assert result.reason == "duration"
+        assert result.terminal is False
+        assert len(result.activations) == 1
+        assert result.activations[0].actor == "decider"
 
 
 # ── _entries_hash() ──────────────────────────────────────────────────

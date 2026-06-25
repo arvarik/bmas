@@ -27,10 +27,10 @@ class TestCapabilityProfiles:
         }
         assert set(CAPABILITY_PROFILES.keys()) == expected
 
-    def test_board_maintenance_cannot_post(self):
-        """Board maintenance (Cleaner) cannot post content entries."""
+    def test_board_maintenance_can_post_finding(self):
+        """Board maintenance (Cleaner) can post finding entries."""
         profile = CAPABILITY_PROFILES["board_maintenance"]
-        assert len(profile.may_post) == 0
+        assert "finding" in profile.may_post
 
     def test_decision_writer_can_post_solution(self):
         profile = CAPABILITY_PROFILES["decision_writer"]
@@ -87,9 +87,12 @@ class TestAuthorizePost:
         with pytest.raises(AuthorizationError, match="explicitly denies"):
             authorize_post(["finding_writer"], "solution")
 
-    def test_board_maintenance_cannot_post_any_content(self):
+    def test_board_maintenance_can_post_finding(self):
+        authorize_post(["board_maintenance"], "finding")
+
+    def test_board_maintenance_cannot_post_solution(self):
         with pytest.raises(AuthorizationError, match="No capability"):
-            authorize_post(["board_maintenance"], "finding")
+            authorize_post(["board_maintenance"], "solution")
 
     def test_no_capabilities_raises(self):
         with pytest.raises(AuthorizationError, match="No capabilities"):

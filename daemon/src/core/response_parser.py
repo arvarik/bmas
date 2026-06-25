@@ -139,8 +139,16 @@ def _extract_candidates(raw: Any, actor: str) -> list[dict[str, Any]]:
         action = raw.get("action")
         if action == "decline":
             return []
-        if action == "clean":
-            return [{"_action": "clean", "removals": raw.get("removals", [])}]
+        if action in ("clean", "condense"):
+            results = []
+            removals = raw.get("removals", [])
+            if removals:
+                results.append({"_action": "clean", "removals": removals})
+            if action == "condense":
+                entries = raw.get("entries")
+                if isinstance(entries, list) and entries:
+                    results.extend(_flatten_entries(entries, actor))
+            return results
 
         # entries_v1 array
         entries = raw.get("entries")

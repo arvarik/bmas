@@ -68,7 +68,7 @@ def parse_edge_nodes(cfg: dict) -> list[dict]:
             "model": f"openai/{inf_model}",
             "api_base": f"http://{inf_host}:{inf_port}/v1",
             "api_key": "not-needed",
-            "max_tokens": 2048,
+            "max_tokens": inference.get("max_tokens", 65536),
         }
         model_info = {
             "description": f"Edge node {node.get('name', i)} ({node.get('role', 'unknown')})",

@@ -477,6 +477,23 @@ class Orchestrator:
                 # Dispatch activations — decider runs AFTER all others
                 # so it can see the critic's board writes (doc 05 §1.1).
                 if step_result.activations:
+                    # Phase 0: Intercept conflict_resolver if there are open conflicts
+                    conflict_activations = [a for a in step_result.activations if a.actor == "conflict_resolver"]
+                    open_conflicts = [e for e in board.values() if e.type == "conflict" and e.status == "open"]
+                    
+                    if conflict_activations and open_conflicts:
+                        logger.info("Conflict resolver selected with open conflicts — triggering private debate")
+                        conflict_entry = sorted(open_conflicts, key=lambda e: getattr(e, 'round', 0))[0]
+                        try:
+                            await variant.handle_conflict_resolution(
+                                task, conflict_entry, self._dispatch_traditional_turn
+                            )
+                        except Exception as e:
+                            logger.error(f"Error during private conflict resolution: {e}")
+                        # Remove conflict_resolver from activations since we handled the mediation
+                        step_result.activations = [a for a in step_result.activations if a.actor != "conflict_resolver"]
+
+                if step_result.activations:
                     # Split into non-decider and decider groups
                     non_decider = [a for a in step_result.activations
                                    if a.actor != "decider"]
@@ -636,6 +653,8 @@ class Orchestrator:
         round_no: int,
         rationale: str | None = None,
         phase: str | None = None,
+        space: str = "public",
+        apply_to_board: bool = True,
     ) -> dict:
         """Dispatch one turn for the traditional variant.
 
@@ -647,7 +666,10 @@ class Orchestrator:
         event so the Graph tab can show WHY each agent was activated.
         """
         task_id = task["task_id"]
-        board = await variant.store.get_snapshot(task_id)
+        if space == "public":
+            board = await variant.store.get_snapshot(task_id)
+        else:
+            board = await variant.store.get_private_snapshot(task_id, space)
 
         # Build payload
         payload = variant.build_turn_payload(task, activation.actor, board)
@@ -795,7 +817,8 @@ class Orchestrator:
                             "confidence": entry.get("confidence"),
                         },
                     )
-                await variant.apply(task, [mutation])
+                if apply_to_board:
+                    await variant.apply(task, [mutation])
         elif resp_status not in ("failed", "timeout"):
             # Agent ran but contributed no board entries (declined/no-op).
             await self._safe_log(
