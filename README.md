@@ -41,7 +41,7 @@
 
 **Observability** — Real-time execution graphs, distributed log streams across all agents, a blackboard command center, and per-model cost tracking are all visible in a live dashboard built with Next.js and Server-Sent Events.
 
-**Operations** — Pause at round boundaries, inject directives, steer which agents run next, and set budget ceilings. A local Qwen3-1.7B classifier routes every task to the cheapest capable model before any paid API call. One YAML file configures the entire deployment. Just `docker compose up` and you're running.
+**Operations** — Pause at round boundaries, inject directives, steer which agents run next, and set budget ceilings. A complexity classifier routes every task to the cheapest capable model before any paid API call — using Gemini Flash Lite by default (or a local Qwen3-1.7B model on GPU). One YAML file configures the entire deployment. Just `docker compose up` and you're running.
 
 ## See It In Action
 
@@ -119,7 +119,7 @@ The project is organized into six deployable components, each with its own READM
 | [`agent/`](agent/README.md) | **The hands.** FastAPI server deployed to each edge node — bridges the Daemon to Hermes agents via the Runs API with real-time trace and log shipping. |
 | [`redis/`](redis/README.md) | **The shared memory.** Redis 8 serves as the blackboard — the central knowledge store through which all agents coordinate via Pub/Sub, Streams, and Redlock. |
 | [`litellm/`](litellm/README.md) | **The router.** Unified OpenAI-compatible gateway that abstracts all model backends behind routing, cost tracking, and retry logic. |
-| [`triage/`](triage/README.md) | **The gatekeeper.** Local Qwen3-1.7B complexity classifier (vLLM) that routes tasks to the cheapest capable model before any paid API call. |
+| [`triage/`](triage/README.md) | **The gatekeeper.** Complexity classifier that routes tasks to the cheapest capable model — Gemini Flash Lite API by default (no GPU), or local Qwen3-1.7B on vLLM for zero-cost classification. |
 
 Additional directories:
 

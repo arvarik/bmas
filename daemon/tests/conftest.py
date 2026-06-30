@@ -72,6 +72,14 @@ _fake_config.ROLE_REGISTRY = {}  # type: ignore
 _fake_config.MODEL_ROUTING = {"simple": "local", "light": "test-light", "medium": "test-medium", "complex": "test-pro"}  # type: ignore
 _fake_config.MODEL_POOLS = {}  # type: ignore
 
+# Phase 4: Triage config values (needed by core/triage.py imports)
+_fake_config.TRIAGE_ENABLED = True  # type: ignore
+_fake_config.TRIAGE_BACKEND = "gemini"  # type: ignore
+_fake_config.TRIAGE_GEMINI_MODEL = "gemini-flash-lite"  # type: ignore
+_fake_config.TRIAGE_LOCAL_MODEL = "Qwen/Qwen3-1.7B"  # type: ignore
+_fake_config.TRIAGE_MODEL = "gemini-flash-lite"  # type: ignore
+_fake_config.TRIAGE_DEFAULT_COMPLEXITY = "medium"  # type: ignore
+
 # Inject BEFORE any real import can trigger sys.exit
 sys.modules["config"] = _fake_config
 

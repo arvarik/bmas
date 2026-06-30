@@ -331,3 +331,79 @@ class TestBmasNodeKey:
         )
         assert r.returncode == 0
         assert "test-node-key-for-ci" in r.stdout
+
+
+# ── Tests: Triage Backend ────────────────────────────────────────────
+
+class TestTriageBackend:
+
+    def test_default_backend_is_gemini(self):
+        """When triage.backend is not set, it defaults to 'gemini'."""
+        r = _run_config_probe(
+            yaml_override={"triage": {"enabled": True}},
+            probe_expr="print(config.TRIAGE_BACKEND)",
+        )
+        assert r.returncode == 0
+        assert "gemini" in r.stdout
+
+    def test_backend_gemini_loads(self):
+        """Setting backend=gemini loads correctly with gemini model alias."""
+        r = _run_config_probe(
+            yaml_override={"triage": {"backend": "gemini", "model": "gemini-flash-lite"}},
+            probe_expr="print(f'{config.TRIAGE_BACKEND}|{config.TRIAGE_MODEL}')",
+        )
+        assert r.returncode == 0
+        assert "gemini|gemini-flash-lite" in r.stdout
+
+    def test_backend_local_loads(self):
+        """Setting backend=local loads correctly with local model name."""
+        r = _run_config_probe(
+            yaml_override={"triage": {"backend": "local", "local_model": "Qwen/Qwen3-1.7B"}},
+            probe_expr="print(f'{config.TRIAGE_BACKEND}|{config.TRIAGE_LOCAL_MODEL}')",
+        )
+        assert r.returncode == 0
+        assert "local|Qwen/Qwen3-1.7B" in r.stdout
+
+    def test_invalid_backend_fails(self):
+        """An invalid backend value triggers a FATAL exit."""
+        r = _run_config_probe(
+            yaml_override={"triage": {"backend": "ollama"}}
+        )
+        assert r.returncode != 0
+        assert "FATAL" in r.stderr
+
+    def test_backend_local_model_alias(self):
+        """With backend=local, TRIAGE_MODEL points to the local model."""
+        r = _run_config_probe(
+            yaml_override={"triage": {"backend": "local", "local_model": "Qwen/Qwen3-1.7B"}},
+            probe_expr="print(config.TRIAGE_MODEL)",
+        )
+        assert r.returncode == 0
+        assert "Qwen/Qwen3-1.7B" in r.stdout
+
+    def test_backend_gemini_model_alias(self):
+        """With backend=gemini, TRIAGE_MODEL points to the gemini model alias."""
+        r = _run_config_probe(
+            yaml_override={"triage": {"backend": "gemini", "model": "gemini-flash-lite"}},
+            probe_expr="print(config.TRIAGE_MODEL)",
+        )
+        assert r.returncode == 0
+        assert "gemini-flash-lite" in r.stdout
+
+    def test_gemini_backend_warns_on_unknown_model(self):
+        """Gemini backend with unknown model alias produces a warning (not FATAL)."""
+        r = _run_config_probe(
+            yaml_override={"triage": {"backend": "gemini", "model": "nonexistent-model"}},
+        )
+        assert r.returncode == 0  # Warning, not fatal
+        assert "WARNING" in r.stderr or "not defined" in r.stderr
+
+    def test_triage_disabled_ignores_backend(self):
+        """When triage is disabled, backend validation still passes."""
+        r = _run_config_probe(
+            yaml_override={"triage": {"enabled": False, "backend": "gemini"}},
+            probe_expr="print(config.TRIAGE_ENABLED)",
+        )
+        assert r.returncode == 0
+        assert "False" in r.stdout
+

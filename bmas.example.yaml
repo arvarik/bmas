@@ -65,15 +65,23 @@ nodes:
       model: "gemma-4-e4b"
 
 # ── Triage ─────────────────────────────────────────────────────────
-# The local complexity classifier. Runs on the control plane GPU.
+# Complexity classifier that routes tasks to the cheapest capable model.
 # Set enabled: false to skip triage (all tasks route to the
 # default_complexity tier).
+#
+# backend: Which inference backend to use for classification.
+#   gemini  — (default) Routes through LiteLLM → Gemini API. No GPU needed.
+#   local   — Uses a local vLLM server (Qwen3-1.7B). Requires GPU +
+#             docker compose --profile gpu. See triage/README.md.
 triage:
   enabled: true
-  model: "Qwen/Qwen3-1.7B"
-  gpu_memory_utilization: 0.35
-  max_model_len: 8192
-  default_complexity: medium   # Fallback if triage is disabled/unreachable
+  backend: gemini                    # gemini (default, cloud API) | local (vLLM, requires GPU)
+  model: "gemini-flash-lite"         # LiteLLM model alias (used when backend: gemini)
+  default_complexity: medium         # Fallback if triage is disabled/unreachable
+  # ── Local backend options (only used when backend: local) ────────
+  # local_model: "Qwen/Qwen3-1.7B"
+  # gpu_memory_utilization: 0.35
+  # max_model_len: 8192
 
 # ── Models ─────────────────────────────────────────────────────────
 # Define the models available for task execution.

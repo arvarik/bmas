@@ -27,6 +27,7 @@ def parse_cloud_models(cfg: dict) -> list[dict]:
         api_key_env = model_cfg.get("api_key_env", "")
         max_tokens = model_cfg.get("max_tokens", 4096)
 
+        api_base = model_cfg.get("api_base", "")
         entry = {
             "model_name": alias,
             "litellm_params": {
@@ -36,6 +37,8 @@ def parse_cloud_models(cfg: dict) -> list[dict]:
         }
         if api_key_env:
             entry["litellm_params"]["api_key"] = f"os.environ/{api_key_env}"
+        if api_base:
+            entry["litellm_params"]["api_base"] = api_base
 
         model_list.append(entry)
 
@@ -92,13 +95,20 @@ def parse_edge_nodes(cfg: dict) -> list[dict]:
 
 
 def parse_triage_model(cfg: dict) -> list[dict]:
-    """Parse the local triage (vLLM) model if enabled."""
+    """Parse the local triage (vLLM) model if enabled and using local backend.
+
+    When backend is 'gemini', triage requests go through an existing
+    cloud model alias — no special LiteLLM entry needed.
+    """
     triage = cfg.get("triage", {})
     if not triage.get("enabled", True):
         return []
 
-    cp = cfg.get("control_plane", {})
-    triage_model = triage.get("model", "Qwen/Qwen3-1.7B")
+    backend = triage.get("backend", "gemini")
+    if backend != "local":
+        return []  # Gemini backend uses existing cloud model alias
+
+    triage_model = triage.get("local_model", "Qwen/Qwen3-1.7B")
 
     return [{
         "model_name": "triage",

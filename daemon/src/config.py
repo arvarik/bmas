@@ -206,7 +206,22 @@ print("  Validating triage configuration...", file=sys.stderr)
 
 _triage = _cfg.get("triage", {})
 TRIAGE_ENABLED: bool = _triage.get("enabled", True)
-TRIAGE_MODEL: str = _triage.get("model", "Qwen/Qwen3-1.7B")
+
+_VALID_TRIAGE_BACKENDS = {"gemini", "local"}
+TRIAGE_BACKEND: str = _triage.get("backend", "gemini")
+if TRIAGE_BACKEND not in _VALID_TRIAGE_BACKENDS:
+    _fatal(
+        f"Invalid triage.backend: '{TRIAGE_BACKEND}'",
+        f"Must be one of: {', '.join(sorted(_VALID_TRIAGE_BACKENDS))}.",
+    )
+
+# Gemini backend: LiteLLM model alias used for classification
+TRIAGE_GEMINI_MODEL: str = _triage.get("model", "gemini-flash-lite")
+# Local backend: vLLM model name (HuggingFace ID)
+TRIAGE_LOCAL_MODEL: str = _triage.get("local_model", "Qwen/Qwen3-1.7B")
+# Legacy alias — points to whichever backend is active
+TRIAGE_MODEL: str = TRIAGE_GEMINI_MODEL if TRIAGE_BACKEND == "gemini" else TRIAGE_LOCAL_MODEL
+
 TRIAGE_GPU_MEMORY: float = _triage.get("gpu_memory_utilization", 0.35)
 TRIAGE_MAX_MODEL_LEN: int = _triage.get("max_model_len", 8192)
 
@@ -219,7 +234,7 @@ if TRIAGE_DEFAULT_COMPLEXITY not in _VALID_COMPLEXITIES:
     )
 
 if TRIAGE_ENABLED:
-    _ok(f"Triage: enabled (model={TRIAGE_MODEL}, fallback={TRIAGE_DEFAULT_COMPLEXITY})")
+    _ok(f"Triage: enabled (backend={TRIAGE_BACKEND}, model={TRIAGE_MODEL}, fallback={TRIAGE_DEFAULT_COMPLEXITY})")
 else:
     _ok(f"Triage: disabled (all tasks route to '{TRIAGE_DEFAULT_COMPLEXITY}' tier)")
 
@@ -230,6 +245,15 @@ print("  Validating model routing...", file=sys.stderr)
 
 _models = _cfg.get("models", {})
 _routing = _cfg.get("routing", {})
+
+# Validate gemini backend model alias exists in models section
+# (deferred to here because _models is defined above)
+if TRIAGE_ENABLED and TRIAGE_BACKEND == "gemini" and TRIAGE_GEMINI_MODEL not in _models:
+    _warn(
+        f"triage.model '{TRIAGE_GEMINI_MODEL}' is not defined in the 'models' section. "
+        f"Triage classification will use LiteLLM alias '{TRIAGE_GEMINI_MODEL}' — "
+        f"ensure it is registered in LiteLLM."
+    )
 
 # The routing table maps complexity enum values to LiteLLM model aliases.
 # "local" is a special value that maps to edge inference nodes.
@@ -576,7 +600,7 @@ print(f"│  ✅ {PROJECT_NAME} — Configuration OK        ", file=sys.stderr)
 print("└─────────────────────────────────────────────┘", file=sys.stderr)
 print(f"  Redis:    {CP_HOST}:{CP_PORTS['redis']}", file=sys.stderr)
 print(f"  LiteLLM:  {CP_HOST}:{CP_PORTS['litellm']}", file=sys.stderr)
-print(f"  Triage:   {'enabled' if TRIAGE_ENABLED else 'disabled'} ({TRIAGE_MODEL})", file=sys.stderr)
+print(f"  Triage:   {'enabled' if TRIAGE_ENABLED else 'disabled'} (backend={TRIAGE_BACKEND}, model={TRIAGE_MODEL})", file=sys.stderr)
 print(f"  Agents:   {', '.join(AGENT_ENDPOINTS.keys()) or 'none'}", file=sys.stderr)
 print(f"  Routing:  {' | '.join(f'{k}→{v}' for k, v in MODEL_ROUTING.items())}", file=sys.stderr)
 print(f"  Variant:  {COORDINATION_VARIANT} (bb_v2={'on' if BLACKBOARD_V2 else 'off'})", file=sys.stderr)
