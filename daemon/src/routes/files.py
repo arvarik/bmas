@@ -17,8 +17,9 @@ from fastapi import APIRouter, File, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 import database as db
-from auth import check_bearer_or_pass
+from auth import check_bearer_or_pass, require_api_key
 from config import (
+    BMAS_API_KEY,
     BMAS_NODE_KEY,
     STORAGE_ALLOWED_TYPES,
     STORAGE_ENABLED,
@@ -56,6 +57,7 @@ async def upload_file(task_id: str, request: Request, file: UploadFile = File(..
     Validates size, type, sanitizes filename, extracts text for PDFs,
     stores on disk, and creates a task_files row.
     """
+    require_api_key(request, BMAS_API_KEY)
     if not STORAGE_ENABLED:
         return JSONResponse(
             {"error": "Storage is not enabled. Set storage.enabled: true in bmas.yaml"},

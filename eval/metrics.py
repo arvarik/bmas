@@ -9,8 +9,9 @@ One row per task; one summary per benchmark.
 from __future__ import annotations
 
 import json
+import math
 import statistics
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -32,14 +33,19 @@ class RunMetrics:
     # Accuracy
     accuracy: float
     accuracy_by_subject: dict[str, float] = field(default_factory=dict)
+    completed_tasks: int = 0
+    completion_rate: float = 0.0
+    accuracy_on_completed: float = 0.0
 
     # Cost
     total_cost_usd: float = 0.0
     avg_cost_per_task_usd: float = 0.0
+    cost_observations: int = 0
 
     # Tokens
     total_tokens: int = 0
     avg_tokens_per_task: float = 0.0
+    token_observations: int = 0
 
     # Latency
     avg_latency_ms: float = 0.0
@@ -47,9 +53,11 @@ class RunMetrics:
     p95_latency_ms: float = 0.0
     min_latency_ms: float = 0.0
     max_latency_ms: float = 0.0
+    latency_observations: int = 0
 
     # Termination
     avg_rounds: float = 0.0
+    round_observations: int = 0
     terminated_by: dict[str, int] = field(default_factory=dict)
 
     # Energy (Phase 1 hook — nullable until wired)
@@ -73,7 +81,7 @@ class RunMetrics:
         return out_path
 
     @classmethod
-    def load(cls, path: str | Path) -> "RunMetrics":
+    def load(cls, path: str | Path) -> RunMetrics:
         """Load a RunMetrics from a saved JSON file."""
         data = json.loads(Path(path).read_text())
         return cls(**data)
@@ -112,6 +120,15 @@ def compute_run_metrics(
     # Accuracy
     correct_count = sum(1 for r in results if r.correct)
     accuracy = correct_count / dataset_size
+    completed_results = [
+        result for result in results if result.status in (None, "completed")
+    ]
+    completed_tasks = len(completed_results)
+    completion_rate = completed_tasks / dataset_size
+    completed_correct = sum(1 for result in completed_results if result.correct)
+    accuracy_on_completed = (
+        completed_correct / completed_tasks if completed_tasks else 0.0
+    )
 
     # Accuracy by subject
     accuracy_by_subject: dict[str, float] = {}
@@ -125,12 +142,12 @@ def compute_run_metrics(
     # Cost
     costs = [r.cost_usd for r in results if r.cost_usd is not None]
     total_cost = sum(costs)
-    avg_cost = total_cost / dataset_size if dataset_size > 0 else 0.0
+    avg_cost = statistics.mean(costs) if costs else 0.0
 
     # Tokens
     token_counts = [r.tokens for r in results if r.tokens is not None]
     total_tokens = sum(token_counts)
-    avg_tokens = total_tokens / dataset_size if dataset_size > 0 else 0.0
+    avg_tokens = statistics.mean(token_counts) if token_counts else 0.0
 
     # Latency
     latencies = [r.duration_ms for r in results if r.duration_ms is not None]
@@ -150,8 +167,8 @@ def compute_run_metrics(
         terminated_by[reason] = terminated_by.get(reason, 0) + 1
 
     # Rounds
-    # Future: parse from task metadata when traditional variant populates it
-    avg_rounds = 1.0
+    rounds = [r.rounds for r in results if r.rounds is not None]
+    avg_rounds = statistics.mean(rounds) if rounds else 0.0
 
     return RunMetrics(
         run_id=run_id,
@@ -161,16 +178,23 @@ def compute_run_metrics(
         completed_at=completed_at,
         accuracy=accuracy,
         accuracy_by_subject=accuracy_by_subject,
+        completed_tasks=completed_tasks,
+        completion_rate=completion_rate,
+        accuracy_on_completed=accuracy_on_completed,
         total_cost_usd=total_cost,
         avg_cost_per_task_usd=avg_cost,
+        cost_observations=len(costs),
         total_tokens=total_tokens,
         avg_tokens_per_task=avg_tokens,
+        token_observations=len(token_counts),
         avg_latency_ms=avg_latency,
         median_latency_ms=median_latency,
         p95_latency_ms=p95_latency,
         min_latency_ms=min_latency,
         max_latency_ms=max_latency,
+        latency_observations=len(latencies),
         avg_rounds=avg_rounds,
+        round_observations=len(rounds),
         terminated_by=terminated_by,
         joules_estimate=joules_estimate,
         run_config=run_config,
@@ -185,5 +209,6 @@ def _percentile(data: list[float | int], pct: float) -> float:
     if not data:
         return 0.0
     sorted_data = sorted(data)
-    k = max(0, min(len(sorted_data) - 1, int(len(sorted_data) * pct / 100)))
+    rank = math.ceil(len(sorted_data) * pct / 100)
+    k = max(0, min(len(sorted_data) - 1, rank - 1))
     return float(sorted_data[k])

@@ -17,8 +17,6 @@ import { bodyPreview } from "./board/boardModel";
 import { typeMeta } from "./board/boardModel";
 import { X, CheckCircle, XCircle } from "lucide-react";
 
-const DAEMON_URL = process.env.NEXT_PUBLIC_DAEMON_URL ?? "http://192.168.4.240:9000";
-
 // ── Trace line glyph map ──────────────────────────────────────────────
 
 const TYPE_GLYPHS: Record<string, { glyph: string; color: string }> = {
@@ -98,14 +96,16 @@ export function TurnInspector({
       const taskId = turn?.task_id;
       if (!taskId) return;
       try {
-        const resp = await fetch(
-          `${DAEMON_URL}/api/tasks/${taskId}/approval`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ run_id: runId, decision }),
-          },
-        );
+        const resp = await fetch("/api/hitl", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "approval",
+            task_id: taskId,
+            run_id: runId,
+            decision,
+          }),
+        });
         if (resp.ok) {
           setDecidedRuns((prev) => ({ ...prev, [runId]: decision }));
         }

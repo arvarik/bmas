@@ -10,18 +10,25 @@ Endpoints:
 """
 
 import contextlib
-import json
 import logging
 import os
 import re
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
 logger = logging.getLogger("bmas.daemon")
 
 router = APIRouter(prefix="/api/tasks", tags=["hitl"])
+
+
+def _authorize_operator(request: Request) -> None:
+    """Require operator authentication when the deployment enables it."""
+    from auth import require_api_key
+    from config import BMAS_API_KEY
+
+    require_api_key(request, BMAS_API_KEY)
 
 
 # ── Input Validation ─────────────────────────────────────────────────
@@ -74,98 +81,97 @@ class DirectiveRequest(BaseModel):
         return v
 
 
+class AbortRequest(BaseModel):
+    reason: str = "operator_request"
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("abort reason cannot be empty")
+        if len(value) > 200:
+            raise ValueError("abort reason must be at most 200 characters")
+        return value
+
+
 # ── Steer Endpoint ───────────────────────────────────────────────────
 
 @router.post("/{task_id}/steer")
-async def steer_entry(task_id: str, req: SteerRequest):
+async def steer_entry(task_id: str, req: SteerRequest, request: Request):
     """Boost or retract a board entry (doc 05 §6 — HITL steer).
 
     - boost: multiply entry's salience by 2.0 (clamped to 1.0)
     - retract: set entry status to 'superseded'
     """
     task_id = _validate_id(task_id, "task_id")
+    _authorize_operator(request)
     from app import app
 
     orch = app.state.orchestrator
-    bb = orch.bb
+    try:
+        result = await orch.steer_entry(task_id, req.entry_id, req.action)
+        logger.info(
+            "Steer %s | task=%s entry=%s",
+            req.action, task_id, req.entry_id,
+        )
+        return result
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Entry not found") from exc
+    except Exception as exc:
+        logger.warning(
+            "Steer %s failed for %s/%s: %s",
+            req.action, task_id, req.entry_id, exc,
+        )
+        raise HTTPException(status_code=500, detail="Steering failed") from exc
 
-    if req.action == "boost":
-        # Read current salience from Redis board entries
-        try:
-            entry_key = f"bmas:board:{task_id}:entries"
-            raw = await bb.redis.hget(entry_key, req.entry_id)
-            if not raw:
-                raise HTTPException(status_code=404, detail="Entry not found")
 
-            entry_data = json.loads(raw)
-            current_salience = float(entry_data.get("salience", 0.5))
-            new_salience = min(1.0, current_salience * 2.0)
-            entry_data["salience"] = new_salience
-            await bb.redis.hset(entry_key, req.entry_id, json.dumps(entry_data))
+# ── Pause Endpoint ───────────────────────────────────────────────────
 
-            # Emit status change event
-            await bb.publish_event(task_id, "entry_status_changed", {
-                "entry_id": req.entry_id,
-                "by": "operator",
-                "old_salience": current_salience,
-                "salience": new_salience,
-                "action": "boost",
-            })
+@router.post("/{task_id}/abort", status_code=202)
+async def abort_task(task_id: str, req: AbortRequest, request: Request):
+    """Stop an active task or mark a queued task for cancellation."""
+    task_id = _validate_id(task_id, "task_id")
+    _authorize_operator(request)
+    from app import app
+    from routes.submit import abort_scheduled_task
 
-            logger.info(
-                "Steer boost | task=%s entry=%s salience=%.2f→%.2f",
-                task_id, req.entry_id, current_salience, new_salience,
-            )
-            return {"status": "boosted", "entry_id": req.entry_id, "salience": new_salience}
+    orch = app.state.orchestrator
+    try:
+        await orch.bb.redis.set(
+            f"bmas:public:abort:{task_id}", req.reason, ex=3600,
+        )
+    except Exception as exc:
+        logger.warning("Redis abort marker failed for %s: %s", task_id, exc)
 
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning("Steer boost failed for %s/%s: %s", task_id, req.entry_id, e)
-            raise HTTPException(status_code=500, detail="Boost failed") from e
+    scheduled = False
+    try:
+        scheduled = await abort_scheduled_task(task_id, req.reason)
+    except Exception as exc:
+        logger.warning("Local abort failed for %s: %s", task_id, exc)
 
-    elif req.action == "retract":
-        try:
-            entry_key = f"bmas:board:{task_id}:entries"
-            raw = await bb.redis.hget(entry_key, req.entry_id)
-            if not raw:
-                raise HTTPException(status_code=404, detail="Entry not found")
+    remote_cancelled = 0
+    try:
+        remote_cancelled = await orch.cancel_remote_task(task_id)
+    except Exception as exc:
+        logger.warning("Remote abort failed for %s: %s", task_id, exc)
 
-            entry_data = json.loads(raw)
-            old_status = entry_data.get("status", "open")
-            entry_data["status"] = "superseded"
-            await bb.redis.hset(entry_key, req.entry_id, json.dumps(entry_data))
-
-            await bb.publish_event(task_id, "entry_status_changed", {
-                "entry_id": req.entry_id,
-                "by": "operator",
-                "old_status": old_status,
-                "status": "superseded",
-                "action": "retract",
-            })
-
-            logger.info(
-                "Steer retract | task=%s entry=%s %s→superseded",
-                task_id, req.entry_id, old_status,
-            )
-            return {"status": "retracted", "entry_id": req.entry_id}
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning("Steer retract failed for %s/%s: %s", task_id, req.entry_id, e)
-            raise HTTPException(status_code=500, detail="Retract failed") from e
-
-    # Unreachable due to validator, but satisfies type checker
-    raise HTTPException(status_code=400, detail="Unknown action")
+    logger.info("Abort requested for task %s: %s", task_id, req.reason)
+    return {
+        "status": "abort_requested",
+        "task_id": task_id,
+        "scheduled": scheduled,
+        "remote_cancelled": remote_cancelled,
+    }
 
 
 # ── Pause Endpoint ───────────────────────────────────────────────────
 
 @router.post("/{task_id}/pause")
-async def pause_task(task_id: str):
+async def pause_task(task_id: str, request: Request):
     """Pause a running task at the next round boundary (doc 05 §6)."""
     task_id = _validate_id(task_id, "task_id")
+    _authorize_operator(request)
     from app import app
 
     orch = app.state.orchestrator
@@ -174,6 +180,8 @@ async def pause_task(task_id: str):
     try:
         pause_key = f"bmas:public:pause:{task_id}"
         await bb.redis.set(pause_key, "1", ex=3600)  # TTL 1 hour
+        from database import update_run_state
+        await update_run_state(task_id, "pause_requested")
         logger.info("Pause requested for task %s", task_id)
         return {"status": "pause_requested", "task_id": task_id}
     except Exception as e:
@@ -184,9 +192,10 @@ async def pause_task(task_id: str):
 # ── Resume Endpoint ──────────────────────────────────────────────────
 
 @router.post("/{task_id}/resume")
-async def resume_task(task_id: str):
+async def resume_task(task_id: str, request: Request):
     """Resume a paused task (doc 05 §6)."""
     task_id = _validate_id(task_id, "task_id")
+    _authorize_operator(request)
     from app import app
 
     orch = app.state.orchestrator
@@ -195,6 +204,8 @@ async def resume_task(task_id: str):
     try:
         pause_key = f"bmas:public:pause:{task_id}"
         await bb.redis.delete(pause_key)
+        from database import update_run_state
+        await update_run_state(task_id, "running")
         logger.info("Resume requested for task %s", task_id)
         return {"status": "resumed", "task_id": task_id}
     except Exception as e:
@@ -205,13 +216,14 @@ async def resume_task(task_id: str):
 # ── Directive Endpoint ───────────────────────────────────────────────
 
 @router.post("/{task_id}/directive")
-async def inject_directive(task_id: str, req: DirectiveRequest):
+async def inject_directive(task_id: str, req: DirectiveRequest, request: Request):
     """Inject an operator directive into the hint queue (doc 05 §6).
 
     The directive will be converted to a board entry at the next
     round boundary by the variant's inject_directives() method.
     """
     task_id = _validate_id(task_id, "task_id")
+    _authorize_operator(request)
     from app import app
 
     orch = app.state.orchestrator
@@ -257,13 +269,14 @@ class ApprovalRequest(BaseModel):
 # ── Approval Endpoint (doc 12 §5.1) ──────────────────────────────────
 
 @router.post("/{task_id}/approval")
-async def handle_approval(task_id: str, req: ApprovalRequest):
+async def handle_approval(task_id: str, req: ApprovalRequest, request: Request):
     """Forward an approval decision to the Hermes agent node.
 
     The daemon looks up which agent node owns the run_id and forwards
     the decision via POST /v1/runs/{run_id}/approval on that node.
     """
     task_id = _validate_id(task_id, "task_id")
+    _authorize_operator(request)
     from app import app
 
     orch = app.state.orchestrator

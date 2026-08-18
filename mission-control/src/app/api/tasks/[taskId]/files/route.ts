@@ -61,6 +61,9 @@ export async function POST(
       method: "POST",
       headers: {
         "content-type": contentType,
+        ...(process.env.BMAS_API_KEY
+          ? { Authorization: `Bearer ${process.env.BMAS_API_KEY}` }
+          : {}),
       },
       body: body,
       signal: AbortSignal.timeout(30_000), // uploads can be larger

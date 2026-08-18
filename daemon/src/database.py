@@ -23,7 +23,27 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 5
+
+
+class LeaseFenceError(RuntimeError):
+    """A SQLite write used a task lease token that no longer owns the task."""
+
+
+async def _assert_task_lease(
+    connection: aiosqlite.Connection,
+    task_id: str,
+    lease_token: str | None,
+) -> None:
+    """Validate a task lease inside the caller's SQLite transaction."""
+    if lease_token is None:
+        return
+    cursor = await connection.execute(
+        "SELECT 1 FROM tasks WHERE id = ? AND lease_token = ? ",
+        (task_id, lease_token),
+    )
+    if await cursor.fetchone() is None:
+        raise LeaseFenceError(f"Task lease no longer owns SQLite writes: {task_id}")
 
 
 # ── Schema DDL ───────────────────────────────────────────────────────
@@ -251,6 +271,40 @@ MIGRATION_V2_ALTER_COST_ENTRIES = [
 ]
 
 
+# Migration v3 makes the classic blackboard resumable. The event log stays
+# authoritative. The metadata row stores the current control state required
+# to continue after a daemon restart.
+MIGRATION_V3_BOARD_META_DDL = """
+CREATE TABLE IF NOT EXISTS board_meta (
+    task_id       TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    data          TEXT NOT NULL DEFAULT '{}',
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_traces_turn_seq
+ON agent_traces(task_id, turn_id, seq);
+"""
+
+MIGRATION_V4_COST_IDEMPOTENCY_DDL = """
+DELETE FROM cost_entries
+WHERE turn_id IS NOT NULL
+  AND id NOT IN (
+    SELECT MIN(id)
+    FROM cost_entries
+    WHERE turn_id IS NOT NULL
+    GROUP BY task_id, turn_id, COALESCE(phase, '')
+  );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cost_turn_phase_unique
+ON cost_entries(task_id, turn_id, COALESCE(phase, ''))
+WHERE turn_id IS NOT NULL;
+"""
+
+MIGRATION_V5_TASK_LEASE_DDL = """
+CREATE INDEX IF NOT EXISTS idx_tasks_lease_token ON tasks(lease_token);
+"""
+
+
 # ── Connection Infrastructure ────────────────────────────────────────
 
 @asynccontextmanager
@@ -329,10 +383,103 @@ async def _migrate_to_v2(db: aiosqlite.Connection) -> None:
     logger.info("Migration v2 applied: 6 new tables, 12 new columns")
 
 
+async def _migrate_to_v3(db: aiosqlite.Connection) -> None:
+    """Migration v2 to v3: durable classic-board control state.
+
+    The old board snapshot used a global entry identifier as its primary key.
+    Every task starts at ``e-1``, so that key could overwrite another task.
+    Version 3 changes the primary key to ``(task_id, id)``.
+    """
+    cursor = await db.execute("PRAGMA table_info(board_entries)")
+    board_columns = await cursor.fetchall()
+    composite_pk = {
+        row[1] for row in board_columns if int(row[5] or 0) > 0
+    } == {"task_id", "id"}
+
+    if not composite_pk:
+        await db.executescript(
+            """
+            CREATE TABLE board_entries_v3 (
+                id              TEXT NOT NULL,
+                task_id         TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                type            TEXT NOT NULL,
+                author          TEXT NOT NULL,
+                author_node     TEXT,
+                title           TEXT,
+                body            TEXT,
+                refs            TEXT,
+                confidence      REAL,
+                status          TEXT NOT NULL DEFAULT 'open',
+                salience        REAL DEFAULT 0.0,
+                round           INTEGER,
+                space           TEXT NOT NULL DEFAULT 'public',
+                created_by_turn TEXT,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL,
+                PRIMARY KEY (task_id, id)
+            );
+            INSERT OR REPLACE INTO board_entries_v3
+            SELECT id, task_id, type, author, author_node, title, body, refs,
+                   confidence, status, salience, round, space, created_by_turn,
+                   created_at, updated_at
+            FROM board_entries;
+            DROP TABLE board_entries;
+            ALTER TABLE board_entries_v3 RENAME TO board_entries;
+            CREATE INDEX idx_board_entries_task ON board_entries(task_id);
+            CREATE INDEX idx_board_entries_salience
+            ON board_entries(task_id, salience DESC);
+            """
+        )
+        db.row_factory = aiosqlite.Row
+
+    # Remove duplicate trace deliveries before the unique index is created.
+    await db.execute(
+        "DELETE FROM agent_traces WHERE id NOT IN ("
+        "SELECT MIN(id) FROM agent_traces GROUP BY task_id, turn_id, seq)"
+    )
+    await db.executescript(MIGRATION_V3_BOARD_META_DDL)
+    db.row_factory = aiosqlite.Row
+
+    cursor = await db.execute("PRAGMA table_info(tasks)")
+    task_columns = {row[1] for row in await cursor.fetchall()}
+    for column, ddl in (
+        ("run_state", "ALTER TABLE tasks ADD COLUMN run_state TEXT DEFAULT 'queued'"),
+        ("resume_count", "ALTER TABLE tasks ADD COLUMN resume_count INTEGER DEFAULT 0"),
+        ("last_heartbeat_at", "ALTER TABLE tasks ADD COLUMN last_heartbeat_at TEXT"),
+    ):
+        if column not in task_columns:
+            await db.execute(ddl)
+
+    await db.commit()
+    logger.info("Migration v3 applied: resumable board state and scoped entry keys")
+
+
+async def _migrate_to_v4(db: aiosqlite.Connection) -> None:
+    """Make retry cost records idempotent for each turn and phase."""
+    await db.executescript(MIGRATION_V4_COST_IDEMPOTENCY_DDL)
+    await db.commit()
+    logger.info("Migration v4 applied: idempotent turn cost records")
+
+
+async def _migrate_to_v5(db: aiosqlite.Connection) -> None:
+    """Add the SQLite lease token that fences task lifecycle writes."""
+    cursor = await db.execute("PRAGMA table_info(tasks)")
+    task_columns = {row[1] for row in await cursor.fetchall()}
+    if "lease_token" not in task_columns:
+        await db.execute("ALTER TABLE tasks ADD COLUMN lease_token TEXT")
+    await db.executescript(MIGRATION_V5_TASK_LEASE_DDL)
+    db.row_factory = aiosqlite.Row
+    await db.commit()
+    logger.info("Migration v5 applied: fenced task lifecycle writes")
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
         2: _migrate_to_v2,
+        3: _migrate_to_v3,
+        4: _migrate_to_v4,
+        5: _migrate_to_v5,
     }
     fn = migrations.get(version)
     if fn is None:
@@ -438,18 +585,8 @@ async def init_db() -> None:
                     await db.execute(ddl)
             await db.commit()
 
-            # Zombie task recovery: mark orphaned tasks as failed
-            orphaned = await db.execute(
-                "UPDATE tasks SET status = 'failed', "
-                "error_message = 'Daemon restarted unexpectedly', "
-                "completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
-                "WHERE status IN ('pending', 'running')"
-            )
-            await db.commit()
-            if orphaned.rowcount > 0:
-                logger.warning(
-                    f"Recovered {orphaned.rowcount} orphaned task(s) from unclean shutdown"
-                )
+            # The recovery scanner reads unfinished rows after startup. Do not
+            # change their lease tokens here. Another daemon can still own them.
 
         db_size = os.path.getsize(DB_PATH)
         logger.info(f"SQLite ready: {DB_PATH} ({db_size} bytes)")
@@ -488,7 +625,8 @@ async def update_task_status(
     complexity: str | None = None,
     model_used: str | None = None,
     variant: str | None = None,
-) -> None:
+    lease_token: str | None = None,
+) -> bool:
     """Update task fields. Only non-None arguments are written."""
     updates: list[str] = []
     params: list = []
@@ -509,20 +647,54 @@ async def update_task_status(
         params.append(variant)
 
     if not updates:
-        return
+        return True
 
     params.append(task_id)
+    where = "id = ?"
+    if lease_token is not None:
+        where += " AND lease_token = ?"
+        params.append(lease_token)
     async with _connect() as db:
-        await db.execute(
-            f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?",
+        cursor = await db.execute(
+            f"UPDATE tasks SET {', '.join(updates)} WHERE {where}",
             params,
         )
         await db.commit()
+        return cursor.rowcount == 1
+
+
+async def claim_task_lease(task_id: str, lease_token: str) -> bool:
+    """Claim the SQLite lifecycle lease after Redis grants its lease."""
+    async with _connect() as db:
+        cursor = await db.execute(
+            "UPDATE tasks SET lease_token = ?, run_state = 'running', "
+            "resume_count = COALESCE(resume_count, 0) "
+            "+ CASE WHEN status = 'running' THEN 1 ELSE 0 END, "
+            "last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+            "WHERE id = ? AND status IN ('pending', 'running')",
+            (lease_token, task_id),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def release_task_lease(task_id: str, lease_token: str) -> bool:
+    """Clear the SQLite lease only when the caller still owns it."""
+    async with _connect() as db:
+        cursor = await db.execute(
+            "UPDATE tasks SET lease_token = NULL WHERE id = ? AND lease_token = ?",
+            (task_id, lease_token),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
 
 
 async def complete_task(
-    task_id: str, result_summary: str, result_json: str
-) -> None:
+    task_id: str,
+    result_summary: str,
+    result_json: str,
+    lease_token: str | None = None,
+) -> bool:
     """Mark a task as completed with its result.
 
     Extracts ``rounds_completed``, ``terminated_by``, and ``answer_source``
@@ -557,35 +729,62 @@ async def complete_task(
             except (ValueError, TypeError):
                 pass
 
-        await db.execute(
+        where = "id = ? AND status IN ('pending', 'running')"
+        params: list = [
+            result_summary,
+            result_json,
+            duration_ms,
+            rounds_used,
+            terminated_by,
+            answer_source,
+            task_id,
+        ]
+        if lease_token is not None:
+            where += " AND lease_token = ?"
+            params.append(lease_token)
+        cursor = await db.execute(
             "UPDATE tasks SET "
             "status = 'completed', "
+            "run_state = 'succeeded', "
             "result_summary = ?, "
             "result_json = ?, "
             "completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
             "duration_ms = ?, "
             "rounds_used = ?, "
             "terminated_by = ?, "
-            "answer_source = ? "
-            "WHERE id = ?",
-            (result_summary, result_json, duration_ms,
-             rounds_used, terminated_by, answer_source, task_id),
+            "answer_source = ?, "
+            "lease_token = NULL "
+            f"WHERE {where}",
+            params,
         )
         await db.commit()
+        return cursor.rowcount == 1
 
 
-async def fail_task(task_id: str, error_message: str) -> None:
+async def fail_task(
+    task_id: str,
+    error_message: str,
+    lease_token: str | None = None,
+) -> bool:
     """Mark a task as failed with an error message."""
     async with _connect() as db:
-        await db.execute(
+        where = "id = ? AND status IN ('pending', 'running')"
+        params = [error_message, task_id]
+        if lease_token is not None:
+            where += " AND lease_token = ?"
+            params.append(lease_token)
+        cursor = await db.execute(
             "UPDATE tasks SET "
             "status = 'failed', "
+            "run_state = 'failed', "
             "error_message = ?, "
-            "completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
-            "WHERE id = ?",
-            (error_message, task_id),
+            "completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
+            "lease_token = NULL "
+            f"WHERE {where}",
+            params,
         )
         await db.commit()
+        return cursor.rowcount == 1
 
 
 async def get_task(task_id: str) -> dict | None:
@@ -596,6 +795,40 @@ async def get_task(task_id: str) -> dict | None:
         )
         row = await cursor.fetchone()
         return dict(row) if row else None
+
+
+async def get_resumable_tasks() -> list[dict]:
+    """Return unfinished traditional tasks in creation order."""
+    async with _connect() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM tasks "
+            "WHERE status IN ('pending', 'running') "
+            "AND COALESCE(variant, 'traditional') = 'traditional' "
+            "ORDER BY created_at"
+        )
+        return [dict(row) for row in rows]
+
+
+async def update_run_state(
+    task_id: str,
+    run_state: str,
+    lease_token: str | None = None,
+) -> bool:
+    """Set the detailed execution state and refresh its heartbeat."""
+    async with _connect() as db:
+        where = "id = ?"
+        params = [run_state, task_id]
+        if lease_token is not None:
+            where += " AND lease_token = ?"
+            params.append(lease_token)
+        cursor = await db.execute(
+            "UPDATE tasks SET run_state = ?, "
+            "last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+            f"WHERE {where}",
+            params,
+        )
+        await db.commit()
+        return cursor.rowcount == 1
 
 
 async def list_tasks(
@@ -694,7 +927,10 @@ async def get_debate(task_id: str) -> list[dict]:
 
 # ── Cost CRUD ────────────────────────────────────────────────────────
 
-async def update_task_cost_totals(task_id: str) -> None:
+async def update_task_cost_totals(
+    task_id: str,
+    lease_token: str | None = None,
+) -> bool:
     """Roll up cost_entries into the tasks row (total_cost_usd, total_tokens)."""
     async with _connect() as db:
         cursor = await db.execute(
@@ -706,11 +942,19 @@ async def update_task_cost_totals(task_id: str) -> None:
         )
         row = await cursor.fetchone()
         if row:
-            await db.execute(
-                "UPDATE tasks SET total_cost_usd = ?, total_tokens = ? WHERE id = ?",
-                (row["total_cost"], row["total_tokens"], task_id),
+            where = "id = ?"
+            params = [row["total_cost"], row["total_tokens"], task_id]
+            if lease_token is not None:
+                where += " AND lease_token = ?"
+                params.append(lease_token)
+            updated = await db.execute(
+                "UPDATE tasks SET total_cost_usd = ?, total_tokens = ? "
+                f"WHERE {where}",
+                params,
             )
             await db.commit()
+            return updated.rowcount == 1
+        return False
 
 
 async def get_task_cost_summary(task_id: str) -> dict:
@@ -850,7 +1094,7 @@ async def insert_agent_traces(rows: list[dict]) -> None:
             if isinstance(data_json, dict):
                 data_json = json.dumps(data_json)
             await db.execute(
-                "INSERT INTO agent_traces "
+                "INSERT OR IGNORE INTO agent_traces "
                 "(task_id, turn_id, seq, role, node, type, data, model, "
                 "tokens_in, tokens_out, cost_usd) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -995,7 +1239,7 @@ async def insert_cost_entry_v2(
     """
     async with _connect() as db:
         await db.execute(
-            "INSERT INTO cost_entries "
+            "INSERT OR IGNORE INTO cost_entries "
             "(task_id, model, input_tokens, output_tokens, cost_usd, phase, "
             "node_id, turn_id, provider, price_source, joules_estimate) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1009,7 +1253,10 @@ async def insert_cost_entry_v2(
 
 # ── Board CRUD (Phase 2, doc 07 §3) ─────────────────────────────────
 
-async def upsert_board_entry(entry: dict) -> None:
+async def upsert_board_entry(
+    entry: dict,
+    lease_token: str | None = None,
+) -> None:
     """Insert or update a board entry in the durable snapshot.
 
     Uses INSERT OR REPLACE so that re-folding from events produces
@@ -1019,32 +1266,38 @@ async def upsert_board_entry(entry: dict) -> None:
     if isinstance(refs, list):
         refs = json.dumps(refs)
     async with _connect() as db:
-        await db.execute(
-            "INSERT OR REPLACE INTO board_entries "
-            "(id, task_id, type, author, author_node, title, body, refs, "
-            "confidence, status, salience, round, space, created_by_turn, "
-            "created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                entry["id"],
-                entry["task_id"],
-                entry["type"],
-                entry["author"],
-                entry.get("author_node"),
-                entry.get("title"),
-                entry.get("body"),
-                refs,
-                entry.get("confidence", 0.5),
-                entry.get("status", "open"),
-                entry.get("salience", 0.0),
-                entry.get("round", 0),
-                entry.get("space", "public"),
-                entry.get("created_by_turn"),
-                entry.get("created_at", ""),
-                entry.get("updated_at", ""),
-            ),
-        )
-        await db.commit()
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await _assert_task_lease(db, entry["task_id"], lease_token)
+            await db.execute(
+                "INSERT OR REPLACE INTO board_entries "
+                "(id, task_id, type, author, author_node, title, body, refs, "
+                "confidence, status, salience, round, space, created_by_turn, "
+                "created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    entry["id"],
+                    entry["task_id"],
+                    entry["type"],
+                    entry["author"],
+                    entry.get("author_node"),
+                    entry.get("title"),
+                    entry.get("body"),
+                    refs,
+                    entry.get("confidence", 0.5),
+                    entry.get("status", "open"),
+                    entry.get("salience", 0.0),
+                    entry.get("round", 0),
+                    entry.get("space", "public"),
+                    entry.get("created_by_turn"),
+                    entry.get("created_at", ""),
+                    entry.get("updated_at", ""),
+                ),
+            )
+            await db.commit()
+        except BaseException:
+            await db.rollback()
+            raise
 
 
 async def get_board_entries(task_id: str) -> list[dict]:
@@ -1078,6 +1331,7 @@ async def insert_board_event(
     entry_id: str | None,
     payload: dict | str,
     redis_stream_id: str | None = None,
+    lease_token: str | None = None,
 ) -> None:
     """Insert a board event into the durable event log.
 
@@ -1086,17 +1340,36 @@ async def insert_board_event(
     """
     payload_str = payload if isinstance(payload, str) else json.dumps(payload)
     async with _connect() as db:
-        await db.execute(
-            "INSERT INTO board_events "
-            "(task_id, seq, round, turn_id, actor, event_type, "
-            "entry_id, payload, redis_stream_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                task_id, seq, round_no, turn_id, actor,
-                event_type, entry_id, payload_str, redis_stream_id,
-            ),
-        )
-        await db.commit()
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await _assert_task_lease(db, task_id, lease_token)
+            cursor = await db.execute(
+                "INSERT OR IGNORE INTO board_events "
+                "(task_id, seq, round, turn_id, actor, event_type, "
+                "entry_id, payload, redis_stream_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    task_id, seq, round_no, turn_id, actor,
+                    event_type, entry_id, payload_str, redis_stream_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                existing_cursor = await db.execute(
+                    "SELECT actor, event_type, entry_id, payload FROM board_events "
+                    "WHERE task_id = ? AND seq = ?",
+                    (task_id, seq),
+                )
+                existing = await existing_cursor.fetchone()
+                expected = (actor, event_type, entry_id, payload_str)
+                actual = tuple(existing) if existing else None
+                if actual != expected:
+                    raise RuntimeError(
+                        f"Board event sequence conflict for {task_id} at {seq}"
+                    )
+            await db.commit()
+        except BaseException:
+            await db.rollback()
+            raise
 
 
 async def get_board_events(
@@ -1129,32 +1402,199 @@ async def get_board_events(
         return result
 
 
+async def import_legacy_board_snapshot(
+    task_id: str,
+    events: list[dict],
+    entries: list[dict],
+    meta: dict,
+    lease_token: str | None = None,
+) -> int:
+    """Import a legacy board snapshot in one SQLite transaction.
+
+    The event-log existence check and all writes share one write lock. A crash
+    therefore leaves either the old empty board or the complete imported board.
+    """
+    async with _connect() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await _assert_task_lease(db, task_id, lease_token)
+            cursor = await db.execute(
+                "SELECT 1 FROM board_events WHERE task_id = ? LIMIT 1",
+                (task_id,),
+            )
+            if await cursor.fetchone():
+                await db.rollback()
+                return 0
+
+            for event in events:
+                payload = event.get("payload", {})
+                payload_json = (
+                    payload if isinstance(payload, str) else json.dumps(payload)
+                )
+                await db.execute(
+                    "INSERT INTO board_events "
+                    "(task_id, seq, round, turn_id, actor, event_type, "
+                    "entry_id, payload, redis_stream_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        task_id,
+                        int(event.get("seq", 0)),
+                        event.get("round"),
+                        event.get("turn_id"),
+                        str(event.get("actor", "unknown")),
+                        str(event.get("event_type", "entry_added")),
+                        event.get("entry_id"),
+                        payload_json,
+                        event.get("redis_stream_id"),
+                    ),
+                )
+
+            for entry in entries:
+                refs = entry.get("refs", [])
+                refs_json = refs if isinstance(refs, str) else json.dumps(refs)
+                await db.execute(
+                    "INSERT OR REPLACE INTO board_entries "
+                    "(id, task_id, type, author, author_node, title, body, refs, "
+                    "confidence, status, salience, round, space, created_by_turn, "
+                    "created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        entry["id"],
+                        task_id,
+                        entry["type"],
+                        entry["author"],
+                        entry.get("author_node"),
+                        entry.get("title"),
+                        entry.get("body"),
+                        refs_json,
+                        entry.get("confidence", 0.5),
+                        entry.get("status", "open"),
+                        entry.get("salience", 0.0),
+                        entry.get("round", 0),
+                        entry.get("space", "public"),
+                        entry.get("created_by_turn"),
+                        entry.get("created_at", ""),
+                        entry.get("updated_at", ""),
+                    ),
+                )
+
+            await db.execute(
+                "INSERT INTO board_meta (task_id, data, updated_at) "
+                "VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now')) "
+                "ON CONFLICT(task_id) DO UPDATE SET "
+                "data = excluded.data, updated_at = excluded.updated_at",
+                (task_id, json.dumps(meta)),
+            )
+            await db.commit()
+            return len(events)
+        except BaseException:
+            await db.rollback()
+            raise
+
+
 async def update_board_entry_status(
-    task_id: str, entry_id: str, status: str
+    task_id: str,
+    entry_id: str,
+    status: str,
+    lease_token: str | None = None,
 ) -> None:
     """Update the status of a board entry."""
     async with _connect() as db:
-        await db.execute(
-            "UPDATE board_entries SET status = ?, "
-            "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
-            "WHERE id = ? AND task_id = ?",
-            (status, entry_id, task_id),
-        )
-        await db.commit()
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await _assert_task_lease(db, task_id, lease_token)
+            await db.execute(
+                "UPDATE board_entries SET status = ?, "
+                "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                "WHERE id = ? AND task_id = ?",
+                (status, entry_id, task_id),
+            )
+            await db.commit()
+        except BaseException:
+            await db.rollback()
+            raise
 
 
 async def update_board_entry_salience(
-    task_id: str, entry_id: str, salience: float
+    task_id: str,
+    entry_id: str,
+    salience: float,
+    lease_token: str | None = None,
 ) -> None:
     """Update the salience score of a board entry."""
     async with _connect() as db:
-        await db.execute(
-            "UPDATE board_entries SET salience = ?, "
-            "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
-            "WHERE id = ? AND task_id = ?",
-            (salience, entry_id, task_id),
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await _assert_task_lease(db, task_id, lease_token)
+            await db.execute(
+                "UPDATE board_entries SET salience = ?, "
+                "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                "WHERE id = ? AND task_id = ?",
+                (salience, entry_id, task_id),
+            )
+            await db.commit()
+        except BaseException:
+            await db.rollback()
+            raise
+
+
+async def upsert_board_meta(
+    task_id: str,
+    meta: dict,
+    lease_token: str | None = None,
+) -> None:
+    """Persist the complete classic-board control metadata."""
+    async with _connect() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await _assert_task_lease(db, task_id, lease_token)
+            await db.execute(
+                "INSERT INTO board_meta (task_id, data, updated_at) "
+                "VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now')) "
+                "ON CONFLICT(task_id) DO UPDATE SET "
+                "data = excluded.data, updated_at = excluded.updated_at",
+                (task_id, json.dumps(meta)),
+            )
+            await db.commit()
+        except BaseException:
+            await db.rollback()
+            raise
+
+
+async def get_board_meta(task_id: str) -> dict:
+    """Read the persisted classic-board control metadata."""
+    async with _connect() as db:
+        cursor = await db.execute(
+            "SELECT data FROM board_meta WHERE task_id = ?", (task_id,)
         )
-        await db.commit()
+        row = await cursor.fetchone()
+        if not row or not row["data"]:
+            return {}
+        try:
+            value = json.loads(row["data"])
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+
+async def delete_board_entries_in_space(
+    task_id: str,
+    space: str,
+    lease_token: str | None = None,
+) -> None:
+    """Remove an archived private-space snapshot from SQLite."""
+    async with _connect() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await _assert_task_lease(db, task_id, lease_token)
+            await db.execute(
+                "DELETE FROM board_entries WHERE task_id = ? AND space = ?",
+                (task_id, space),
+            )
+            await db.commit()
+        except BaseException:
+            await db.rollback()
+            raise
 
 
 # ── Task Files CRUD (doc 17 §3) ─────────────────────────────────────

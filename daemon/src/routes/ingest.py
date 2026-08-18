@@ -154,12 +154,13 @@ async def ingest_traces(task_id: str, turn_id: str, request: Request):
     Bearer auth via BMAS_NODE_KEY. Accepts a JSON array of trace events
     matching the schema in doc 06 §4.
 
-    For each trace:
-    - Writes to Redis Stream bmas:traces:{task_id}:{turn_id} (capped, TTL 24h)
-    - Publishes to bmas:events:{task_id} as event:trace for live SSE
+    For each batch:
+    - Inserts all traces into the durable SQLite archive
+    - Returns 503 when the archive cannot accept the batch
+    - Writes accepted traces to the capped Redis live stream
+    - Publishes accepted traces as live SSE events
 
-    On `final` events:
-    - Batch-inserts all traces to SQLite agent_traces
+    On `final` events, before live publication:
     - Computes cost_usd from usage × MODEL_PRICING
     - Inserts cost_entries with per-task/model/node breakdown
     - Updates task cost totals
@@ -182,45 +183,18 @@ async def ingest_traces(task_id: str, turn_id: str, request: Request):
 
     orch = app.state.orchestrator
 
-    # Track whether we see a final event for cost processing
+    # Build the durable batch before any live publication. The agent keeps the
+    # batch when this endpoint returns a failure status.
     final_trace = None
     db_rows = []
 
     for trace in traces:
-        # Validate required fields
         if not isinstance(trace, dict):
             continue
         trace_type = trace.get("type", "unknown")
-
-        # 1. Write to Redis Stream (live transport; capped)
-        try:
-            stream_key = f"bmas:traces:{task_id}:{turn_id}"
-            await orch.bb.redis.xadd(
-                stream_key,
-                {
-                    "type": trace_type,
-                    "data": json.dumps(trace.get("data", {})),
-                    "seq": str(trace.get("seq", 0)),
-                    "role": trace.get("role", ""),
-                    "node": trace.get("node", ""),
-                    "ts": trace.get("ts", datetime.now(UTC).isoformat()),
-                },
-                maxlen=5000,
-                approximate=True,
-            )
-            # Set TTL (24h) — idempotent
-            await orch.bb.redis.expire(stream_key, 86400)
-        except Exception as e:
-            logger.warning(f"Redis trace write failed for {task_id}/{turn_id}: {e}")
-
-        # 2. Publish to Pub/Sub for live SSE (event: trace)
-        try:
-            await orch.bb.publish_event(task_id, "trace", trace)
-        except Exception as e:
-            logger.warning(f"Trace Pub/Sub failed for {task_id}: {e}")
-
-        # 3. Collect for SQLite batch insert
         tokens = trace.get("tokens", {})
+        if not isinstance(tokens, dict):
+            tokens = {}
         db_rows.append({
             "task_id": task_id,
             "turn_id": turn_id,
@@ -235,19 +209,25 @@ async def ingest_traces(task_id: str, turn_id: str, request: Request):
             "cost_usd": 0.0,  # Computed on final
         })
 
-        # 4. Check for final event
         if trace_type == "final":
             final_trace = trace
 
-    # 5. Batch-insert to SQLite
+    # Save the archive first. A non-2xx response tells the agent to retry or
+    # spool the complete batch. Database uniqueness constraints make retries
+    # idempotent.
     try:
         await db.insert_agent_traces(db_rows)
     except Exception as e:
-        logger.warning(f"SQLite trace insert failed for {task_id}/{turn_id}: {e}")
+        logger.exception("SQLite trace insert failed for %s/%s", task_id, turn_id)
+        raise HTTPException(
+            status_code=503,
+            detail="The durable trace archive is unavailable",
+        ) from e
 
-    # 6. On final: compute and record cost
+    cost_event = None
     if final_trace:
-        usage = (final_trace.get("data") or {}).get("usage")
+        final_data = final_trace.get("data")
+        usage = final_data.get("usage") if isinstance(final_data, dict) else None
         node_id = final_trace.get("node")
 
         # Determine model from usage or trace context
@@ -258,10 +238,9 @@ async def ingest_traces(task_id: str, turn_id: str, request: Request):
         cost_usd, price_source = _compute_cost(usage, model)
 
         if usage and model:
+            input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", 0))
+            output_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0))
             try:
-                input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", 0))
-                output_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0))
-
                 await db.insert_cost_entry_v2(
                     task_id=task_id,
                     model=model,
@@ -282,25 +261,58 @@ async def ingest_traces(task_id: str, turn_id: str, request: Request):
                     f"source={price_source}"
                 )
             except Exception as e:
-                logger.warning(f"Cost entry insert failed for {task_id}/{turn_id}: {e}")
+                logger.exception("Cost archive failed for %s/%s", task_id, turn_id)
+                raise HTTPException(
+                    status_code=503,
+                    detail="The durable cost archive is unavailable",
+                ) from e
 
-            # Publish cost event for live SSE
-            with contextlib.suppress(Exception):
-                await orch.bb.publish_event(task_id, "cost", {
-                    "model": model,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "cost_usd": cost_usd,
-                    "node_id": node_id,
-                    "turn_id": turn_id,
-                    "price_source": price_source,
-                })
+            cost_event = {
+                "model": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cost_usd": cost_usd,
+                "node_id": node_id,
+                "turn_id": turn_id,
+                "price_source": price_source,
+            }
         elif usage is None:
             # Legacy hermes -z fallback — usage unknown (doc 06 §3.1 note)
             logger.warning(
                 f"No usage in final trace for {task_id}/{turn_id} — "
                 f"likely hermes -z fallback. Cost entry skipped."
             )
+
+    # Publish the durable batch for live consumers. Redis failures do not
+    # invalidate the SQLite archive.
+    stream_key = f"bmas:traces:{task_id}:{turn_id}"
+    for trace in traces:
+        if not isinstance(trace, dict):
+            continue
+        try:
+            await orch.bb.redis.xadd(
+                stream_key,
+                {
+                    "type": trace.get("type", "unknown"),
+                    "data": json.dumps(trace.get("data", {})),
+                    "seq": str(trace.get("seq", 0)),
+                    "role": trace.get("role", ""),
+                    "node": trace.get("node", ""),
+                    "ts": trace.get("ts", datetime.now(UTC).isoformat()),
+                },
+                maxlen=5000,
+                approximate=True,
+            )
+            await orch.bb.redis.expire(stream_key, 86400)
+        except Exception as e:
+            logger.warning(f"Redis trace write failed for {task_id}/{turn_id}: {e}")
+
+        with contextlib.suppress(Exception):
+            await orch.bb.publish_event(task_id, "trace", trace)
+
+    if cost_event is not None:
+        with contextlib.suppress(Exception):
+            await orch.bb.publish_event(task_id, "cost", cost_event)
 
     return JSONResponse({
         "status": "ok",

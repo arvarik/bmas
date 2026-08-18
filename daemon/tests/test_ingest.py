@@ -17,7 +17,8 @@ as a module before importing ingest.
 
 import os
 import sys
-from unittest.mock import MagicMock
+import types
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -42,7 +43,7 @@ _mock_config.MODEL_PRICING = {
 
 # Now safe to add daemon/src to path and import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from routes.ingest import _compute_cost, _verify_bearer  # noqa: E402
+from routes.ingest import _compute_cost, _verify_bearer, ingest_traces  # noqa: E402
 
 # ── Test _compute_cost ─────────────────────────────────────────────────
 
@@ -299,3 +300,112 @@ class TestTraceIngestion:
         all_known = phase1_types | future_types
         assert len(all_known) == 9
 
+
+class _JsonRequest:
+    """Supply the request fields that the ingest route reads."""
+
+    def __init__(self, body):
+        self.headers = {"Authorization": "Bearer test-node-key-abc123"}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+
+def _install_ingest_app(monkeypatch):
+    """Install a small application object for a direct route call."""
+    board = types.SimpleNamespace(
+        redis=types.SimpleNamespace(xadd=AsyncMock(), expire=AsyncMock()),
+        publish_event=AsyncMock(),
+    )
+    orchestrator = types.SimpleNamespace(bb=board)
+    test_app = types.SimpleNamespace(
+        state=types.SimpleNamespace(orchestrator=orchestrator),
+    )
+    monkeypatch.setitem(sys.modules, "app", types.SimpleNamespace(app=test_app))
+    return board
+
+
+@pytest.mark.asyncio
+async def test_trace_archive_failure_returns_503_before_live_publish(monkeypatch):
+    """A database failure keeps the batch on the agent for a later retry."""
+    from fastapi import HTTPException
+
+    import database as db
+
+    board = _install_ingest_app(monkeypatch)
+    monkeypatch.setattr(
+        db,
+        "insert_agent_traces",
+        AsyncMock(side_effect=RuntimeError("disk unavailable")),
+    )
+    request = _JsonRequest([{"seq": 1, "type": "reasoning", "data": {}}])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await ingest_traces("task-1", "turn-1", request)
+
+    assert exc_info.value.status_code == 503
+    board.redis.xadd.assert_not_awaited()
+    board.publish_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cost_archive_failure_returns_503_before_live_publish(monkeypatch):
+    """A cost failure does not acknowledge the final trace batch."""
+    from fastapi import HTTPException
+
+    import database as db
+
+    board = _install_ingest_app(monkeypatch)
+    monkeypatch.setattr(db, "insert_agent_traces", AsyncMock())
+    monkeypatch.setattr(
+        db,
+        "insert_cost_entry_v2",
+        AsyncMock(side_effect=RuntimeError("cost archive unavailable")),
+    )
+    monkeypatch.setattr(db, "update_task_cost_totals", AsyncMock())
+    request = _JsonRequest([
+        {
+            "seq": 2,
+            "type": "final",
+            "node": "node-1",
+            "data": {
+                "usage": {
+                    "model": "gemini-pro",
+                    "prompt_tokens": 10,
+                    "completion_tokens": 2,
+                },
+            },
+        },
+    ])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await ingest_traces("task-1", "turn-1", request)
+
+    assert exc_info.value.status_code == 503
+    board.redis.xadd.assert_not_awaited()
+    board.publish_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_trace_ingest_publishes_only_after_durable_archive(monkeypatch):
+    """The route saves the trace before it publishes the live event."""
+    import database as db
+
+    events = []
+    board = _install_ingest_app(monkeypatch)
+
+    async def archive(_rows):
+        events.append("archive")
+
+    async def publish(*_args, **_kwargs):
+        events.append("publish")
+
+    monkeypatch.setattr(db, "insert_agent_traces", archive)
+    board.publish_event.side_effect = publish
+    request = _JsonRequest([{"seq": 1, "type": "reasoning", "data": {}}])
+
+    response = await ingest_traces("task-1", "turn-1", request)
+
+    assert response.status_code == 200
+    assert events == ["archive", "publish"]

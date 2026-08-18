@@ -2,9 +2,16 @@
 """Board store tests: append, snapshot, fork, replay (doc 04 §5)."""
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
-from core.board_store import InMemoryBoardStore, fold_events_to_snapshot, make_event
+from core.board_store import (
+    InMemoryBoardStore,
+    SqliteRedisBoardStore,
+    fold_events_to_snapshot,
+    make_event,
+)
 from core.entry import BoardEntry, entry_to_dict
 
 
@@ -52,6 +59,19 @@ class TestInMemoryBoardStore:
         events = await store.get_events("task-1")
         assert len(events) == 1
         assert events[0]["seq"] == 1
+
+    @pytest.mark.asyncio
+    async def test_mutation_id_lookup_uses_the_event_index(self):
+        store = InMemoryBoardStore()
+        event = make_event(
+            "task-1", 1, "actor", "entry_rejected",
+            payload={"_mutation_id": "turn-1:0"},
+        )
+        await store.append_event("task-1", event)
+
+        assert await store.get_event_by_mutation_id(
+            "task-1", "turn-1:0",
+        ) is event
 
     @pytest.mark.asyncio
     async def test_seq_monotonicity(self):
@@ -319,3 +339,145 @@ class TestFoldEvents:
         for k in snap1:
             assert snap1[k].body == snap2[k].body
             assert snap1[k].status == snap2[k].status
+
+
+class TestSqliteRedisBoardStore:
+
+    @pytest.mark.asyncio
+    async def test_legacy_snapshot_import_becomes_replayable(self, tmp_path, monkeypatch):
+        import database as db
+
+        monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "legacy.db"))
+        await db.init_db()
+        await db.create_task("task-legacy", "test", "test")
+        entry = BoardEntry(
+            id="e-4",
+            task_id="task-legacy",
+            type="finding",
+            author="expert.x",
+            body="legacy fact",
+            round=2,
+            salience=0.7,
+        )
+        store = SqliteRedisBoardStore()
+
+        imported = await store.import_snapshot(
+            "task-legacy",
+            [{**entry_to_dict(entry), "seq": 4}],
+            {"round": 2, "phase": "Debate"},
+        )
+
+        resumed = SqliteRedisBoardStore()
+        await resumed.load_task("task-legacy")
+        snapshot = await resumed.get_snapshot("task-legacy")
+        assert imported == 1
+        assert snapshot["e-4"].body == "legacy fact"
+        assert (await resumed.get_meta("task-legacy"))["round"] == 2
+        assert await resumed.get_next_seq("task-legacy") == 5
+
+    @pytest.mark.asyncio
+    async def test_restart_replays_entries_and_meta(self, tmp_path, monkeypatch):
+        import database as db
+
+        monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "board.db"))
+        await db.init_db()
+        await db.create_task("task-1", "test", "test")
+
+        first = SqliteRedisBoardStore()
+        seq = await first.get_next_seq("task-1")
+        event = _make_entry_added_event("task-1", seq, "e-1")
+        entry = BoardEntry(
+            id="e-1",
+            task_id="task-1",
+            type="finding",
+            author="expert.x",
+            body="durable fact",
+        )
+        await first.append_event("task-1", event)
+        await first.upsert_entry("task-1", entry)
+        await first.set_meta("task-1", round=7, budget_spent=0.25)
+
+        resumed = SqliteRedisBoardStore()
+        await resumed.load_task("task-1")
+        snapshot = await resumed.get_snapshot("task-1")
+        meta = await resumed.get_meta("task-1")
+
+        assert snapshot["e-1"].body == "test body"
+        assert meta == {"round": 7, "budget_spent": 0.25}
+        assert await resumed.get_next_seq("task-1") == 2
+
+    @pytest.mark.asyncio
+    async def test_unload_releases_hot_state_and_later_replays(self, tmp_path, monkeypatch):
+        import database as db
+
+        monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "unload.db"))
+        await db.init_db()
+        await db.create_task("task-1", "test", "test")
+        store = SqliteRedisBoardStore()
+        entry = BoardEntry(
+            id="e-1",
+            task_id="task-1",
+            type="finding",
+            author="expert.x",
+            body="durable fact",
+        )
+        await store.append_event(
+            "task-1", _make_entry_added_event("task-1", 1, "e-1"),
+        )
+        await store.upsert_entry("task-1", entry)
+        await store.set_meta("task-1", round=2)
+
+        await store.unload_task("task-1")
+
+        assert "task-1" not in store._events
+        assert "task-1" not in store._entries
+        assert "task-1" not in store._meta
+        assert "task-1" not in store._mutation_events
+        assert "task-1" not in store._loaded_tasks
+        assert "task-1" not in store._load_locks
+        replayed = await store.get_snapshot("task-1")
+        assert replayed["e-1"].body == "test body"
+        assert (await store.get_meta("task-1"))["round"] == 2
+
+    @pytest.mark.asyncio
+    async def test_legacy_import_rolls_back_as_one_transaction(
+        self, tmp_path, monkeypatch,
+    ):
+        import database as db
+
+        monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "atomic.db"))
+        await db.init_db()
+        await db.create_task("task-1", "test", "test")
+        duplicate_events = [
+            make_event("task-1", 1, "expert.x", "entry_added"),
+            make_event("task-1", 1, "expert.y", "entry_added"),
+        ]
+
+        with pytest.raises(sqlite3.IntegrityError):
+            await db.import_legacy_board_snapshot(
+                "task-1", duplicate_events, [], {"round": 7},
+            )
+
+        assert await db.get_board_events("task-1") == []
+        assert await db.get_board_meta("task-1") == {}
+
+    def test_fold_archived_space_removes_private_entries(self):
+        private = BoardEntry(
+            id="e-1",
+            task_id="task-1",
+            type="finding",
+            author="expert.x",
+            body="private",
+            space="private:conflict-e-9",
+        )
+        events = [
+            make_event(
+                "task-1", 1, "expert.x", "entry_added",
+                entry_id="e-1", payload=entry_to_dict(private),
+            ),
+            make_event(
+                "task-1", 2, "control_unit", "space_archived",
+                payload={"space": "private:conflict-e-9"},
+            ),
+        ]
+        assert fold_events_to_snapshot(events) == {}

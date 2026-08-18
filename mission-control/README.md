@@ -4,6 +4,18 @@ The real-time operations dashboard for **bMAS**. A task-scoped interface for mon
 
 > Runs as Docker container `bmas-dashboard` on the control plane at port 9321.
 
+## Access Control
+
+Set `BMAS_DASHBOARD_KEY` to protect all pages and API routes. The browser asks
+for HTTP Basic credentials. Enter any username and the dashboard key as the
+password. Keep this key separate from the daemon `BMAS_API_KEY`.
+Use HTTPS whenever a client connects outside the local host. HTTP Basic sends
+reusable credentials with each request.
+
+Mission Control keeps `BMAS_API_KEY` on the server. Client JavaScript never
+receives that key. An empty `BMAS_DASHBOARD_KEY` permits unauthenticated access
+for trusted-network deployments.
+
 ## Features
 
 | # | Feature | Technology | Data Source |

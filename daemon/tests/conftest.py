@@ -42,6 +42,8 @@ _fake_config.STORAGE_ALLOWED_TYPES = {"pdf", "txt", "md", "csv", "json", "png", 
 _fake_config.STORAGE_PDF_EXTRACTION = "pymupdf"  # type: ignore
 _fake_config.STORAGE_EXTRACTION_MAX_CHARS = 60000  # type: ignore
 _fake_config.BMAS_NODE_KEY = ""  # type: ignore
+_fake_config.BMAS_EXECUTE_KEY = ""  # type: ignore
+_fake_config.BMAS_API_KEY = ""  # type: ignore
 _fake_config.STORAGE_CONFIG = {  # type: ignore
     "enabled": False,
     "user_media_dir": "/tmp/bmas-test-uploads",
@@ -64,6 +66,7 @@ _fake_config.TRADITIONAL_CONFIG = {  # type: ignore
     "experts_per_tier": {"simple": 0, "light": 1, "medium": 2, "complex": 3},
     "cleaner_entry_threshold": 12,
     "stall_rounds": 2,
+    "max_replans": 2,
     "cu_mode": "llm",
     "coordinator_narration": False,
     "sole_similarity": "auto",
@@ -71,6 +74,21 @@ _fake_config.TRADITIONAL_CONFIG = {  # type: ignore
 _fake_config.ROLE_REGISTRY = {}  # type: ignore
 _fake_config.MODEL_ROUTING = {"simple": "local", "light": "test-light", "medium": "test-medium", "complex": "test-pro"}  # type: ignore
 _fake_config.MODEL_POOLS = {}  # type: ignore
+_fake_config.ROUND_EXECUTION = "concurrent"  # type: ignore
+_fake_config.VIEW_BUDGET_TOKENS = 12000  # type: ignore
+_fake_config.MAX_ACTIVE_TASKS = 2  # type: ignore
+_fake_config.MAX_QUEUED_TASKS = 10  # type: ignore
+_fake_config.SHUTDOWN_GRACE_S = 1  # type: ignore
+_fake_config.AGENT_TURN_TIMEOUT_S = 600  # type: ignore
+_fake_config.AGENT_ENDPOINTS = {}  # type: ignore
+_fake_config.EDGE_NODE_MODELS = ["edge-node-1"]  # type: ignore
+_fake_config.LITELLM_KEY = "test-key"  # type: ignore
+_fake_config.LITELLM_URL = "http://litellm.test"  # type: ignore
+_fake_config.MODEL_PRICING = {}  # type: ignore
+_fake_config.TRIAGE_URL = "http://triage.test"  # type: ignore
+_fake_config.LOCK_TTL_MS = 300000  # type: ignore
+_fake_config.NODE_URL_TO_NAME = {}  # type: ignore
+_fake_config.REDIS_URL = "redis://localhost:6379/0"  # type: ignore
 
 # Phase 4: Triage config values (needed by core/triage.py imports)
 _fake_config.TRIAGE_ENABLED = True  # type: ignore

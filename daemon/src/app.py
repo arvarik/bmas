@@ -42,12 +42,16 @@ async def lifespan(app: FastAPI):
     app.state.orchestrator = orch
     app.state.health_client = httpx.AsyncClient(timeout=3.0)
 
+    # Start the bounded admission queue after all shared clients are ready.
+    await submit.start_task_workers(orch)
+
     # Start system health loop
     health_task = asyncio.create_task(system_health_loop(app))
 
     yield
 
     health_task.cancel()
+    await submit.stop_task_workers()
     await app.state.health_client.aclose()
     await orch.close()
 

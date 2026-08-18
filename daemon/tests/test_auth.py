@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from auth import check_bearer_or_pass, require_node_key  # noqa: E402
+from auth import check_bearer_or_pass, require_api_key, require_node_key  # noqa: E402
 
 
 def _make_request(auth_header: str | None = None) -> MagicMock:
@@ -126,3 +126,20 @@ class TestRequireNodeKey:
         req = _make_request("Bearer abc-123-def")
         result = require_node_key(req, "abc-123-def")
         assert result is None  # returns None on success
+
+
+class TestRequireApiKey:
+    """Tests for optional operator mutation authentication."""
+
+    def test_empty_key_keeps_local_development_compatible(self):
+        require_api_key(_make_request(), "")
+
+    def test_valid_bearer_passes(self):
+        require_api_key(_make_request("Bearer operator-secret"), "operator-secret")
+
+    def test_missing_key_is_rejected(self):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            require_api_key(_make_request(), "operator-secret")
+        assert exc_info.value.status_code == 401

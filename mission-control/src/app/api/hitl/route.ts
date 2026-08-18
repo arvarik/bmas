@@ -1,112 +1,103 @@
 import { NextResponse } from "next/server";
+import { DAEMON_BASE_URL } from "@/lib/config";
 import { getRedis } from "@/lib/redis";
 
-/** Allowed HITL actions. */
-type HitlAction = "pause" | "resume" | "abort" | "inject-hint";
+type HitlAction =
+  | "pause"
+  | "resume"
+  | "abort"
+  | "inject-hint"
+  | "approval";
 
-/** POST request body schema. */
 interface HitlPayload {
   action: HitlAction;
   task_id?: string;
   hint_text?: string;
+  reason?: string;
+  run_id?: string;
+  decision?: "approve" | "deny";
 }
 
-const STATE_KEY = "bmas:public:state";
+function daemonHeaders(): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    ...(process.env.BMAS_API_KEY
+      ? { Authorization: `Bearer ${process.env.BMAS_API_KEY}` }
+      : {}),
+  };
+}
 
-/** GET — return current pause state. */
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: Request): Promise<NextResponse> {
   try {
+    const taskId = new URL(request.url).searchParams.get("task_id");
+    if (!taskId) {
+      return NextResponse.json({ paused: false });
+    }
     const redis = await getRedis();
-    const paused = await redis.hGet(STATE_KEY, "pause");
-
-    return NextResponse.json({
-      paused: paused === "true",
-    });
+    const paused = await redis.get(`bmas:public:pause:${taskId}`);
+    return NextResponse.json({ paused: paused !== null });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Unknown Redis error";
+    const message = err instanceof Error ? err.message : "Unknown Redis error";
     return NextResponse.json(
-      { error: "Failed to read HITL state", detail: message },
+      { error: "Failed to read task pause state", detail: message },
       { status: 500 },
     );
   }
 }
 
-/** POST — pause, resume, or inject a hint. */
 export async function POST(request: Request): Promise<NextResponse> {
   try {
     const body = (await request.json()) as HitlPayload;
-
-    if (!body.action) {
+    if (!body.action || !body.task_id) {
       return NextResponse.json(
-        { error: "Missing required field: action" },
+        { error: "The action and task_id fields are required" },
         { status: 400 },
       );
     }
 
-    const redis = await getRedis();
-
-    switch (body.action) {
-      case "pause": {
-        await redis.hSet(STATE_KEY, "pause", "true");
-        return NextResponse.json({ ok: true, paused: true });
-      }
-
-      case "resume": {
-        await redis.hDel(STATE_KEY, "pause");
-        return NextResponse.json({ ok: true, paused: false });
-      }
-
-      case "inject-hint": {
-        if (!body.task_id || !body.hint_text) {
-          return NextResponse.json(
-            {
-              error:
-                "inject-hint requires both 'task_id' and 'hint_text' fields",
-            },
-            { status: 400 },
-          );
-        }
-
-        const hintsKey = `bmas:public:hints:${body.task_id}`;
-        await redis.lPush(hintsKey, body.hint_text);
-
-        return NextResponse.json({
-          ok: true,
-          hints_key: hintsKey,
-          hint_text: body.hint_text,
-        });
-      }
-
-      case "abort": {
-        if (!body.task_id) {
-          return NextResponse.json(
-            { error: "abort requires 'task_id' field" },
-            { status: 400 },
-          );
-        }
-        const abortKey = `bmas:public:abort:${body.task_id}`;
-        await redis.set(abortKey, "true");
-        // Auto-expire after 5 minutes if daemon never reads it
-        await redis.expire(abortKey, 300);
-        return NextResponse.json({ ok: true, task_id: body.task_id });
-      }
-
-      default: {
+    let endpoint: string = body.action;
+    let payload: Record<string, string> | undefined;
+    if (body.action === "inject-hint") {
+      if (!body.hint_text?.trim()) {
         return NextResponse.json(
-          {
-            error: `Unknown action: '${body.action as string}'. Expected: pause | resume | abort | inject-hint`,
-          },
+          { error: "inject-hint requires hint_text" },
           { status: 400 },
         );
       }
+      endpoint = "directive";
+      payload = { body: body.hint_text.trim() };
+    } else if (body.action === "abort") {
+      payload = { reason: body.reason ?? "operator_request" };
+    } else if (body.action === "approval") {
+      if (!body.run_id || !body.decision) {
+        return NextResponse.json(
+          { error: "approval requires run_id and decision" },
+          { status: 400 },
+        );
+      }
+      payload = {
+        run_id: body.run_id,
+        decision: body.decision,
+        reason: body.reason ?? "",
+      };
     }
+
+    const upstream = await fetch(
+      `${DAEMON_BASE_URL}/api/tasks/${body.task_id}/${endpoint}`,
+      {
+        method: "POST",
+        headers: daemonHeaders(),
+        ...(payload ? { body: JSON.stringify(payload) } : {}),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    const data = await upstream.json().catch(() => ({}));
+    return NextResponse.json(data, { status: upstream.status });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Unknown Redis error";
+    const message = err instanceof Error ? err.message : "Unknown daemon error";
     return NextResponse.json(
-      { error: "HITL operation failed", detail: message },
-      { status: 500 },
+      { error: "Task control request failed", detail: message },
+      { status: 503 },
     );
   }
 }

@@ -9,7 +9,12 @@ export async function POST(): Promise<NextResponse> {
   try {
     const res = await fetch(`${DAEMON_BASE_URL}/settings/reset`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(process.env.BMAS_API_KEY
+          ? { Authorization: `Bearer ${process.env.BMAS_API_KEY}` }
+          : {}),
+      },
     });
     const data = await res.json().catch(() => ({}));
     return NextResponse.json(data, { status: res.status });

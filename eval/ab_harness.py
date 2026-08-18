@@ -10,7 +10,6 @@ between arms via GET /config/active.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,7 +18,7 @@ from typing import Any
 from eval.datasets import EvalItem
 from eval.metrics import RunMetrics, compute_run_metrics
 from eval.runner import BenchmarkRunner
-from eval.scorer import ScoredResult, compute_accuracy, compute_accuracy_by_subject
+from eval.scorer import ScoredResult
 
 logger = logging.getLogger("bmas.eval.ab")
 
@@ -160,6 +159,8 @@ def _build_report(
         "| Metric | Variant A | Variant B | Delta |",
         "|:-------|----------:|----------:|------:|",
         f"| Accuracy | {a.accuracy:.4f} | {b.accuracy:.4f} | {_delta(a.accuracy, b.accuracy)} |",
+        f"| Completion Rate | {a.completion_rate:.4f} | {b.completion_rate:.4f} | {_delta(a.completion_rate, b.completion_rate)} |",
+        f"| Accuracy on Completed | {a.accuracy_on_completed:.4f} | {b.accuracy_on_completed:.4f} | {_delta(a.accuracy_on_completed, b.accuracy_on_completed)} |",
         f"| Total Cost ($) | {a.total_cost_usd:.6f} | {b.total_cost_usd:.6f} | {_delta(a.total_cost_usd, b.total_cost_usd)} |",
         f"| Total Tokens | {a.total_tokens} | {b.total_tokens} | {_delta_int(a.total_tokens, b.total_tokens)} |",
         f"| Avg Latency (ms) | {a.avg_latency_ms:.0f} | {b.avg_latency_ms:.0f} | {_delta(a.avg_latency_ms, b.avg_latency_ms)} |",
@@ -169,6 +170,18 @@ def _build_report(
         f"| Avg Rounds | {a.avg_rounds:.1f} | {b.avg_rounds:.1f} | {_delta(a.avg_rounds, b.avg_rounds)} |",
         "",
     ]
+
+    lines.extend([
+        "## Metric Coverage",
+        "",
+        "| Field | Variant A | Variant B |",
+        "|:------|----------:|----------:|",
+        f"| Cost | {a.cost_observations}/{a.dataset_size} | {b.cost_observations}/{b.dataset_size} |",
+        f"| Tokens | {a.token_observations}/{a.dataset_size} | {b.token_observations}/{b.dataset_size} |",
+        f"| Latency | {a.latency_observations}/{a.dataset_size} | {b.latency_observations}/{b.dataset_size} |",
+        f"| Rounds | {a.round_observations}/{a.dataset_size} | {b.round_observations}/{b.dataset_size} |",
+        "",
+    ])
 
     # Subject breakdown (MMLU)
     all_subjects = sorted(
@@ -210,12 +223,16 @@ def _build_report(
     lines.extend([
         "## Notes",
         "",
-        f"> N={a.dataset_size}. No statistical significance test applied at this "
-        f"sample size. Results are directional, not conclusive.",
+        (
+            f"> N={a.dataset_size}. No statistical significance test applied at this "
+            f"sample size. Results are directional, not conclusive."
+        ),
         "",
-        f"> Energy estimate: "
-        f"{'not captured' if a.joules_estimate is None else f'{a.joules_estimate:.1f}J'} (A) / "
-        f"{'not captured' if b.joules_estimate is None else f'{b.joules_estimate:.1f}J'} (B)",
+        (
+            f"> Energy estimate: "
+            f"{'not captured' if a.joules_estimate is None else f'{a.joules_estimate:.1f}J'} (A) / "
+            f"{'not captured' if b.joules_estimate is None else f'{b.joules_estimate:.1f}J'} (B)"
+        ),
     ])
 
     return "\n".join(lines) + "\n"

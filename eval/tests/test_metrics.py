@@ -9,10 +9,10 @@ Covers:
 """
 
 import json
-import pytest
-from pathlib import Path
 
-from eval.metrics import RunMetrics, compute_run_metrics, _percentile
+import pytest
+
+from eval.metrics import RunMetrics, _percentile, compute_run_metrics
 from eval.scorer import ScoredResult
 
 
@@ -67,6 +67,54 @@ class TestComputeRunMetrics:
         assert metrics.total_cost_usd == 0.0
         assert metrics.total_tokens == 0
         assert metrics.avg_latency_ms == 0.0
+        assert metrics.completed_tasks == 0
+        assert metrics.completion_rate == 0.0
+        assert metrics.accuracy_on_completed == 0.0
+        assert metrics.cost_observations == 0
+        assert metrics.token_observations == 0
+        assert metrics.latency_observations == 0
+        assert metrics.round_observations == 0
+
+    def test_partial_metric_coverage_does_not_count_missing_values_as_zero(self):
+        results = [
+            ScoredResult(
+                id="complete-with-metrics", question="Q", expected_answer="1",
+                actual_response="1", dataset="gsm8k", subject=None,
+                extracted_answer="1", correct=True, score_method="numeric_match",
+                status="completed", cost_usd=0.3, tokens=300,
+                duration_ms=3000, rounds=3,
+            ),
+            ScoredResult(
+                id="complete-without-metrics", question="Q", expected_answer="1",
+                actual_response="2", dataset="gsm8k", subject=None,
+                extracted_answer="2", correct=False, score_method="numeric_match",
+                status="completed",
+            ),
+            ScoredResult(
+                id="failed", question="Q", expected_answer="1",
+                actual_response="", dataset="gsm8k", subject=None,
+                extracted_answer=None, correct=False, score_method="task_failed",
+                status="failed",
+            ),
+        ]
+
+        metrics = compute_run_metrics(
+            run_id="test-coverage",
+            dataset="gsm8k",
+            results=results,
+            run_config={"variant": "traditional"},
+        )
+
+        assert metrics.accuracy == pytest.approx(1 / 3)
+        assert metrics.completed_tasks == 2
+        assert metrics.completion_rate == pytest.approx(2 / 3)
+        assert metrics.accuracy_on_completed == pytest.approx(1 / 2)
+        assert metrics.avg_cost_per_task_usd == pytest.approx(0.3)
+        assert metrics.avg_tokens_per_task == pytest.approx(300)
+        assert metrics.cost_observations == 1
+        assert metrics.token_observations == 1
+        assert metrics.latency_observations == 1
+        assert metrics.round_observations == 1
 
     def test_latency_stats(self, sample_scored_results):
         metrics = compute_run_metrics(
@@ -91,6 +139,46 @@ class TestComputeRunMetrics:
         )
         # All have terminated_by="solution"
         assert metrics.terminated_by == {"solution": 7}
+
+    def test_average_rounds_uses_recorded_classic_rounds(self):
+        results = [
+            ScoredResult(
+                id=f"item-{rounds}", question="Q", expected_answer="1",
+                actual_response="1", dataset="gsm8k", subject=None,
+                extracted_answer="1", correct=True, score_method="numeric_match",
+                rounds=rounds,
+            )
+            for rounds in (2, 4, 6)
+        ]
+        results.append(
+            ScoredResult(
+                id="legacy", question="Q", expected_answer="1",
+                actual_response="1", dataset="gsm8k", subject=None,
+                extracted_answer="1", correct=True, score_method="numeric_match",
+                rounds=None,
+            )
+        )
+
+        metrics = compute_run_metrics(
+            run_id="test-rounds",
+            dataset="gsm8k",
+            results=results,
+            run_config={"variant": "traditional"},
+        )
+
+        assert metrics.avg_rounds == 4.0
+
+    def test_average_rounds_is_zero_without_recorded_rounds(
+        self, sample_scored_results
+    ):
+        metrics = compute_run_metrics(
+            run_id="test-no-rounds",
+            dataset="mixed",
+            results=sample_scored_results,
+            run_config={"variant": "traditional"},
+        )
+
+        assert metrics.avg_rounds == 0.0
 
     def test_subject_accuracy(self, sample_scored_results):
         metrics = compute_run_metrics(
@@ -134,8 +222,13 @@ class TestPercentile:
 
     def test_ordered(self):
         data = list(range(1, 101))  # 1..100
-        # nearest-rank: index = int(100 * 95 / 100) = 95 → value 96
-        assert _percentile(data, 95) == 96.0
+        # Nearest rank 95 selects the 95th one-based item.
+        assert _percentile(data, 95) == 95.0
+
+    def test_bounds(self):
+        data = [10, 20, 30]
+        assert _percentile(data, 0) == 10.0
+        assert _percentile(data, 100) == 30.0
 
     def test_p50(self):
         data = [1, 2, 3, 4, 5]
@@ -162,6 +255,8 @@ class TestRunMetricsSerialization:
         assert parsed["dataset"] == "mixed"
         assert parsed["dataset_size"] == 7
         assert "accuracy" in parsed
+        assert parsed["completion_rate"] == 1.0
+        assert parsed["cost_observations"] == 7
         assert "run_config" in parsed
         assert parsed["run_config"]["variant"] == "traditional"
 

@@ -201,7 +201,12 @@ class TestGuardOrdering:
         # Write a solution via the store
         sol = _make_entry("e-1", "solution", "decider", "42", round_no=1)
         await v.store.upsert_entry(task_id, sol)
-        await v.store.set_meta(task_id, round=0, budget_spent=0.0)
+        await v.store.set_meta(
+            task_id,
+            round=0,
+            budget_spent=0.0,
+            solution_reviewed_id="e-1",
+        )
 
         # genesis_time must be set
         v.genesis_time = time.monotonic()
@@ -210,6 +215,29 @@ class TestGuardOrdering:
         result = await v.step(task, None)
         assert result.terminal is True
         assert result.reason == "solution"
+
+    @pytest.mark.asyncio
+    async def test_unreviewed_solution_routes_to_critic(self):
+        """An unreviewed solution cannot terminate a classic task."""
+        from core.board_store import InMemoryBoardStore
+
+        v = _make_variant(max_rounds=4)
+        v.store = InMemoryBoardStore()
+        task_id = "test-task"
+        await v.store.upsert_entry(
+            task_id,
+            _make_entry("e-1", "solution", "decider", "42", round_no=1),
+        )
+        await v.store.set_meta(task_id, round=0, budget_spent=0.0)
+        v.genesis_time = time.monotonic()
+
+        result = await v.step(
+            {"task_id": task_id, "query": "What is the answer?"}, None,
+        )
+
+        assert result.terminal is False
+        assert result.selected == ["critic"]
+        assert result.selection_source == "verification_guard"
 
     @pytest.mark.asyncio
     async def test_budget_guard(self):
