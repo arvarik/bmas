@@ -23,6 +23,8 @@ from config import (
     AGENT_ENDPOINTS,
     AGENT_TURN_TIMEOUT_S,
     BMAS_EXECUTE_KEY,
+    CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+    CIRCUIT_BREAKER_RECOVERY_S,
     COORDINATION_VARIANT,
     EDGE_NODE_MODELS,
     LITELLM_KEY,
@@ -37,6 +39,7 @@ from config import (
     VIEW_BUDGET_TOKENS,
 )
 from core.blackboard import Blackboard, normalize_level
+from core.circuit_breaker import EndpointCircuitBreaker
 from core.gateway import LeaseLostError
 from core.triage import MODEL_ROUTING, Complexity, TriageResult, TriageRouter
 
@@ -79,6 +82,25 @@ class Orchestrator:
         self._task_lock_ids: dict[str, str] = {}
         self._lease_lost: dict[str, asyncio.Event] = {}
         self._active_gateways: dict[str, Any] = {}
+        self._agent_circuits = EndpointCircuitBreaker(
+            failure_threshold=CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+            recovery_timeout_s=CIRCUIT_BREAKER_RECOVERY_S,
+        )
+
+    def _circuits(self) -> EndpointCircuitBreaker:
+        """Return the endpoint circuit registry.
+
+        Some focused tests construct an orchestrator without calling the
+        initializer. The lazy path keeps those tests representative.
+        """
+        circuits = getattr(self, "_agent_circuits", None)
+        if circuits is None:
+            circuits = EndpointCircuitBreaker(
+                failure_threshold=CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+                recovery_timeout_s=CIRCUIT_BREAKER_RECOVERY_S,
+            )
+            self._agent_circuits = circuits
+        return circuits
 
     async def _renew_task_lease(self, task_id: str, lock_id: str) -> None:
         """Renew one task lease until cancellation or ownership loss."""
@@ -1489,16 +1511,25 @@ class Orchestrator:
             payload["context"] = context
         payload["timeout"] = max(10, min(3600, int(timeout_s)))
 
-        candidate_urls = [
+        configured_urls = [
             candidate
             for candidate in dict.fromkeys(endpoints or [url])
             if candidate
+        ]
+        circuits = self._circuits()
+        candidate_urls = [
+            candidate for candidate in configured_urls
+            if circuits.allow(candidate)
         ]
         if not candidate_urls:
             return {
                 "task_id": task_id,
                 "status": "failed",
-                "result": f"No agent endpoint configured for role {role}",
+                "result": (
+                    f"No healthy agent endpoint is available for role {role}"
+                    if configured_urls
+                    else f"No agent endpoint configured for role {role}"
+                ),
             }
 
         try:
@@ -1529,6 +1560,16 @@ class Orchestrator:
                 )
                 resp.raise_for_status()
                 data = resp.json()
+                if not isinstance(data, dict) or not data:
+                    raise ValueError("Agent returned an empty or invalid response")
+                agent_status = str(data.get("status", "")).lower()
+                if agent_status not in {
+                    "completed", "declined", "failed", "timeout",
+                }:
+                    raise ValueError(
+                        f"Agent returned an invalid status: {agent_status or 'missing'}"
+                    )
+                circuits.record_success(url)
                 # The daemon creates the durable turn identity. Do not let an
                 # agent node replace it with a local or stale identifier.
                 data["turn_id"] = turn_id
@@ -1563,7 +1604,6 @@ class Orchestrator:
                             joules_estimate=0.0,
                         )
 
-                agent_status = data.get("status", "")
                 turn_status = "completed" if agent_status == "completed" else (
                     "declined" if agent_status == "declined" else "failed"
                 )
@@ -1576,6 +1616,7 @@ class Orchestrator:
                 return data
 
             except Exception as e:
+                circuits.record_failure(url)
                 # A connect failure proves that the selected node did not
                 # receive the request. Other transport errors are ambiguous.
                 # Retry ambiguous calls on the same node so its idempotency

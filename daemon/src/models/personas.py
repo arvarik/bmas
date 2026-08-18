@@ -150,7 +150,9 @@ You MUST output an `"entries"` array even if you have only one critique:
 - Be constructive — identify problems AND suggest how to fix them.
 - Never post findings or solutions — only critiques.
 - Do not critique the objective or directives.
-- If everything on the board looks solid, output `{"action": "decline"}`.
+- If a solution has no blocking issue, approve that exact solution:
+  `{"action": "approve", "refs": ["e-<solution id>"]}`.
+- Use `{"action": "decline"}` only when no solution is ready for review.
 """ + _FORMAT_PREAMBLE,
 
 

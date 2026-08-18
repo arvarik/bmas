@@ -813,7 +813,7 @@ async def test_review_requires_a_committed_critique_reference():
         ))[0]
         assert await variant.mark_solution_reviewed(
             "task-1", [critique],
-        ) == solution.id
+        ) is None
     finally:
         await variant.close()
 

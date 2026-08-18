@@ -512,6 +512,7 @@ if _role_reg:
             "profile": _profile,
             "dispatch_port": _port,
             "endpoints": _endpoints,
+            "enabled": bool(_role_cfg.get("enabled", True)),
         }
         _ok(
             f"Role '{_role_name}' → profile={_profile}, "
@@ -595,6 +596,12 @@ MAX_QUEUED_TASKS = max(1, int(os.getenv("BMAS_MAX_QUEUED_TASKS", "100")))
 SHUTDOWN_GRACE_S = max(1, int(os.getenv("BMAS_SHUTDOWN_GRACE_S", "30")))
 AGENT_TURN_TIMEOUT_S = max(
     10, min(3600, int(os.getenv("BMAS_AGENT_TURN_TIMEOUT_S", "600")))
+)
+CIRCUIT_BREAKER_FAILURE_THRESHOLD = max(
+    1, int(os.getenv("BMAS_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3"))
+)
+CIRCUIT_BREAKER_RECOVERY_S = max(
+    0.0, float(os.getenv("BMAS_CIRCUIT_BREAKER_RECOVERY_S", "30"))
 )
 
 # ── Full Config (for entrypoint scripts that need the raw dict) ──────

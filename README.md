@@ -103,6 +103,7 @@ See [Quick Start Guide](docs/QUICKSTART.md) for the full walkthrough.
 |:---|:---|
 | [Quick Start](docs/QUICKSTART.md) | Get running in 5 minutes |
 | [Configuration](docs/CONFIGURATION.md) | Full `bmas.yaml` reference |
+| [Classic Harness](docs/CLASSIC_HARNESS.md) | Lifecycle, fault, long-board, and soak verification |
 | [Architecture](docs/architecture/README.md) | System architecture & component deep-dive |
 | [Node Setup](docs/NODE_SETUP.md) | Provisioning edge nodes with inference + agents |
 | [Design System](docs/design/DESIGN.md) | Mission Control UI specification |
