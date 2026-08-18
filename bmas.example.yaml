@@ -180,8 +180,10 @@ coordination:
   # preferred_host: null → load-balanced across all nodes.
   # profile: Hermes profile name (in ~/.hermes/profiles/<profile>/).
   # dispatch_port: Port of the api_server.py bridge on the target node.
+  # enabled: false removes a role from coordinator selections.
   role_registry:
     planner:
+      enabled: true
       preferred_host: "192.168.4.103"     # node-1
       profile: planner
       dispatch_port: 8000

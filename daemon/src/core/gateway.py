@@ -287,10 +287,15 @@ class BoardGateway:
         entry_id: str,
         status: str,
         actor: str,
+        mutation_id: str | None = None,
     ) -> None:
         """Change an entry's status (supersede, etc.)."""
         async with self._task_lock(task_id):
             await self._assert_commit_allowed(task_id)
+            if mutation_id and await self._find_mutation(
+                task_id, mutation_id,
+            ) is not None:
+                return
             entry = await self._store.get_entry(task_id, entry_id)
             if entry is None:
                 logger.warning(
@@ -312,6 +317,7 @@ class BoardGateway:
                     "entry_id": entry_id,
                     "old_status": old_status,
                     "status": status,
+                    "_mutation_id": mutation_id,
                 },
             )
             await self._store.append_event(task_id, event)

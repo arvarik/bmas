@@ -659,6 +659,21 @@ class TraditionalVariant:
                 source = "heuristic"
                 rationale = None
 
+        selected = self._normalize_selection(selected)
+        if not selected:
+            await self.gateway.set_meta(
+                task_id,
+                terminal_reason="no_available_agents",
+            )
+            return StepResult(
+                terminal=True,
+                reason="no_available_agents",
+                selected=[],
+                rationale="No enabled agent can accept the next activation.",
+                selection_source="availability_guard",
+                phase=self._infer_phase(snapshot, current_round),
+            )
+
         # Clamp to max_concurrent
         selected = selected[:self.max_concurrent]
 
@@ -695,6 +710,19 @@ class TraditionalVariant:
 
         phase = self._infer_phase(snapshot, current_round)
         activations = self._to_activations(selected)
+        if not activations:
+            await self.gateway.set_meta(
+                task_id,
+                terminal_reason="no_available_agents",
+            )
+            return StepResult(
+                terminal=True,
+                reason="no_available_agents",
+                selected=[],
+                rationale="No configured endpoint can accept the next activation.",
+                selection_source="availability_guard",
+                phase=phase,
+            )
         for index, activation in enumerate(activations):
             activation.activation_id = self._activation_id(
                 task_id, current_round, activation.actor, index,
@@ -968,8 +996,12 @@ class TraditionalVariant:
         # Serialize board for prompt
         if actor == "cleaner":
             eviction_candidates = self._get_eviction_candidates(board)
-            objective_entry = next((e for e in board.values() if getattr(e, "type", None) == "objective"), None)
-            subset = [e for e in [objective_entry] + eviction_candidates if e]
+            protected_context = [
+                entry
+                for entry in board.values()
+                if getattr(entry, "type", None) in {"objective", "directive"}
+            ]
+            subset = [*protected_context, *eviction_candidates]
             board_data = {"mode": "condense", "entries": [entry_to_dict(e) for e in subset]}
         else:
             board_data = self._serialize_board(board, actor=actor)
@@ -1000,6 +1032,26 @@ class TraditionalVariant:
     ) -> list[dict]:
         """Parse agent response into proposed board entries."""
         results = []
+        action_payload = raw
+        if isinstance(raw, dict) and isinstance(raw.get("result"), str):
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
+                decoded = json.loads(raw["result"])
+                if isinstance(decoded, dict):
+                    action_payload = decoded
+        if (
+            actor == "critic"
+            and isinstance(action_payload, dict)
+            and action_payload.get("action") == "approve"
+        ):
+            refs = action_payload.get("refs", [])
+            if not isinstance(refs, list):
+                return []
+            valid_refs = [
+                str(ref) for ref in refs
+                if isinstance(ref, str)
+                and (known_ids is None or ref in known_ids)
+            ]
+            return [{"_action": "approve", "refs": valid_refs}]
         # Cleaner / decline short-circuit (preserve existing contract)
         if isinstance(raw, dict):
             if raw.get("action") in ("clean", "condense"):
@@ -1041,15 +1093,76 @@ class TraditionalVariant:
                     events.extend(removed)
                 continue
 
-            proposed = mutation.get("entries", [mutation])
+            if mutation.get("_action") == "approve":
+                snapshot = await self.store.get_snapshot(task_id)
+                referenced = [
+                    snapshot[entry_id]
+                    for entry_id in mutation.get("refs", [])
+                    if entry_id in snapshot
+                    and snapshot[entry_id].type == "solution"
+                    and snapshot[entry_id].status == "open"
+                ]
+                if len(referenced) != 1:
+                    continue
+                solution = referenced[0]
+                mutation_id = mutation.get("_mutation_id")
+                proposed = {
+                    "type": "critique",
+                    "title": "Verification passed",
+                    "body": (
+                        "The independent critic found no blocking issue in "
+                        f"solution {solution.id}."
+                    ),
+                    "refs": [solution.id],
+                    "confidence": 1.0,
+                }
+                if mutation_id:
+                    proposed["_mutation_id"] = f"{mutation_id}:approval"
+                committed = await self.gateway.append(
+                    task_id,
+                    actor,
+                    caps,
+                    [proposed],
+                    turn_id=mutation.get("turn_id", ""),
+                    round_no=mutation.get("round", 0),
+                )
+                if not committed:
+                    continue
+                audit_entry = committed[0]
+                await self.gateway.set_status(
+                    task_id,
+                    audit_entry.id,
+                    "superseded",
+                    actor,
+                    mutation_id=(
+                        f"{mutation_id}:approval:resolved"
+                        if mutation_id else None
+                    ),
+                )
+                await self.gateway.set_meta(
+                    task_id,
+                    solution_reviewed_id=solution.id,
+                )
+                events.extend(committed)
+                continue
+
+            raw_entries = mutation.get("entries")
+            if raw_entries is None:
+                proposed_entries = [mutation]
+            elif isinstance(raw_entries, list):
+                proposed_entries = [
+                    entry for entry in raw_entries if isinstance(entry, dict)
+                ]
+            else:
+                continue
             mutation_id = mutation.get("_mutation_id")
             if mutation_id:
-                proposed = [
+                proposed_entries = [
                     {**entry, "_mutation_id": f"{mutation_id}:{index}"}
-                    for index, entry in enumerate(proposed)
+                    for index, entry in enumerate(proposed_entries)
                 ]
             committed = await self.gateway.append(
-                task_id, actor, caps, proposed,
+                task_id, actor, caps, proposed_entries,
                 turn_id=mutation.get("turn_id", ""),
                 round_no=mutation.get("round", 0),
             )
@@ -1343,8 +1456,17 @@ class TraditionalVariant:
         if not answers:
             return self._best_finding(snapshot)
 
-        # Majority-similarity vote
-        winner = sole_majority_vote(answers, self.sole_similarity)
+        evidence = [
+            (entry.body, float(entry.confidence), float(entry.salience))
+            for entry in snapshot.values()
+            if entry.status == "open"
+            and entry.type in ("finding", "rebuttal", "artifact")
+        ]
+        winner = sole_evidence_vote(
+            answers,
+            evidence,
+            self.sole_similarity,
+        )
         return winner
 
     async def _sole_answer(
@@ -1451,7 +1573,8 @@ class TraditionalVariant:
         solution_id = candidates[0].id
         if not any(
             entry.type == "critique"
-            and entry.status == "open"
+            and entry.status == "superseded"
+            and entry.title == "Verification passed"
             and solution_id in entry.refs
             for entry in committed_critiques
         ):
@@ -1882,6 +2005,9 @@ class TraditionalVariant:
             base_role = actor.split(".")[0] if "." in actor else actor
             # Look up in registry
             reg = self.role_registry.get(base_role, {})
+            if reg.get("enabled") is False:
+                logger.info("Actor %s is disabled", actor)
+                continue
             profile = reg.get("profile")
             raw_endpoints = reg.get("endpoints", list(self.node_endpoints))
             endpoints: list[str] = [
@@ -1925,6 +2051,25 @@ class TraditionalVariant:
             ))
 
         return activations
+
+    def _normalize_selection(self, selected: list[str]) -> list[str]:
+        """Remove unknown, disabled, and duplicate actor selections."""
+        valid_names = (
+            set(self.roster.actor_names())
+            if self.roster
+            else set(CONSTANT_ROLE_DESCRIPTIONS)
+        )
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for actor in selected:
+            if actor in seen or actor not in valid_names:
+                continue
+            base_role = actor.split(".", 1)[0]
+            if self.role_registry.get(base_role, {}).get("enabled") is False:
+                continue
+            seen.add(actor)
+            normalized.append(actor)
+        return normalized
 
     # ── Phase Inference ──────────────────────────────────────────────
 
@@ -2032,7 +2177,11 @@ class TraditionalVariant:
             )
 
         candidates.sort(key=_priority, reverse=True)
-        pinned.sort(key=lambda entry: (int(entry.get("round", 0) or 0), str(entry.get("id", ""))))
+        pinned.sort(key=lambda entry: (
+            entry.get("type") != "directive",
+            int(entry.get("round", 0) or 0),
+            str(entry.get("id", "")),
+        ))
 
         selected: list[dict[str, Any]] = []
         used_tokens = 0
@@ -2166,10 +2315,15 @@ class TraditionalVariant:
                 continue
             refs_str = f" refs=[{','.join(entry.refs)}]" if entry.refs else ""
             conf_str = f" conf={entry.confidence:.1f}" if entry.confidence else ""
+            summary = (
+                entry.body[:240]
+                if entry.type == "directive"
+                else entry.title or entry.body[:240]
+            )
             line = (
                 f"[{entry.id}] ({entry.type}) by {entry.author} "
                 f"R{entry.round}{refs_str}{conf_str}: "
-                f"{entry.title or entry.body[:240]}"
+                f"{summary}"
             )
             line_tokens = max(1, len(line) // 4)
             if used_tokens + line_tokens > cu_budget:
@@ -2351,12 +2505,14 @@ def parse_cu_output(
 
     # Filter to valid names
     result = []
+    seen: set[str] = set()
     valid_set = set(valid_names)
     for name in selected:
         if not isinstance(name, str):
             continue
-        if name in valid_set:
+        if name in valid_set and name not in seen:
             result.append(name)
+            seen.add(name)
         else:
             logger.warning("CU selected unknown agent '%s' — dropping", name)
 
@@ -2417,6 +2573,40 @@ def sole_majority_vote(
     return winner
 
 
+def sole_evidence_vote(
+    answers: list[tuple[str, str]],
+    evidence: list[tuple[str, float, float]],
+    similarity_mode: str = "auto",
+) -> str:
+    """Select an answer by peer support and independent board evidence."""
+    if not answers:
+        return "No answer could be determined."
+    if not evidence:
+        return sole_majority_vote(answers, similarity_mode)
+
+    if similarity_mode == "exact":
+        peer_similarity = _exact_similarity
+    else:
+        peer_similarity = _fuzzy_similarity
+
+    scored: list[tuple[float, str, str]] = []
+    for index, (actor, answer) in enumerate(answers):
+        peer_score = sum(
+            peer_similarity(answer, other_answer)
+            for other_index, (_other_actor, other_answer) in enumerate(answers)
+            if index != other_index
+        )
+        evidence_score = sum(
+            _evidence_similarity(answer, body)
+            * max(0.0, min(2.0, confidence + salience))
+            * 2.0
+            for body, confidence, salience in evidence
+        )
+        scored.append((peer_score + evidence_score, actor, answer))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][2]
+
+
 def _normalize_answer(text: str) -> str:
     """Normalize an answer for comparison."""
     import re
@@ -2441,6 +2631,17 @@ def _fuzzy_similarity(a: str, b: str) -> float:
     intersection = tokens_a & tokens_b
     union = tokens_a | tokens_b
     return len(intersection) / len(union) if union else 0.0
+
+
+def _evidence_similarity(answer: str, evidence: str) -> float:
+    """Measure whether a concise answer appears in an evidence statement."""
+    answer_tokens = set(_normalize_answer(answer).split())
+    evidence_tokens = set(_normalize_answer(evidence).split())
+    if not answer_tokens or not evidence_tokens:
+        return 0.0
+    if len(answer_tokens) <= 4 and answer_tokens.issubset(evidence_tokens):
+        return 1.0
+    return _fuzzy_similarity(answer, evidence)
 
 
 def _entries_hash(entries: list[BoardEntry]) -> str:

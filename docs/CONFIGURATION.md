@@ -220,6 +220,7 @@ Maps blackboard roles to Hermes profiles and preferred hosts for dispatch.
 
 | Field | Type | Description |
 |:---|:---|:---|
+| `enabled` | bool | Enables the role. The default is `true`. |
 | `preferred_host` | string or null | IP for preferred dispatch. `null` = load-balanced across all nodes. |
 | `profile` | string | Hermes profile name (in `~/.hermes/profiles/<profile>/`). |
 | `dispatch_port` | int | Port of the `api_server.py` bridge on the target node. |
@@ -227,6 +228,7 @@ Maps blackboard roles to Hermes profiles and preferred hosts for dispatch.
 ```yaml
   role_registry:
     planner:
+      enabled: true
       preferred_host: "192.168.1.101"
       profile: planner
       dispatch_port: 8000
@@ -315,6 +317,8 @@ Secrets are **never** stored in `bmas.yaml`. They go in `.env`:
 | `BMAS_MAX_QUEUED_TASKS` | ❌ | Global queued task limit. The default is `100`. |
 | `BMAS_SHUTDOWN_GRACE_S` | ❌ | Graceful task drain limit. The default is `30`. |
 | `BMAS_AGENT_TURN_TIMEOUT_S` | ❌ | Per-agent turn limit. The default is `600`. |
+| `BMAS_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | ❌ | Consecutive endpoint failures before the circuit opens. The default is `3`. |
+| `BMAS_CIRCUIT_BREAKER_RECOVERY_S` | ❌ | Seconds before one endpoint recovery probe. The default is `30`. |
 | `GEMINI_API_KEY` | ❌ | Google Gemini API key. |
 | `ANTHROPIC_API_KEY` | ❌ | Anthropic (Claude) API key. |
 | `OPENAI_API_KEY` | ❌ | OpenAI API key. |

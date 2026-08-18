@@ -297,12 +297,27 @@ class InMemoryBoardStore:
         Returns the archived events list for SQLite persistence.
         Removes entries with matching space from the live snapshot.
         """
-        # Collect events for this space
+        # Collect events for this space before the archive marker.
         archived: list[dict[str, Any]] = []
         for event in self._events.get(task_id, []):
             payload = event.get("payload", {})
             if payload.get("space") == space:
                 archived.append(copy.deepcopy(event))
+
+        seq = await self.get_next_seq(task_id)
+        await self.append_event(
+            task_id,
+            make_event(
+                task_id=task_id,
+                seq=seq,
+                actor="control_unit",
+                event_type="space_archived",
+                payload={
+                    "space": space,
+                    "_mutation_id": mutation_id,
+                },
+            ),
+        )
 
         # Remove entries with matching space from snapshot
         entries = self._entries.get(task_id, {})
@@ -655,21 +670,9 @@ class SqliteRedisBoardStore(InMemoryBoardStore):
         mutation_id: str | None = None,
     ) -> list[dict[str, Any]]:
         await self._ensure_loaded(task_id)
-        seq = await self.get_next_seq(task_id)
-        await self.append_event(
-            task_id,
-            make_event(
-                task_id=task_id,
-                seq=seq,
-                actor="control_unit",
-                event_type="space_archived",
-                payload={
-                    "space": space,
-                    "_mutation_id": mutation_id,
-                },
-            ),
+        archived = await super().archive_space(
+            task_id, space, mutation_id=mutation_id,
         )
-        archived = await super().archive_space(task_id, space)
         import database as db
 
         await db.delete_board_entries_in_space(
