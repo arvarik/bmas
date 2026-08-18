@@ -17,17 +17,47 @@ import logging
 import os
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
+from typing import Any
 
 import aiosqlite
 
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
+
+
+def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    """Read one bounded integer without importing the shared config module."""
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return min(max(value, minimum), maximum)
+
+
+MAX_EVENT_PAYLOAD_BYTES = _bounded_env_int(
+    "BMAS_EVENT_PAYLOAD_MAX_BYTES", 1_048_576, 1_024, 16_777_216
+)
+MAX_OUTBOX_BACKLOG = _bounded_env_int(
+    "BMAS_EVENT_OUTBOX_MAX", 10_000, 100, 1_000_000
+)
+OUTBOX_OVERLOAD_THRESHOLD = _bounded_env_int(
+    "BMAS_EVENT_OUTBOX_OVERLOAD", 5_000, 10, MAX_OUTBOX_BACKLOG
+)
+TURN_TERMINAL_STATUSES = {"completed", "declined", "failed", "timeout"}
 
 
 class LeaseFenceError(RuntimeError):
     """A SQLite write used a task lease token that no longer owns the task."""
+
+
+class EventPayloadTooLarge(ValueError):
+    """An event payload exceeds the durable journal limit."""
+
+
+class EventIdempotencyConflict(RuntimeError):
+    """An event idempotency key identifies different event content."""
 
 
 async def _assert_task_lease(
@@ -253,7 +283,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_artifacts_task_path_v ON artifacts(task_id,
 
 # Column additions are ALTER TABLE statements that must run one at a time
 MIGRATION_V2_ALTER_TASKS = [
-    "ALTER TABLE tasks ADD COLUMN variant          TEXT DEFAULT 'traditional'",
+    "ALTER TABLE tasks ADD COLUMN variant          TEXT DEFAULT 'classic'",
     "ALTER TABLE tasks ADD COLUMN rounds_used      INTEGER DEFAULT 0",
     "ALTER TABLE tasks ADD COLUMN terminated_by    TEXT",
     "ALTER TABLE tasks ADD COLUMN answer_source    TEXT",
@@ -302,6 +332,39 @@ WHERE turn_id IS NOT NULL;
 
 MIGRATION_V5_TASK_LEASE_DDL = """
 CREATE INDEX IF NOT EXISTS idx_tasks_lease_token ON tasks(lease_token);
+"""
+
+
+MIGRATION_V6_EVENT_DELIVERY_DDL = """
+CREATE TABLE IF NOT EXISTS event_journal (
+    cursor          INTEGER PRIMARY KEY AUTOINCREMENT,
+    stream          TEXT NOT NULL,
+    task_id         TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+    event_type      TEXT NOT NULL,
+    data            TEXT NOT NULL,
+    idempotency_key TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    published_at    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_journal_stream_cursor
+ON event_journal(stream, cursor);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_event_journal_idempotency
+ON event_journal(stream, idempotency_key)
+WHERE idempotency_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS event_outbox (
+    event_cursor    INTEGER PRIMARY KEY
+                    REFERENCES event_journal(cursor) ON DELETE CASCADE,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    queued_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    last_attempt_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_outbox_queued
+ON event_outbox(queued_at, event_cursor);
 """
 
 
@@ -473,6 +536,31 @@ async def _migrate_to_v5(db: aiosqlite.Connection) -> None:
     logger.info("Migration v5 applied: fenced task lifecycle writes")
 
 
+async def _migrate_to_v6(db: aiosqlite.Connection) -> None:
+    """Add the durable event journal, bounded outbox, and lifecycle telemetry."""
+    await db.executescript(MIGRATION_V6_EVENT_DELIVERY_DDL)
+    db.row_factory = aiosqlite.Row
+
+    cursor = await db.execute("PRAGMA table_info(tasks)")
+    task_columns = {row[1] for row in await cursor.fetchall()}
+    for column, ddl in (
+        (
+            "effective_actions",
+            "ALTER TABLE tasks ADD COLUMN effective_actions INTEGER DEFAULT 0",
+        ),
+        (
+            "state_revision",
+            "ALTER TABLE tasks ADD COLUMN state_revision INTEGER DEFAULT 0",
+        ),
+        ("checkpoint_at", "ALTER TABLE tasks ADD COLUMN checkpoint_at TEXT"),
+    ):
+        if column not in task_columns:
+            await db.execute(ddl)
+
+    await db.commit()
+    logger.info("Migration v6 applied: durable events and lifecycle telemetry")
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -480,6 +568,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         3: _migrate_to_v3,
         4: _migrate_to_v4,
         5: _migrate_to_v5,
+        6: _migrate_to_v6,
     }
     fn = migrations.get(version)
     if fn is None:
@@ -602,7 +691,7 @@ async def init_db() -> None:
 
 async def create_task(
     task_id: str, label: str, full_input: str,
-    variant: str = "traditional",
+    variant: str = "classic",
 ) -> None:
     """Create a new task record with status='pending'.
 
@@ -617,6 +706,33 @@ async def create_task(
             (task_id, label, full_input, variant),
         )
         await db.commit()
+
+
+async def create_task_with_meta(
+    task_id: str,
+    label: str,
+    full_input: str,
+    variant: str,
+    metadata: dict,
+) -> None:
+    """Create a task and its recovery metadata in one transaction."""
+    async with _connect() as connection:
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            await connection.execute(
+                "INSERT INTO tasks (id, label, full_input, status, variant) "
+                "VALUES (?, ?, ?, 'pending', ?)",
+                (task_id, label, full_input, variant),
+            )
+            await connection.execute(
+                "INSERT INTO board_meta (task_id, data, updated_at) "
+                "VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+                (task_id, json.dumps(metadata)),
+            )
+            await connection.commit()
+        except BaseException:
+            await connection.rollback()
+            raise
 
 
 async def update_task_status(
@@ -663,6 +779,26 @@ async def update_task_status(
         return cursor.rowcount == 1
 
 
+async def update_task_phase(
+    task_id: str,
+    phase: str,
+    lease_token: str | None = None,
+) -> bool:
+    """Set the authoritative task phase with optional lease fencing."""
+    where = "id = ?"
+    params = [phase, task_id]
+    if lease_token is not None:
+        where += " AND lease_token = ?"
+        params.append(lease_token)
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            f"UPDATE tasks SET phase = ? WHERE {where}",
+            params,
+        )
+        await connection.commit()
+        return cursor.rowcount == 1
+
+
 async def claim_task_lease(task_id: str, lease_token: str) -> bool:
     """Claim the SQLite lifecycle lease after Redis grants its lease."""
     async with _connect() as db:
@@ -687,6 +823,17 @@ async def release_task_lease(task_id: str, lease_token: str) -> bool:
         )
         await db.commit()
         return cursor.rowcount == 1
+
+
+async def owns_task_lease(task_id: str, lease_token: str) -> bool:
+    """Return true when one unfinished task still owns its lease token."""
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "SELECT 1 FROM tasks WHERE id = ? AND lease_token = ? "
+            "AND status IN ('pending', 'running')",
+            (task_id, lease_token),
+        )
+        return await cursor.fetchone() is not None
 
 
 async def complete_task(
@@ -794,19 +941,82 @@ async def get_task(task_id: str) -> dict | None:
             "SELECT * FROM tasks WHERE id = ?", (task_id,)
         )
         row = await cursor.fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        task = dict(row)
+        raw_result = task.get("result_json")
+        if isinstance(raw_result, str) and raw_result:
+            with suppress(json.JSONDecodeError, TypeError):
+                result = json.loads(raw_result)
+                if isinstance(result, dict) and isinstance(
+                    result.get("variant_metrics"), dict
+                ):
+                    task["variant_metrics"] = result["variant_metrics"]
+        return task
 
 
 async def get_resumable_tasks() -> list[dict]:
-    """Return unfinished traditional tasks in creation order."""
+    """Return all unfinished tasks in creation order."""
     async with _connect() as db:
         rows = await db.execute_fetchall(
             "SELECT * FROM tasks "
             "WHERE status IN ('pending', 'running') "
-            "AND COALESCE(variant, 'traditional') = 'traditional' "
+            "AND COALESCE(run_state, 'queued') <> 'blocked' "
             "ORDER BY created_at"
         )
         return [dict(row) for row in rows]
+
+
+async def get_blocked_tasks(
+    limit: int = 100,
+    after: tuple[str, str] | None = None,
+) -> list[dict]:
+    """Return one stable page of blocked tasks for compatibility checks."""
+    bounded_limit = min(max(limit, 1), 500)
+    cursor_clause = ""
+    params: list[Any] = []
+    if after is not None:
+        cursor_clause = (
+            "AND (created_at > ? OR (created_at = ? AND id > ?)) "
+        )
+        params.extend((after[0], after[0], after[1]))
+    params.append(bounded_limit)
+    async with _connect() as connection:
+        rows = await connection.execute_fetchall(
+            "SELECT * FROM tasks "
+            "WHERE status IN ('pending', 'running') AND run_state = 'blocked' "
+            f"{cursor_clause}ORDER BY created_at, id LIMIT ?",
+            params,
+        )
+        return [dict(row) for row in rows]
+
+
+async def block_task_recovery(task_id: str) -> bool:
+    """Block recovery for one unfinished and currently unleased task."""
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "UPDATE tasks SET run_state = 'blocked', "
+            "last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+            "WHERE id = ? AND status IN ('pending', 'running') "
+            "AND lease_token IS NULL",
+            (task_id,),
+        )
+        await connection.commit()
+        return cursor.rowcount == 1
+
+
+async def retry_blocked_task(task_id: str) -> bool:
+    """Move one unleased blocked task to recovering before a new claim."""
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "UPDATE tasks SET run_state = 'recovering', "
+            "last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+            "WHERE id = ? AND status IN ('pending', 'running') "
+            "AND run_state = 'blocked' AND lease_token IS NULL",
+            (task_id,),
+        )
+        await connection.commit()
+        return cursor.rowcount == 1
 
 
 async def update_run_state(
@@ -828,6 +1038,42 @@ async def update_run_state(
             params,
         )
         await db.commit()
+        return cursor.rowcount == 1
+
+
+async def update_task_lifecycle_telemetry(
+    task_id: str,
+    *,
+    effective_actions: int | None = None,
+    state_revision: int | None = None,
+    resume_count: int | None = None,
+    lease_token: str | None = None,
+) -> bool:
+    """Update generic task lifecycle telemetry with optional lease fencing."""
+    updates: list[str] = []
+    params: list = []
+    for column, value in (
+        ("effective_actions", effective_actions),
+        ("state_revision", state_revision),
+        ("resume_count", resume_count),
+    ):
+        if value is not None:
+            updates.append(f"{column} = ?")
+            params.append(value)
+    if not updates:
+        return True
+
+    where = "id = ?"
+    params.append(task_id)
+    if lease_token is not None:
+        where += " AND lease_token = ?"
+        params.append(lease_token)
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            f"UPDATE tasks SET {', '.join(updates)} WHERE {where}",
+            params,
+        )
+        await connection.commit()
         return cursor.rowcount == 1
 
 
@@ -862,6 +1108,354 @@ async def count_tasks(status: str | None = None) -> int:
             cursor = await conn.execute("SELECT COUNT(*) as cnt FROM tasks")
         row = await cursor.fetchone()
         return row["cnt"] if row else 0
+
+
+# ── Durable Event Journal and Outbox ────────────────────────────────
+
+def _decode_event_row(row) -> dict:
+    """Convert an event row to its public dictionary shape."""
+    event = dict(row)
+    raw_data = event.get("data")
+    if isinstance(raw_data, str):
+        with suppress(json.JSONDecodeError, TypeError):
+            event["data"] = json.loads(raw_data)
+    return event
+
+
+async def append_delivery_event(
+    stream: str,
+    event_type: str,
+    data: dict,
+    *,
+    task_id: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict:
+    """Append one authoritative event and enqueue a bounded delivery record."""
+    payload = json.dumps(data, separators=(",", ":"), sort_keys=True)
+    payload_bytes = len(payload.encode("utf-8"))
+    if payload_bytes > MAX_EVENT_PAYLOAD_BYTES:
+        raise EventPayloadTooLarge(
+            f"Event payload is {payload_bytes} bytes. "
+            f"The limit is {MAX_EVENT_PAYLOAD_BYTES} bytes."
+        )
+
+    async with _connect() as connection:
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            if idempotency_key is None and task_id and event_type in {"complete", "error"}:
+                task_cursor = await connection.execute(
+                    "SELECT status FROM tasks WHERE id = ?",
+                    (task_id,),
+                )
+                task = await task_cursor.fetchone()
+                if task and task["status"] in {"completed", "failed"}:
+                    idempotency_key = f"terminal:{task_id}:{task['status']}"
+
+            cursor = await connection.execute(
+                "INSERT OR IGNORE INTO event_journal "
+                "(stream, task_id, event_type, data, idempotency_key) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (stream, task_id, event_type, payload, idempotency_key),
+            )
+            if cursor.rowcount == 0:
+                existing_cursor = await connection.execute(
+                    "SELECT * FROM event_journal "
+                    "WHERE stream = ? AND idempotency_key = ?",
+                    (stream, idempotency_key),
+                )
+                existing = await existing_cursor.fetchone()
+                if not existing:
+                    raise RuntimeError("The event insert did not return a row")
+                if existing["event_type"] != event_type or existing["data"] != payload:
+                    raise EventIdempotencyConflict(
+                        f"Event key {idempotency_key!r} has different content"
+                    )
+                event_cursor = int(existing["cursor"])
+                already_published = existing["published_at"] is not None
+            else:
+                event_cursor = int(cursor.lastrowid)
+                already_published = False
+                if task_id:
+                    await connection.execute(
+                        "UPDATE tasks SET "
+                        "state_revision = COALESCE(state_revision, 0) + 1 "
+                        "WHERE id = ?",
+                        (task_id,),
+                    )
+
+            outbox_cursor = await connection.execute(
+                "SELECT COUNT(*) AS count FROM event_outbox"
+            )
+            outbox_row = await outbox_cursor.fetchone()
+            outbox_count = int(outbox_row["count"] if outbox_row else 0)
+            if not already_published and outbox_count < MAX_OUTBOX_BACKLOG:
+                await connection.execute(
+                    "INSERT OR IGNORE INTO event_outbox (event_cursor) VALUES (?)",
+                    (event_cursor,),
+                )
+
+            event_row_cursor = await connection.execute(
+                "SELECT * FROM event_journal WHERE cursor = ?",
+                (event_cursor,),
+            )
+            event_row = await event_row_cursor.fetchone()
+            await connection.commit()
+        except BaseException:
+            await connection.rollback()
+            raise
+
+    if not event_row:
+        raise RuntimeError("The durable event disappeared after insertion")
+    return _decode_event_row(event_row)
+
+
+async def fill_event_outbox() -> int:
+    """Fill free outbox slots from unpublished journal rows."""
+    async with _connect() as connection:
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = await connection.execute(
+                "SELECT COUNT(*) AS count FROM event_outbox"
+            )
+            row = await cursor.fetchone()
+            current = int(row["count"] if row else 0)
+            capacity = max(0, MAX_OUTBOX_BACKLOG - current)
+            if capacity == 0:
+                await connection.rollback()
+                return 0
+            inserted = await connection.execute(
+                "INSERT OR IGNORE INTO event_outbox (event_cursor) "
+                "SELECT journal.cursor FROM event_journal AS journal "
+                "LEFT JOIN event_outbox AS outbox "
+                "ON outbox.event_cursor = journal.cursor "
+                "WHERE journal.published_at IS NULL "
+                "AND outbox.event_cursor IS NULL "
+                "ORDER BY journal.cursor "
+                "LIMIT ?",
+                (capacity,),
+            )
+            await connection.commit()
+            return max(0, inserted.rowcount)
+        except BaseException:
+            await connection.rollback()
+            raise
+
+
+async def get_pending_delivery_events(limit: int = 100) -> list[dict]:
+    """Return one bounded outbox batch in durable cursor order."""
+    await fill_event_outbox()
+    bounded_limit = min(max(limit, 1), 500)
+    async with _connect() as connection:
+        rows = await connection.execute_fetchall(
+            "SELECT journal.*, outbox.attempts, outbox.last_error "
+            "FROM event_outbox AS outbox "
+            "JOIN event_journal AS journal "
+            "ON journal.cursor = outbox.event_cursor "
+            "ORDER BY journal.cursor LIMIT ?",
+            (bounded_limit,),
+        )
+        return [_decode_event_row(row) for row in rows]
+
+
+async def mark_delivery_published(event_cursor: int) -> None:
+    """Mark one journal event published and remove its outbox record."""
+    async with _connect() as connection:
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            await connection.execute(
+                "UPDATE event_journal SET "
+                "published_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                "WHERE cursor = ?",
+                (event_cursor,),
+            )
+            await connection.execute(
+                "DELETE FROM event_outbox WHERE event_cursor = ?",
+                (event_cursor,),
+            )
+            await connection.commit()
+        except BaseException:
+            await connection.rollback()
+            raise
+
+
+async def mark_delivery_failed(event_cursor: int, error: str) -> None:
+    """Record one failed delivery attempt without removing the event."""
+    async with _connect() as connection:
+        await connection.execute(
+            "UPDATE event_outbox SET attempts = attempts + 1, last_error = ?, "
+            "last_attempt_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+            "WHERE event_cursor = ?",
+            (error[:1000], event_cursor),
+        )
+        await connection.commit()
+
+
+async def get_delivery_events_after(
+    stream: str,
+    after_cursor: int,
+    limit: int = 250,
+) -> list[dict]:
+    """Return a bounded replay page after one durable cursor."""
+    bounded_limit = min(max(limit, 1), 500)
+    async with _connect() as connection:
+        rows = await connection.execute_fetchall(
+            "SELECT * FROM event_journal "
+            "WHERE stream = ? AND cursor > ? "
+            "ORDER BY cursor LIMIT ?",
+            (stream, after_cursor, bounded_limit),
+        )
+        return [_decode_event_row(row) for row in rows]
+
+
+async def get_delivery_event_by_idempotency(
+    stream: str,
+    idempotency_key: str,
+) -> dict | None:
+    """Return one durable event by its stream-scoped identity."""
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "SELECT * FROM event_journal "
+            "WHERE stream = ? AND idempotency_key = ?",
+            (stream, idempotency_key),
+        )
+        row = await cursor.fetchone()
+        return _decode_event_row(row) if row else None
+
+
+async def get_delivery_cursor_bounds(stream: str) -> dict[str, int]:
+    """Return the earliest and latest durable cursors for one stream."""
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "SELECT COALESCE(MIN(cursor), 0) AS earliest, "
+            "COALESCE(MAX(cursor), 0) AS latest "
+            "FROM event_journal WHERE stream = ?",
+            (stream,),
+        )
+        row = await cursor.fetchone()
+        return {
+            "earliest": int(row["earliest"] if row else 0),
+            "latest": int(row["latest"] if row else 0),
+        }
+
+
+async def get_terminal_tasks_without_events(limit: int = 100) -> list[dict]:
+    """Return terminal tasks that lack their durable terminal event."""
+    bounded_limit = min(max(limit, 1), 500)
+    async with _connect() as connection:
+        rows = await connection.execute_fetchall(
+            "SELECT task.* FROM tasks AS task "
+            "WHERE task.status IN ('completed', 'failed') "
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM event_journal AS event "
+            "WHERE event.stream = 'task:' || task.id "
+            "AND event.idempotency_key = "
+            "'terminal:' || task.id || ':' || task.status"
+            ") ORDER BY task.completed_at LIMIT ?",
+            (bounded_limit,),
+        )
+        return [dict(row) for row in rows]
+
+
+async def get_terminal_tasks_missing_system_events(
+    limit: int = 100,
+) -> list[dict]:
+    """Return terminal tasks that lack their durable system event."""
+    bounded_limit = min(max(limit, 1), 500)
+    async with _connect() as connection:
+        rows = await connection.execute_fetchall(
+            "SELECT task.* FROM tasks AS task "
+            "WHERE task.status IN ('completed', 'failed') "
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM event_journal AS event "
+            "WHERE event.stream = 'system' "
+            "AND event.idempotency_key = "
+            "'system-terminal:' || task.id || ':' || task.status"
+            ") ORDER BY task.completed_at LIMIT ?",
+            (bounded_limit,),
+        )
+        return [dict(row) for row in rows]
+
+
+async def get_event_delivery_health(task_id: str | None = None) -> dict:
+    """Return journal, outbox, failure, and overload health signals."""
+    where = ""
+    params: list = []
+    if task_id is not None:
+        where = "WHERE task_id = ?"
+        params.append(task_id)
+
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "SELECT COALESCE(SUM(CASE WHEN published_at IS NULL THEN 1 ELSE 0 END), 0) "
+            "AS unpublished, "
+            "MIN(CASE WHEN published_at IS NULL THEN created_at END) AS oldest, "
+            "COALESCE(MAX(cursor), 0) AS latest_cursor "
+            f"FROM event_journal {where}",
+            params,
+        )
+        journal = await cursor.fetchone()
+
+        if task_id is None:
+            outbox_cursor = await connection.execute(
+                "SELECT COUNT(*) AS count, COALESCE(SUM(attempts), 0) AS failures "
+                "FROM event_outbox"
+            )
+        else:
+            outbox_cursor = await connection.execute(
+                "SELECT COUNT(*) AS count, COALESCE(SUM(outbox.attempts), 0) "
+                "AS failures FROM event_outbox AS outbox "
+                "JOIN event_journal AS journal "
+                "ON journal.cursor = outbox.event_cursor "
+                "WHERE journal.task_id = ?",
+                (task_id,),
+            )
+        outbox = await outbox_cursor.fetchone()
+
+    unpublished = int(journal["unpublished"] if journal else 0)
+    outbox_count = int(outbox["count"] if outbox else 0)
+    oldest = journal["oldest"] if journal else None
+    oldest_age_seconds = 0.0
+    if oldest:
+        with suppress(ValueError, TypeError):
+            oldest_age_seconds = max(
+                0.0,
+                (datetime.now(UTC) - datetime.fromisoformat(oldest)).total_seconds(),
+            )
+    overloaded = (
+        unpublished >= OUTBOX_OVERLOAD_THRESHOLD
+        or outbox_count >= MAX_OUTBOX_BACKLOG
+    )
+    state = "overloaded" if overloaded else "recovering" if unpublished else "healthy"
+    return {
+        "status": state,
+        "unpublished_events": unpublished,
+        "outbox_backlog": outbox_count,
+        "outbox_capacity": MAX_OUTBOX_BACKLOG,
+        "publish_failures": int(outbox["failures"] if outbox else 0),
+        "oldest_unpublished_age_seconds": round(oldest_age_seconds, 3),
+        "latest_cursor": int(journal["latest_cursor"] if journal else 0),
+        "overloaded": overloaded,
+    }
+
+
+async def get_lifecycle_health() -> dict:
+    """Return aggregate runtime telemetry for operational health."""
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "SELECT "
+            "SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running, "
+            "COALESCE(SUM(effective_actions), 0) AS effective_actions, "
+            "COALESCE(SUM(resume_count), 0) AS recoveries, "
+            "MAX(checkpoint_at) AS latest_checkpoint_at "
+            "FROM tasks"
+        )
+        row = await cursor.fetchone()
+    return {
+        "running_tasks": int(row["running"] or 0) if row else 0,
+        "effective_actions": int(row["effective_actions"] or 0) if row else 0,
+        "recovery_count": int(row["recoveries"] or 0) if row else 0,
+        "latest_checkpoint_at": row["latest_checkpoint_at"] if row else None,
+    }
 
 
 # ── Sub-task CRUD ────────────────────────────────────────────────────
@@ -930,20 +1524,29 @@ async def get_debate(task_id: str) -> list[dict]:
 async def update_task_cost_totals(
     task_id: str,
     lease_token: str | None = None,
+    reported_cost_usd: float | None = None,
 ) -> bool:
-    """Roll up cost_entries into the tasks row (total_cost_usd, total_tokens)."""
+    """Save ledger totals and one runtime-reported cumulative cost floor."""
     async with _connect() as db:
         cursor = await db.execute(
             "SELECT "
             "  COALESCE(SUM(cost_usd), 0.0) as total_cost, "
-            "  COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens "
+            "  COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens, "
+            "  COALESCE((SELECT total_cost_usd FROM tasks WHERE id = ?), 0.0) "
+            "  as current_total_cost "
             "FROM cost_entries WHERE task_id = ?",
-            (task_id,),
+            (task_id, task_id),
         )
         row = await cursor.fetchone()
         if row:
+            total_cost = max(
+                float(row["total_cost"]),
+                float(row["current_total_cost"]),
+            )
+            if reported_cost_usd is not None:
+                total_cost = max(total_cost, max(0.0, reported_cost_usd))
             where = "id = ?"
-            params = [row["total_cost"], row["total_tokens"], task_id]
+            params = [total_cost, row["total_tokens"], task_id]
             if lease_token is not None:
                 where += " AND lease_token = ?"
                 params.append(lease_token)
@@ -1193,17 +1796,41 @@ async def complete_turn(
     entries_added: int,
     cost_usd: float,
     joules_estimate: float = 0.0,
+    node: str | None = None,
 ) -> None:
-    """Mark a turn as completed/failed/declined with cost info."""
+    """Mark a turn terminal and save the endpoint that returned."""
     async with _connect() as db:
+        cursor = await db.execute(
+            "SELECT task_id, status FROM turns WHERE id = ?",
+            (turn_id,),
+        )
+        current = await cursor.fetchone()
         await db.execute(
             "UPDATE turns SET "
             "status = ?, entries_added = ?, cost_usd = ?, "
-            "joules_estimate = ?, "
+            "joules_estimate = ?, node = COALESCE(?, node), "
             "completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
             "WHERE id = ?",
-            (status, entries_added, cost_usd, joules_estimate, turn_id),
+            (
+                status,
+                entries_added,
+                cost_usd,
+                joules_estimate,
+                node,
+                turn_id,
+            ),
         )
+        if (
+            current
+            and current["status"] not in TURN_TERMINAL_STATUSES
+            and status in TURN_TERMINAL_STATUSES
+        ):
+            await db.execute(
+                "UPDATE tasks SET "
+                "effective_actions = COALESCE(effective_actions, 0) + 1 "
+                "WHERE id = ?",
+                (current["task_id"],),
+            )
         await db.commit()
 
 
@@ -1538,6 +2165,33 @@ async def update_board_entry_salience(
             raise
 
 
+async def update_board_entry_saliences(
+    task_id: str,
+    scores: dict[str, float],
+    lease_token: str | None = None,
+) -> None:
+    """Update multiple salience scores in one fenced transaction."""
+    if not scores:
+        return
+    async with _connect() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await _assert_task_lease(db, task_id, lease_token)
+            await db.executemany(
+                "UPDATE board_entries SET salience = ?, "
+                "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                "WHERE id = ? AND task_id = ?",
+                [
+                    (salience, entry_id, task_id)
+                    for entry_id, salience in scores.items()
+                ],
+            )
+            await db.commit()
+        except BaseException:
+            await db.rollback()
+            raise
+
+
 async def upsert_board_meta(
     task_id: str,
     meta: dict,
@@ -1559,6 +2213,27 @@ async def upsert_board_meta(
         except BaseException:
             await db.rollback()
             raise
+
+
+async def mark_task_checkpoint(
+    task_id: str,
+    lease_token: str | None = None,
+) -> bool:
+    """Record an explicit durable task checkpoint with optional fencing."""
+    where = "id = ?"
+    params = [task_id]
+    if lease_token is not None:
+        where += " AND lease_token = ?"
+        params.append(lease_token)
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "UPDATE tasks SET "
+            "checkpoint_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+            f"WHERE {where}",
+            params,
+        )
+        await connection.commit()
+        return cursor.rowcount == 1
 
 
 async def get_board_meta(task_id: str) -> dict:

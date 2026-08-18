@@ -8,9 +8,23 @@ from datetime import UTC, datetime
 import httpx
 from fastapi import APIRouter
 
+import database as db
 from config import AGENT_ENDPOINTS
 
 router = APIRouter()
+
+
+def _has_runtime_pressure(queue: dict, runtime: dict) -> bool:
+    """Return true when queues, recovery, or endpoint circuits need attention."""
+    if queue.get("recovery_blocked_tasks", 0):
+        return True
+    if queue.get("queued_tasks", 0) >= queue.get("queue_capacity", 1):
+        return True
+    endpoint_requests = runtime.get("endpoint_requests", {})
+    return any(
+        endpoint.get("circuit") == "open"
+        for endpoint in endpoint_requests.values()
+    )
 
 
 async def _check_agent_health(client: httpx.AsyncClient, role: str, url: str) -> dict:
@@ -71,18 +85,46 @@ async def health():
     from 'app crashed').
     """
     from app import app
-    from database import check_sqlite_health
+    from routes.submit import task_queue_snapshot
 
     orch = app.state.orchestrator
     redis_ok = False
     with contextlib.suppress(Exception):
         redis_ok = bool(await orch.bb.redis.ping())
 
-    sqlite_ok = await check_sqlite_health()
+    sqlite_ok = await db.check_sqlite_health()
+    delivery_health = {
+        "status": "unavailable",
+        "overloaded": True,
+    }
+    lifecycle_health = {
+        "running_tasks": 0,
+        "effective_actions": 0,
+        "recovery_count": 0,
+        "latest_checkpoint_at": None,
+    }
+    if sqlite_ok:
+        with contextlib.suppress(Exception):
+            delivery_health = await db.get_event_delivery_health()
+        with contextlib.suppress(Exception):
+            lifecycle_health = await db.get_lifecycle_health()
+
+    queue_health = task_queue_snapshot()
+    runtime_health = orch.runtime_snapshot()
+    degraded = (
+        not redis_ok
+        or not sqlite_ok
+        or bool(delivery_health.get("overloaded"))
+        or _has_runtime_pressure(queue_health, runtime_health)
+    )
 
     return {
-        "status": "healthy" if (redis_ok and sqlite_ok) else "degraded",
+        "status": "degraded" if degraded else "healthy",
         "redis_connected": redis_ok,
         "sqlite_connected": sqlite_ok,
         "agents": list(AGENT_ENDPOINTS.keys()),
+        "event_delivery": delivery_health,
+        "task_queue": queue_health,
+        "runtime": runtime_health,
+        "lifecycle": lifecycle_health,
     }

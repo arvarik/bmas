@@ -41,7 +41,7 @@ control_plane:
     dashboard: 9321
 
 coordination:
-  variant: traditional        # The cyclic blackboard variant
+  variant: classic            # The cyclic blackboard runtime
 ```
 
 If you have edge nodes with Hermes agents, add them under `nodes:`.
@@ -131,7 +131,7 @@ Verify everything is correctly integrated:
 ## Next Steps
 
 - **Add edge nodes:** See [NODE_SETUP.md](NODE_SETUP.md) for provisioning agents
-- **Tune the variant:** See [CONFIGURATION.md](CONFIGURATION.md) for `coordination.traditional.*` settings (rounds, budget, CU mode)
+- **Tune the runtime:** See [CONFIGURATION.md](CONFIGURATION.md) for `coordination.classic.*` settings.
 - **Multi-provider routing:** See [CONFIGURATION.md](CONFIGURATION.md) for mixing Gemini + Claude + OpenAI
 - **Development:** Use `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` for hot reload
 - **Architecture:** See [architecture/README.md](architecture/README.md) for the full system deep-dive

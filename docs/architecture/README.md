@@ -3,7 +3,8 @@
 # bMAS — System Architecture
 
 > [!NOTE]
-> This document describes the **current** architecture as implemented in the traditional coordination variant.
+> This document describes the **current** architecture in the classic coordination runtime.
+> See [Platform Foundations](../PLATFORM_FOUNDATIONS.md) for the shared runtime contract.
 
 ## 1. Overview
 
@@ -20,8 +21,8 @@ The system uses a **cyclic execution model**: a Control Unit (CU) reads the boar
 | **Single config file** | All deployment topology, model routing, variant settings, and node configuration in `bmas.yaml` |
 | **Docker-first** | Control plane runs as 5 Docker containers via `docker-compose.yml` |
 | **Cost-optimized** | Local triage classifier routes tasks to the cheapest capable model; budget ceilings halt runaway spend |
-| **Dual-write persistence** | Every event writes to Redis (real-time) AND SQLite (permanent history) |
-| **Fail-open** | Triage, cost tracking, and logging are best-effort — failures never block task execution |
+| **Durable lifecycle** | SQLite saves task state, board events, and replay events before publication |
+| **Bounded load** | Task admission, endpoint dispatch, event delivery, and memory projections have explicit limits |
 
 ---
 
@@ -74,7 +75,7 @@ The system uses a **cyclic execution model**: a Control Unit (CU) reads the boar
 | **Language** | Python 3.13+ |
 | **Framework** | FastAPI + Uvicorn |
 | **Port** | 9000 |
-| **Persistence** | Dual-write: Redis (real-time) + SQLite v2 schema via aiosqlite (permanent) |
+| **Persistence** | SQLite stores authoritative state. Redis stores locks, notifications, and live projections. |
 | **Config** | Reads `bmas.yaml` at startup via `config.py` |
 
 #### Internal Structure
@@ -83,7 +84,7 @@ The system uses a **cyclic execution model**: a Control Unit (CU) reads the boar
 daemon/src/
 ├── app.py                     # FastAPI entry point + lifespan
 ├── config.py                  # YAML config loader → module-level constants
-├── database.py                # SQLite v2 schema (12 tables, additive migrations)
+├── database.py                # Authoritative SQLite state, journal, and outbox
 ├── auth.py                    # Bearer token auth for agent ingest
 ├── file_utils.py              # File upload handling + PDF extraction
 ├── core/
@@ -94,20 +95,23 @@ daemon/src/
 │   ├── entry.py               # Board entry schema + validation
 │   ├── protocol.py            # Agent ↔ Daemon message protocol
 │   ├── salience.py            # Entry salience scoring
-│   ├── event_emitter.py       # SSE event abstraction (Redis Pub/Sub + in-memory)
+│   ├── event_delivery.py      # SQLite-first event journal and Redis outbox
+│   ├── event_emitter.py       # Task event interface
 │   ├── capabilities.py        # Agent capability registry
 │   ├── log_levels.py          # Level normalization (INF→info, WRN→warning, etc.)
 │   ├── triage.py              # Complexity classifier client (calls vLLM)
 │   └── variants/
-│       └── traditional.py     # Cyclic CU → agent selection → board → convergence loop
+│       ├── classic.py         # Registered lifecycle adapter for the classic runtime
+│       └── traditional.py     # Cyclic CU → agent selection → board → convergence engine
 ├── models/
 │   └── personas.py            # Agent role definitions + dynamic expert persona generator
 ├── monitoring/
 │   └── health_loop.py         # Background agent health polling → Redis
 └── routes/
-    ├── submit.py              # POST /submit — async task submission (HTTP 202)
+    ├── capabilities.py        # Registered runtime and UI contracts
+    ├── submit.py              # POST /submit — bounded async task admission
     ├── tasks.py               # GET /tasks, /tasks/{id}/* — task/board/cost/log/trace/turns
-    ├── events.py              # GET /events/{id}, /events/system — SSE via Redis Pub/Sub
+    ├── events.py              # GET /events/{id}, /events/system — durable SSE replay
     ├── ingest.py              # POST /ingest/traces, /ingest/logs — bearer-auth'd agent ingest
     ├── artifacts.py           # Artifact ingest + retrieval
     ├── files.py               # File upload + download + text extraction
@@ -117,12 +121,15 @@ daemon/src/
 
 #### Key Design Decisions
 
-- **Cyclic execution**: The traditional variant implements the paper's CU-driven loop. Each round, the CU reads the full board and selects agents with rationale. Agents execute concurrently, write entries to the board, and the cycle repeats until convergence (Decider says done, budget exceeded, or max rounds reached).
+- **Cyclic execution**: The classic runtime implements the paper's CU-driven loop. The control unit selects agents until the task reaches a terminal condition.
 - **Event-sourced board**: `board_store.py` maintains an append-only event log. Board state is derived by replaying events, enabling deterministic snapshots and fork support.
-- **Dual-write pattern**: Every lifecycle event writes to both Redis (for live SSE streaming) and SQLite (for permanent task history). SQLite writes are best-effort — they log warnings but never interrupt a running task.
+- **SQLite-first events**: The daemon saves each lifecycle event before it publishes a Redis notification. SSE clients replay missed events from SQLite.
+- **Runtime registry**: The daemon resolves each task through a registered runtime contract. The `classic` adapter wraps the current cyclic blackboard engine.
+- **Immutable task settings**: The daemon saves the effective runtime settings when it accepts a task. A restart uses the same settings.
+- **Bounded pressure**: The daemon limits queued tasks, active tasks, endpoint requests, event batches, payload sizes, and projection caches.
 - **Lock-per-task**: Each task acquires a Redlock on `orchestrator:{task_id}`, allowing concurrent task execution while preventing duplicate processing.
-- **Capability-gated dispatch**: `gateway.py` checks agent capabilities before dispatch, ensuring only capable agents receive tasks.
-- **Budget ceiling**: The traditional variant tracks cumulative LLM spend and halts execution when `budget_ceiling_usd` is exceeded.
+- **Capability-gated commits**: `gateway.py` checks actor capabilities before each board mutation.
+- **Budget ceiling**: The classic runtime tracks cumulative LLM spend and stops when the task reaches `budget_ceiling_usd`.
 
 ---
 
@@ -274,9 +281,9 @@ All API routes are **server-side proxies** in `src/app/api/` that forward to bac
 
 ---
 
-## 4. Task Lifecycle (Traditional Variant)
+## 4. Task Lifecycle (Classic Runtime)
 
-The traditional variant implements the bMAS paper's cyclic execution model:
+The classic runtime implements the bMAS paper's cyclic execution model:
 
 ### 4.1 Full Flow
 
@@ -358,23 +365,21 @@ A round converges when any of these conditions is met:
 
 ## 5. Data Flow & Persistence
 
-### 5.1 Dual-Write Strategy
+### 5.1 Authoritative State and Live Projections
 
-Every significant event writes to **two** persistence layers:
+SQLite accepts durable state and events first. Redis provides live projections and notifications.
 
 ```
 Event (turn, board entry, log, cost, trace, result)
     │
-    ├──→ Redis       Real-time blackboard for live dashboard (ephemeral)
-    │                - Pub/Sub for SSE streaming (18 event types)
-    │                - Hashes for board entries and state snapshots
-    │                - Streams for log tailing
+    ├──→ SQLite      Authoritative task history and event journal
+    │                - Durable SSE replay with monotonic cursors
+    │                - Task, turn, cost, board, log, trace, file, and artifact data
     │
-    └──→ SQLite      Permanent task history (durable)
-                     - 12 tables: tasks, sub_tasks, debate, cost_entries,
-                       logs, turns, board_entries, board_events,
-                       agent_traces, task_files, artifacts, ...
-                     - Survives Redis eviction and container restarts
+    └──→ Redis       Live blackboard projection and notification path
+                     - Pub/Sub wakes SSE consumers after SQLite accepts an event
+                     - Hashes provide low-latency board and state reads
+                     - Streams provide live log tailing
 ```
 
 ### 5.2 Real-time Event Delivery (SSE)
@@ -518,7 +523,7 @@ A background `health_loop` polls each agent node's `/health` endpoint and publis
 
 ### 10.2 Cost Tracking
 
-Every LLM call's token usage and cost are tracked in Redis (`bmas:metrics:cost`, `bmas:metrics:tokens`) and SQLite (`cost_entries` table). The traditional variant accumulates per-task spend and checks against `budget_ceiling_usd` each round.
+SQLite records the token usage and cost for each LLM call. The classic runtime checks the task budget after each round.
 
 ### 10.3 Structured Logging
 

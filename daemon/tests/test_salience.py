@@ -161,3 +161,36 @@ class TestComputeSalience:
         # refs_in = 10 → min(1, 10/3) = 1.0
         # Expected: 0.4*0.5 + 0.2*1.0 + 0.3*1.0 = 0.7
         assert abs(scores["e-1"] - 0.7) < 0.01
+
+    def test_duplicate_reference_counts_once(self):
+        """One entry cannot increase a target score with repeated references."""
+        target = _entry("target", confidence=0.5)
+        source = _entry("source", refs=["target", "target", "target"])
+
+        scores = compute_salience(
+            {"target": target, "source": source}, current_round=1,
+        )
+
+        assert abs(scores["target"] - 0.5) < 0.02
+
+    def test_removed_rebuttal_does_not_cancel_a_penalty(self):
+        """Only an open rebuttal can answer an open critique."""
+        target = _entry("target", confidence=0.8)
+        critique = _entry("critique", entry_type="critique", refs=["target"])
+        rebuttal = _entry(
+            "rebuttal",
+            entry_type="rebuttal",
+            refs=["critique"],
+            status="removed",
+        )
+
+        scores = compute_salience(
+            {
+                "target": target,
+                "critique": critique,
+                "rebuttal": rebuttal,
+            },
+            current_round=1,
+        )
+
+        assert abs(scores["target"] - 0.52) < 0.02

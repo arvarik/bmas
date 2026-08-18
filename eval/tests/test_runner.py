@@ -37,10 +37,19 @@ class FakeHTTPClient:
         self,
         poll_payloads: list[dict[str, Any]] | None = None,
         abort_error: Exception | None = None,
+        capabilities: dict[str, Any] | None = None,
     ):
         self.poll_payloads = list(poll_payloads or [])
         self.last_poll_payload: dict[str, Any] = {}
         self.abort_error = abort_error
+        self.capabilities = capabilities or {
+            "api_version": "1",
+            "variants": [{
+                "id": "classic",
+                "available": True,
+                "aliases": ["traditional"],
+            }],
+        }
         self.post_calls: list[dict[str, Any]] = []
         self.get_calls: list[str] = []
         self.closed = False
@@ -66,6 +75,8 @@ class FakeHTTPClient:
 
     async def get(self, url: str) -> FakeResponse:
         self.get_calls.append(url)
+        if url.endswith("/capabilities"):
+            return FakeResponse(self.capabilities)
         if self.poll_payloads:
             self.last_poll_payload = self.poll_payloads.pop(0)
         return FakeResponse(self.last_poll_payload)
@@ -137,6 +148,12 @@ async def test_nested_task_response_maps_classic_lifecycle_fields(monkeypatch):
                     "completed_at": "2026-08-18T00:00:08Z",
                     "terminated_by": "max_rounds",
                     "rounds_used": 4,
+                    "effective_actions": 17,
+                    "variant": "classic",
+                    "phase": "completed",
+                    "state_revision": 28,
+                    "resume_count": 2,
+                    "variant_metrics": {"consensus": 0.91},
                 },
                 "sub_tasks": [{"id": "sub-1"}],
             },
@@ -153,6 +170,12 @@ async def test_nested_task_response_maps_classic_lifecycle_fields(monkeypatch):
     assert result.model_used == "preserved-model-choice"
     assert result.terminated_by == "max_rounds"
     assert result.rounds == 4
+    assert result.effective_actions == 17
+    assert result.variant == "classic"
+    assert result.phase == "completed"
+    assert result.state_revision == 28
+    assert result.recovery_count == 2
+    assert result.variant_metrics == {"consensus": 0.91}
     assert fake_http.get_calls == [
         "http://daemon.test/tasks/task-1",
         "http://daemon.test/tasks/task-1",
@@ -288,6 +311,51 @@ async def test_operator_key_defaults_to_environment(monkeypatch):
         }
     finally:
         await runner.close()
+
+
+@pytest.mark.asyncio
+async def test_selected_variant_is_submitted_per_task(monkeypatch):
+    """One daemon can receive different registered implementations."""
+    monkeypatch.setattr("eval.runner.POLL_INTERVAL_S", 0)
+    fake_http = FakeHTTPClient(poll_payloads=[{
+        "task": {"status": "completed", "result_summary": "#### 42"},
+    }])
+    runner = BenchmarkRunner(
+        daemon_url="http://daemon.test", variant="classic",
+    )
+    await runner.http.aclose()
+    runner.http = fake_http
+
+    await runner._submit_task("A task")
+
+    assert fake_http.post_calls[0]["json"] == {
+        "task": "A task", "variant": "classic",
+    }
+
+
+@pytest.mark.asyncio
+async def test_verify_daemon_uses_authoritative_capabilities():
+    """The preflight reads the versioned capability contract."""
+    fake_http = FakeHTTPClient()
+    runner = await _runner_with_fake_http(fake_http)
+
+    capabilities = await runner.verify_daemon()
+
+    assert capabilities["api_version"] == "1"
+    assert capabilities["variants"][0]["id"] == "classic"
+    assert fake_http.get_calls == ["http://daemon.test/capabilities"]
+
+
+@pytest.mark.asyncio
+async def test_verify_daemon_rejects_unknown_contract_version():
+    """The harness stops before it uses an incompatible daemon contract."""
+    fake_http = FakeHTTPClient(capabilities={
+        "api_version": "2", "variants": [],
+    })
+    runner = await _runner_with_fake_http(fake_http)
+
+    with pytest.raises(ValueError, match="unsupported capability contract"):
+        await runner.verify_daemon()
 
 
 @pytest.mark.asyncio

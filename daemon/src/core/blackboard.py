@@ -5,13 +5,17 @@ Uses single-instance Redis lock (sufficient for homelab; upgrade to
 multi-instance Redlock via aioredlock for production HA).
 """
 
+import hashlib
 import json
+import os
 import uuid
+from collections import OrderedDict
 from datetime import UTC, datetime
 
 import redis.asyncio as aioredis
 
 from config import AGENT_ENDPOINTS, LOCK_TTL_MS, NODE_URL_TO_NAME, REDIS_URL
+from core.event_delivery import record_and_publish, task_stream
 from core.log_levels import normalize_level
 
 
@@ -28,9 +32,30 @@ def _entry_seq(entry_id: str) -> int:
 _normalize_level = normalize_level
 
 
+def _projection_cache_capacity() -> int:
+    """Return the bounded count of task projections retained in memory."""
+    try:
+        value = int(os.getenv("BMAS_BOARD_PROJECTION_CACHE_TASKS", "128"))
+    except ValueError:
+        return 128
+    return min(max(value, 1), 10_000)
+
+
 class Blackboard:
     def __init__(self) -> None:
         self.redis: aioredis.Redis = aioredis.from_url(REDIS_URL, decode_responses=True)
+        self._projection_digests: dict[str, dict[str, str]] = {}
+        self._projection_meta: dict[str, dict[str, str]] = {}
+        self._projection_revision: OrderedDict[str, str] = OrderedDict()
+        self._projection_cache_capacity = _projection_cache_capacity()
+
+    def _touch_projection_cache(self, task_id: str) -> None:
+        """Mark one task projection recent and evict the oldest task."""
+        self._projection_revision.move_to_end(task_id)
+        while len(self._projection_revision) > self._projection_cache_capacity:
+            evicted_task, _ = self._projection_revision.popitem(last=False)
+            self._projection_digests.pop(evicted_task, None)
+            self._projection_meta.pop(evicted_task, None)
 
     # ── Lock Management ──────────────────────────────────────────────
     async def acquire_lock(self, resource: str, ttl_ms: int = LOCK_TTL_MS) -> tuple[bool, str]:
@@ -133,10 +158,9 @@ class Blackboard:
 
     # ── Durable Board Snapshot (board v2 persistence) ──────────────
     #
-    # The traditional variant keeps its working board in an in-process
-    # store for the duration of a run.  To guarantee the board survives
-    # for the LIFE of the task — and is retained for completed tasks —
-    # we mirror the materialized snapshot into Redis with NO expiry.
+    # The classic runtime keeps its active board in an in-process store.
+    # SQLite stores the authoritative board. Redis stores a persistent
+    # materialized projection for low-latency reads.
     #
     # Keys follow the v2 layout (core/protocol.py):
     #   bmas:board:{task}:entries  — Hash: entry_id → entry JSON
@@ -153,6 +177,14 @@ class Blackboard:
     def _board_meta_key(task_id: str) -> str:
         return f"bmas:board:{task_id}:meta"
 
+    @staticmethod
+    def _board_digests_key(task_id: str) -> str:
+        return f"bmas:board:{task_id}:digests"
+
+    @staticmethod
+    def _board_projection_key(task_id: str) -> str:
+        return f"bmas:board:{task_id}:projection"
+
     async def save_board_snapshot(
         self,
         task_id: str,
@@ -167,30 +199,90 @@ class Blackboard:
         """
         entries_key = self._board_entries_key(task_id)
         meta_key = self._board_meta_key(task_id)
-
-        pipe = self.redis.pipeline()
-        # Rewrite entries: delete stale then set current snapshot.
-        pipe.delete(entries_key)
-        if entries:
-            pipe.hset(  # type: ignore[misc]
-                entries_key,
-                mapping={eid: json.dumps(e) for eid, e in entries.items()},
+        digests_key = self._board_digests_key(task_id)
+        projection_key = self._board_projection_key(task_id)
+        serialized_entries = {
+            entry_id: json.dumps(entry, separators=(",", ":"), sort_keys=True)
+            for entry_id, entry in entries.items()
+        }
+        entry_digests = {
+            entry_id: hashlib.sha256(value.encode("utf-8")).hexdigest()
+            for entry_id, value in serialized_entries.items()
+        }
+        serialized_meta = {
+            key: value if isinstance(value, str) else json.dumps(
+                value,
+                separators=(",", ":"),
+                sort_keys=True,
             )
-        if meta:
-            pipe.hset(  # type: ignore[misc]
-                meta_key,
-                mapping={
-                    k: (v if isinstance(v, str) else json.dumps(v))
-                    for k, v in meta.items()
-                },
-            )
-        await pipe.execute()
+            for key, value in (meta or {}).items()
+        }
+        projection_value = json.dumps(
+            {"entries": entry_digests, "meta": serialized_meta},
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        revision = hashlib.sha256(projection_value.encode("utf-8")).hexdigest()
 
-        # Belt-and-suspenders: ensure these keys never expire even if a
-        # TTL was ever set on them by another code path.
-        await self.redis.persist(entries_key)
-        if meta:
-            await self.redis.persist(meta_key)
+        if task_id not in self._projection_digests:
+            read_pipe = self.redis.pipeline()
+            read_pipe.hgetall(digests_key)
+            read_pipe.hkeys(entries_key)
+            read_pipe.hgetall(meta_key)
+            read_pipe.hget(projection_key, "revision")
+            stored_digests, stored_entry_ids, stored_meta, stored_revision = (
+                await read_pipe.execute()
+            )
+            self._projection_digests[task_id] = dict(stored_digests)
+            self._projection_meta[task_id] = dict(stored_meta)
+            self._projection_revision[task_id] = str(stored_revision or "")
+            if not stored_digests and stored_entry_ids:
+                self._projection_digests[task_id] = {
+                    str(entry_id): "" for entry_id in stored_entry_ids
+                }
+
+        if self._projection_revision[task_id] == revision:
+            self._touch_projection_cache(task_id)
+            return
+
+        previous_digests = self._projection_digests[task_id]
+        previous_meta = self._projection_meta[task_id]
+        changed_entries = {
+            entry_id: serialized_entries[entry_id]
+            for entry_id, digest in entry_digests.items()
+            if previous_digests.get(entry_id) != digest
+        }
+        deleted_entries = sorted(set(previous_digests) - set(entry_digests))
+        changed_meta = {
+            key: value
+            for key, value in serialized_meta.items()
+            if previous_meta.get(key) != value
+        }
+        deleted_meta = sorted(set(previous_meta) - set(serialized_meta))
+
+        write_pipe = self.redis.pipeline()
+        if changed_entries:
+            write_pipe.hset(entries_key, mapping=changed_entries)  # type: ignore[misc,arg-type]
+            write_pipe.hset(  # type: ignore[misc,arg-type]
+                digests_key,
+                mapping={entry_id: entry_digests[entry_id] for entry_id in changed_entries},
+            )
+        if deleted_entries:
+            write_pipe.hdel(entries_key, *deleted_entries)
+            write_pipe.hdel(digests_key, *deleted_entries)
+        if changed_meta:
+            write_pipe.hset(meta_key, mapping=changed_meta)  # type: ignore[misc,arg-type]
+        if deleted_meta:
+            write_pipe.hdel(meta_key, *deleted_meta)
+        write_pipe.hset(projection_key, mapping={"revision": revision})  # type: ignore[misc]
+        for key in (entries_key, meta_key, digests_key, projection_key):
+            write_pipe.persist(key)
+        await write_pipe.execute()
+
+        self._projection_digests[task_id] = entry_digests
+        self._projection_meta[task_id] = serialized_meta
+        self._projection_revision[task_id] = revision
+        self._touch_projection_cache(task_id)
 
     async def get_board_snapshot(self, task_id: str) -> dict:
         """Read the durable board snapshot from Redis.
@@ -244,22 +336,33 @@ class Blackboard:
                 break
 
     # ── SSE Pub/Sub Events ───────────────────────────────────
-    async def publish_event(self, task_id: str, event: str, data: dict):
-        """Publish a typed event to the task's Pub/Sub channel.
-        
-        Consumed by the SSE endpoint /events/{task_id}.
-        """
-        await self.redis.publish(
-            f"bmas:events:{task_id}",
-            json.dumps({"event": event, "data": data})
+    async def publish_event(
+        self,
+        task_id: str,
+        event: str,
+        data: dict,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
+        """Save a task event, then send a low-latency Redis notification."""
+        await record_and_publish(
+            self.redis,
+            task_stream(task_id),
+            event,
+            data,
+            task_id=task_id,
+            idempotency_key=idempotency_key,
         )
 
     async def publish_system_event(self, event: str, data: dict):
-        """Publish to the system Pub/Sub channel (consumed by /events/system)."""
-        await self.redis.publish(
-            "bmas:events:system",
-            json.dumps({"event": event, "data": data})
-        )
+        """Save a system event, then send a low-latency Redis notification."""
+        if event in {"daemon-status", "agent-health"}:
+            await self.redis.publish(
+                "bmas:events:system",
+                json.dumps({"event": event, "data": data}),
+            )
+            return
+        await record_and_publish(self.redis, "system", event, data)
 
     # ── Logging (Streams) ────────────────────────────────────
     async def publish_log(
@@ -302,6 +405,24 @@ class Blackboard:
         if fields_json:
             stream_fields["fields"] = fields_json
 
+        if task_id:
+            log_event = {
+                "agent_role": node_id,
+                "level": level,
+                "message": message,
+                "fields": fields or None,
+                "node": node,
+                "turn_id": turn_id,
+                "ts": ts,
+            }
+            await record_and_publish(
+                self.redis,
+                task_stream(task_id),
+                "log",
+                log_event,
+                task_id=task_id,
+            )
+
         # 1. Global stream (existing behavior — /api/logs global view)
         await self.redis.xadd(  # type: ignore[misc]
             f"bmas:logs:{node_id}",
@@ -316,20 +437,6 @@ class Blackboard:
                 f"bmas:logs:task:{task_id}", {**stream_fields, "task_id": task_id},  # type: ignore[dict-item]
             )
             await self.redis.expire(f"bmas:logs:task:{task_id}", 86400)  # type: ignore[misc]
-
-            # 3. Pub/Sub (live SSE delivery)
-            await self.redis.publish(
-                f"bmas:events:{task_id}",
-                json.dumps({"event": "log", "data": {
-                    "agent_role": node_id,
-                    "level": level,
-                    "message": message,
-                    "fields": fields or None,
-                    "node": node,
-                    "turn_id": turn_id,
-                    "ts": ts,
-                }})
-            )
 
     # ── Metrics ──────────────────────────────────────────────
     async def track_cost(self, model: str, tokens: int, cost_usd: float):

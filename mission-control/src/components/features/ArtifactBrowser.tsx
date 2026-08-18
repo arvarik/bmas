@@ -7,21 +7,33 @@
  * version badge, and download button. Fetches from /api/tasks/{taskId}/artifacts.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   File, FileText, Image, Code, Download, FolderTree,
 } from "lucide-react";
+import type { TaskArtifact } from "@/hooks/useTaskStream";
 
-interface Artifact {
-  id: string;
-  rel_path: string;
-  mime: string | null;
-  bytes: number;
-  sha256: string;
-  version: number;
-  author: string | null;
-  turn_id: string | null;
-  created_at: string;
+const EMPTY_TASK_ARTIFACTS: readonly TaskArtifact[] = [];
+
+export function mergeTaskArtifacts(
+  saved: readonly TaskArtifact[],
+  live: readonly TaskArtifact[],
+): TaskArtifact[] {
+  const merged = new Map(saved.map((artifact) => [artifact.id, artifact]));
+  for (const artifact of live) {
+    const previous = merged.get(artifact.id);
+    merged.set(artifact.id, previous ? {
+      ...previous,
+      ...artifact,
+      rel_path: artifact.rel_path || previous.rel_path,
+      mime: artifact.mime ?? previous.mime,
+      sha256: artifact.sha256 || previous.sha256,
+      author: artifact.author ?? previous.author,
+      turn_id: artifact.turn_id ?? previous.turn_id,
+      created_at: artifact.created_at || previous.created_at,
+    } : artifact);
+  }
+  return [...merged.values()];
 }
 
 function formatBytes(bytes: number): string {
@@ -41,10 +53,36 @@ function ArtifactIcon({ mime, path }: { mime: string | null; path: string }) {
   return <File size={14} />;
 }
 
-export function ArtifactBrowser({ taskId }: { taskId: string }) {
-  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+export function ArtifactBrowser({
+  taskId,
+  liveArtifacts = EMPTY_TASK_ARTIFACTS,
+}: {
+  taskId: string;
+  liveArtifacts?: readonly TaskArtifact[];
+}) {
+  return (
+    <TaskArtifactBrowser
+      key={taskId}
+      taskId={taskId}
+      liveArtifacts={liveArtifacts}
+    />
+  );
+}
+
+function TaskArtifactBrowser({
+  taskId,
+  liveArtifacts,
+}: {
+  taskId: string;
+  liveArtifacts: readonly TaskArtifact[];
+}) {
+  const [artifacts, setArtifacts] = useState<TaskArtifact[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const visibleArtifacts = useMemo(
+    () => mergeTaskArtifacts(artifacts, liveArtifacts),
+    [artifacts, liveArtifacts],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -73,7 +111,7 @@ export function ArtifactBrowser({ taskId }: { taskId: string }) {
     };
   }, [taskId]);
 
-  if (loading) {
+  if (loading && visibleArtifacts.length === 0) {
     return (
       <div className="artifact-browser artifact-browser--loading">
         <div className="artifact-browser__spinner" />
@@ -82,7 +120,7 @@ export function ArtifactBrowser({ taskId }: { taskId: string }) {
     );
   }
 
-  if (error) {
+  if (error && visibleArtifacts.length === 0) {
     return (
       <div className="artifact-browser artifact-browser--error">
         <span>{error}</span>
@@ -90,7 +128,7 @@ export function ArtifactBrowser({ taskId }: { taskId: string }) {
     );
   }
 
-  if (artifacts.length === 0) {
+  if (visibleArtifacts.length === 0) {
     return (
       <div className="artifact-browser artifact-browser--empty">
         <FolderTree size={32} strokeWidth={1.5} />
@@ -101,8 +139,8 @@ export function ArtifactBrowser({ taskId }: { taskId: string }) {
   }
 
   // Group by directory
-  const grouped = new Map<string, Artifact[]>();
-  for (const a of artifacts) {
+  const grouped = new Map<string, TaskArtifact[]>();
+  for (const a of visibleArtifacts) {
     const dir = a.rel_path.includes("/")
       ? a.rel_path.substring(0, a.rel_path.lastIndexOf("/"))
       : ".";
@@ -115,7 +153,7 @@ export function ArtifactBrowser({ taskId }: { taskId: string }) {
       <div className="artifact-browser__header">
         <h3>
           <FolderTree size={16} /> Artifacts
-          <span className="artifact-browser__count">{artifacts.length}</span>
+          <span className="artifact-browser__count">{visibleArtifacts.length}</span>
         </h3>
       </div>
 

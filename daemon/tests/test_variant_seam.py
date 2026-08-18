@@ -6,15 +6,47 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+import core.variants as variant_registry
 from core.variants import (
+    _ALIASES,
     _VARIANTS,
     SEAMS_CHECKLIST,
     CoordinationVariant,
+    UnknownVariantError,
+    VariantDescriptor,
     available_variants,
+    canonical_variant_id,
     get_variant_class,
     register_variant,
     verify_seams_checklist,
 )
+
+
+@pytest.fixture(autouse=True)
+def preserve_variant_registry():
+    """Restore the complete runtime registry after each test."""
+    variants = dict(_VARIANTS)
+    aliases = dict(_ALIASES)
+    builtins_loaded = variant_registry._BUILTINS_LOADED
+    yield
+    _VARIANTS.clear()
+    _VARIANTS.update(variants)
+    _ALIASES.clear()
+    _ALIASES.update(aliases)
+    variant_registry._BUILTINS_LOADED = builtins_loaded
+
+
+class RuntimeStub:
+    """Provide the required runtime methods for registry tests."""
+
+    @classmethod
+    async def capture_configuration(cls, overrides=None): ...
+
+    @classmethod
+    def configuration_from_metadata(cls, metadata): ...
+
+    @classmethod
+    async def run(cls, host, request): ...
 
 
 class TestSeamsChecklist:
@@ -36,14 +68,10 @@ class TestSeamsChecklist:
 
 
 class TestVariantRegistry:
-
-    def setup_method(self):
-        """Clear registry before each test."""
-        _VARIANTS.clear()
-
     def test_register_and_get(self):
-        class FakeVariant:
+        class FakeVariant(RuntimeStub):
             name = "fake"
+            descriptor = VariantDescriptor("fake", "Fake", "1")
         register_variant("fake", FakeVariant)
         assert get_variant_class("fake") is FakeVariant
 
@@ -51,17 +79,30 @@ class TestVariantRegistry:
         assert get_variant_class("nonexistent") is None
 
     def test_available_variants(self):
-        class V1:
+        class V1(RuntimeStub):
             name = "v1"
-        class V2:
+            descriptor = VariantDescriptor("v1", "V1", "1")
+        class V2(RuntimeStub):
             name = "v2"
+            descriptor = VariantDescriptor("v2", "V2", "1")
         register_variant("v1", V1)
         register_variant("v2", V2)
-        assert sorted(available_variants()) == ["v1", "v2"]
+        assert {"classic", "v1", "v2"}.issubset(available_variants())
 
     def test_register_non_class_raises(self):
         with pytest.raises(TypeError):
             register_variant("bad", "not a class")  # type: ignore
+
+    def test_register_malformed_runtime_raises(self):
+        class MalformedRuntime:
+            descriptor = VariantDescriptor("malformed", "Malformed", "1")
+
+        with pytest.raises(TypeError, match="capture_configuration"):
+            register_variant("malformed", MalformedRuntime)
+
+    def test_builtin_rejects_unregistered_variant(self):
+        with pytest.raises(UnknownVariantError):
+            canonical_variant_id("patchboard")
 
 
 class TestProtocol:
@@ -70,12 +111,15 @@ class TestProtocol:
         """CoordinationVariant is runtime-checkable."""
 
         class GoodVariant:
-            name = "good"
-            async def genesis(self, task): ...
-            def build_turn_payload(self, task, actor, board): ...
-            def parse_agent_response(self, task, actor, raw): ...
-            async def apply(self, task, mutations): ...
-            async def step(self, task, board): ...
-            def is_terminal(self, board): ...
+            descriptor = VariantDescriptor("good", "Good", "1")
+
+            @classmethod
+            async def capture_configuration(cls, overrides=None): ...
+
+            @classmethod
+            def configuration_from_metadata(cls, metadata): ...
+
+            @classmethod
+            async def run(cls, host, request): ...
 
         assert isinstance(GoodVariant(), CoordinationVariant)

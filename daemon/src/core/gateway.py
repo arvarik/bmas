@@ -73,8 +73,8 @@ class BoardGateway:
         event_emitter: SSE event emitter.
         recompute_hooks: Optional list of async hooks called after each
             commit batch to recompute derived fields (e.g. salience).
-            Seam rule 5: the traditional variant registers salience;
-            stigmergic registers pressure + decay.
+            The classic runtime registers its salience projection.
+            A future runtime can register other derived fields.
         max_title_len: Maximum title length (default 200, doc 04 §4).
         max_body_len: Maximum body length (default 8000, configurable
             via board.max_entry_chars).
@@ -147,6 +147,7 @@ class BoardGateway:
         Rejected entries emit entry_rejected events but do not raise.
         """
         committed: list[BoardEntry] = []
+        new_entries: list[tuple[BoardEntry, str | None]] = []
 
         async with self._task_lock(task_id):
             for raw in proposed:
@@ -164,6 +165,25 @@ class BoardGateway:
                                     entry = entry_from_dict(payload)
                             if entry is not None:
                                 committed.append(entry)
+                                await self._ensure_emitted(
+                                    task_id,
+                                    EVENT_BOARD_ENTRY,
+                                    entry_to_dict(entry),
+                                    mutation_id=mutation_id,
+                                )
+                        elif previous.get("event_type") == "entry_rejected":
+                            payload = previous.get("payload", {})
+                            if isinstance(payload, dict):
+                                await self._ensure_emitted(
+                                    task_id,
+                                    EVENT_ENTRY_REJECTED,
+                                    {
+                                        "entry": payload.get("entry", raw),
+                                        "actor": payload.get("actor", actor),
+                                        "reason": payload.get("reason", "rejected"),
+                                    },
+                                    mutation_id=mutation_id,
+                                )
                         continue
                 try:
                     entry = await self._normalize(
@@ -181,9 +201,7 @@ class BoardGateway:
                         mutation_id=mutation_id,
                     )
                     committed.append(entry)
-                    await self._emit(
-                        task_id, EVENT_BOARD_ENTRY, entry_to_dict(entry)
-                    )
+                    new_entries.append((entry, mutation_id))
                 except EntryRejected as e:
                     await self._log_rejection(
                         task_id,
@@ -198,6 +216,13 @@ class BoardGateway:
             # Recompute derived fields after all entries in this batch
             if committed:
                 await self._recompute_derived(task_id)
+            for entry, mutation_id in new_entries:
+                await self._emit(
+                    task_id,
+                    EVENT_BOARD_ENTRY,
+                    entry_to_dict(entry),
+                    mutation_id=mutation_id,
+                )
 
         return committed
 
@@ -225,10 +250,43 @@ class BoardGateway:
                 entry_mutation_id = (
                     f"{mutation_id}:{entry_id}" if mutation_id else None
                 )
-                if entry_mutation_id and await self._find_mutation(
-                    task_id, entry_mutation_id,
-                ) is not None:
-                    removed.append(entry_id)
+                previous = (
+                    await self._find_mutation(task_id, entry_mutation_id)
+                    if entry_mutation_id
+                    else None
+                )
+                if entry_mutation_id and previous is not None:
+                    payload = previous.get("payload", {})
+                    if previous.get("event_type") == "entry_removed":
+                        removed.append(entry_id)
+                        await self._ensure_emitted(
+                            task_id,
+                            EVENT_ENTRY_REMOVED,
+                            {
+                                "entry_id": entry_id,
+                                "by": previous.get("actor", actor),
+                                "reason": (
+                                    payload.get("reason", reason)
+                                    if isinstance(payload, dict)
+                                    else reason
+                                ),
+                            },
+                            mutation_id=entry_mutation_id,
+                        )
+                    elif (
+                        previous.get("event_type") == "entry_rejected"
+                        and isinstance(payload, dict)
+                    ):
+                        await self._ensure_emitted(
+                            task_id,
+                            EVENT_ENTRY_REJECTED,
+                            {
+                                "entry": payload.get("entry", {}),
+                                "actor": payload.get("actor", actor),
+                                "reason": payload.get("reason", "rejected"),
+                            },
+                            mutation_id=entry_mutation_id,
+                        )
                     continue
                 entry = await self._store.get_entry(task_id, entry_id)
                 if entry is None:
@@ -247,6 +305,9 @@ class BoardGateway:
                         {"entry_id": entry_id, "action": "remove"},
                         actor,
                         e.reason,
+                        turn_id,
+                        round_no,
+                        mutation_id=entry_mutation_id,
                     )
                     continue
 
@@ -274,7 +335,7 @@ class BoardGateway:
                     "entry_id": entry_id,
                     "by": actor,
                     "reason": reason,
-                })
+                }, mutation_id=entry_mutation_id)
 
             if removed:
                 await self._recompute_derived(task_id)
@@ -292,9 +353,26 @@ class BoardGateway:
         """Change an entry's status (supersede, etc.)."""
         async with self._task_lock(task_id):
             await self._assert_commit_allowed(task_id)
-            if mutation_id and await self._find_mutation(
-                task_id, mutation_id,
-            ) is not None:
+            previous = (
+                await self._find_mutation(task_id, mutation_id)
+                if mutation_id
+                else None
+            )
+            if mutation_id and previous is not None:
+                payload = previous.get("payload", {})
+                if isinstance(payload, dict):
+                    await self._ensure_emitted(
+                        task_id,
+                        EVENT_ENTRY_STATUS_CHANGED,
+                        {
+                            "entry_id": payload.get("entry_id", entry_id),
+                            "by": previous.get("actor", actor),
+                            "old_status": payload.get("old_status"),
+                            "status": payload.get("status", status),
+                        },
+                        mutation_id=mutation_id,
+                    )
+                await self._recompute_derived(task_id)
                 return
             entry = await self._store.get_entry(task_id, entry_id)
             if entry is None:
@@ -330,7 +408,7 @@ class BoardGateway:
                 "by": actor,
                 "old_status": old_status,
                 "status": status,
-            })
+            }, mutation_id=mutation_id)
 
             # Recompute derived fields (salience) and re-persist the
             # durable snapshot so status flips survive a refetch/reload.
@@ -618,7 +696,7 @@ class BoardGateway:
             "entry": raw,
             "actor": actor,
             "reason": reason,
-        })
+        }, mutation_id=mutation_id)
 
     async def _find_mutation(
         self, task_id: str, mutation_id: str,
@@ -634,21 +712,56 @@ class BoardGateway:
         return None
 
     async def _emit(
-        self, task_id: str, event_type: str, data: dict[str, Any]
+        self,
+        task_id: str,
+        event_type: str,
+        data: dict[str, Any],
+        *,
+        mutation_id: str | None = None,
     ) -> None:
         """Emit an SSE event."""
+        idempotency_key = None
+        if mutation_id:
+            idempotency_key = f"mutation:{mutation_id}:{event_type}"
         try:
-            await self._emitter.emit(task_id, event_type, data)
+            await self._emitter.emit(
+                task_id,
+                event_type,
+                data,
+                idempotency_key=idempotency_key,
+            )
         except Exception:
             logger.warning(
-                "Failed to emit %s for task %s", event_type, task_id
+                "Failed to save %s for task %s", event_type, task_id,
+                exc_info=True,
             )
+            raise
+
+    async def _ensure_emitted(
+        self,
+        task_id: str,
+        event_type: str,
+        data: dict[str, Any],
+        *,
+        mutation_id: str,
+    ) -> None:
+        """Repair a missing durable event without delivering a duplicate."""
+        idempotency_key = f"mutation:{mutation_id}:{event_type}"
+        contains = getattr(self._emitter, "contains", None)
+        if contains is not None and await contains(task_id, idempotency_key):
+            return
+        await self._emit(
+            task_id,
+            event_type,
+            data,
+            mutation_id=mutation_id,
+        )
 
     async def _recompute_derived(self, task_id: str) -> None:
         """Run all registered recompute hooks (seam rule 5).
 
-        Traditional registers salience; stigmergic registers pressure + decay;
-        patchboard registers its state hash.
+        The classic runtime registers salience. A future runtime can register
+        other deterministic projections.
         """
         for hook in self._recompute_hooks:
             try:
@@ -667,7 +780,7 @@ async def salience_recompute_hook(
 ) -> None:
     """Default recompute hook: recompute salience for all entries.
 
-    This is the traditional variant's derived-field computation.
+    This is the classic runtime's derived-field computation.
     Import SalienceWeights from config if needed.
     """
     from core.salience import compute_salience
@@ -677,6 +790,10 @@ async def salience_recompute_hook(
     current_round = int(meta.get("round", 0))
 
     scores = compute_salience(snapshot, current_round)
-
-    for entry_id, score in scores.items():
-        await store.set_salience(task_id, entry_id, score)
+    changed = {
+        entry_id: score
+        for entry_id, score in scores.items()
+        if abs(snapshot[entry_id].salience - score) > 1e-12
+    }
+    if changed:
+        await store.set_salience_many(task_id, changed)

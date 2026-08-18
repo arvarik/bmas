@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * TurnGraph — execution graph for the traditional (blackboard) variant.
+ * TurnGraph — execution graph for a runtime that reports turn records.
  *
  * ── Design rationale ──────────────────────────────────────────────────
  * The real execution model is a *cyclic* multi-agent blackboard loop: each
@@ -81,7 +81,7 @@ const ROLE_MEANING: Record<string, string> = {
   cleaner: "Removes redundant or obsolete entries to keep the board focused.",
   decider: "Judges whether the board is sufficient and posts the final solution.",
   expert: "Task-specific domain expert; investigates and posts findings.",
-  universal: "Roleless agent (stigmergic variant).",
+  universal: "Roleless agent.",
   control_unit: "Coordinator — selects which agents act each round, and why.",
   operator: "Human operator directive injected into the board.",
 };

@@ -7,17 +7,29 @@
  * Click opens a slide-over with extracted text preview (for text/PDF).
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { File, FileText, Image, X } from "lucide-react";
+import type { TaskFile } from "@/hooks/useTaskStream";
 
-interface TaskFile {
-  id: string;
-  name: string;
-  mime: string;
-  bytes: number;
-  sha256: string;
-  extracted_chars: number;
-  created_at: string;
+const EMPTY_TASK_FILES: readonly TaskFile[] = [];
+
+export function mergeTaskFiles(
+  saved: readonly TaskFile[],
+  live: readonly TaskFile[],
+): TaskFile[] {
+  const merged = new Map(saved.map((file) => [file.id, file]));
+  for (const file of live) {
+    const previous = merged.get(file.id);
+    merged.set(file.id, previous ? {
+      ...previous,
+      ...file,
+      name: file.name || previous.name,
+      mime: file.mime || previous.mime,
+      sha256: file.sha256 || previous.sha256,
+      created_at: file.created_at || previous.created_at,
+    } : file);
+  }
+  return [...merged.values()];
 }
 
 function formatBytes(bytes: number): string {
@@ -34,11 +46,30 @@ function FileIcon({ mime }: { mime: string }) {
   return <File size={14} />;
 }
 
-export function AttachmentRail({ taskId }: { taskId: string }) {
+export function AttachmentRail({
+  taskId,
+  liveFiles = EMPTY_TASK_FILES,
+}: {
+  taskId: string;
+  liveFiles?: readonly TaskFile[];
+}) {
+  return <TaskAttachmentRail key={taskId} taskId={taskId} liveFiles={liveFiles} />;
+}
+
+function TaskAttachmentRail({
+  taskId,
+  liveFiles,
+}: {
+  taskId: string;
+  liveFiles: readonly TaskFile[];
+}) {
   const [files, setFiles] = useState<TaskFile[]>([]);
-  const [loading, setLoading] = useState(true);
   const [previewFile, setPreviewFile] = useState<TaskFile | null>(null);
   const [previewText, setPreviewText] = useState<string>("");
+  const visibleFiles = useMemo(
+    () => mergeTaskFiles(files, liveFiles),
+    [files, liveFiles],
+  );
 
   // Fetch files on mount
   useEffect(() => {
@@ -54,8 +85,6 @@ export function AttachmentRail({ taskId }: { taskId: string }) {
         }
       } catch {
         // ignore
-      } finally {
-        if (!cancelled) setLoading(false);
       }
     })();
     return () => {
@@ -80,13 +109,13 @@ export function AttachmentRail({ taskId }: { taskId: string }) {
     [],
   );
 
-  if (loading || files.length === 0) return null;
+  if (visibleFiles.length === 0) return null;
 
   return (
     <>
       <div className="attachment-rail">
         <span className="attachment-rail__label">Attachments</span>
-        {files.map((f) => (
+        {visibleFiles.map((f) => (
           <button
             key={f.id}
             className="attachment-rail__chip"

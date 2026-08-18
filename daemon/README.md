@@ -32,7 +32,7 @@ daemon/
 ├── src/
 │   ├── app.py                     # FastAPI entry point + lifespan
 │   ├── config.py                  # YAML config loader + validation
-│   ├── database.py                # SQLite persistence (v2 schema, 12 tables)
+│   ├── database.py                # Authoritative SQLite state and event journal
 │   ├── auth.py                    # Bearer token auth for node ingest
 │   ├── file_utils.py              # File upload handling + PDF extraction
 │   ├── core/
@@ -43,12 +43,14 @@ daemon/
 │   │   ├── entry.py               # Board entry schema + validation
 │   │   ├── protocol.py            # Agent ↔ Daemon message protocol
 │   │   ├── salience.py            # Entry salience scoring
-│   │   ├── event_emitter.py       # SSE event abstraction (Redis + in-memory)
+│   │   ├── event_delivery.py      # Durable journal outbox and Redis notification
+│   │   ├── event_emitter.py       # Task event interface
 │   │   ├── capabilities.py        # Agent capability registry
 │   │   ├── log_levels.py          # Level normalization (INF→info, etc.)
 │   │   ├── triage.py              # Complexity classifier client (vLLM)
 │   │   └── variants/
-│   │       └── traditional.py     # Cyclic CU → agents → board loop
+│   │       ├── classic.py         # Registered classic lifecycle adapter
+│   │       └── traditional.py     # Classic CU and board engine
 │   ├── models/
 │   │   └── personas.py            # Agent role definitions + dynamic experts
 │   ├── monitoring/
@@ -56,7 +58,8 @@ daemon/
 │   └── routes/
 │       ├── submit.py              # POST /submit
 │       ├── tasks.py               # GET /tasks, /tasks/{id}/*
-│       ├── events.py              # SSE endpoints (task + system)
+│       ├── capabilities.py        # Registered runtime contracts
+│       ├── events.py              # Durable task and system SSE replay
 │       ├── ingest.py              # POST /ingest/traces, /ingest/logs
 │       ├── artifacts.py           # Artifact ingest + retrieval
 │       ├── files.py               # File upload + retrieval
@@ -64,8 +67,8 @@ daemon/
 │       └── health.py              # GET /health, /state
 └── tests/                         # 25+ test files (429 tests)
     ├── test_board_store.py        # Event-sourced board
-    ├── test_gateway.py            # Agent dispatch + capability gating
-    ├── test_traditional_cost.py   # Cost tracking in traditional variant
+    ├── test_gateway.py            # Board mutation authorization
+    ├── test_traditional_cost.py   # Cost tracking in the classic engine
     ├── test_structured_logs.py    # Structured logging pipeline
     ├── test_coordinator_narration.py  # CU narration events
     ├── test_salience.py           # Entry salience scoring
@@ -88,7 +91,8 @@ daemon/
 | `GET` | `/tasks/{id}/board` | Durable board snapshot (entries + events). |
 | `GET` | `/tasks/{id}/trace` | Agent trace data (per-turn structured traces). |
 | `GET` | `/tasks/{id}/turns` | Turn-level breakdown (round, agent, selection rationale). |
-| `GET` | `/config/active` | Active coordination variant + deployment config. |
+| `GET` | `/capabilities` | Registered runtime and UI contracts. |
+| `GET` | `/config/active` | Active coordination runtime and deployment config. |
 
 ### Files & Artifacts
 
@@ -123,9 +127,9 @@ daemon/
 | `GET` | `/health` | Dependency health check (Redis + SQLite). |
 | `GET` | `/state` | Public blackboard state with live agent health. |
 
-## Task Lifecycle (Traditional Variant)
+## Task Lifecycle (Classic Runtime)
 
-The traditional variant implements the bMAS paper's cyclic execution model:
+The classic runtime implements the bMAS paper's cyclic execution model:
 
 ```
 User submits task
@@ -187,8 +191,8 @@ All values are loaded from `bmas.yaml` and environment variables:
 | `bmas.yaml` | `control_plane.host/ports` | Redis, LiteLLM, Triage URLs |
 | `bmas.yaml` | `nodes[*].host/port` | Agent endpoints |
 | `bmas.yaml` | `routing.*` | Complexity-to-model mapping |
-| `bmas.yaml` | `coordination.variant` | Active variant (traditional/stigmergic) |
-| `bmas.yaml` | `coordination.traditional.*` | Variant-specific tuning (rounds, budget, etc.) |
+| `bmas.yaml` | `coordination.variant` | Default registered runtime. This build provides `classic`. |
+| `bmas.yaml` | `coordination.classic.*` | Classic runtime tuning, including rounds and budget. |
 | `bmas.yaml` | `storage.*` | File upload + artifact settings |
 | `.env` | `REDIS_PASSWORD` | Redis authentication |
 | `.env` | `LITELLM_MASTER_KEY` | LiteLLM API key |

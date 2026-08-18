@@ -156,11 +156,11 @@ routing:
 # Controls the coordination paradigm used for multi-agent tasks.
 # See docs/CONFIGURATION.md for full reference.
 coordination:
-  variant: traditional               # traditional | patchboard | stigmergic
+  variant: classic                   # This build provides the classic runtime.
   blackboard_v2: true                 # Gates the new board substrate independently of variant
   view_budget_tokens: 12000         # Full-board default; budgeted mode above this
   round_execution: concurrent       # concurrent | sequential (paper-exact reproduction)
-  traditional:
+  classic:
     max_rounds: 4
     max_duration_s: 1800
     budget_ceiling_usd: 0.50

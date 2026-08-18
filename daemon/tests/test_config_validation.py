@@ -111,12 +111,12 @@ class TestCoordinationConfig:
         """Default coordination config loads without error."""
         r = _run_config_probe(probe_expr="print(config.COORDINATION_VARIANT)")
         assert r.returncode == 0
-        assert "traditional" in r.stdout
+        assert "classic" in r.stdout
 
     def test_invalid_variant_fails(self):
         """An invalid variant value triggers a FATAL exit."""
         r = _run_config_probe(
-            yaml_override={"coordination": {"variant": "invalid_variant"}}
+            yaml_override={"coordination": {"variant": "Invalid Variant!"}}
         )
         assert r.returncode != 0
         assert "FATAL" in r.stderr
@@ -128,7 +128,28 @@ class TestCoordinationConfig:
             probe_expr="print(config.COORDINATION_VARIANT)",
         )
         assert r.returncode == 0
-        assert "traditional" in r.stdout
+        assert "classic" in r.stdout
+
+    def test_classic_config_block_is_canonical(self):
+        r = _run_config_probe(
+            yaml_override={"coordination": {
+                "traditional": None,
+                "classic": {"max_rounds": 9},
+            }},
+            probe_expr="print(config.CLASSIC_CONFIG['max_rounds'])",
+        )
+        assert r.returncode == 0
+        assert "9" in r.stdout
+
+    def test_conflicting_classic_and_legacy_blocks_fail(self):
+        r = _run_config_probe(
+            yaml_override={"coordination": {
+                "classic": {"max_rounds": 9},
+                "traditional": {"max_rounds": 8},
+            }},
+        )
+        assert r.returncode != 0
+        assert "conflicts" in r.stderr
 
     def test_blackboard_v2_flag(self):
         """blackboard_v2 flag is exposed as a bool."""
@@ -406,4 +427,3 @@ class TestTriageBackend:
         )
         assert r.returncode == 0
         assert "False" in r.stdout
-

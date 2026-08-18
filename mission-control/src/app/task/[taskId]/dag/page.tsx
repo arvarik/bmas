@@ -15,6 +15,8 @@ import dynamic from "next/dynamic";
 import { useTaskData } from "../TaskStreamContext";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Panel } from "@/components/ui/Panel";
+import { UnsupportedVariantState } from "@/components/features/UnsupportedVariantState";
+import { getActiveAdapter } from "@/lib/variants";
 
 const TurnGraph = dynamic(
   () => import("@/components/features/TurnGraph").then((m) => m.TurnGraph),
@@ -33,7 +35,15 @@ const TurnGraph = dynamic(
 );
 
 export default function DAGPage() {
-  const { activeTurns, completedTurns, isLive, coordinatorNarrations, roster } = useTaskData();
+  const { activeTurns, completedTurns, isLive, coordinatorNarrations, roster, runtime } = useTaskData();
+  const adapter = getActiveAdapter(runtime.adapterId);
+  const graphFeature = runtime.capability?.features.graphs.find(
+    (feature) => adapter?.graphViews[feature] === "turns",
+  );
+
+  if (!adapter || !graphFeature) {
+    return <UnsupportedVariantState runtime={runtime} feature="execution graph" />;
+  }
 
   const totalTurns = activeTurns.length + completedTurns.length;
   const rounds = new Set(

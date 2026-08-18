@@ -1,25 +1,20 @@
 "use client";
 
-/**
- * useTaskStream — SSE hook for real-time task data.
- *
- * Connects to `/api/stream/task/{taskId}` and accumulates events into
- * a TaskStreamData object. For completed tasks (no active SSE), it
- * falls back to a REST fetch of the full task state.
- *
- * Handles field-name mapping between daemon and frontend shapes
- * (agent_role→agent, created_at→timestamp, ts→timestamp, etc.).
- */
-
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState, type SetStateAction } from "react";
 import {
-  mapSubTask,
-  mapDebate,
-  mapLog,
-  mapTaskMeta,
-} from "@/lib/mappers";
-
-// ── Types ─────────────────────────────────────────────────────────────
+  CapabilityContractError,
+  findVariantCapability,
+  parseCapabilities,
+  type CapabilitiesDocument,
+  type VariantCapability,
+} from "@/lib/capabilities";
+import {
+  adapterSupportsCapability,
+  getActiveAdapter,
+  type DecodedVariantEvent,
+  type VariantHydrationBundle,
+  type VariantUIAdapter,
+} from "@/lib/variants";
 
 export type TaskStatus = "pending" | "running" | "completed" | "failed";
 
@@ -35,7 +30,6 @@ export interface SubTask {
   completed_at?: string;
 }
 
-/** Top-level task (used by DAGVisualizer to render the execution graph). */
 export interface Task {
   id: string;
   label: string;
@@ -58,15 +52,10 @@ export interface LogEntry {
   level: string;
   message: string;
   timestamp: string;
-  /** Originating node endpoint/id, when known. */
   node?: string;
-  /** Correlating turn id, when known. */
   turn_id?: string;
-  /** Arbitrary structured payload for the detail view. */
   fields?: Record<string, unknown> | null;
 }
-
-// ── Phase 4 Types (doc 08/09) ─────────────────────────────────────────
 
 export interface BoardEntry {
   id: string;
@@ -96,8 +85,6 @@ export interface TurnRecord {
   tokens_out?: number;
   cost_usd?: number;
   model?: string;
-  // Graph-tab enrichment (doc 05 §1): base role, target node endpoint, and the
-  // Control Unit's routing rationale for the round that activated this turn.
   role?: string;
   node?: string;
   rationale?: string | null;
@@ -114,6 +101,28 @@ export interface TraceEvent {
   run_id?: string;
 }
 
+export interface TaskFile {
+  id: string;
+  name: string;
+  mime: string;
+  bytes: number;
+  sha256: string;
+  extracted_chars: number;
+  created_at: string;
+}
+
+export interface TaskArtifact {
+  id: string;
+  rel_path: string;
+  mime: string | null;
+  bytes: number;
+  sha256: string;
+  version: number;
+  author: string | null;
+  turn_id: string | null;
+  created_at: string;
+}
+
 export interface RejectedEntry {
   entry_id: string;
   actor: string;
@@ -121,7 +130,6 @@ export interface RejectedEntry {
   timestamp: string;
 }
 
-/** One entry in the AG-generated expert roster stored in board meta. */
 export interface RosterEntry {
   actor: string;
   ability: string;
@@ -134,8 +142,6 @@ export interface CostData {
   by_phase?: { phase: string; cost_usd: number; tokens: number }[];
   by_actor?: { actor: string; cost_usd: number; tokens: number; turns: number }[];
 }
-
-// Phase 5: HITL Types (doc 05 §6, doc 12 §5.1)
 
 export interface ApprovalRequest {
   turn_id: string;
@@ -177,6 +183,25 @@ export interface ConsensusState {
   decider_state: string;
 }
 
+export type VariantRuntimeStatus =
+  | "loading"
+  | "ready"
+  | "capabilities-unavailable"
+  | "malformed-capabilities"
+  | "unsupported-api-version"
+  | "unsupported-variant"
+  | "unsupported-contract"
+  | "variant-unavailable"
+  | "hydration-unavailable";
+
+export interface VariantRuntimeState {
+  status: VariantRuntimeStatus;
+  message: string;
+  requestedVariant: string | null;
+  adapterId: string | null;
+  capability: VariantCapability | null;
+}
+
 export interface TaskStreamData {
   phase: string | null;
   subTasks: SubTask[];
@@ -187,7 +212,6 @@ export interface TaskStreamData {
   error: string | null;
   isLive: boolean;
   taskMeta: TaskMeta | null;
-  // Phase 4 — board, trace, turns
   boardEntries: BoardEntry[];
   removedEntryIds: string[];
   consensus: ConsensusState | null;
@@ -195,18 +219,18 @@ export interface TaskStreamData {
   completedTurns: TurnRecord[];
   traceEvents: TraceEvent[];
   rejectedEntries: RejectedEntry[];
-  // Phase 5 — HITL, budget, narration
   approvalRequests: ApprovalRequest[];
   isPaused: boolean;
   budgetState: BudgetState | null;
   coordinatorNarrations: CoordinatorNarration[];
-  /** AG-generated expert roster (actor slug → ability description). */
   roster: RosterEntry[];
+  liveFiles: TaskFile[];
+  liveArtifacts: TaskArtifact[];
+  hydrationError: string | null;
+  runtime: VariantRuntimeState;
 }
 
-// ── Empty / initial state ─────────────────────────────────────────────
-
-const INITIAL_STREAM_DATA: TaskStreamData = {
+export const INITIAL_STREAM_DATA: TaskStreamData = {
   phase: null,
   subTasks: [],
   debates: [],
@@ -228,590 +252,450 @@ const INITIAL_STREAM_DATA: TaskStreamData = {
   budgetState: null,
   coordinatorNarrations: [],
   roster: [],
+  liveFiles: [],
+  liveArtifacts: [],
+  hydrationError: null,
+  runtime: {
+    status: "loading",
+    message: "Loading daemon capabilities…",
+    requestedVariant: null,
+    adapterId: null,
+    capability: null,
+  },
 };
 
-// Field mapping helpers are imported from @/lib/mappers.
-// They are pure functions that convert daemon API shapes to frontend types.
-// Tests: src/lib/__tests__/mappers.test.ts
+export interface TaskBoundStreamData {
+  taskId: string;
+  data: TaskStreamData;
+}
 
+export interface PendingRawEvent {
+  name: string;
+  value: unknown;
+}
 
-// ── Hook ──────────────────────────────────────────────────────────────
+export const MAX_PENDING_RAW_EVENTS = 500;
+
+export function appendPendingRawEvent(
+  events: readonly PendingRawEvent[],
+  event: PendingRawEvent,
+): PendingRawEvent[] {
+  return [...events, event].slice(-MAX_PENDING_RAW_EVENTS);
+}
+
+export function streamDataForTask(
+  state: TaskBoundStreamData,
+  taskId: string,
+): TaskStreamData {
+  return state.taskId === taskId ? state.data : INITIAL_STREAM_DATA;
+}
+
+function readPersistedVariant(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) return null;
+  const envelope = value as Record<string, unknown>;
+  const taskValue = envelope.task;
+  const task = typeof taskValue === "object" && taskValue !== null
+    ? taskValue as Record<string, unknown>
+    : envelope;
+  return typeof task.variant === "string" && task.variant.trim() ? task.variant : null;
+}
+
+function runtimeError(
+  status: VariantRuntimeStatus,
+  message: string,
+  requestedVariant: string | null = null,
+): VariantRuntimeState {
+  return { status, message, requestedVariant, adapterId: null, capability: null };
+}
+
+export class TaskHydrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TaskHydrationError";
+  }
+}
+
+export async function fetchTaskHydrationBundle(
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<VariantHydrationBundle> {
+  const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/hydrate`, {
+    cache: "no-store",
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok) {
+    throw new TaskHydrationError(`Task hydration returned HTTP ${response.status}`);
+  }
+  try {
+    return await response.json() as VariantHydrationBundle;
+  } catch {
+    throw new TaskHydrationError("Task hydration returned invalid JSON");
+  }
+}
+
+export async function fetchTaskRuntimeDetail(
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
+    cache: "no-store",
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok) {
+    throw new TaskHydrationError(`Task detail returned HTTP ${response.status}`);
+  }
+  try {
+    return await response.json() as unknown;
+  } catch {
+    throw new TaskHydrationError("Task detail returned invalid JSON");
+  }
+}
+
+export async function prepareTaskRuntime(
+  document: CapabilitiesDocument,
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<{
+  adapter: VariantUIAdapter | null;
+  detail: unknown;
+  runtime: VariantRuntimeState;
+}> {
+  const detail = await fetchTaskRuntimeDetail(taskId, signal);
+  const requestedVariant = readPersistedVariant(detail);
+  const resolved = resolveRuntime(document, requestedVariant);
+  return { ...resolved, detail };
+}
+
+export function compareEventCursor(left: string, right: string): number {
+  if (/^\d+$/.test(left) && /^\d+$/.test(right)) {
+    const leftCursor = BigInt(left);
+    const rightCursor = BigInt(right);
+    return leftCursor === rightCursor ? 0 : leftCursor > rightCursor ? 1 : -1;
+  }
+  const leftParts = left.split("-");
+  const rightParts = right.split("-");
+  if (
+    leftParts.length === 2
+    && rightParts.length === 2
+    && leftParts.every((part) => /^\d+$/.test(part))
+    && rightParts.every((part) => /^\d+$/.test(part))
+  ) {
+    const leftTime = BigInt(leftParts[0]);
+    const rightTime = BigInt(rightParts[0]);
+    if (leftTime !== rightTime) return leftTime > rightTime ? 1 : -1;
+    const leftSequence = BigInt(leftParts[1]);
+    const rightSequence = BigInt(rightParts[1]);
+    return leftSequence === rightSequence ? 0 : leftSequence > rightSequence ? 1 : -1;
+  }
+  return left.localeCompare(right);
+}
+
+export function shouldApplyEventCursor(lastCursor: string, nextCursor: string): boolean {
+  return !nextCursor || !lastCursor || compareEventCursor(nextCursor, lastCursor) > 0;
+}
+
+export function taskEventListenerNames(document: CapabilitiesDocument): string[] {
+  const variantEvents = new Set(document.variants.flatMap((variant) => variant.features.events));
+  variantEvents.delete("initial_state");
+  variantEvents.delete("error");
+  return ["initial_state", ...variantEvents, "error"];
+}
+
+export function resolveRuntime(
+  document: CapabilitiesDocument,
+  requestedVariant: string | null,
+): { runtime: VariantRuntimeState; adapter: VariantUIAdapter | null } {
+  const capability = findVariantCapability(document, requestedVariant);
+  const displayVariant = requestedVariant ?? "classic";
+  if (!capability) {
+    return {
+      runtime: runtimeError(
+        "unsupported-variant",
+        `Mission Control does not support the saved variant “${displayVariant}”.`,
+        requestedVariant,
+      ),
+      adapter: null,
+    };
+  }
+  if (!capability.available) {
+    return {
+      runtime: runtimeError(
+        "variant-unavailable",
+        capability.reason || `The ${capability.label} runtime is unavailable.`,
+        requestedVariant,
+      ),
+      adapter: null,
+    };
+  }
+  const adapter = getActiveAdapter(capability.id);
+  if (!adapter) {
+    return {
+      runtime: runtimeError(
+        "unsupported-variant",
+        `Mission Control has no interface adapter for “${capability.id}”.`,
+        requestedVariant,
+      ),
+      adapter: null,
+    };
+  }
+  if (!adapterSupportsCapability(adapter, capability)) {
+    return {
+      runtime: runtimeError(
+        "unsupported-contract",
+        `Mission Control does not support ${capability.label} contract version ${capability.contract_version}.`,
+        requestedVariant,
+      ),
+      adapter: null,
+    };
+  }
+  return {
+    runtime: {
+      status: "ready",
+      message: "",
+      requestedVariant,
+      adapterId: adapter.id,
+      capability,
+    },
+    adapter,
+  };
+}
 
 export function useTaskStream(taskId: string): TaskStreamData {
-  const [data, setData] = useState<TaskStreamData>(INITIAL_STREAM_DATA);
-  const eventSourceRef = useRef<EventSource | null>(null);
-
-  // rAF batching buffers for high-frequency events (doc 09 §8, doc 13 §5)
-  const boardBufRef = useRef<BoardEntry[]>([]);
-  const traceBufRef = useRef<TraceEvent[]>([]);
-  const rafRef = useRef<number | null>(null);
-
-  const flushBuffers = useCallback(() => {
-    const boardBatch = boardBufRef.current;
-    const traceBatch = traceBufRef.current;
-    if (boardBatch.length === 0 && traceBatch.length === 0) return;
-    boardBufRef.current = [];
-    traceBufRef.current = [];
-    setData((prev) => ({
-      ...prev,
-      ...(boardBatch.length > 0
-        ? { boardEntries: [...prev.boardEntries, ...boardBatch] }
-        : {}),
-      ...(traceBatch.length > 0
-        ? { traceEvents: [...prev.traceEvents, ...traceBatch] }
-        : {}),
-    }));
-  }, []);
-
-  const scheduleFlush = useCallback(() => {
-    if (rafRef.current === null) {
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null;
-        flushBuffers();
-      });
-    }
-  }, [flushBuffers]);
-
-  // REST fallback for completed/failed tasks (SSE closes immediately)
-  const fetchRestFallback = useCallback(async () => {
-    try {
-      // Fetch task detail + cost + board + turns in parallel
-      const [taskRes, costRes, boardRes, turnsRes] = await Promise.all([
-        fetch(`/api/tasks/${taskId}`, { cache: "no-store" }),
-        fetch(`/api/tasks/${taskId}/cost`, { cache: "no-store" }).catch(() => null),
-        fetch(`/api/tasks/${taskId}/board`, { cache: "no-store" }).catch(() => null),
-        fetch(`/api/tasks/${taskId}/turns`, { cache: "no-store" }).catch(() => null),
-      ]);
-
-      if (!taskRes.ok) return;
-      const json = await taskRes.json();
-      const task = json.task;
-      const subTasks = (json.sub_tasks ?? []).map(mapSubTask);
-
-      // Map cost data if available
-      let costData: CostData | null = null;
-      if (costRes?.ok) {
-        try {
-          const rawCost = await costRes.json();
-          const byModel: Record<string, { cost: number; tokens: number }> = {};
-          let computedTotalTokens = 0;
-          let computedTotalCost = 0;
-          for (const entry of rawCost.by_model ?? []) {
-            const modelTokens = (entry.input_tokens ?? 0) + (entry.output_tokens ?? 0);
-            const modelCost = entry.cost_usd ?? 0;
-            byModel[entry.model ?? "unknown"] = {
-              cost: modelCost,
-              tokens: modelTokens,
-            };
-            computedTotalTokens += modelTokens;
-            computedTotalCost += modelCost;
-          }
-          // Prefer top-level totals from daemon; fall back to computed.
-          // The daemon cost summary exposes `total_cost_usd` / `total_tokens`.
-          const totalCost =
-            rawCost.total_cost_usd ?? rawCost.total_cost ?? computedTotalCost;
-          const totalTokens =
-            rawCost.total_tokens ??
-            (rawCost.total_input_tokens != null
-              ? (rawCost.total_input_tokens ?? 0) + (rawCost.total_output_tokens ?? 0)
-              : computedTotalTokens);
-          costData = {
-            total_cost: totalCost,
-            total_tokens: totalTokens,
-            by_model: byModel,
-            by_phase: Array.isArray(rawCost.by_phase) ? rawCost.by_phase : undefined,
-            by_actor: Array.isArray(rawCost.by_actor) ? rawCost.by_actor : undefined,
-          };
-        } catch {
-          // Cost data is non-critical
-        }
-      }
-
-      // Map board entries for completed tasks (Bug 1 fix)
-      let hydratedBoard: BoardEntry[] = [];
-      if (boardRes?.ok) {
-        try {
-          const boardData = await boardRes.json();
-          const rawEntries = Array.isArray(boardData) ? boardData : boardData.entries ?? [];
-          hydratedBoard = rawEntries.map((raw: Record<string, unknown>, idx: number) => ({
-            id: (raw.id ?? raw.entry_id ?? `e-${idx}`) as string,
-            type: (raw.type ?? raw.entry_type ?? "finding") as string,
-            title: (raw.title ?? "") as string,
-            body: (raw.body ?? raw.content ?? "") as string,
-            author: (raw.author ?? raw.actor ?? "unknown") as string,
-            refs: (raw.refs ?? []) as string[],
-            confidence: (raw.confidence ?? 0) as number,
-            salience: (raw.salience ?? 0) as number,
-            seq: (raw.seq ?? idx) as number,
-            created_at: (raw.created_at ?? "") as string,
-          }));
-        } catch {
-          // Board data is non-critical
-        }
-      }
-
-      // Map completed turns for the trace timeline
-      let hydratedTurns: TurnRecord[] = [];
-      if (turnsRes?.ok) {
-        try {
-          const turnsData = await turnsRes.json();
-          const rawTurns = Array.isArray(turnsData) ? turnsData : turnsData.turns ?? [];
-          hydratedTurns = rawTurns.map((raw: Record<string, unknown>) => ({
-            turn_id: (raw.turn_id ?? raw.id ?? "") as string,
-            task_id: (raw.task_id ?? taskId) as string,
-            actor: (raw.actor ?? raw.role ?? "unknown") as string,
-            round_no: (raw.round_no ?? raw.round ?? 0) as number,
-            phase: (raw.phase ?? "completed") as string,
-            status: (raw.status ?? "completed") as string,
-            started_at: (raw.started_at ?? raw.created_at ?? "") as string,
-            ended_at: (raw.ended_at ?? raw.completed_at) as string | undefined,
-            tokens_in: (raw.tokens_in ?? raw.input_tokens) as number | undefined,
-            tokens_out: (raw.tokens_out ?? raw.output_tokens) as number | undefined,
-            cost_usd: raw.cost_usd as number | undefined,
-            model: raw.model as string | undefined,
-            role: (raw.role ?? undefined) as string | undefined,
-            node: (raw.node ?? undefined) as string | undefined,
-            rationale: (raw.rationale ?? null) as string | null,
-          }));
-        } catch {
-          // Turn data is non-critical
-        }
-      }
-
-      // Extract roster from board meta if available
-      let hydratedRoster: RosterEntry[] = [];
-      if (boardRes?.ok) {
-        try {
-          // boardRes was already consumed above — re-parse from the same data
-          // We stored boardData earlier; re-fetch is the safest approach here.
-          const boardMeta = await fetch(`/api/tasks/${taskId}/board`, { cache: "no-store" })
-            .then((r) => r.ok ? r.json() : null)
-            .catch(() => null);
-          if (boardMeta?.meta?.roster) {
-            const raw: unknown[] = boardMeta.meta.roster;
-            hydratedRoster = raw
-              .filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null)
-              .map((r) => ({
-                actor: (r.actor ?? "") as string,
-                ability: (r.ability ?? "") as string,
-              }))
-              .filter((r) => r.actor);
-          }
-        } catch {
-          // Roster is non-critical
-        }
-      }
-
-      setData((prev) => ({
-        ...prev,
-        taskMeta: task ? mapTaskMeta(task) : prev.taskMeta,
-        subTasks: subTasks.length > 0 ? subTasks : prev.subTasks,
-        result: task?.result_summary ?? prev.result,
-        error: task?.error_message ?? prev.error,
-        cost: costData ?? prev.cost,
-        boardEntries: hydratedBoard.length > 0 ? hydratedBoard : prev.boardEntries,
-        completedTurns: hydratedTurns.length > 0 ? hydratedTurns : prev.completedTurns,
-        roster: hydratedRoster.length > 0 ? hydratedRoster : prev.roster,
-        isLive: false,
-      }));
-    } catch {
-      // Best-effort — REST fallback is non-critical
-    }
+  const [streamState, setStreamState] = useState<TaskBoundStreamData>({
+    taskId,
+    data: INITIAL_STREAM_DATA,
+  });
+  const data = streamDataForTask(streamState, taskId);
+  const setData = useCallback((update: SetStateAction<TaskStreamData>) => {
+    setStreamState((current) => {
+      const currentData = streamDataForTask(current, taskId);
+      const nextData = typeof update === "function" ? update(currentData) : update;
+      return { taskId, data: nextData };
+    });
   }, [taskId]);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const adapterRef = useRef<VariantUIAdapter | null>(null);
+  const capabilityRef = useRef<VariantCapability | null>(null);
+  const pendingRawEventsRef = useRef<PendingRawEvent[]>([]);
+  const frameEventsRef = useRef<DecodedVariantEvent[]>([]);
+  const frameRef = useRef<number | null>(null);
 
-  // Attempt to connect to the SSE stream for this task
-  const connect = useCallback(() => {
+  useEffect(() => {
     if (!taskId) return;
+    adapterRef.current = null;
+    capabilityRef.current = null;
+    pendingRawEventsRef.current = [];
+    frameEventsRef.current = [];
+    let cancelled = false;
+    let lastEventCursor = "";
+    let hydrationInFlight: Promise<void> | null = null;
+    let hydrationRefreshQueued = false;
+    let initialHydrationStarted = false;
+    const abortController = new AbortController();
 
-    // Close any existing connection
-    eventSourceRef.current?.close();
+    const flushEvents = () => {
+      frameRef.current = null;
+      const adapter = adapterRef.current;
+      const events = frameEventsRef.current;
+      frameEventsRef.current = [];
+      if (!adapter || events.length === 0) return;
+      setData((current) => events.reduce(adapter.projectEvent, current));
+    };
 
-    const es = new EventSource(`/api/stream/task/${taskId}`);
-    eventSourceRef.current = es;
-
-    es.addEventListener("open", () => {
-      setData((prev) => ({ ...prev, isLive: true }));
-    });
-
-    // ── initial_state: daemon sends { task, sub_tasks } ──────────
-    es.addEventListener("initial_state", (ev: MessageEvent) => {
-      try {
-        const payload = JSON.parse(ev.data);
-        const task = payload.task;
-        const subTasks = (payload.sub_tasks ?? []).map(mapSubTask);
-
-        setData((prev) => ({
-          ...prev,
-          taskMeta: task ? mapTaskMeta(task) : prev.taskMeta,
-          subTasks: subTasks.length > 0 ? subTasks : prev.subTasks,
-          result: task?.result_summary ?? prev.result,
-          error: task?.error_message ?? prev.error,
-          isLive: true,
-        }));
-      } catch {
-        console.error("[useTaskStream] Failed to parse initial_state");
+    const applyEvent = (event: DecodedVariantEvent, terminal: boolean) => {
+      frameEventsRef.current.push(event);
+      if (terminal) {
+        if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+        flushEvents();
+        return;
       }
-    });
+      if (frameRef.current === null) frameRef.current = requestAnimationFrame(flushEvents);
+    };
 
-    es.addEventListener("phase", (ev: MessageEvent) => {
-      try {
-        const payload = JSON.parse(ev.data);
-        setData((prev) => ({ ...prev, phase: payload.phase }));
-      } catch {}
-    });
-
-    // ── subtask: daemon sends agent_role, map to agent ───────────
-    es.addEventListener("subtask", (ev: MessageEvent) => {
-      try {
-        const raw = JSON.parse(ev.data);
-        const payload = mapSubTask(raw);
-        setData((prev) => {
-          const idx = prev.subTasks.findIndex((st) => st.id === payload.id);
-          const updated =
-            idx >= 0
-              ? prev.subTasks.map((st, i) => (i === idx ? payload : st))
-              : [...prev.subTasks, payload];
-          return { ...prev, subTasks: updated };
-        });
-      } catch {}
-    });
-
-    // ── debate: daemon sends created_at, map to timestamp ────────
-    es.addEventListener("debate", (ev: MessageEvent) => {
-      try {
-        const raw = JSON.parse(ev.data);
-        setData((prev) => ({
-          ...prev,
-          debates: [...prev.debates, mapDebate(raw, prev.debates.length)],
-        }));
-      } catch {}
-    });
-
-    // ── log: daemon sends ts, map to timestamp ──────────────────
-    es.addEventListener("log", (ev: MessageEvent) => {
-      try {
-        const raw = JSON.parse(ev.data);
-        // Intercept the genesis log event which carries the roster
-        let rosterUpdate: RosterEntry[] | undefined;
-        try {
-          const fields = typeof raw.fields === "string" ? JSON.parse(raw.fields) : (raw.fields ?? {});
-          if (fields?.event === "genesis" && Array.isArray(fields.roster)) {
-            rosterUpdate = (fields.roster as Record<string, unknown>[])
-              .filter((r) => typeof r.actor === "string" && r.actor)
-              .map((r) => ({ actor: r.actor as string, ability: (r.ability ?? "") as string }));
+    const installRuntime = (
+      resolved: ReturnType<typeof resolveRuntime>,
+      bundle?: VariantHydrationBundle,
+    ): VariantUIAdapter | null => {
+      const { adapter, runtime } = resolved;
+      adapterRef.current = adapter;
+      capabilityRef.current = runtime.capability;
+      setData((current) => {
+        let next: TaskStreamData = { ...current, runtime, hydrationError: null };
+        if (adapter && runtime.capability) {
+          for (const pending of pendingRawEventsRef.current) {
+            if (
+              pending.name !== "initial_state"
+              && !runtime.capability.features.events.includes(pending.name)
+            ) {
+              continue;
+            }
+            const decoded = adapter.decodeEvent(pending.name, pending.value, taskId);
+            if (decoded) next = adapter.projectEvent(next, decoded);
           }
-        } catch { /* fields parsing is best-effort */ }
-        setData((prev) => ({
-          ...prev,
-          logs: [...prev.logs, mapLog(raw, prev.logs.length)],
-          ...(rosterUpdate && rosterUpdate.length > 0 ? { roster: rosterUpdate } : {}),
-        }));
-      } catch {}
-    });
-
-    // ── cost: daemon sends per-call entries, accumulate ───────────
-    es.addEventListener("cost", (ev: MessageEvent) => {
-      try {
-        const entry = JSON.parse(ev.data);
-        setData((prev) => {
-          const current = prev.cost ?? { total_cost: 0, total_tokens: 0, by_model: {} };
-          const tokens = (entry.input_tokens ?? 0) + (entry.output_tokens ?? 0);
-          const model: string = entry.model ?? "unknown";
-          const existing = current.by_model[model] ?? { cost: 0, tokens: 0 };
-          return {
-            ...prev,
-            cost: {
-              total_cost: current.total_cost + (entry.cost_usd ?? 0),
-              total_tokens: current.total_tokens + tokens,
-              by_model: {
-                ...current.by_model,
-                [model]: {
-                  cost: existing.cost + (entry.cost_usd ?? 0),
-                  tokens: existing.tokens + tokens,
-                },
-              },
-            },
-          };
-        });
-      } catch {}
-    });
-
-    // ── complete: daemon emits event: complete (NOT task-completed) ─
-    // For completed tasks the daemon sends the full task dict as the payload.
-    // We must build taskMeta from it (prev.taskMeta is likely null for
-    // history tasks whose SSE immediately emits complete then closes).
-    es.addEventListener("complete", (ev: MessageEvent) => {
-      try {
-        const payload = JSON.parse(ev.data);
-        setData((prev) => ({
-          ...prev,
-          isLive: false,
-          result: payload.result_summary ?? prev.result,
-          taskMeta: prev.taskMeta
-            ? { ...prev.taskMeta, status: "completed" }
-            : mapTaskMeta({ ...payload, status: "completed" }),
-        }));
-      } catch {}
-      es.close();
-      // Hydrate remaining data (cost, debates, logs) via REST
-      void fetchRestFallback();
-    });
-
-    // ── error: daemon emits event: error (NOT task-failed) ─────────
-    // Named SSE event "error" is distinct from the native EventSource
-    // error handler. We guard on ev.data to disambiguate.
-    es.addEventListener("error", (ev: MessageEvent) => {
-      // Native EventSource errors have no data property
-      if (!ev.data) {
-        // Auto-reconnect unless explicitly closed
-        if (es.readyState === EventSource.CLOSED) {
-          // Stream closed — use REST fallback to hydrate full task state
-          void fetchRestFallback();
-          setData((prev) => ({ ...prev, isLive: false }));
+          if (bundle) next = adapter.projectHydration(next, bundle, taskId);
         }
+        pendingRawEventsRef.current = [];
+        return next;
+      });
+      return adapter;
+    };
+
+    const refreshHydration = (queueIfBusy = false): Promise<void> => {
+      if (hydrationInFlight) {
+        if (queueIfBusy) hydrationRefreshQueued = true;
+        return hydrationInFlight;
+      }
+      const request = (async () => {
+        try {
+          const bundle = await fetchTaskHydrationBundle(taskId, abortController.signal);
+          if (cancelled) return;
+          const adapter = adapterRef.current;
+          if (!adapter) return;
+          setData((current) => adapter.projectHydration(
+            { ...current, hydrationError: null },
+            bundle,
+            taskId,
+          ));
+        } catch (error) {
+          if (cancelled) return;
+          const message = error instanceof Error ? error.message : "Task hydration failed";
+          setData((current) => ({ ...current, hydrationError: message }));
+        }
+      })();
+      hydrationInFlight = request;
+      void request.finally(() => {
+        if (hydrationInFlight === request) hydrationInFlight = null;
+        if (hydrationRefreshQueued && !cancelled) {
+          hydrationRefreshQueued = false;
+          void refreshHydration();
+        }
+      });
+      return request;
+    };
+
+    const start = async () => {
+      let document: CapabilitiesDocument;
+      try {
+        const response = await fetch("/api/capabilities", {
+          cache: "no-store",
+          signal: abortController.signal,
+        });
+        if (!response.ok) throw new Error(`Capabilities returned HTTP ${response.status}`);
+        document = parseCapabilities(await response.json() as unknown);
+      } catch (error) {
+        if (cancelled) return;
+        const status: VariantRuntimeStatus = error instanceof CapabilityContractError
+          ? error.code === "unsupported-api-version"
+            ? "unsupported-api-version"
+            : "malformed-capabilities"
+          : "capabilities-unavailable";
+        const message = error instanceof Error ? error.message : "Daemon capabilities are unavailable.";
+        setData((current) => ({ ...current, runtime: runtimeError(status, message) }));
+        return;
+      }
+      if (cancelled) return;
+
+      try {
+        const prepared = await prepareTaskRuntime(document, taskId, abortController.signal);
+        if (cancelled) return;
+        const adapter = installRuntime(prepared);
+        if (!adapter) return;
+      } catch (error) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : "Task hydration failed";
+        setData((current) => ({
+          ...current,
+          hydrationError: message,
+          runtime: runtimeError("hydration-unavailable", message),
+        }));
         return;
       }
 
-      // Named "error" event from daemon with payload (full task dict)
-      try {
-        const payload = JSON.parse(ev.data);
-        setData((prev) => ({
-          ...prev,
-          isLive: false,
-          error: payload.error_message ?? payload.error ?? "Task failed",
-          taskMeta: prev.taskMeta
-            ? { ...prev.taskMeta, status: "failed" }
-            : mapTaskMeta({ ...payload, status: "failed" }),
-        }));
-      } catch {}
-      es.close();
-      // Hydrate remaining data via REST
-      void fetchRestFallback();
-    });
+      const eventNames = taskEventListenerNames(document);
+      const eventSource = new EventSource(`/api/stream/task/${taskId}`);
+      eventSourceRef.current = eventSource;
 
-    // ── Phase 4: board_entry — buffer + rAF flush ───────────────────
-    es.addEventListener("board_entry", (ev: MessageEvent) => {
-      try {
-        const raw = JSON.parse(ev.data);
-        const entry: BoardEntry = {
-          id: raw.id ?? raw.entry_id ?? `entry-${Date.now()}`,
-          type: raw.type ?? raw.entry_type ?? "finding",
-          title: raw.title ?? "",
-          body: raw.body ?? raw.content ?? "",
-          author: raw.author ?? raw.actor ?? "unknown",
-          refs: raw.refs ?? [],
-          confidence: raw.confidence ?? 0,
-          salience: raw.salience ?? 0,
-          seq: raw.seq ?? 0,
-          created_at: raw.created_at ?? new Date().toISOString(),
-        };
-        boardBufRef.current.push(entry);
-        scheduleFlush();
-      } catch {}
-    });
-
-    // ── Phase 4: entry_removed ──────────────────────────────────────
-    es.addEventListener("entry_removed", (ev: MessageEvent) => {
-      try {
-        const raw = JSON.parse(ev.data);
-        const entryId = raw.entry_id ?? raw.id;
-        if (entryId) {
-          setData((prev) => ({
-            ...prev,
-            removedEntryIds: [...prev.removedEntryIds, entryId],
-          }));
+      eventSource.addEventListener("open", () => {
+        setData((current) => ({ ...current, isLive: true }));
+        if (!initialHydrationStarted) {
+          initialHydrationStarted = true;
+          void refreshHydration();
         }
-      } catch {}
-    });
+      });
 
-    // ── Phase 4: consensus ──────────────────────────────────────────
-    es.addEventListener("consensus", (ev: MessageEvent) => {
-      try {
-        const raw = JSON.parse(ev.data);
-        setData((prev) => ({
-          ...prev,
-          consensus: {
-            signal: raw.signal ?? raw.convergence ?? 0,
-            decider_state: raw.decider_state ?? raw.state ?? "evaluating",
-          },
-        }));
-      } catch {}
-    });
+      const receive = (name: string, message: MessageEvent) => {
+        if (!shouldApplyEventCursor(lastEventCursor, message.lastEventId)) return;
+        let value: unknown;
+        try {
+          value = JSON.parse(message.data) as unknown;
+        } catch {
+          return;
+        }
+        const variant = readPersistedVariant(value);
+        if (
+          !adapterRef.current
+          && (name === "initial_state" || ((name === "complete" || name === "error") && variant))
+        ) {
+          installRuntime(resolveRuntime(document, variant));
+        }
+        const adapter = adapterRef.current;
+        const capability = capabilityRef.current;
+        const terminal = name === "complete" || name === "error";
+        if (!adapter || !capability) {
+          pendingRawEventsRef.current = appendPendingRawEvent(
+            pendingRawEventsRef.current,
+            { name, value },
+          );
+          if (terminal) {
+            eventSource.close();
+            void refreshHydration(true);
+          }
+          return;
+        }
+        if (name !== "initial_state" && !capability.features.events.includes(name)) return;
+        const decoded = adapter.decodeEvent(name, value, taskId);
+        if (!decoded) return;
+        if (message.lastEventId) lastEventCursor = message.lastEventId;
+        applyEvent(decoded, terminal);
+        if (terminal) {
+          eventSource.close();
+          void refreshHydration(true);
+        }
+      };
 
-    // ── Phase 4: turn_start ─────────────────────────────────────────
-    es.addEventListener("turn_start", (ev: MessageEvent) => {
-      try {
-        const raw = JSON.parse(ev.data);
-        const turn: TurnRecord = {
-          turn_id: raw.turn_id ?? `turn-${Date.now()}`,
-          task_id: raw.task_id ?? taskId,
-          actor: raw.actor ?? raw.agent_role ?? "unknown",
-          round_no: raw.round_no ?? raw.round ?? 0,
-          phase: raw.phase ?? "active",
-          status: "active",
-          started_at: raw.started_at ?? new Date().toISOString(),
-          model: raw.model as string | undefined,
-          role: (raw.role ?? undefined) as string | undefined,
-          node: (raw.node ?? undefined) as string | undefined,
-          rationale: (raw.rationale ?? null) as string | null,
-        };
-        setData((prev) => ({
-          ...prev,
-          activeTurns: [...prev.activeTurns, turn],
-        }));
-      } catch {}
-    });
-
-    // ── Phase 4: turn_end ───────────────────────────────────────────
-    es.addEventListener("turn_end", (ev: MessageEvent) => {
-      try {
-        const raw = JSON.parse(ev.data);
-        const turnId = raw.turn_id;
-        setData((prev) => {
-          const finished = prev.activeTurns.find((t) => t.turn_id === turnId);
-          return {
-            ...prev,
-            activeTurns: prev.activeTurns.filter((t) => t.turn_id !== turnId),
-            completedTurns: finished
-              ? [
-                  ...prev.completedTurns,
-                  {
-                    ...finished,
-                    status: raw.status ?? "completed",
-                    ended_at: raw.ended_at ?? new Date().toISOString(),
-                    tokens_in: raw.tokens_in ?? raw.input_tokens,
-                    tokens_out: raw.tokens_out ?? raw.output_tokens,
-                    cost_usd: raw.cost_usd,
-                  },
-                ]
-              : prev.completedTurns,
-          };
+      eventSource.addEventListener("initial_state", (event) => {
+        receive("initial_state", event as MessageEvent);
+      });
+      for (const eventName of eventNames.slice(1, -1)) {
+        eventSource.addEventListener(eventName, (event) => {
+          receive(eventName, event as MessageEvent);
         });
-      } catch {}
-    });
-
-    // ── Phase 4: trace — buffer + rAF flush ─────────────────────────
-    // Traces may arrive in two formats:
-    // 1. Daemon-internal: { actor, content, turn_id, ... }
-    // 2. Agent ingest passthrough: { role, data: { text, tool, args }, trace_id, ts, ... }
-    es.addEventListener("trace", (ev: MessageEvent) => {
-      try {
-        const raw = JSON.parse(ev.data);
-        // Extract content: prefer direct content, then data.text, then JSON of data
-        const dataObj = raw.data ?? {};
-        let content = raw.content ?? raw.message ?? "";
-        if (!content && typeof dataObj === "object") {
-          if (dataObj.text) content = dataObj.text;
-          else if (dataObj.tool) content = `${dataObj.tool}(${JSON.stringify(dataObj.args ?? {}).slice(0, 200)})`;
-          else if (Object.keys(dataObj).length > 0) content = JSON.stringify(dataObj).slice(0, 300);
+      }
+      eventSource.addEventListener("error", (event) => {
+        const message = event as MessageEvent;
+        if (typeof message.data === "string" && message.data) {
+          receive("error", message);
+          return;
         }
-        const trace: TraceEvent = {
-          id: raw.id ?? raw.trace_id ?? `trace-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          turn_id: raw.turn_id ?? "",
-          actor: raw.actor ?? raw.role ?? raw.agent_role ?? "unknown",
-          type: raw.type ?? raw.trace_type ?? "reasoning",
-          content,
-          seq: raw.seq ?? 0,
-          timestamp: raw.timestamp ?? raw.ts ?? new Date().toISOString(),
-          run_id: raw.run_id as string | undefined,
-        };
-        traceBufRef.current.push(trace);
-        scheduleFlush();
-      } catch {}
-    });
+        if (eventSource.readyState === EventSource.CLOSED) {
+          setData((current) => ({ ...current, isLive: false }));
+          void refreshHydration(true);
+        }
+      });
+    };
 
-    // ── Phase 4: entry_rejected ─────────────────────────────────────
-    es.addEventListener("entry_rejected", (ev: MessageEvent) => {
-      try {
-        const raw = JSON.parse(ev.data);
-        setData((prev) => ({
-          ...prev,
-          rejectedEntries: [
-            ...prev.rejectedEntries,
-            {
-              entry_id: raw.entry_id ?? raw.id ?? "",
-              actor: raw.actor ?? "unknown",
-              reason: raw.reason ?? "Unknown reason",
-              timestamp: raw.timestamp ?? new Date().toISOString(),
-            },
-          ],
-        }));
-      } catch {}
-    });
-
-    // ── Phase 5: approval_request ────────────────────────────────────
-    es.addEventListener("approval_request", (ev: MessageEvent) => {
-      try {
-        const raw = JSON.parse(ev.data);
-        const req: ApprovalRequest = {
-          turn_id: raw.turn_id ?? "",
-          actor: raw.actor ?? "unknown",
-          run_id: raw.run_id ?? "",
-          description: raw.description ?? "",
-          timestamp: raw.timestamp ?? new Date().toISOString(),
-        };
-        setData((prev) => ({
-          ...prev,
-          approvalRequests: [...prev.approvalRequests, req],
-        }));
-      } catch {}
-    });
-
-    // ── Phase 5: paused / resumed ───────────────────────────────────
-    es.addEventListener("paused", () => {
-      setData((prev) => ({ ...prev, isPaused: true }));
-    });
-
-    es.addEventListener("resumed", () => {
-      setData((prev) => ({ ...prev, isPaused: false }));
-    });
-
-    // ── Phase 5: budget ─────────────────────────────────────────────
-    es.addEventListener("budget", (ev: MessageEvent) => {
-      try {
-        const raw = JSON.parse(ev.data);
-        setData((prev) => ({
-          ...prev,
-          budgetState: {
-            spent: raw.spent ?? 0,
-            ceiling: raw.ceiling ?? 0,
-            percentage: raw.percentage ?? 0,
-          },
-        }));
-      } catch {}
-    });
-
-    // ── Phase 5: coordinator_narration ───────────────────────────────
-    es.addEventListener("coordinator_narration", (ev: MessageEvent) => {
-      try {
-        const raw = JSON.parse(ev.data);
-        const narration: CoordinatorNarration = {
-          round: raw.round ?? 0,
-          selected: raw.selected ?? [],
-          rationale: raw.rationale ?? null,
-          source: raw.source ?? "unknown",
-          timestamp: new Date().toISOString(),
-        };
-        setData((prev) => ({
-          ...prev,
-          coordinatorNarrations: [...prev.coordinatorNarrations, narration],
-        }));
-      } catch {}
-    });
-  }, [taskId, fetchRestFallback, scheduleFlush]);
-
-  // Connect on mount, disconnect on unmount
-  useEffect(() => {
-    connect();
+    void start();
     return () => {
+      cancelled = true;
+      abortController.abort();
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+      frameEventsRef.current = [];
+      pendingRawEventsRef.current = [];
     };
-  }, [connect]);
+  }, [setData, taskId]);
 
   return data;
 }

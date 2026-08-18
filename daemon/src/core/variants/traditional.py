@@ -31,7 +31,6 @@ import httpx
 from core.capabilities import capabilities_for_role
 from core.entry import BoardEntry, entry_to_dict
 from core.response_parser import parse_entries
-from core.variants import register_variant
 
 logger = logging.getLogger("bmas.traditional")
 
@@ -114,7 +113,7 @@ class TraditionalVariant:
       3. finalize() — called after the loop exits
     """
 
-    name = "traditional"
+    name = "classic"
 
     def __init__(
         self,
@@ -130,6 +129,7 @@ class TraditionalVariant:
         model_routing: dict[str, str],
         model_pools: dict[str, list[str]] | None = None,
         edge_node_models: list[str] | None = None,
+        model_pricing: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self.gateway = gateway
         self.store = board_store
@@ -170,6 +170,14 @@ class TraditionalVariant:
         self.role_registry = role_registry
         self.model_routing = model_routing
         self.model_pools = model_pools or {}
+        if model_pricing is None:
+            from config import MODEL_PRICING
+
+            model_pricing = MODEL_PRICING
+        self.model_pricing = {
+            str(model): dict(pricing)
+            for model, pricing in model_pricing.items()
+        }
 
         # Edge inference round-robin state.
         # When model_routing resolves to "local", _resolve_edge_model()
@@ -198,12 +206,48 @@ class TraditionalVariant:
 
     # ── Genesis ──────────────────────────────────────────────────────
 
+    @staticmethod
+    def genesis_checkpoint_complete(meta: dict[str, Any]) -> bool:
+        """Return true when metadata proves that genesis completed."""
+        if "genesis_complete" in meta:
+            return meta.get("genesis_complete") is True
+
+        # Older classic tasks saved the roster before this marker existed.
+        # A saved roster is the legacy completion record for those tasks.
+        roster = meta.get("roster")
+        if isinstance(roster, str):
+            try:
+                roster = json.loads(roster)
+            except (json.JSONDecodeError, TypeError):
+                return False
+        return bool(roster) and isinstance(roster, (dict, list))
+
     async def genesis(self, task: Any) -> None:
         """Initialize: triage → AG experts → objective entry → attachments."""
         self.genesis_time = time.monotonic()
         self.genesis_started_at = time.time()
         task_id = task["task_id"]
         query = task["query"]
+
+        # A failed genesis can save AG cost before it saves the completion
+        # marker. Preserve that cost and the original duration boundary.
+        get_meta = getattr(self.store, "get_meta", None)
+        if get_meta is not None:
+            prior_meta = await get_meta(task_id)
+            self.budget_spent = max(
+                self.budget_spent,
+                float(prior_meta.get("budget_spent", 0.0)),
+            )
+            prior_started_at = prior_meta.get("genesis_started_at")
+            if prior_started_at is not None:
+                self.genesis_started_at = float(prior_started_at)
+                elapsed = max(0.0, time.time() - self.genesis_started_at)
+                self.genesis_time = time.monotonic() - elapsed
+        await self.gateway.set_meta(
+            task_id,
+            genesis_started_at=self.genesis_started_at,
+            genesis_complete=False,
+        )
 
         # 1. Triage classification (existing triage, now effective)
         triage_result = task.get("triage_result")
@@ -243,20 +287,24 @@ class TraditionalVariant:
             "title": query[:200],
             "body": objective_body,
             "confidence": 1.0,
+            "_mutation_id": "genesis:objective:v1",
         }
         await self.gateway.append(
             task_id, "control_unit", ["decision_writer"],
             [objective_entry], turn_id="genesis", round_no=0,
         )
 
-        # 5. Initialize board meta
+        # 5. Attach uploads (doc 17 §4)
+        await self._attach_uploads(task_id, task)
+
+        # 6. Save the roster and completion marker in one metadata update.
         await self.gateway.set_meta(
             task_id,
             phase="Discovery",
             round=0,
             budget_spent=self.budget_spent,
             budget_reserved=0.0,
-            variant="traditional",
+            variant="classic",
             decider_state="waiting",
             tier=self._tier,
             genesis_started_at=self.genesis_started_at,
@@ -281,10 +329,8 @@ class TraditionalVariant:
             progress_ledger=[],
             progress_ledger_archived=0,
             objective_truncated=objective_truncated,
+            genesis_complete=True,
         )
-
-        # 6. Attach uploads (doc 17 §4)
-        await self._attach_uploads(task_id, task)
 
     async def resume(self, task: Any) -> None:
         """Restore the control state for a durable classic-board task."""
@@ -496,12 +542,14 @@ class TraditionalVariant:
         if not attachments:
             return
 
-        for att in attachments:
+        for index, att in enumerate(attachments):
+            attachment_id = str(att.get("id") or index)
             entry = {
                 "type": "attachment",
                 "title": f"Uploaded: {att.get('name', 'file')}",
                 "body": att.get("text_preview", f"File: {att.get('name', 'unknown')}"),
                 "confidence": 1.0,
+                "_mutation_id": f"genesis:attachment:{attachment_id}:v1",
             }
             await self.gateway.append(
                 task_id, "control_unit",
@@ -2396,16 +2444,19 @@ class TraditionalVariant:
         if not task_id or not usage or not isinstance(usage, dict):
             return
 
-        import config as _config
         import database as db
-
-        MODEL_PRICING = getattr(_config, "MODEL_PRICING", {})
 
         # LiteLLM may report the resolved alias on the response; prefer it,
         # falling back to the alias we requested (both match MODEL_PRICING).
         resolved_model = usage.get("model") or model
-        pricing = MODEL_PRICING.get(resolved_model) or MODEL_PRICING.get(model) or {}
-        price_model = resolved_model if resolved_model in MODEL_PRICING else model
+        pricing = (
+            self.model_pricing.get(resolved_model)
+            or self.model_pricing.get(model)
+            or {}
+        )
+        price_model = (
+            resolved_model if resolved_model in self.model_pricing else model
+        )
 
         in_tok = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
         out_tok = int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
@@ -2649,8 +2700,3 @@ def _entries_hash(entries: list[BoardEntry]) -> str:
     bodies = sorted(e.body.strip().lower() for e in entries)
     combined = "|".join(bodies)
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
-
-
-# ── Register with the variant registry ───────────────────────────────
-
-register_variant("traditional", TraditionalVariant)

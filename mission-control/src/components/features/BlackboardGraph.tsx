@@ -236,7 +236,7 @@ interface BlackboardGraphProps {
 export function BlackboardGraph({
   entries,
   removedEntryIds,
-  variant = "traditional",
+  variant = "classic",
   onNodeClick,
 }: BlackboardGraphProps) {
   const [selectedNode, setSelectedNode] = useState<string | null>(null);

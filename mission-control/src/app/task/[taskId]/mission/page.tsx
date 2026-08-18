@@ -17,14 +17,11 @@ import { useMemo, useState, useCallback } from "react";
 import { useTaskData } from "../TaskStreamContext";
 import { BlackboardBoard } from "@/components/features/BlackboardBoard";
 import { AgentMindCard } from "@/components/features/AgentMindCard";
-import { BudgetGauge } from "@/components/features/BudgetGauge";
-import { ConsensusMeter } from "@/components/features/ConsensusMeter";
 import { TurnInspector } from "@/components/features/TurnInspector";
 import {
   Pause,
   Play,
   MessageSquarePlus,
-  Radio,
 } from "lucide-react";
 
 export default function MissionPage() {
@@ -37,11 +34,10 @@ export default function MissionPage() {
     traceEvents,
     approvalRequests,
     isPaused,
-    budgetState,
-    coordinatorNarrations,
     isLive,
     consensus,
     phase,
+    runtime,
   } = useTaskData();
 
 
@@ -50,6 +46,11 @@ export default function MissionPage() {
   const [directiveText, setDirectiveText] = useState("");
 
   const taskId = taskMeta?.task_id ?? "";
+  const controls = runtime.capability?.features.controls ?? [];
+  const canTogglePause = isPaused
+    ? controls.includes("resume")
+    : controls.includes("pause");
+  const canSendDirective = controls.includes("directive");
 
   // Unique actors from board entries and turns
   const actors = useMemo(() => {
@@ -113,8 +114,42 @@ export default function MissionPage() {
   return (
     <div className="mission-cockpit">
 
+      {isLive && (canTogglePause || canSendDirective) ? (
+        <div className="mission-cockpit__topbar">
+          <div className="mission-cockpit__topbar-left">
+            <span className="mission-cockpit__status">
+              {runtime.capability?.label ?? "Coordination runtime"}
+            </span>
+          </div>
+          <div className="mission-cockpit__topbar-right">
+          {canTogglePause ? (
+            <button
+              type="button"
+              className="mission-cockpit__btn"
+              onClick={handleTogglePause}
+              aria-label={isPaused ? "Resume task" : "Pause task"}
+              title={isPaused ? "Resume task" : "Pause task"}
+            >
+              {isPaused ? <Play size={14} /> : <Pause size={14} />}
+            </button>
+          ) : null}
+          {canSendDirective ? (
+            <button
+              type="button"
+              className="mission-cockpit__btn"
+              onClick={() => setShowDirectiveInput((current) => !current)}
+              aria-label="Send a directive"
+              title="Send a directive"
+            >
+              <MessageSquarePlus size={14} />
+            </button>
+          ) : null}
+          </div>
+        </div>
+      ) : null}
+
       {/* Directive input bar */}
-      {showDirectiveInput && (
+      {canSendDirective && showDirectiveInput && (
         <div className="mission-cockpit__directive-bar">
           <input
             type="text"
@@ -151,6 +186,7 @@ export default function MissionPage() {
               phase={phase}
               consensus={consensus}
               allTurns={[...activeTurns, ...completedTurns]}
+              controls={controls}
             />
           </div>
 

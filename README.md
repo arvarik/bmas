@@ -115,10 +115,10 @@ The project is organized into six deployable components, each with its own READM
 
 | Component | Description |
 |:---|:---|
-| [`daemon/`](daemon/README.md) | **The brain.** Python FastAPI orchestrator — manages task lifecycle, cyclic blackboard execution, agent dispatch, and dual-write persistence (Redis + SQLite). |
+| [`daemon/`](daemon/README.md) | **The brain.** Python FastAPI orchestrator that runs task lifecycles, dispatches agents, and saves durable state in SQLite. |
 | [`mission-control/`](mission-control/README.md) | **The eyes.** Next.js 16 real-time dashboard — execution graphs, distributed logs, blackboard command center, cost tracking, and HITL controls. |
 | [`agent/`](agent/README.md) | **The hands.** FastAPI server deployed to each edge node — bridges the Daemon to Hermes agents via the Runs API with real-time trace and log shipping. |
-| [`redis/`](redis/README.md) | **The shared memory.** Redis 8 serves as the blackboard — the central knowledge store through which all agents coordinate via Pub/Sub, Streams, and Redlock. |
+| [`redis/`](redis/README.md) | **The live projection.** Redis 8 supplies locks, low-latency notifications, and current dashboard projections. |
 | [`litellm/`](litellm/README.md) | **The router.** Unified OpenAI-compatible gateway that abstracts all model backends behind routing, cost tracking, and retry logic. |
 | [`triage/`](triage/README.md) | **The gatekeeper.** Complexity classifier that routes tasks to the cheapest capable model — Gemini Flash Lite API by default (no GPU), or local Qwen3-1.7B on vLLM for zero-cost classification. |
 
@@ -138,12 +138,12 @@ This project implements and extends multi-agent coordination architectures from 
 > **Han, B. & Zhang, S. (2025).** *Exploring Advanced LLM Multi-Agent Systems Based on Blackboard Architecture.*
 > [arXiv:2507.01701](https://arxiv.org/abs/2507.01701)
 
-The foundational architecture. LLM agents coordinate through a shared blackboard with an LLM-driven control unit that dynamically selects agents per round — achieving competitive performance with state-of-the-art multi-agent systems while consuming fewer tokens. Stigmergic implements this as the **traditional** coordination variant.
+The current **classic** runtime implements this architecture. An LLM control unit selects agents, and those agents coordinate through a durable shared blackboard.
 
 > **Zhang, S., Shi, W. & Wang, H. (2026).** *PatchBoard: Schema-Grounded State Mutation for Reliable and Auditable LLM Multi-Agent Collaboration.*
 > [arXiv:2605.29313](https://arxiv.org/abs/2605.29313)
 
-A complementary coordination paradigm where agents emit validated JSON-Patch mutations against a schema-grounded state tree through a deterministic kernel — achieving 84.6% task success (vs. 30.8% for LangGraph) with zero committed-state contamination under fault injection. Stigmergic implements this as the **PatchBoard** coordination variant.
+A complementary coordination paradigm where agents emit validated JSON-Patch mutations against a schema-grounded state tree. This repository does not implement PatchBoard yet.
 
 ## License
 

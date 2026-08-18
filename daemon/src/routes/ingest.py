@@ -307,12 +307,42 @@ async def ingest_traces(task_id: str, turn_id: str, request: Request):
         except Exception as e:
             logger.warning(f"Redis trace write failed for {task_id}/{turn_id}: {e}")
 
-        with contextlib.suppress(Exception):
-            await orch.bb.publish_event(task_id, "trace", trace)
+        try:
+            await orch.bb.publish_event(
+                task_id,
+                "trace",
+                trace,
+                idempotency_key=f"trace:{turn_id}:{trace.get('seq', 0)}",
+            )
+        except Exception as e:
+            logger.exception(
+                "Durable trace event failed for %s/%s",
+                task_id,
+                turn_id,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="The durable trace event journal is unavailable",
+            ) from e
 
     if cost_event is not None:
-        with contextlib.suppress(Exception):
-            await orch.bb.publish_event(task_id, "cost", cost_event)
+        try:
+            await orch.bb.publish_event(
+                task_id,
+                "cost",
+                cost_event,
+                idempotency_key=f"trace-cost:{turn_id}",
+            )
+        except Exception as e:
+            logger.exception(
+                "Durable trace cost event failed for %s/%s",
+                task_id,
+                turn_id,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="The durable trace event journal is unavailable",
+            ) from e
 
     return JSONResponse({
         "status": "ok",

@@ -9,8 +9,9 @@ Event names are defined in protocol.py.
 """
 from __future__ import annotations
 
-import json
 from typing import Any, Protocol, runtime_checkable
+
+from core.event_delivery import record_and_publish, task_stream
 
 
 @runtime_checkable
@@ -18,7 +19,12 @@ class EventEmitter(Protocol):
     """Protocol for emitting board events via SSE."""
 
     async def emit(
-        self, task_id: str, event_type: str, data: dict[str, Any]
+        self,
+        task_id: str,
+        event_type: str,
+        data: dict[str, Any],
+        *,
+        idempotency_key: str | None = None,
     ) -> None:
         """Emit an event for a task.
 
@@ -42,14 +48,30 @@ class InMemoryEventEmitter:
 
     def __init__(self) -> None:
         self.events: list[tuple[str, str, dict[str, Any]]] = []
+        self._idempotency_keys: set[tuple[str, str]] = set()
 
     async def emit(
-        self, task_id: str, event_type: str, data: dict[str, Any]
+        self,
+        task_id: str,
+        event_type: str,
+        data: dict[str, Any],
+        *,
+        idempotency_key: str | None = None,
     ) -> None:
+        if idempotency_key is not None:
+            key = (task_id, idempotency_key)
+            if key in self._idempotency_keys:
+                return
+            self._idempotency_keys.add(key)
         self.events.append((task_id, event_type, data))
+
+    async def contains(self, task_id: str, idempotency_key: str) -> bool:
+        """Return true when this emitter already accepted the event key."""
+        return (task_id, idempotency_key) in self._idempotency_keys
 
     def clear(self) -> None:
         self.events.clear()
+        self._idempotency_keys.clear()
 
     def events_of_type(self, event_type: str) -> list[dict[str, Any]]:
         """Return all event payloads matching the given type."""
@@ -70,10 +92,29 @@ class RedisEventEmitter:
     def __init__(self, redis_client: Any) -> None:
         self._redis = redis_client
 
+    async def contains(self, task_id: str, idempotency_key: str) -> bool:
+        """Return true when SQLite already stores the event key."""
+        import database as db
+
+        event = await db.get_delivery_event_by_idempotency(
+            task_stream(task_id),
+            idempotency_key,
+        )
+        return event is not None
+
     async def emit(
-        self, task_id: str, event_type: str, data: dict[str, Any]
+        self,
+        task_id: str,
+        event_type: str,
+        data: dict[str, Any],
+        *,
+        idempotency_key: str | None = None,
     ) -> None:
-        await self._redis.publish(
-            f"bmas:events:{task_id}",
-            json.dumps({"event": event_type, "data": data}),
+        await record_and_publish(
+            self._redis,
+            task_stream(task_id),
+            event_type,
+            data,
+            task_id=task_id,
+            idempotency_key=idempotency_key,
         )

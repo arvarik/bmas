@@ -7,7 +7,7 @@ MMLU: letter answer extraction (A/B/C/D).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass
 
 
 @dataclass
@@ -32,6 +32,12 @@ class ScoredResult:
     status: str | None = None
     error_message: str | None = None
     rounds: int | None = None
+    effective_actions: int | None = None
+    variant: str | None = None
+    phase: str | None = None
+    state_revision: int | None = None
+    recovery_count: int | None = None
+    variant_metrics: dict[str, object] | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -7,6 +7,8 @@ type HitlAction =
   | "resume"
   | "abort"
   | "inject-hint"
+  | "boost"
+  | "retract"
   | "approval";
 
 interface HitlPayload {
@@ -16,6 +18,7 @@ interface HitlPayload {
   reason?: string;
   run_id?: string;
   decision?: "approve" | "deny";
+  entry_id?: string;
 }
 
 function daemonHeaders(): Record<string, string> {
@@ -54,6 +57,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         { status: 400 },
       );
     }
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(body.task_id)) {
+      return NextResponse.json({ error: "Invalid task_id" }, { status: 400 });
+    }
 
     let endpoint: string = body.action;
     let payload: Record<string, string> | undefined;
@@ -68,6 +74,15 @@ export async function POST(request: Request): Promise<NextResponse> {
       payload = { body: body.hint_text.trim() };
     } else if (body.action === "abort") {
       payload = { reason: body.reason ?? "operator_request" };
+    } else if (body.action === "boost" || body.action === "retract") {
+      if (!body.entry_id || !/^[a-zA-Z0-9_-]{1,64}$/.test(body.entry_id)) {
+        return NextResponse.json(
+          { error: `${body.action} requires entry_id` },
+          { status: 400 },
+        );
+      }
+      endpoint = "steer";
+      payload = { action: body.action, entry_id: body.entry_id };
     } else if (body.action === "approval") {
       if (!body.run_id || !body.decision) {
         return NextResponse.json(
@@ -83,7 +98,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const upstream = await fetch(
-      `${DAEMON_BASE_URL}/api/tasks/${body.task_id}/${endpoint}`,
+      `${DAEMON_BASE_URL}/api/tasks/${encodeURIComponent(body.task_id)}/${endpoint}`,
       {
         method: "POST",
         headers: daemonHeaders(),

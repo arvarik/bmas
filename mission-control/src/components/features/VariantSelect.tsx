@@ -1,55 +1,96 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import {
+  CapabilityContractError,
+  parseCapabilities,
+  type VariantCapability,
+} from "@/lib/capabilities";
+import {
+  hasMissionControlAdapter,
+  supportsMissionControlVariant,
+} from "@/lib/variant-support";
 
 /**
  * VariantSelect — dropdown for the composer (doc 08 §2.1).
  *
- * Fetches the daemon's capabilities and renders a compact select with
- * one enabled option (traditional) and disabled options with tooltips
- * for planned variants.
+ * Fetches the daemon's capabilities and renders only reported variants.
+ * Local adapters decide whether Mission Control can open each variant.
  */
-
-interface VariantDescriptor {
-  id: string;
-  label: string;
-  available: boolean;
-  reason?: string;
-}
 
 interface VariantSelectProps {
   value: string;
   onChange: (variant: string) => void;
+  onAvailabilityChange?: (available: boolean) => void;
 }
 
-export function VariantSelect({ value, onChange }: VariantSelectProps) {
-  const [variants, setVariants] = useState<VariantDescriptor[]>([
-    { id: "traditional", label: "Blackboard (bMAS)", available: true },
-  ]);
+type LoadState = "loading" | "ready" | "error";
+
+function isSelectable(variant: VariantCapability): boolean {
+  return supportsMissionControlVariant(variant);
+}
+
+export function VariantSelect({
+  value,
+  onChange,
+  onAvailabilityChange,
+}: VariantSelectProps) {
+  const [variants, setVariants] = useState<VariantCapability[]>([]);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [errorMessage, setErrorMessage] = useState("Capabilities unavailable");
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/capabilities")
-      .then((r) => r.json())
-      .then((data: { variants: VariantDescriptor[] }) => {
-        if (!cancelled && data.variants?.length) {
-          setVariants(data.variants);
-        }
+    fetch("/api/capabilities", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Capabilities returned HTTP ${response.status}`);
+        return response.json() as Promise<unknown>;
       })
-      .catch(() => {
-        // Keep the static default
+      .then((raw) => {
+        const document = parseCapabilities(raw);
+        if (cancelled) return;
+        setVariants(document.variants);
+        setLoadState("ready");
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        const message = error instanceof CapabilityContractError
+          ? error.message
+          : "Capabilities unavailable";
+        setErrorMessage(message);
+        setLoadState("error");
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
+  useEffect(() => {
+    if (loadState !== "ready") {
+      onAvailabilityChange?.(false);
+      return;
+    }
+    const selected = variants.find(
+      (variant) => variant.id === value || variant.aliases.includes(value),
+    );
+    onAvailabilityChange?.(Boolean(selected && isSelectable(selected)));
+    if (selected && selected.id !== value) onChange(selected.id);
+  }, [loadState, onAvailabilityChange, onChange, value, variants]);
+
   return (
     <select
       id="variant-select"
       className="variant-select"
       value={value}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(event) => {
+        const next = event.target.value;
+        onChange(next);
+        onAvailabilityChange?.(
+          variants.some((variant) => variant.id === next && isSelectable(variant)),
+        );
+      }}
+      disabled={loadState !== "ready"}
+      aria-label="Coordination variant"
       style={{
         padding: "3px 22px 3px 8px",
         background: "var(--surface-hover)",
@@ -71,15 +112,23 @@ export function VariantSelect({ value, onChange }: VariantSelectProps) {
         backgroundPosition: "right 6px center",
       }}
     >
+      {loadState === "loading" ? (
+        <option value={value}>Loading capabilities…</option>
+      ) : null}
+      {loadState === "error" ? (
+        <option value={value}>{errorMessage}</option>
+      ) : null}
       {variants.map((v) => (
         <option
           key={v.id}
           value={v.id}
-          disabled={!v.available}
+          disabled={!isSelectable(v)}
           title={v.reason ? `${v.label} — ${v.reason}` : v.label}
         >
           {v.label}
           {!v.available && v.reason ? ` (${v.reason})` : ""}
+          {!hasMissionControlAdapter(v.id) ? " (interface unavailable)" : ""}
+          {hasMissionControlAdapter(v.id) && !isSelectable(v) ? " (unsupported contract)" : ""}
         </option>
       ))}
     </select>

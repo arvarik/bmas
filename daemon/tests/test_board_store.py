@@ -167,6 +167,29 @@ class TestInMemoryBoardStore:
         assert fetched.salience == 0.75
 
     @pytest.mark.asyncio
+    async def test_set_salience_many(self):
+        """A batch updates all entries in one store operation."""
+        store = InMemoryBoardStore()
+        for entry_id in ("e-1", "e-2"):
+            await store.upsert_entry(
+                "task-1",
+                BoardEntry(
+                    id=entry_id,
+                    task_id="task-1",
+                    type="finding",
+                    author="expert.x",
+                    body="test",
+                ),
+            )
+
+        await store.set_salience_many(
+            "task-1", {"e-1": 0.25, "e-2": 0.75},
+        )
+
+        assert (await store.get_entry("task-1", "e-1")).salience == 0.25
+        assert (await store.get_entry("task-1", "e-2")).salience == 0.75
+
+    @pytest.mark.asyncio
     async def test_get_events_until_seq(self):
         store = InMemoryBoardStore()
         for i in range(1, 6):
@@ -438,6 +461,35 @@ class TestSqliteRedisBoardStore:
         replayed = await store.get_snapshot("task-1")
         assert replayed["e-1"].body == "test body"
         assert (await store.get_meta("task-1"))["round"] == 2
+
+    @pytest.mark.asyncio
+    async def test_restart_restores_batched_derived_scores(
+        self, tmp_path, monkeypatch,
+    ):
+        """Replay combines authoritative events with the derived score cache."""
+        import database as db
+
+        monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "scores.db"))
+        await db.init_db()
+        await db.create_task("task-1", "test", "test")
+        first = SqliteRedisBoardStore()
+        entry = BoardEntry(
+            id="e-1",
+            task_id="task-1",
+            type="finding",
+            author="expert.x",
+            body="durable fact",
+        )
+        await first.append_event(
+            "task-1", _make_entry_added_event("task-1", 1, "e-1"),
+        )
+        await first.upsert_entry("task-1", entry)
+        await first.set_salience_many("task-1", {"e-1": 0.875})
+
+        resumed = SqliteRedisBoardStore()
+        snapshot = await resumed.get_snapshot("task-1")
+
+        assert snapshot["e-1"].salience == 0.875
 
     @pytest.mark.asyncio
     async def test_legacy_import_rolls_back_as_one_transaction(

@@ -58,7 +58,13 @@ class RunMetrics:
     # Termination
     avg_rounds: float = 0.0
     round_observations: int = 0
+    avg_effective_actions: float = 0.0
+    action_observations: int = 0
+    total_recoveries: int = 0
+    recovery_observations: int = 0
     terminated_by: dict[str, int] = field(default_factory=dict)
+    variants: dict[str, int] = field(default_factory=dict)
+    terminal_phases: dict[str, int] = field(default_factory=dict)
 
     # Energy (Phase 1 hook — nullable until wired)
     joules_estimate: float | None = None
@@ -170,6 +176,24 @@ def compute_run_metrics(
     rounds = [r.rounds for r in results if r.rounds is not None]
     avg_rounds = statistics.mean(rounds) if rounds else 0.0
 
+    actions = [
+        result.effective_actions
+        for result in results
+        if result.effective_actions is not None
+    ]
+    recoveries = [
+        result.recovery_count
+        for result in results
+        if result.recovery_count is not None
+    ]
+    variants: dict[str, int] = {}
+    terminal_phases: dict[str, int] = {}
+    for result in results:
+        if result.variant:
+            variants[result.variant] = variants.get(result.variant, 0) + 1
+        if result.phase:
+            terminal_phases[result.phase] = terminal_phases.get(result.phase, 0) + 1
+
     return RunMetrics(
         run_id=run_id,
         dataset=dataset,
@@ -195,7 +219,13 @@ def compute_run_metrics(
         latency_observations=len(latencies),
         avg_rounds=avg_rounds,
         round_observations=len(rounds),
+        avg_effective_actions=(statistics.mean(actions) if actions else 0.0),
+        action_observations=len(actions),
+        total_recoveries=sum(recoveries),
+        recovery_observations=len(recoveries),
         terminated_by=terminated_by,
+        variants=variants,
+        terminal_phases=terminal_phases,
         joules_estimate=joules_estimate,
         run_config=run_config,
     )

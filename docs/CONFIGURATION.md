@@ -176,12 +176,12 @@ Controls the coordination paradigm used for multi-agent tasks.
 
 | Field | Type | Required | Default | Description |
 |:---|:---|:---|:---|:---|
-| `variant` | string | ✅ | — | Active variant: `traditional`, `patchboard`, or `stigmergic`. |
+| `variant` | string | ✅ | `classic` | Default registered coordination runtime. This build provides `classic`. |
 | `blackboard_v2` | bool | ❌ | `false` | Enables the v2 board substrate (entries + events). |
 | `view_budget_tokens` | int | ❌ | `12000` | Full-board token budget; budgeted view mode above this. |
 | `round_execution` | string | ❌ | `concurrent` | `concurrent` (parallel agents) or `sequential` (paper-exact). |
 
-#### `coordination.traditional` *(when variant = traditional)*
+#### `coordination.classic` *(when variant = classic)*
 
 | Field | Type | Default | Description |
 |:---|:---|:---|:---|
@@ -198,10 +198,10 @@ Controls the coordination paradigm used for multi-agent tasks.
 
 ```yaml
 coordination:
-  variant: traditional
+  variant: classic
   view_budget_tokens: 12000
   round_execution: concurrent
-  traditional:
+  classic:
     max_rounds: 8
     max_duration_s: 1800
     budget_ceiling_usd: 1.00
@@ -315,10 +315,19 @@ Secrets are **never** stored in `bmas.yaml`. They go in `.env`:
 | `BMAS_DASHBOARD_KEY` | ❌ | Mission Control access key. |
 | `BMAS_MAX_ACTIVE_TASKS` | ❌ | Global concurrent task limit. The default is `4`. |
 | `BMAS_MAX_QUEUED_TASKS` | ❌ | Global queued task limit. The default is `100`. |
+| `BMAS_MAX_TASK_CHARS` | ❌ | Maximum task objective size in characters. The default is `200000`. |
 | `BMAS_SHUTDOWN_GRACE_S` | ❌ | Graceful task drain limit. The default is `30`. |
 | `BMAS_AGENT_TURN_TIMEOUT_S` | ❌ | Per-agent turn limit. The default is `600`. |
+| `BMAS_AGENT_ENDPOINT_MAX_CONCURRENCY` | ❌ | Concurrent requests per agent endpoint. The default is `4`. |
+| `BMAS_AGENT_ENDPOINT_WAIT_TIMEOUT_S` | ❌ | Endpoint capacity wait in seconds. The default is `30`. |
 | `BMAS_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | ❌ | Consecutive endpoint failures before the circuit opens. The default is `3`. |
 | `BMAS_CIRCUIT_BREAKER_RECOVERY_S` | ❌ | Seconds before one endpoint recovery probe. The default is `30`. |
+| `BMAS_EVENT_PAYLOAD_MAX_BYTES` | ❌ | Maximum serialized payload size for one durable event. The default is `1048576`. |
+| `BMAS_EVENT_OUTBOX_MAX` | ❌ | Maximum pending durable event count. The default is `10000`. |
+| `BMAS_EVENT_OUTBOX_OVERLOAD` | ❌ | Pending event count that marks delivery as overloaded. The default is `5000`. |
+| `BMAS_EVENT_OUTBOX_BATCH` | ❌ | Maximum events in one delivery retry batch. The default is `100`. |
+| `BMAS_EVENT_REPLAY_PAGE` | ❌ | Maximum events in one SSE replay query. The default is `250`. |
+| `BMAS_BOARD_PROJECTION_CACHE_TASKS` | ❌ | Maximum Redis board projections retained in daemon memory. The default is `128`. |
 | `GEMINI_API_KEY` | ❌ | Google Gemini API key. |
 | `ANTHROPIC_API_KEY` | ❌ | Anthropic (Claude) API key. |
 | `OPENAI_API_KEY` | ❌ | OpenAI API key. |
@@ -343,7 +352,7 @@ At least one cloud API key is required unless all routing goes to `local`.
 ## Example Configurations
 
 See the `examples/` directory:
-- **[stigmergic.yaml](../examples/stigmergic/stigmergic.yaml)** — Full 3-node deployment with Gemini
+- **[stigmergic.yaml](../examples/stigmergic/stigmergic.yaml)** — Legacy example name for a full 3-node classic deployment with Gemini
 - **[minimal-cloud.yaml](../examples/minimal-cloud.yaml)** — No edge nodes, single cloud provider
 - **[multi-provider.yaml](../examples/multi-provider.yaml)** — Mix of Gemini + Claude + local
 

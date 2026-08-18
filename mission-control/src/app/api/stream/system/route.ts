@@ -10,10 +10,24 @@ export async function GET(req: Request) {
   req.signal.addEventListener("abort", () => abortController.abort());
 
   try {
-    const upstream = await fetch(`${DAEMON_BASE_URL}/events/system`, {
-      signal: abortController.signal,
-      cache: "no-store",
-    });
+    const lastEventId = req.headers.get("last-event-id");
+    const fetchUpstream = (cursor: string | null) => fetch(
+      `${DAEMON_BASE_URL}/events/system`,
+      {
+        signal: abortController.signal,
+        cache: "no-store",
+        headers: cursor ? { "Last-Event-ID": cursor } : undefined,
+      },
+    );
+    let upstream = await fetchUpstream(lastEventId);
+    if (lastEventId && upstream.status === 409) {
+      const conflict = await upstream.clone().json().catch(() => null) as {
+        error?: unknown;
+      } | null;
+      if (conflict?.error === "event_cursor_gap") {
+        upstream = await fetchUpstream(null);
+      }
+    }
 
     if (!upstream.ok || !upstream.body) {
       return new Response(

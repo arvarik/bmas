@@ -6,7 +6,7 @@
  * in/out reference links so the operator can walk the debate.
  */
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { authorColor } from "@/lib/design-tokens";
 import { RichContent } from "@/components/ui/RichContent";
@@ -24,12 +24,23 @@ interface BoardEntryDetailProps {
   allEntries: MergedBoardEntry[];
   onClose: () => void;
   onSelect: (id: string) => void;
+  controls: readonly string[];
+  onSteer: (action: "boost" | "retract", entryId: string) => Promise<void>;
 }
 
-export function BoardEntryDetail({ entry, allEntries, onClose, onSelect }: BoardEntryDetailProps) {
+export function BoardEntryDetail({
+  entry,
+  allEntries,
+  onClose,
+  onSelect,
+  controls,
+  onSteer,
+}: BoardEntryDetailProps) {
   const meta = typeMeta(entry.type);
   const Icon = meta.icon;
   const aColor = authorColor(entry.author);
+  const [pendingAction, setPendingAction] = useState<"boost" | "retract" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const byId = useMemo(() => new Map(allEntries.map((e) => [e.id, e])), [allEntries]);
   const refsOut = useMemo(
@@ -127,6 +138,35 @@ export function BoardEntryDetail({ entry, allEntries, onClose, onSelect }: Board
             {entry.status}
           </Chip>
         </div>
+
+        {controls.some((control) => control === "boost" || control === "retract") ? (
+          <div style={{ display: "flex", gap: "var(--space-2)" }}>
+            {(["boost", "retract"] as const).map((action) => controls.includes(action) ? (
+              <button
+                key={action}
+                type="button"
+                disabled={pendingAction !== null}
+                onClick={async () => {
+                  setPendingAction(action);
+                  setActionError(null);
+                  try {
+                    await onSteer(action, entry.id);
+                  } catch (error) {
+                    setActionError(error instanceof Error ? error.message : `${action} failed`);
+                  } finally {
+                    setPendingAction(null);
+                  }
+                }}
+                className="overview__hitl-btn"
+              >
+                {pendingAction === action
+                  ? `${action === "boost" ? "Boosting" : "Retracting"}…`
+                  : action === "boost" ? "Boost entry" : "Retract entry"}
+              </button>
+            ) : null)}
+          </div>
+        ) : null}
+        {actionError ? <div role="alert">{actionError}</div> : null}
 
         {/* Salience + confidence meters */}
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
