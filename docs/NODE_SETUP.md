@@ -172,6 +172,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
+StateDirectory=bmas-agent
 WorkingDirectory=/opt/bmas
 Environment="PATH=/opt/hermes-agent/.venv/bin:/usr/local/bin:/usr/bin"
 Environment="NODE_ID=agent-node1"
@@ -181,6 +182,9 @@ Environment="HERMES_GATEWAY_URL=http://localhost:8642"
 Environment="HERMES_GATEWAY_KEY=your-gateway-key"
 Environment="DAEMON_INGEST_URL=http://<CONTROL_PLANE_IP>:9000"
 Environment="BMAS_NODE_KEY=your-node-auth-token"
+Environment="BMAS_EXECUTE_KEY=your-execute-auth-token"
+Environment="TRACE_SPOOL_DIR=/var/lib/bmas-agent/traces"
+Environment="ACTIVATION_CACHE_DIR=/var/lib/bmas-agent/activations"
 ExecStart=/opt/hermes-agent/.venv/bin/uvicorn api_server:app \
   --host 0.0.0.0 --port 8000
 Restart=on-failure
@@ -205,9 +209,15 @@ systemctl enable --now hermes-agent
 | `HERMES_GATEWAY_KEY` | ❌ | API key for the Hermes Gateway |
 | `DAEMON_INGEST_URL` | ❌ | Daemon URL for trace/log ingest (e.g., `http://192.168.1.100:9000`) |
 | `BMAS_NODE_KEY` | ❌ | Bearer token for authenticating ingest requests (must match `.env` on control plane) |
+| `BMAS_EXECUTE_KEY` | ❌ | Bearer token for daemon execution requests (must match `.env` on the control plane) |
+| `TRACE_SPOOL_DIR` | ✅ | Persistent trace queue directory. Use `/var/lib/bmas-agent/traces`. |
+| `ACTIVATION_CACHE_DIR` | ✅ | Persistent activation state directory. Use `/var/lib/bmas-agent/activations`. |
 | `SSE_READ_TIMEOUT` | ❌ | SSE stream read timeout in seconds (default: `600`) |
 
-> **Note:** Set `NODE_ID` to a unique value per node (e.g., `agent-node1`, `agent-node2`, `agent-node3`). Set `BMAS_NODE_KEY` to the same value as in your control plane `.env` to enable trace/log shipping.
+> **Note:** Set `NODE_ID` to a unique value per node. Set both shared keys to their matching control-plane values.
+
+`StateDirectory=bmas-agent` creates `/var/lib/bmas-agent` for persistent agent state.
+Do not use `/tmp` for production state. A reboot can erase `/tmp` and remove retry records.
 
 ### Verify
 

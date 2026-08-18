@@ -5,7 +5,30 @@ Consolidates bearer-token auth logic used by both files.py and
 artifacts.py to avoid code duplication.
 """
 
+import hmac
+
 from fastapi import HTTPException, Request
+
+
+def require_api_key(request: Request, api_key: str) -> None:
+    """Require the operator API key when a deployment configures one."""
+    if not api_key:
+        return
+    authorization = request.headers.get("Authorization", "")
+    bearer = ""
+    if authorization.lower().startswith("bearer "):
+        bearer = authorization[7:].strip()
+    header_key = request.headers.get("X-BMAS-API-Key", "")
+    if any(
+        candidate and hmac.compare_digest(candidate, api_key)
+        for candidate in (bearer, header_key)
+    ):
+        return
+    raise HTTPException(
+        status_code=401,
+        detail="Missing or invalid operator API credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def check_bearer_or_pass(request: Request, node_key: str) -> None:
@@ -23,7 +46,7 @@ def check_bearer_or_pass(request: Request, node_key: str) -> None:
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         token = auth[7:].strip()
-        if token == node_key:
+        if hmac.compare_digest(token, node_key):
             return
     # If an Authorization header is present but wrong, reject
     if auth:
@@ -47,5 +70,5 @@ def require_node_key(request: Request, node_key: str) -> None:
     if not auth.startswith("Bearer "):
         raise ValueError("Missing bearer token")
     token = auth[7:].strip()
-    if token != node_key:
+    if not hmac.compare_digest(token, node_key):
         raise ValueError("Invalid bearer token")

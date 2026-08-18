@@ -308,6 +308,13 @@ Secrets are **never** stored in `bmas.yaml`. They go in `.env`:
 | `REDIS_PASSWORD` | ✅ | Redis authentication password. |
 | `LITELLM_MASTER_KEY` | ✅ | LiteLLM proxy authentication key. |
 | `BMAS_NODE_KEY` | ✅ | Bearer token for agent ingest auth (traces + logs). |
+| `BMAS_EXECUTE_KEY` | ❌ | Shared daemon-to-agent execution key. |
+| `BMAS_API_KEY` | ❌ | Operator key for task and settings mutations. |
+| `BMAS_DASHBOARD_KEY` | ❌ | Mission Control access key. |
+| `BMAS_MAX_ACTIVE_TASKS` | ❌ | Global concurrent task limit. The default is `4`. |
+| `BMAS_MAX_QUEUED_TASKS` | ❌ | Global queued task limit. The default is `100`. |
+| `BMAS_SHUTDOWN_GRACE_S` | ❌ | Graceful task drain limit. The default is `30`. |
+| `BMAS_AGENT_TURN_TIMEOUT_S` | ❌ | Per-agent turn limit. The default is `600`. |
 | `GEMINI_API_KEY` | ❌ | Google Gemini API key. |
 | `ANTHROPIC_API_KEY` | ❌ | Anthropic (Claude) API key. |
 | `OPENAI_API_KEY` | ❌ | OpenAI API key. |
@@ -318,6 +325,12 @@ Secrets are **never** stored in `bmas.yaml`. They go in `.env`:
 At least one cloud API key is required unless all routing goes to `local`.
 
 **`BMAS_NODE_KEY`:** This token authenticates agent nodes when they ship traces and logs back to the daemon. Set the same value on the daemon (via `.env`) and on each agent node (in its systemd service Environment).
+
+**`BMAS_EXECUTE_KEY`:** Set the same value on the daemon and each agent node. The agent then rejects unauthenticated execution requests.
+
+**`BMAS_API_KEY`:** Set the same value on the daemon, dashboard, and evaluation runner. The daemon then rejects unauthenticated mutation requests.
+
+**`BMAS_DASHBOARD_KEY`:** Set this value to protect all Mission Control pages and API routes. Enter any username and this value as the browser password. Keep this key separate from `BMAS_API_KEY`. Use HTTPS outside the local host because HTTP Basic sends reusable credentials with each request. Leave the key empty only on a trusted network.
 
 **Beszel credentials:** Required if `monitoring.beszel_hub` is set in `bmas.yaml`. These are the email/password you use to log into the Beszel web UI.
 

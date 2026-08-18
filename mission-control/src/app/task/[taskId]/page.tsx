@@ -1303,11 +1303,11 @@ function HITLControls({ taskId }: { taskId: string }) {
 
   // Check current pause state on mount
   useEffect(() => {
-    fetch("/api/hitl")
+    fetch(`/api/hitl?task_id=${encodeURIComponent(taskId)}`)
       .then((r) => r.json())
       .then((d) => setIsPaused(d.paused ?? false))
       .catch(() => {});
-  }, []);
+  }, [taskId]);
 
   const handlePauseToggle = useCallback(async () => {
     const action = isPaused ? "resume" : "pause";
@@ -1315,11 +1315,11 @@ function HITLControls({ taskId }: { taskId: string }) {
       const res = await fetch("/api/hitl", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, task_id: taskId }),
       });
       if (res.ok) setIsPaused(!isPaused);
     } catch {}
-  }, [isPaused]);
+  }, [isPaused, taskId]);
 
   const handleAbort = useCallback(async () => {
     if (!confirm("Stop this task? Any progress will be lost.")) return;

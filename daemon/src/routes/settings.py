@@ -15,9 +15,11 @@ Endpoints:
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from auth import require_api_key
+from config import BMAS_API_KEY
 from settings_store import get_store
 
 logger = logging.getLogger("bmas.settings")
@@ -78,11 +80,12 @@ async def get_settings():
 
 
 @router.patch("/routing")
-async def patch_routing(body: RoutingPatch):
+async def patch_routing(body: RoutingPatch, request: Request):
     """Override complexity → model routing for this session.
 
     Only provided tiers are changed; omitted tiers keep their current value.
     """
+    require_api_key(request, BMAS_API_KEY)
     overrides = body.to_dict()
     if not overrides:
         raise HTTPException(status_code=400, detail="No routing overrides provided")
@@ -98,11 +101,12 @@ async def patch_routing(body: RoutingPatch):
 
 
 @router.patch("/role_registry")
-async def patch_role_registry(body: RoleRegistryPatch):
+async def patch_role_registry(body: RoleRegistryPatch, request: Request):
     """Override role registry entries for this session.
 
     Only provided fields in each entry are changed.
     """
+    require_api_key(request, BMAS_API_KEY)
     raw_overrides: dict[str, dict] = {
         role: entry.model_dump(exclude_unset=True)
         for role, entry in body.entries.items()
@@ -121,8 +125,9 @@ async def patch_role_registry(body: RoleRegistryPatch):
 
 
 @router.post("/reset")
-async def reset_settings():
+async def reset_settings(request: Request):
     """Reset all runtime overrides back to bmas.yaml defaults."""
+    require_api_key(request, BMAS_API_KEY)
     store = get_store()
     restored = await store.reset_to_defaults()
     logger.info("Settings reset to bmas.yaml defaults via API")

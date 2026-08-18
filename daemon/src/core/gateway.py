@@ -30,6 +30,7 @@ from core.entry import (
     DEFAULT_MAX_TITLE_LEN,
     BoardEntry,
     clamp_confidence,
+    entry_from_dict,
     entry_to_dict,
     role_default_type,
 )
@@ -48,6 +49,7 @@ logger = logging.getLogger("bmas.gateway")
 
 # Type for recompute hooks: async fn(task_id, board_store) -> None
 RecomputeHook = Callable[[str, BoardStore], Awaitable[None]]
+CommitGuard = Callable[[str], Awaitable[bool]]
 
 
 class EntryRejected(Exception):
@@ -57,6 +59,10 @@ class EntryRejected(Exception):
         self.reason = reason
         self.entry = entry or {}
         super().__init__(reason)
+
+
+class LeaseLostError(RuntimeError):
+    """Raised when an expired task owner attempts a board mutation."""
 
 
 class BoardGateway:
@@ -79,12 +85,14 @@ class BoardGateway:
         board_store: BoardStore,
         event_emitter: EventEmitter,
         recompute_hooks: list[RecomputeHook] | None = None,
+        commit_guard: CommitGuard | None = None,
         max_title_len: int = DEFAULT_MAX_TITLE_LEN,
         max_body_len: int = DEFAULT_MAX_BODY_LEN,
     ) -> None:
         self._store = board_store
         self._emitter = event_emitter
         self._recompute_hooks = recompute_hooks or []
+        self._commit_guard = commit_guard
         self._max_title_len = max_title_len
         self._max_body_len = max_body_len
         # Per-task locks (doc 04 §6): one writer per task.
@@ -94,18 +102,30 @@ class BoardGateway:
         self._locks: dict[str, asyncio.Lock] = {}
         self._lock_capacity: int = 1024
 
+    @property
+    def store(self) -> BoardStore:
+        """Return the board store for read-only coordination queries."""
+        return self._store
+
     def _task_lock(self, task_id: str) -> asyncio.Lock:
         """Get or create the per-task asyncio.Lock.
 
-        Evicts the least-recently-added lock when the capacity limit is
-        reached. Eviction is safe: completed tasks no longer hold their lock.
+        Evicts the oldest unlocked lock when the capacity limit is reached.
+        A busy lock stays registered until its writers finish.
         """
         if task_id not in self._locks:
             if len(self._locks) >= self._lock_capacity:
-                # Evict the oldest entry (first key in insertion order)
-                oldest = next(iter(self._locks))
-                del self._locks[oldest]
-                logger.debug("Evicted lock for completed task %s", oldest)
+                oldest = next(
+                    (
+                        known_task
+                        for known_task, lock in self._locks.items()
+                        if not lock.locked()
+                    ),
+                    None,
+                )
+                if oldest is not None:
+                    del self._locks[oldest]
+                    logger.debug("Evicted lock for completed task %s", oldest)
             self._locks[task_id] = asyncio.Lock()
         return self._locks[task_id]
 
@@ -130,6 +150,21 @@ class BoardGateway:
 
         async with self._task_lock(task_id):
             for raw in proposed:
+                await self._assert_commit_allowed(task_id)
+                mutation_id = str(raw.get("_mutation_id", "")) or None
+                if mutation_id:
+                    previous = await self._find_mutation(task_id, mutation_id)
+                    if previous is not None:
+                        entry_id = previous.get("entry_id")
+                        if previous.get("event_type") == "entry_added" and entry_id:
+                            entry = await self._store.get_entry(task_id, entry_id)
+                            if entry is None:
+                                payload = previous.get("payload", {})
+                                if isinstance(payload, dict):
+                                    entry = entry_from_dict(payload)
+                            if entry is not None:
+                                committed.append(entry)
+                        continue
                 try:
                     entry = await self._normalize(
                         raw, task_id, actor, turn_id, round_no, space,
@@ -137,14 +172,27 @@ class BoardGateway:
                     self._validate_envelope(entry)
                     await self._validate_refs(task_id, entry)
                     self._authorize_post(capabilities, entry)
-                    await self._commit(task_id, entry, actor, turn_id, round_no)
+                    await self._commit(
+                        task_id,
+                        entry,
+                        actor,
+                        turn_id,
+                        round_no,
+                        mutation_id=mutation_id,
+                    )
                     committed.append(entry)
                     await self._emit(
                         task_id, EVENT_BOARD_ENTRY, entry_to_dict(entry)
                     )
                 except EntryRejected as e:
                     await self._log_rejection(
-                        task_id, raw, actor, e.reason, turn_id, round_no
+                        task_id,
+                        raw,
+                        actor,
+                        e.reason,
+                        turn_id,
+                        round_no,
+                        mutation_id=mutation_id,
                     )
 
             # Recompute derived fields after all entries in this batch
@@ -160,6 +208,9 @@ class BoardGateway:
         capabilities: list[str],
         entry_ids: list[str],
         reason: str,
+        turn_id: str | None = None,
+        round_no: int = 0,
+        mutation_id: str | None = None,
     ) -> list[str]:
         """Remove entries (Cleaner path, doc 04 §3).
 
@@ -170,6 +221,15 @@ class BoardGateway:
 
         async with self._task_lock(task_id):
             for entry_id in entry_ids:
+                await self._assert_commit_allowed(task_id)
+                entry_mutation_id = (
+                    f"{mutation_id}:{entry_id}" if mutation_id else None
+                )
+                if entry_mutation_id and await self._find_mutation(
+                    task_id, entry_mutation_id,
+                ) is not None:
+                    removed.append(entry_id)
+                    continue
                 entry = await self._store.get_entry(task_id, entry_id)
                 if entry is None:
                     logger.warning(
@@ -198,7 +258,13 @@ class BoardGateway:
                     actor=actor,
                     event_type="entry_removed",
                     entry_id=entry_id,
-                    payload={"entry_id": entry_id, "reason": reason},
+                    payload={
+                        "entry_id": entry_id,
+                        "reason": reason,
+                        "_mutation_id": entry_mutation_id,
+                    },
+                    round_no=round_no,
+                    turn_id=turn_id,
                 )
                 await self._store.append_event(task_id, event)
                 await self._store.remove_entry(task_id, entry_id)
@@ -224,6 +290,7 @@ class BoardGateway:
     ) -> None:
         """Change an entry's status (supersede, etc.)."""
         async with self._task_lock(task_id):
+            await self._assert_commit_allowed(task_id)
             entry = await self._store.get_entry(task_id, entry_id)
             if entry is None:
                 logger.warning(
@@ -234,10 +301,6 @@ class BoardGateway:
                 return
 
             old_status = entry.status
-            entry.status = status
-            entry.updated_at = datetime.now(UTC).isoformat()
-            await self._store.upsert_entry(task_id, entry)
-
             seq = await self._store.get_next_seq(task_id)
             event = make_event(
                 task_id=task_id,
@@ -252,6 +315,9 @@ class BoardGateway:
                 },
             )
             await self._store.append_event(task_id, event)
+            entry.status = status
+            entry.updated_at = datetime.now(UTC).isoformat()
+            await self._store.upsert_entry(task_id, entry)
 
             await self._emit(task_id, EVENT_ENTRY_STATUS_CHANGED, {
                 "entry_id": entry_id,
@@ -264,11 +330,93 @@ class BoardGateway:
             # durable snapshot so status flips survive a refetch/reload.
             await self._recompute_derived(task_id)
 
+    async def set_salience(
+        self,
+        task_id: str,
+        entry_id: str,
+        salience: float,
+        actor: str,
+    ) -> float:
+        """Set an entry salience value through the durable commit path."""
+        async with self._task_lock(task_id):
+            await self._assert_commit_allowed(task_id)
+            entry = await self._store.get_entry(task_id, entry_id)
+            if entry is None:
+                raise KeyError(entry_id)
+            old_salience = float(entry.salience)
+            new_salience = max(0.0, min(1.0, float(salience)))
+            seq = await self._store.get_next_seq(task_id)
+            event = make_event(
+                task_id=task_id,
+                seq=seq,
+                actor=actor,
+                event_type="entry_salience_changed",
+                entry_id=entry_id,
+                payload={
+                    "entry_id": entry_id,
+                    "old_salience": old_salience,
+                    "salience": new_salience,
+                },
+            )
+            await self._store.append_event(task_id, event)
+            await self._store.set_salience(task_id, entry_id, new_salience)
+            await self._emit(task_id, EVENT_ENTRY_STATUS_CHANGED, {
+                "entry_id": entry_id,
+                "by": actor,
+                "old_salience": old_salience,
+                "salience": new_salience,
+                "action": "boost",
+            })
+            return new_salience
+
     async def set_meta(self, task_id: str, **fields: Any) -> None:
         """Update board metadata (phase, round, budget_spent, etc.)."""
-        await self._store.set_meta(task_id, **fields)
+        async with self._task_lock(task_id):
+            await self._assert_commit_allowed(task_id)
+            await self._store.set_meta(task_id, **fields)
+
+    async def refresh(self, task_id: str) -> None:
+        """Recompute derived state after a store-level maintenance operation."""
+        async with self._task_lock(task_id):
+            await self._assert_commit_allowed(task_id)
+            await self._recompute_derived(task_id)
+
+    async def archive_space(
+        self,
+        task_id: str,
+        space: str,
+        mutation_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Archive a private space through the guarded write path."""
+        async with self._task_lock(task_id):
+            await self._assert_commit_allowed(task_id)
+            if mutation_id and await self._find_mutation(
+                task_id, mutation_id,
+            ) is not None:
+                return []
+            archived = await self._store.archive_space(
+                task_id, space, mutation_id=mutation_id,
+            )
+            await self._recompute_derived(task_id)
+            return archived
+
+    async def unload_task(self, task_id: str) -> None:
+        """Release a terminal task's hot board state under its writer lock."""
+        async with self._task_lock(task_id):
+            unload = getattr(self._store, "unload_task", None)
+            if unload is not None:
+                await unload(task_id)
+        self._locks.pop(task_id, None)
 
     # ── Internal Methods ─────────────────────────────────────────────
+
+    async def _assert_commit_allowed(self, task_id: str) -> None:
+        if self._commit_guard is None:
+            return
+        if not await self._commit_guard(task_id):
+            raise LeaseLostError(
+                f"Task lease expired before board commit: {task_id}"
+            )
 
     async def _normalize(
         self,
@@ -407,6 +555,7 @@ class BoardGateway:
         actor: str,
         turn_id: str,
         round_no: int,
+        mutation_id: str | None = None,
     ) -> None:
         """Commit an entry: append event to log + update snapshot.
 
@@ -415,13 +564,16 @@ class BoardGateway:
         """
         seq: int = getattr(entry, "_gateway_seq", 0)
 
+        payload = entry_to_dict(entry)
+        if mutation_id:
+            payload["_mutation_id"] = mutation_id
         event = make_event(
             task_id=task_id,
             seq=seq,
             actor=actor,
             event_type="entry_added",
             entry_id=entry.id,
-            payload=entry_to_dict(entry),
+            payload=payload,
             round_no=round_no,
             turn_id=turn_id,
         )
@@ -436,6 +588,7 @@ class BoardGateway:
         reason: str,
         turn_id: str | None = None,
         round_no: int = 0,
+        mutation_id: str | None = None,
     ) -> None:
         """Log a rejected entry event."""
         seq = await self._store.get_next_seq(task_id)
@@ -444,7 +597,12 @@ class BoardGateway:
             seq=seq,
             actor=actor,
             event_type="entry_rejected",
-            payload={"entry": raw, "actor": actor, "reason": reason},
+            payload={
+                "entry": raw,
+                "actor": actor,
+                "reason": reason,
+                "_mutation_id": mutation_id,
+            },
             round_no=round_no,
             turn_id=turn_id,
         )
@@ -455,6 +613,19 @@ class BoardGateway:
             "actor": actor,
             "reason": reason,
         })
+
+    async def _find_mutation(
+        self, task_id: str, mutation_id: str,
+    ) -> dict[str, Any] | None:
+        """Return the event for a stable mutation identifier."""
+        indexed_lookup = getattr(self._store, "get_event_by_mutation_id", None)
+        if indexed_lookup is not None:
+            return await indexed_lookup(task_id, mutation_id)
+        for event in await self._store.get_events(task_id):
+            payload = event.get("payload", {})
+            if isinstance(payload, dict) and payload.get("_mutation_id") == mutation_id:
+                return event
+        return None
 
     async def _emit(
         self, task_id: str, event_type: str, data: dict[str, Any]

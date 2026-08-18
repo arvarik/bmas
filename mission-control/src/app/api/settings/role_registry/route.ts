@@ -10,7 +10,12 @@ export async function PATCH(request: Request): Promise<NextResponse> {
     const body = await request.json();
     const res = await fetch(`${DAEMON_BASE_URL}/settings/role_registry`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(process.env.BMAS_API_KEY
+          ? { Authorization: `Bearer ${process.env.BMAS_API_KEY}` }
+          : {}),
+      },
       body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));

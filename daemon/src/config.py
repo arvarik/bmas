@@ -142,6 +142,11 @@ BMAS_NODE_KEY = _require_env(
 )
 _ok("BMAS_NODE_KEY is set")
 
+# Optional credential for daemon-to-agent execution requests. An empty value
+# keeps existing trusted-network deployments compatible.
+BMAS_EXECUTE_KEY = os.getenv("BMAS_EXECUTE_KEY", "")
+BMAS_API_KEY = os.getenv("BMAS_API_KEY", "")
+
 # ── Derived URLs ─────────────────────────────────────────────────────
 
 REDIS_URL = f"redis://:{REDIS_PASSWORD}@{CP_HOST}:{CP_PORTS['redis']}/0"
@@ -438,6 +443,7 @@ TRADITIONAL_CONFIG: dict[str, object] = {
         "salience": 2.0, "confidence": 1.0, "recency": 0.1, "size_penalty": 0.01
     }),
     "stall_rounds": _trad_int("stall_rounds", 2),
+    "max_replans": _trad_int("max_replans", 2, min_val=0),
     "cu_mode": _trad_cu_mode,
     "coordinator_narration": bool(_trad.get("coordinator_narration", False)),
     "sole_similarity": _trad_sole_sim,
@@ -581,6 +587,15 @@ BESZEL_HUB_URL: str | None = _monitoring.get("beszel_hub")
 
 LOCK_TTL_MS = int(os.getenv("LOCK_TTL_MS", "300000"))
 LOCK_RETRY_DELAY_MS = int(os.getenv("LOCK_RETRY_DELAY_MS", "200"))
+
+# Global task admission limits. These limits protect SQLite, Redis, agent
+# nodes, and model providers from an unbounded submission burst.
+MAX_ACTIVE_TASKS = max(1, int(os.getenv("BMAS_MAX_ACTIVE_TASKS", "4")))
+MAX_QUEUED_TASKS = max(1, int(os.getenv("BMAS_MAX_QUEUED_TASKS", "100")))
+SHUTDOWN_GRACE_S = max(1, int(os.getenv("BMAS_SHUTDOWN_GRACE_S", "30")))
+AGENT_TURN_TIMEOUT_S = max(
+    10, min(3600, int(os.getenv("BMAS_AGENT_TURN_TIMEOUT_S", "600")))
+)
 
 # ── Full Config (for entrypoint scripts that need the raw dict) ──────
 

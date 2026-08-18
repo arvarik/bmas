@@ -29,6 +29,9 @@ class ScoredResult:
     tokens: int | None = None
     model_used: str | None = None
     terminated_by: str | None = None
+    status: str | None = None
+    error_message: str | None = None
+    rounds: int | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)

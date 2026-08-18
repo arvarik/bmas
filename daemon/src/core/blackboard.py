@@ -54,6 +54,28 @@ class Blackboard:
         result = await self.redis.eval(lua, 1, key, lock_id)  # type: ignore[misc]
         return bool(result)
 
+    async def renew_lock(
+        self, resource: str, lock_id: str, ttl_ms: int = LOCK_TTL_MS,
+    ) -> bool:
+        """Extend a lock only while this caller still owns it."""
+        key = f"bmas:locks:{resource}"
+        lua = """
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("pexpire", KEYS[1], ARGV[2])
+        else
+            return 0
+        end
+        """
+        result = await self.redis.eval(  # type: ignore[misc]
+            lua, 1, key, lock_id, ttl_ms,
+        )
+        return bool(result)
+
+    async def owns_lock(self, resource: str, lock_id: str) -> bool:
+        """Return true only while the supplied owner holds the lock."""
+        key = f"bmas:locks:{resource}"
+        return await self.redis.get(key) == lock_id
+
     # ── Public Namespace ─────────────────────────────────────
     async def publish_task(self, task_id: str, task_data: dict):
         """Write a task to the public task queue."""

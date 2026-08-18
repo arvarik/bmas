@@ -27,8 +27,6 @@ import {
   Radio,
 } from "lucide-react";
 
-const DAEMON_URL = process.env.NEXT_PUBLIC_DAEMON_URL ?? "http://192.168.4.240:9000";
-
 export default function MissionPage() {
   const {
     taskMeta,
@@ -81,8 +79,10 @@ export default function MissionPage() {
   const handleTogglePause = useCallback(async () => {
     const endpoint = isPaused ? "resume" : "pause";
     try {
-      await fetch(`${DAEMON_URL}/api/tasks/${taskId}/${endpoint}`, {
+      await fetch("/api/hitl", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: endpoint, task_id: taskId }),
       });
     } catch (e) {
       console.error("Pause/resume failed:", e);
@@ -94,10 +94,14 @@ export default function MissionPage() {
     const trimmed = directiveText.trim();
     if (!trimmed) return;
     try {
-      await fetch(`${DAEMON_URL}/api/tasks/${taskId}/directive`, {
+      await fetch("/api/hitl", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: trimmed }),
+        body: JSON.stringify({
+          action: "inject-hint",
+          task_id: taskId,
+          hint_text: trimmed,
+        }),
       });
       setDirectiveText("");
       setShowDirectiveInput(false);

@@ -1,4 +1,4 @@
-"""Tests for the SQLite v2 migration (doc 07).
+"""Tests for the SQLite durability migrations (doc 07).
 
 Verifies that the migration creates all 6 new tables, adds all new
 columns to tasks and cost_entries, and that the schema is idempotent.
@@ -18,7 +18,10 @@ from database import (
     SCHEMA_VERSION,
     _migrate,
     _migrate_to_v2,
+    _migrate_to_v3,
+    create_task,
     init_db,
+    insert_cost_entry_v2,
 )
 
 # ── Fixtures ─────────────────────────────────────────────────────────
@@ -96,8 +99,8 @@ async def _get_schema_version(db_path: str) -> int:
 
 class TestSchemaVersion:
 
-    def test_schema_version_is_2(self):
-        assert SCHEMA_VERSION == 2
+    def test_schema_version_is_5(self):
+        assert SCHEMA_VERSION == 5
 
     @pytest.mark.asyncio
     async def test_fresh_db_is_v1(self, fresh_db):
@@ -315,32 +318,185 @@ class TestInitDb:
 
     @pytest.mark.asyncio
     async def test_init_db_fresh(self, tmp_path, monkeypatch):
-        """init_db on a fresh directory creates v2 schema."""
+        """init_db on a fresh directory creates the current schema."""
         db_path = str(tmp_path / "fresh.db")
         monkeypatch.setattr("database.DB_PATH", db_path)
         await init_db()
 
         v = await _get_schema_version(db_path)
-        assert v == 2
+        assert v == 5
         tables = await _get_tables(db_path)
         assert "board_entries" in tables
 
     @pytest.mark.asyncio
     async def test_init_db_upgrade_v1_to_v2(self, fresh_db, monkeypatch):
-        """init_db upgrades a v1 database to v2."""
+        """init_db upgrades a v1 database to the current schema."""
         monkeypatch.setattr("database.DB_PATH", fresh_db)
         await init_db()
 
         v = await _get_schema_version(fresh_db)
-        assert v == 2
+        assert v == 5
         tables = await _get_tables(fresh_db)
         assert "board_entries" in tables
 
     @pytest.mark.asyncio
     async def test_init_db_idempotent(self, v2_db, monkeypatch):
-        """init_db on an already-v2 database is a no-op."""
+        """init_db upgrades an existing v2 database once."""
         monkeypatch.setattr("database.DB_PATH", v2_db)
         await init_db()
 
         v = await _get_schema_version(v2_db)
-        assert v == 2
+        assert v == 5
+
+
+class TestV3Durability:
+
+    @pytest.mark.asyncio
+    async def test_entry_ids_are_scoped_to_each_task(self, v2_db):
+        async with aiosqlite.connect(v2_db) as db:
+            await db.execute("PRAGMA foreign_keys=ON")
+            db.row_factory = aiosqlite.Row
+            await _migrate_to_v3(db)
+            for task_id in ("task-a", "task-b"):
+                await db.execute(
+                    "INSERT INTO tasks (id, label, full_input) VALUES (?, 't', 'i')",
+                    (task_id,),
+                )
+                await db.execute(
+                    "INSERT INTO board_entries "
+                    "(id, task_id, type, author, status, created_at, updated_at) "
+                    "VALUES ('e-1', ?, 'finding', 'expert.x', 'open', '', '')",
+                    (task_id,),
+                )
+            await db.commit()
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM board_entries WHERE id = 'e-1'"
+            )
+            assert (await cursor.fetchone())[0] == 2
+
+    @pytest.mark.asyncio
+    async def test_startup_does_not_mutate_an_active_owner(self, tmp_path, monkeypatch):
+        import database as database_module
+
+        db_path = str(tmp_path / "resume.db")
+        monkeypatch.setattr("database.DB_PATH", db_path)
+        await init_db()
+        await create_task("resume-me", "t", "i")
+        assert await database_module.claim_task_lease(
+            "resume-me", "live-owner",
+        )
+        assert await database_module.update_task_status(
+            "resume-me", status="running", lease_token="live-owner",
+        )
+
+        await init_db()
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute(
+                "SELECT status, run_state, resume_count, lease_token FROM tasks "
+                "WHERE id = 'resume-me'"
+            )
+            row = await cursor.fetchone()
+            assert row == ("running", "running", 0, "live-owner")
+
+        assert await database_module.claim_task_lease(
+            "resume-me", "recovery-owner",
+        )
+        recovered = await database_module.get_task("resume-me")
+        assert recovered["resume_count"] == 1
+        assert recovered["lease_token"] == "recovery-owner"
+
+
+class TestV4CostIdempotency:
+
+    @pytest.mark.asyncio
+    async def test_retried_turn_cost_is_recorded_once(self, tmp_path, monkeypatch):
+        db_path = str(tmp_path / "cost.db")
+        monkeypatch.setattr("database.DB_PATH", db_path)
+        await init_db()
+        await create_task("task-cost", "cost", "cost")
+
+        for _ in range(2):
+            await insert_cost_entry_v2(
+                task_id="task-cost",
+                model="test-model",
+                input_tokens=10,
+                output_tokens=5,
+                cost_usd=0.01,
+                phase="trace",
+                turn_id="turn-stable",
+            )
+
+        async with aiosqlite.connect(db_path) as conn:
+            cursor = await conn.execute(
+                "SELECT COUNT(*) FROM cost_entries WHERE task_id='task-cost'"
+            )
+            assert (await cursor.fetchone())[0] == 1
+
+
+class TestV5LeaseFencing:
+
+    @pytest.mark.asyncio
+    async def test_stale_owner_cannot_write_lifecycle_or_board(
+        self, tmp_path, monkeypatch,
+    ):
+        import database as database_module
+
+        db_path = str(tmp_path / "lease.db")
+        monkeypatch.setattr("database.DB_PATH", db_path)
+        await init_db()
+        await create_task("task-lease", "lease", "lease")
+        assert await database_module.claim_task_lease("task-lease", "owner-a")
+        await database_module.insert_board_event(
+            "task-lease", 1, 1, "turn-1", "expert.x",
+            "entry_rejected", None, {"reason": "first"},
+            lease_token="owner-a",
+        )
+        entry = {
+            "id": "e-1",
+            "task_id": "task-lease",
+            "type": "finding",
+            "author": "expert.x",
+            "body": "current",
+            "space": "private:test",
+        }
+        await database_module.upsert_board_entry(
+            entry, lease_token="owner-a",
+        )
+        assert await database_module.claim_task_lease("task-lease", "owner-b")
+
+        assert not await database_module.complete_task(
+            "task-lease", "stale", "{}", lease_token="owner-a",
+        )
+        with pytest.raises(database_module.LeaseFenceError):
+            await database_module.insert_board_event(
+                "task-lease", 2, 1, "turn-2", "expert.x",
+                "entry_rejected", None, {"reason": "stale"},
+                lease_token="owner-a",
+            )
+        with pytest.raises(database_module.LeaseFenceError):
+            await database_module.upsert_board_meta(
+                "task-lease", {"round": 99}, lease_token="owner-a",
+            )
+        with pytest.raises(database_module.LeaseFenceError):
+            await database_module.upsert_board_entry(
+                {**entry, "body": "stale"}, lease_token="owner-a",
+            )
+        with pytest.raises(database_module.LeaseFenceError):
+            await database_module.update_board_entry_status(
+                "task-lease", "e-1", "removed", lease_token="owner-a",
+            )
+        with pytest.raises(database_module.LeaseFenceError):
+            await database_module.update_board_entry_salience(
+                "task-lease", "e-1", 1.0, lease_token="owner-a",
+            )
+        with pytest.raises(database_module.LeaseFenceError):
+            await database_module.delete_board_entries_in_space(
+                "task-lease", "private:test", lease_token="owner-a",
+            )
+
+        assert await database_module.complete_task(
+            "task-lease", "current", "{}", lease_token="owner-b",
+        )
+        row = await database_module.get_task("task-lease")
+        assert row["status"] == "completed"
+        assert row["result_summary"] == "current"

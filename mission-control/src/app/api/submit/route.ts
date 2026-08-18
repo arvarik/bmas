@@ -38,7 +38,12 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const upstream = await fetch(DAEMON_SUBMIT_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(process.env.BMAS_API_KEY
+          ? { Authorization: `Bearer ${process.env.BMAS_API_KEY}` }
+          : {}),
+      },
       body: JSON.stringify({
         task: body.task.trim(),
         ...(body.variant ? { variant: body.variant } : {}),
