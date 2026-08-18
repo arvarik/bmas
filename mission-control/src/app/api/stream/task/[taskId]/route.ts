@@ -9,6 +9,12 @@ export async function GET(
   { params }: { params: Promise<{ taskId: string }> },
 ) {
   const { taskId } = await params;
+  if (!taskId || !/^[a-zA-Z0-9_-]{1,64}$/.test(taskId)) {
+    return new Response(JSON.stringify({ error: "Invalid task ID" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   // Mirror the client's disconnect signal to the upstream fetch.
   // When the browser tab closes, req.signal fires 'abort', which propagates
@@ -17,10 +23,20 @@ export async function GET(
   req.signal.addEventListener("abort", () => abortController.abort());
 
   try {
-    const upstream = await fetch(`${DAEMON_BASE_URL}/events/${taskId}`, {
-      signal: abortController.signal,
-      cache: "no-store",
-    });
+    const lastEventId = req.headers.get("last-event-id");
+    const upstreamUrl = `${DAEMON_BASE_URL}/events/${encodeURIComponent(taskId)}`;
+    const fetchUpstream = (cursor: string | null) => fetch(upstreamUrl, {
+        signal: abortController.signal,
+        cache: "no-store",
+        headers: cursor ? { "Last-Event-ID": cursor } : undefined,
+      });
+    let upstream = await fetchUpstream(lastEventId);
+    if (lastEventId && upstream.status === 409) {
+      const conflict = await upstream.clone().json().catch(() => null) as { error?: unknown } | null;
+      if (conflict?.error === "event_cursor_gap") {
+        upstream = await fetchUpstream(null);
+      }
+    }
 
     if (!upstream.ok || !upstream.body) {
       return new Response(

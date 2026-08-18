@@ -71,6 +71,7 @@ _fake_config.TRADITIONAL_CONFIG = {  # type: ignore
     "coordinator_narration": False,
     "sole_similarity": "auto",
 }
+_fake_config.CLASSIC_CONFIG = _fake_config.TRADITIONAL_CONFIG  # type: ignore
 _fake_config.ROLE_REGISTRY = {}  # type: ignore
 _fake_config.MODEL_ROUTING = {"simple": "local", "light": "test-light", "medium": "test-medium", "complex": "test-pro"}  # type: ignore
 _fake_config.MODEL_POOLS = {}  # type: ignore
@@ -78,8 +79,11 @@ _fake_config.ROUND_EXECUTION = "concurrent"  # type: ignore
 _fake_config.VIEW_BUDGET_TOKENS = 12000  # type: ignore
 _fake_config.MAX_ACTIVE_TASKS = 2  # type: ignore
 _fake_config.MAX_QUEUED_TASKS = 10  # type: ignore
+_fake_config.MAX_TASK_CHARS = 200000  # type: ignore
 _fake_config.SHUTDOWN_GRACE_S = 1  # type: ignore
 _fake_config.AGENT_TURN_TIMEOUT_S = 600  # type: ignore
+_fake_config.AGENT_ENDPOINT_MAX_CONCURRENCY = 4  # type: ignore
+_fake_config.AGENT_ENDPOINT_WAIT_TIMEOUT_S = 30.0  # type: ignore
 _fake_config.CIRCUIT_BREAKER_FAILURE_THRESHOLD = 3  # type: ignore
 _fake_config.CIRCUIT_BREAKER_RECOVERY_S = 30.0  # type: ignore
 _fake_config.AGENT_ENDPOINTS = {}  # type: ignore

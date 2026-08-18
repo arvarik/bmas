@@ -1,16 +1,15 @@
 # /opt/bmas/daemon/src/core/orchestrator.py
-"""
-bMAS Orchestrator: decomposes tasks, dispatches to agents, manages debate cycles.
+"""Run shared task lifecycle services and registered coordination runtimes.
 
-Dual-write pattern: Every lifecycle event writes to both Redis (real-time
-blackboard for live UI) and SQLite (permanent task history). SQLite writes
-are best-effort — they log warnings on failure but never interrupt a running task.
+SQLite stores authoritative task state and durable events. Redis provides
+leases, live projections, and low-latency event notifications.
 """
 
 import asyncio
 import contextlib
 import json
 import logging
+import math
 import random
 import uuid
 from datetime import UTC, datetime
@@ -20,34 +19,43 @@ import httpx
 
 import database as db
 from config import (
+    AGENT_ENDPOINT_MAX_CONCURRENCY,
+    AGENT_ENDPOINT_WAIT_TIMEOUT_S,
     AGENT_ENDPOINTS,
     AGENT_TURN_TIMEOUT_S,
     BMAS_EXECUTE_KEY,
     CIRCUIT_BREAKER_FAILURE_THRESHOLD,
     CIRCUIT_BREAKER_RECOVERY_S,
     COORDINATION_VARIANT,
-    EDGE_NODE_MODELS,
     LITELLM_KEY,
     LITELLM_URL,
     LOCK_TTL_MS,
-    MODEL_POOLS,
     MODEL_PRICING,
     ROLE_REGISTRY,
-    ROUND_EXECUTION,
-    TRADITIONAL_CONFIG,
     TRIAGE_URL,
-    VIEW_BUDGET_TOKENS,
 )
 from core.blackboard import Blackboard, normalize_level
 from core.circuit_breaker import EndpointCircuitBreaker
+from core.event_delivery import ensure_system_terminal_event, ensure_terminal_event
 from core.gateway import LeaseLostError
 from core.triage import MODEL_ROUTING, Complexity, TriageResult, TriageRouter
+from core.variants import (
+    VariantConfigurationError,
+    VariantExecutionRequest,
+    VariantOutcome,
+    canonical_variant_id,
+    require_variant_class,
+)
 
 logger = logging.getLogger("bmas.orchestrator")
 
 
 class LeaseBusyError(RuntimeError):
     """Another daemon currently owns the task execution lease."""
+
+
+class EndpointOverloadedError(RuntimeError):
+    """An agent endpoint did not provide a request slot in time."""
 
 
 def _infer_level(message: str) -> str:
@@ -86,6 +94,9 @@ class Orchestrator:
             failure_threshold=CIRCUIT_BREAKER_FAILURE_THRESHOLD,
             recovery_timeout_s=CIRCUIT_BREAKER_RECOVERY_S,
         )
+        self._endpoint_slots: dict[str, asyncio.BoundedSemaphore] = {}
+        self._endpoint_active: dict[str, int] = {}
+        self._endpoint_waiting: dict[str, int] = {}
 
     def _circuits(self) -> EndpointCircuitBreaker:
         """Return the endpoint circuit registry.
@@ -101,6 +112,94 @@ class Orchestrator:
             )
             self._agent_circuits = circuits
         return circuits
+
+    def _endpoint_semaphore(self, endpoint: str) -> asyncio.BoundedSemaphore:
+        """Return the bounded request semaphore for one endpoint."""
+        slots = getattr(self, "_endpoint_slots", None)
+        if slots is None:
+            slots = {}
+            self._endpoint_slots = slots
+        semaphore = slots.get(endpoint)
+        if semaphore is None:
+            semaphore = asyncio.BoundedSemaphore(
+                AGENT_ENDPOINT_MAX_CONCURRENCY
+            )
+            slots[endpoint] = semaphore
+        return semaphore
+
+    def runtime_snapshot(self) -> dict[str, Any]:
+        """Return current task, endpoint, and circuit load."""
+        active = getattr(self, "_endpoint_active", {})
+        waiting = getattr(self, "_endpoint_waiting", {})
+        circuits = self._circuits()
+        endpoints = sorted(
+            set(active) | set(waiting) | set(getattr(self, "_endpoint_slots", {}))
+        )
+        return {
+            "active_tasks": len(getattr(self, "_task_lock_ids", {})),
+            "endpoint_requests": {
+                endpoint: {
+                    "active": active.get(endpoint, 0),
+                    "waiting": waiting.get(endpoint, 0),
+                    "limit": AGENT_ENDPOINT_MAX_CONCURRENCY,
+                    "circuit": circuits.status(endpoint),
+                    "consecutive_failures": circuits.failures(endpoint),
+                }
+                for endpoint in endpoints
+            },
+        }
+
+    async def _acquire_endpoint_slot(
+        self, endpoint: str,
+    ) -> asyncio.BoundedSemaphore:
+        """Acquire one endpoint slot within the configured wait limit."""
+        semaphore = self._endpoint_semaphore(endpoint)
+        active = getattr(self, "_endpoint_active", None)
+        if active is None:
+            active = {}
+            self._endpoint_active = active
+        waiting = getattr(self, "_endpoint_waiting", None)
+        if waiting is None:
+            waiting = {}
+            self._endpoint_waiting = waiting
+        waiting[endpoint] = waiting.get(endpoint, 0) + 1
+        try:
+            if AGENT_ENDPOINT_WAIT_TIMEOUT_S == 0:
+                if semaphore.locked():
+                    raise EndpointOverloadedError(
+                        f"Agent endpoint is at capacity: {endpoint}"
+                    )
+                await semaphore.acquire()
+            else:
+                try:
+                    await asyncio.wait_for(
+                        semaphore.acquire(),
+                        timeout=AGENT_ENDPOINT_WAIT_TIMEOUT_S,
+                    )
+                except TimeoutError as exc:
+                    raise EndpointOverloadedError(
+                        "Agent endpoint capacity wait expired: "
+                        f"{endpoint}"
+                    ) from exc
+        finally:
+            waiting[endpoint] = max(0, waiting.get(endpoint, 1) - 1)
+            if waiting[endpoint] == 0:
+                waiting.pop(endpoint, None)
+        active[endpoint] = active.get(endpoint, 0) + 1
+        return semaphore
+
+    def _release_endpoint_slot(
+        self, endpoint: str, semaphore: asyncio.BoundedSemaphore,
+    ) -> None:
+        """Release one endpoint slot and update its request count."""
+        active = getattr(self, "_endpoint_active", {})
+        active[endpoint] = max(0, active.get(endpoint, 1) - 1)
+        semaphore.release()
+        if active[endpoint] == 0:
+            active.pop(endpoint, None)
+        waiting = getattr(self, "_endpoint_waiting", {})
+        if not active.get(endpoint) and not waiting.get(endpoint):
+            getattr(self, "_endpoint_slots", {}).pop(endpoint, None)
 
     async def _renew_task_lease(self, task_id: str, lock_id: str) -> None:
         """Renew one task lease until cancellation or ownership loss."""
@@ -185,6 +284,14 @@ class Orchestrator:
 
     async def _set_phase(self, phase: str, iteration: int = 0, task_id: str | None = None):
         """Update the orchestrator phase in Redis and publish Pub/Sub event."""
+        if task_id and phase != "idle":
+            phase_saved = await db.update_task_phase(
+                task_id,
+                phase,
+                lease_token=self._task_lock_ids.get(task_id),
+            )
+            if not phase_saved:
+                raise LeaseLostError(f"Task lease expired: {task_id}")
         with contextlib.suppress(Exception):
             phases_key = "bmas:public:task_phases"
             if task_id:
@@ -217,6 +324,81 @@ class Orchestrator:
                 await self.bb.publish_event(task_id, "phase", {
                     "phase": phase, "iteration": iteration
                 })
+
+    async def publish_phase(
+        self, phase: str, iteration: int, task_id: str,
+    ) -> None:
+        """Publish and persist one phase through the shared lifecycle."""
+        await self._set_phase(phase, iteration, task_id)
+
+    async def check_abort(self, task_id: str) -> None:
+        """Stop execution when the task lost its lease or was cancelled."""
+        await self._check_abort(task_id)
+
+    async def log_event(
+        self,
+        node_id: str,
+        message: str,
+        task_id: str,
+        **kwargs: Any,
+    ) -> None:
+        """Write one structured task log."""
+        await self._safe_log(node_id, message, task_id, **kwargs)
+
+    async def dispatch_agent(
+        self,
+        *,
+        task_id: str,
+        activation_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Dispatch one activation through the fenced idempotent seam."""
+        stable_id = str(activation_id or "").strip()
+        if not stable_id:
+            raise ValueError("An agent dispatch requires an activation_id")
+        requested_turn_id = kwargs.pop("turn_id", None)
+        if requested_turn_id is not None and str(requested_turn_id) != stable_id:
+            raise ValueError(
+                "The turn_id must match the stable activation_id"
+            )
+        kwargs["turn_id"] = stable_id
+        return await self._dispatch_turn(
+            task_id=task_id,
+            activation_id=stable_id,
+            **kwargs,
+        )
+
+    async def _assert_dispatch_lease(self, task_id: str) -> None:
+        """Reject one external dispatch unless both task leases remain valid."""
+        lock_id = self._task_lock_ids.get(task_id)
+        lease_event = self._lease_lost.get(task_id)
+        if not lock_id or lease_event is None or lease_event.is_set():
+            raise LeaseLostError(f"Task lease expired: {task_id}")
+        try:
+            redis_owned, sqlite_owned = await asyncio.gather(
+                self.bb.owns_lock(f"orchestrator:{task_id}", lock_id),
+                db.owns_task_lease(task_id, lock_id),
+            )
+        except Exception as exc:
+            lease_event.set()
+            raise LeaseLostError(f"Task lease expired: {task_id}") from exc
+        if not redis_owned or not sqlite_owned:
+            lease_event.set()
+            raise LeaseLostError(f"Task lease expired: {task_id}")
+
+    async def publish_progress(
+        self,
+        task_id: str,
+        label: str,
+        status: str,
+        items: list[dict[str, Any]],
+    ) -> None:
+        """Publish variant-defined progress items."""
+        await self._publish_task_state(task_id, label, status, items)
+
+    def task_lease_token(self, task_id: str) -> str | None:
+        """Return the current fenced lifecycle token for one task."""
+        return self._task_lock_ids.get(task_id)
 
     async def _check_abort(self, task_id: str):
         """Check if the operator requested an abort for this task.
@@ -254,7 +436,7 @@ class Orchestrator:
         }
         await self.bb.publish_task(task_id, task_data)
 
-        # Dual-write: persist sub-task state in SQLite
+        # Save durable subtask state after the live projection update.
         if sub_tasks:
             try:
                 await db.upsert_sub_tasks(task_id, sub_tasks)
@@ -277,9 +459,11 @@ class Orchestrator:
         task_id: str | None = None,
         *,
         overrides: dict | None = None,
+        variant_id: str | None = None,
+        effective_configuration: dict[str, Any] | None = None,
         resume: bool = False,
     ) -> dict:
-        """Main entry point: triage → plan → execute → audit → publish.
+        """Run shared triage and the selected coordination runtime.
 
         Args:
             user_task: The raw user task description.
@@ -293,6 +477,9 @@ class Orchestrator:
             task_id = f"task-{session_id}"
 
         generated_task = task_id == f"task-{session_id}"
+        selected_variant = canonical_variant_id(
+            variant_id or COORDINATION_VARIANT
+        )
 
         # 1. Acquire the Redis lease, then fence SQLite with the same token.
         acquired, lock_id = await self.bb.acquire_lock(f"orchestrator:{task_id}")
@@ -307,11 +494,21 @@ class Orchestrator:
             # Only create if we generated the ID here.
             # If task_id was passed, it was already created by the async submit endpoint.
             if generated_task:
-                await db.create_task(
+                generated_variant_class = require_variant_class(
+                    selected_variant
+                )
+                if effective_configuration is None:
+                    effective_configuration = (
+                        await generated_variant_class.capture_configuration(
+                            overrides
+                        )
+                    )
+                await db.create_task_with_meta(
                     task_id,
                     user_task[:80],
                     user_task,
-                    variant=COORDINATION_VARIANT,
+                    selected_variant,
+                    {"effective_configuration": effective_configuration},
                 )
 
             lease_claimed = await db.claim_task_lease(task_id, lock_id)
@@ -341,10 +538,48 @@ class Orchestrator:
                     task_id=task_id, level="info",
                     fields={"event": "task_overrides", "overrides": overrides})
 
+            row = await db.get_task(task_id)
+            if row is None:
+                raise RuntimeError(f"Cannot execute missing task: {task_id}")
+            stored_variant = canonical_variant_id(
+                str(row.get("variant") or selected_variant)
+            )
+            if stored_variant != selected_variant and variant_id is not None:
+                raise RuntimeError(
+                    "The requested variant does not match the stored task variant"
+                )
+            selected_variant = stored_variant
+            variant_class = require_variant_class(selected_variant)
+
+            persisted_meta = await db.get_board_meta(task_id)
+            stored_configuration = variant_class.configuration_from_metadata(
+                persisted_meta
+            )
+            if stored_configuration is not None:
+                effective_configuration = stored_configuration
+                if not isinstance(
+                    persisted_meta.get("effective_configuration"), dict
+                ):
+                    await db.upsert_board_meta(
+                        task_id,
+                        {"effective_configuration": effective_configuration},
+                    )
+            elif effective_configuration is None:
+                effective_configuration = await variant_class.capture_configuration(
+                    overrides
+                )
+                await db.upsert_board_meta(
+                    task_id,
+                    {"effective_configuration": effective_configuration},
+                )
+            else:
+                effective_configuration = (
+                    variant_class.configuration_from_metadata(
+                        {"effective_configuration": effective_configuration}
+                    )
+                )
+
             if resume:
-                row = await db.get_task(task_id)
-                if row is None:
-                    raise RuntimeError(f"Cannot resume missing task: {task_id}")
                 try:
                     complexity = Complexity(str(row.get("complexity") or "medium"))
                 except ValueError:
@@ -363,34 +598,31 @@ class Orchestrator:
                     raise LeaseLostError(f"Task lease expired: {task_id}")
                 await self._safe_log(
                     "daemon",
-                    "Resuming task from its durable classic-board checkpoint",
+                    "Resuming task from its durable coordination checkpoint",
                     task_id=task_id,
-                    fields={"event": "task_resumed"},
+                    fields={
+                        "event": "task_resumed",
+                        "variant": selected_variant,
+                    },
                 )
-                return await self._run_traditional(
-                    task_id,
-                    session_id,
-                    user_task,
-                    triage,
-                    overrides=overrides,
-                    resume=True,
+                return await self._run_variant(
+                    selected_variant,
+                    VariantExecutionRequest(
+                        task_id=task_id,
+                        session_id=session_id,
+                        user_task=user_task,
+                        triage=triage,
+                        overrides=overrides,
+                        resume=True,
+                        effective_configuration=effective_configuration,
+                    ),
                 )
-
-            # Publish initial task state so the UI can show it
-            await self._publish_task_state(task_id, user_task[:80], "running", [
-                {"id": f"{task_id}-triage",  "label": "Triage classification", "status": "running",  "agent_role": "planner",  "depends_on": []},
-                {"id": f"{task_id}-plan",    "label": "Plan decomposition",    "status": "pending",  "agent_role": "planner",  "depends_on": [f"{task_id}-triage"]},
-                {"id": f"{task_id}-exec",    "label": "Execute sub-tasks",     "status": "pending",  "agent_role": "executor", "depends_on": [f"{task_id}-plan"]},
-                {"id": f"{task_id}-audit",   "label": "Audit & consensus",     "status": "pending",  "agent_role": "auditor",  "depends_on": [f"{task_id}-exec"]},
-            ])
 
             # 2. Triage complexity
             # Build effective routing: session overrides merged with per-task overrides
-            from settings_store import get_store as _get_store
-            _store = _get_store()
-            effective_routing = await _store.get_routing()  # session-level overrides
-            if overrides and overrides.get("routing"):
-                effective_routing.update(overrides["routing"])  # per-task on top
+            effective_routing = dict(
+                (effective_configuration or {}).get("model_routing") or {}
+            )
 
             try:
                 triage = await self.triage.classify(user_task, routing_override=effective_routing)
@@ -417,7 +649,6 @@ class Orchestrator:
                     status="running",
                     complexity=triage.complexity.value,
                     model_used=triage.litellm_model,
-                    variant=COORDINATION_VARIANT,  # stamp correct variant, not schema default
                     lease_token=lock_id,
                 )
                 if not updated:
@@ -427,18 +658,18 @@ class Orchestrator:
                     raise
                 logger.warning(f"SQLite update_task_status failed for {task_id}: {e}")
 
-            # Update triage sub-task to completed
-            await self._publish_task_state(task_id, user_task[:80], "running", [
-                {"id": f"{task_id}-triage",  "label": f"Triage: {triage.complexity.value}", "status": "completed", "agent_role": "planner",  "depends_on": []},
-                {"id": f"{task_id}-plan",    "label": "Plan decomposition",    "status": "pending",  "agent_role": "planner",  "depends_on": [f"{task_id}-triage"]},
-                {"id": f"{task_id}-exec",    "label": "Execute sub-tasks",     "status": "pending",  "agent_role": "executor", "depends_on": [f"{task_id}-plan"]},
-                {"id": f"{task_id}-audit",   "label": "Audit & consensus",     "status": "pending",  "agent_role": "auditor",  "depends_on": [f"{task_id}-exec"]},
-            ])
             # 3. Run the blackboard coordination loop
-            return await self._run_traditional(
-                task_id, session_id, user_task, triage,
-                overrides=overrides,
-                resume=False,
+            return await self._run_variant(
+                selected_variant,
+                VariantExecutionRequest(
+                    task_id=task_id,
+                    session_id=session_id,
+                    user_task=user_task,
+                    triage=triage,
+                    overrides=overrides,
+                    resume=False,
+                    effective_configuration=effective_configuration,
+                ),
             )
 
         except (LeaseLostError, db.LeaseFenceError) as exc:
@@ -450,37 +681,36 @@ class Orchestrator:
                         task_id, "recovering", lease_token=lock_id,
                     )
             raise
+        except VariantConfigurationError:
+            if lease_claimed:
+                with contextlib.suppress(Exception):
+                    await db.update_run_state(
+                        task_id, "blocked", lease_token=lock_id,
+                    )
+            raise
         except Exception as e:
             # Record failure in SQLite before re-raising
-            failed = False
-            try:
-                failed = await db.fail_task(
-                    task_id,
-                    str(e),
-                    lease_token=lock_id if lease_claimed else None,
-                )
-            except Exception:
-                logger.warning(f"SQLite fail_task failed for {task_id}")
+            failed = await self._fail_task_with_cost(
+                task_id,
+                str(e),
+                lease_token=lock_id if lease_claimed else None,
+            )
 
             if not failed:
                 raise
 
-            # Emit error event
             with contextlib.suppress(Exception):
-                await self.bb.publish_event(task_id, "error", {
-                    "error_message": str(e)
-                })
+                terminal_task = await db.get_task(task_id)
+                if terminal_task is not None:
+                    await ensure_terminal_event(self.bb.redis, terminal_task)
+                    await ensure_system_terminal_event(
+                        self.bb.redis, terminal_task,
+                    )
 
             with contextlib.suppress(Exception):
                 await self._publish_task_state(
                     task_id, user_task[:80], "failed",
                 )
-
-            # Emit system task-completed (failed) event
-            with contextlib.suppress(Exception):
-                await self.bb.publish_system_event("task-completed", {
-                    "task_id": task_id, "status": "failed", "label": user_task[:80]
-                })
 
             raise
 
@@ -497,18 +727,88 @@ class Orchestrator:
             self._task_lock_ids.pop(task_id, None)
             self._lease_lost.pop(task_id, None)
 
-    # ── Traditional Variant Integration (doc 05) ──────────────────────
-
-    async def _run_traditional(
+    async def rollup_task_cost(
         self,
         task_id: str,
-        session_id: str,
-        user_task: str,
-        triage: TriageResult,
+        lease_token: str | None = None,
+    ) -> bool:
+        """Save current task cost totals without blocking termination."""
+        try:
+            rolled_up = await db.update_task_cost_totals(
+                task_id,
+                lease_token=lease_token,
+            )
+        except Exception:
+            logger.warning(
+                "Final cost rollup failed for task %s",
+                task_id,
+                exc_info=True,
+            )
+            return False
+        if not rolled_up:
+            logger.warning("Final cost rollup did not update task %s", task_id)
+        return rolled_up
+
+    async def _fail_task_with_cost(
+        self,
+        task_id: str,
+        error_message: str,
+        lease_token: str | None = None,
+    ) -> bool:
+        """Roll up partial costs before one fenced failure transition."""
+        await self.rollup_task_cost(task_id, lease_token)
+        try:
+            return await db.fail_task(
+                task_id,
+                error_message,
+                lease_token=lease_token,
+            )
+        except Exception:
+            logger.warning(
+                "SQLite fail_task failed for %s",
+                task_id,
+                exc_info=True,
+            )
+            return False
+
+    async def _run_variant(
+        self,
+        variant_id: str,
+        request: VariantExecutionRequest,
+    ) -> dict[str, Any]:
+        """Run the registered coordination runtime for one task."""
+        variant_class = require_variant_class(variant_id)
+        outcome = await variant_class.run(self, request)
+        if not isinstance(outcome, VariantOutcome):
+            raise TypeError(
+                f"Variant '{variant_id}' returned an invalid outcome"
+            )
+        if outcome.variant_id != variant_id:
+            raise ValueError(
+                "The variant outcome identifier does not match the task"
+            )
+        await self._complete_variant_task(request, outcome)
+        return outcome.public_result
+
+    async def _checkpoint_variant(self, variant: Any, task_id: str) -> None:
+        """Save one variant checkpoint and record its durable boundary."""
+        await variant.checkpoint(task_id)
+        saved = await db.mark_task_checkpoint(
+            task_id,
+            self._task_lock_ids.get(task_id),
+        )
+        if not saved:
+            raise LeaseLostError(f"Task lease expired: {task_id}")
+
+    # ── Classic Variant Host Services ────────────────────────────────
+
+    async def run_classic_runtime(
+        self,
+        request: VariantExecutionRequest,
         *,
-        overrides: dict | None = None,
-        resume: bool = False,
-    ) -> dict:
+        engine_class: type,
+        step_result_class: type,
+    ) -> VariantOutcome:
         """Run the paper's cyclic blackboard loop (doc 05).
 
         The orchestrator owns lifecycle (lock, abort, events, SQLite).
@@ -520,16 +820,54 @@ class Orchestrator:
                 'routing' (dict[str, str]) and/or 'role_registry' (dict[str, dict]).
                 These are merged on top of the session settings_store values.
         """
-        import copy as _copy
-
         from core.board_store import SqliteRedisBoardStore, make_board_persist_hook
         from core.event_emitter import RedisEventEmitter
         from core.gateway import BoardGateway, salience_recompute_hook
-        from core.variants.traditional import TraditionalVariant
-        from settings_store import get_store as _get_store
+
+        task_id = request.task_id
+        user_task = request.user_task
+        triage = request.triage
+        resume = request.resume
+
+        if not resume:
+            await self.publish_progress(
+                task_id,
+                user_task[:80],
+                "running",
+                [
+                    {
+                        "id": f"{task_id}-triage",
+                        "label": f"Triage: {triage.complexity.value}",
+                        "status": "completed",
+                        "agent_role": "planner",
+                        "depends_on": [],
+                    },
+                    {
+                        "id": f"{task_id}-plan",
+                        "label": "Plan decomposition",
+                        "status": "pending",
+                        "agent_role": "planner",
+                        "depends_on": [f"{task_id}-triage"],
+                    },
+                    {
+                        "id": f"{task_id}-exec",
+                        "label": "Execute sub-tasks",
+                        "status": "pending",
+                        "agent_role": "executor",
+                        "depends_on": [f"{task_id}-plan"],
+                    },
+                    {
+                        "id": f"{task_id}-audit",
+                        "label": "Audit and consensus",
+                        "status": "pending",
+                        "agent_role": "auditor",
+                        "depends_on": [f"{task_id}-exec"],
+                    },
+                ],
+            )
 
         await self._safe_log("daemon",
-            f"Traditional variant | tier={triage.complexity.value}", task_id=task_id)
+            f"Classic variant | tier={triage.complexity.value}", task_id=task_id)
 
         # Boot board infrastructure
         # Use RedisEventEmitter so board_entry / entry_removed SSE events
@@ -568,67 +906,34 @@ class Orchestrator:
                         )
                         events = await board_store.get_events(task_id)
 
-        # Build the current task configuration. A resumed task uses its saved
-        # copy, so a settings change cannot alter an active task's behavior.
-        current_task_config = {
-            "traditional": {
-                **_copy.deepcopy(dict(TRADITIONAL_CONFIG)),
-                "round_execution": ROUND_EXECUTION,
-                "view_budget_tokens": VIEW_BUDGET_TOKENS,
-            },
-            "model_pools": _copy.deepcopy(MODEL_POOLS),
-            "edge_node_models": _copy.deepcopy(EDGE_NODE_MODELS),
-            "node_endpoints": sorted({ep for ep in AGENT_ENDPOINTS.values()}),
-        }
-
-        # ── Effective settings: session overrides → per-task overrides ──
-        _store = _get_store()
-        # Routing: session store provides the base, per-task overrides on top
         persisted_meta = await board_store.get_meta(task_id)
-        effective_task_config = current_task_config
-        if resume and isinstance(
-            persisted_meta.get("effective_task_config"), dict,
-        ):
-            effective_task_config = _copy.deepcopy(
-                persisted_meta["effective_task_config"]
-            )
-        effective_routing = await _store.get_routing()
-        has_persisted_routing = resume and isinstance(
-            persisted_meta.get("effective_routing"), dict,
+        effective_configuration = request.effective_configuration or {}
+        effective_task_config = dict(
+            effective_configuration.get("settings") or {}
         )
-        if has_persisted_routing:
-            effective_routing = dict(persisted_meta["effective_routing"])
-        if (
-            not has_persisted_routing
-            and overrides
-            and overrides.get("routing")
-        ):
-            effective_routing.update(overrides["routing"])
-
-        # Role registry: session store provides the base, per-task overrides on top
-        effective_registry = await _store.get_role_registry()
-        has_persisted_registry = resume and isinstance(
-            persisted_meta.get("effective_registry"), dict,
+        effective_routing = dict(
+            effective_configuration.get("model_routing") or {}
         )
-        if has_persisted_registry:
-            effective_registry = dict(persisted_meta["effective_registry"])
-        if (
-            not has_persisted_registry
-            and overrides
-            and overrides.get("role_registry")
-        ):
-            for role_name, role_patch in overrides["role_registry"].items():
-                existing = effective_registry.get(role_name, {})
-                merged = _copy.deepcopy(existing)
-                merged.update(role_patch)
-                effective_registry[role_name] = merged
+        effective_registry = dict(
+            effective_configuration.get("role_registry") or {}
+        )
+        saved_model_pricing = effective_task_config.get("model_pricing")
+        effective_model_pricing = dict(
+            saved_model_pricing
+            if isinstance(saved_model_pricing, dict)
+            else MODEL_PRICING
+        )
 
-        variant = TraditionalVariant(
+        variant = engine_class(
             gateway=gateway,
             board_store=board_store,
             event_emitter=event_emitter,
             triage=self.triage,
-            config=dict(effective_task_config.get("traditional") or {}),
+            config=dict(
+                effective_task_config.get("classic")
+                or effective_task_config.get("traditional")
+                or {}
+            ),
             litellm_url=LITELLM_URL,
             litellm_key=LITELLM_KEY,
             node_endpoints=list(effective_task_config.get("node_endpoints") or []),
@@ -638,6 +943,7 @@ class Orchestrator:
             edge_node_models=list(
                 effective_task_config.get("edge_node_models") or []
             ),
+            model_pricing=effective_model_pricing,
         )
         self._active_gateways[task_id] = gateway
 
@@ -654,7 +960,11 @@ class Orchestrator:
                     if task_files:
                         attachments = [
                             {
-                                "name": f.get("original_filename", "file"),
+                                "id": f.get("id"),
+                                "name": (
+                                    f.get("original_filename")
+                                    or f.get("name", "file")
+                                ),
                                 "text_preview": f.get("text_preview", ""),
                             }
                             for f in task_files
@@ -670,12 +980,17 @@ class Orchestrator:
             }
             await gateway.set_meta(
                 task_id,
+                effective_configuration=effective_configuration,
                 effective_task_config=effective_task_config,
                 effective_routing=effective_routing,
                 effective_registry=effective_registry,
             )
 
-            if resume and events:
+            if (
+                resume
+                and events
+                and variant.genesis_checkpoint_complete(persisted_meta)
+            ):
                 await variant.resume(task)
                 await gateway.refresh(task_id)
             else:
@@ -697,10 +1012,9 @@ class Orchestrator:
                     "rounds_completed": int(persisted_meta.get("round", 0)),
                     "budget_spent": variant.budget_spent,
                 }
-                await self._complete_traditional_task(
-                    task_id, user_task, result, variant.budget_spent,
+                return self._classic_outcome(
+                    task_id, triage, result, variant.budget_spent,
                 )
-                return self._traditional_result(task_id, triage, result)
 
             roster_actors = variant.roster.all_actors() if variant.roster else []
             await self._safe_log("daemon",
@@ -857,10 +1171,11 @@ class Orchestrator:
                 # Phase 5: Emit budget event after each round (doc 09 §5)
                 await variant.finish_round(task_id)
                 await variant.emit_budget_event(task_id)
-                await variant.checkpoint(task_id)
+                await self._checkpoint_variant(variant, task_id)
             else:
-                from core.variants.traditional import StepResult
-                step_result = StepResult(terminal=True, reason="max_rounds")
+                step_result = step_result_class(
+                    terminal=True, reason="max_rounds"
+                )
 
             # ── Finalize ─────────────────────────────────────────────
             await self._set_phase("finalize", 0, task_id=task_id)
@@ -868,7 +1183,7 @@ class Orchestrator:
             result = await variant.finalize(
                 task, board, step_result.reason or "unknown",
             )
-            await variant.checkpoint(task_id)
+            await self._checkpoint_variant(variant, task_id)
 
             # Persist the terminal snapshot + meta durably (no TTL) so the
             # completed board (incl. final phase/answer_source) is retained.
@@ -882,10 +1197,9 @@ class Orchestrator:
                     final_meta,
                 )
 
-            await self._complete_traditional_task(
-                task_id, user_task, result, variant.budget_spent,
+            return self._classic_outcome(
+                task_id, triage, result, variant.budget_spent,
             )
-            return self._traditional_result(task_id, triage, result)
 
         finally:
             self._active_gateways.pop(task_id, None)
@@ -893,19 +1207,27 @@ class Orchestrator:
             with contextlib.suppress(Exception):
                 await gateway.unload_task(task_id)
 
-    async def _complete_traditional_task(
+    async def _complete_variant_task(
         self,
-        task_id: str,
-        user_task: str,
-        result: dict[str, Any],
-        budget_spent: float,
+        request: VariantExecutionRequest,
+        outcome: VariantOutcome,
     ) -> None:
-        """Persist and publish one completed classic task."""
-        answer = str(result.get("answer", ""))
+        """Persist and publish one completed coordination task."""
+        task_id = request.task_id
+        user_task = request.user_task
+        result = outcome.result
+        answer = outcome.answer
         lease_token = self._task_lock_ids.get(task_id)
+        reported_cost = float(outcome.cost_usd)
+        if not math.isfinite(reported_cost) or reported_cost < 0:
+            raise ValueError(
+                "VariantOutcome.cost_usd must be finite and nonnegative"
+            )
         try:
             rolled_up = await db.update_task_cost_totals(
-                task_id, lease_token=lease_token,
+                task_id,
+                lease_token=lease_token,
+                reported_cost_usd=reported_cost,
             )
             if not rolled_up:
                 raise LeaseLostError(f"Task lease expired: {task_id}")
@@ -925,7 +1247,77 @@ class Orchestrator:
         )
         if not completed:
             raise LeaseLostError(f"Task lease expired: {task_id}")
-        completed_subtasks = [
+        with contextlib.suppress(Exception):
+            await self._publish_task_state(
+                task_id,
+                user_task[:80],
+                "completed",
+                list(outcome.completed_subtasks),
+            )
+        with contextlib.suppress(Exception):
+            await self.bb.publish_result(task_id, {
+                "task_id": task_id,
+                **result,
+            })
+        with contextlib.suppress(Exception):
+            terminal_task = await db.get_task(task_id)
+            if terminal_task is not None:
+                await ensure_terminal_event(self.bb.redis, terminal_task)
+                await ensure_system_terminal_event(self.bb.redis, terminal_task)
+
+    async def _complete_traditional_task(
+        self,
+        task_id: str,
+        user_task: str,
+        result: dict[str, Any],
+        budget_spent: float,
+    ) -> None:
+        """Preserve the legacy classic completion helper for callers."""
+        await self._complete_variant_task(
+            VariantExecutionRequest(
+                task_id=task_id,
+                session_id="legacy",
+                user_task=user_task,
+                triage=None,
+            ),
+            VariantOutcome(
+                variant_id="classic",
+                answer=str(result.get("answer", "")),
+                result=result,
+                public_result={"task_id": task_id, **result},
+                cost_usd=budget_spent,
+            ),
+        )
+
+    @staticmethod
+    def _traditional_result(
+        task_id: str,
+        triage: TriageResult,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build the stable public result shape for a classic task."""
+        return {
+            "task_id": task_id,
+            "answer": result.get("answer", ""),
+            "variant": "classic",
+            "terminated_by": result.get("terminated_by"),
+            "answer_source": result.get("answer_source"),
+            "verification_status": result.get("verification_status"),
+            "rounds": result.get("rounds_completed"),
+            "budget_spent": result.get("budget_spent", 0.0),
+            "complexity": triage.complexity.value,
+        }
+
+    @classmethod
+    def _classic_outcome(
+        cls,
+        task_id: str,
+        triage: TriageResult,
+        result: dict[str, Any],
+        cost_usd: float,
+    ) -> VariantOutcome:
+        """Build the classic result and shared terminal outcome."""
+        completed_subtasks = tuple(
             {
                 "id": f"{task_id}-{suffix}",
                 "label": label,
@@ -939,49 +1331,15 @@ class Orchestrator:
                 ("exec", "Execute sub-tasks", "executor", [f"{task_id}-plan"]),
                 ("audit", "Audit and consensus", "auditor", [f"{task_id}-exec"]),
             )
-        ]
-        with contextlib.suppress(Exception):
-            await self._publish_task_state(
-                task_id, user_task[:80], "completed", completed_subtasks,
-            )
-        with contextlib.suppress(Exception):
-            await self.bb.publish_result(task_id, {
-                "task_id": task_id,
-                **result,
-            })
-        with contextlib.suppress(Exception):
-            await self.bb.publish_event(task_id, "complete", {
-                "answer": answer[:2000],
-                "terminated_by": result.get("terminated_by"),
-                "answer_source": result.get("answer_source"),
-                "rounds_completed": result.get("rounds_completed"),
-                "budget_spent": budget_spent,
-            })
-        with contextlib.suppress(Exception):
-            await self.bb.publish_system_event("task-completed", {
-                "task_id": task_id,
-                "status": "completed",
-                "label": user_task[:80],
-            })
-
-    @staticmethod
-    def _traditional_result(
-        task_id: str,
-        triage: TriageResult,
-        result: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Build the stable public result shape for a classic task."""
-        return {
-            "task_id": task_id,
-            "answer": result.get("answer", ""),
-            "variant": "traditional",
-            "terminated_by": result.get("terminated_by"),
-            "answer_source": result.get("answer_source"),
-            "verification_status": result.get("verification_status"),
-            "rounds": result.get("rounds_completed"),
-            "budget_spent": result.get("budget_spent", 0.0),
-            "complexity": triage.complexity.value,
-        }
+        )
+        return VariantOutcome(
+            variant_id="classic",
+            answer=str(result.get("answer", "")),
+            result=result,
+            public_result=cls._traditional_result(task_id, triage, result),
+            cost_usd=cost_usd,
+            completed_subtasks=completed_subtasks,
+        )
 
     async def steer_entry(
         self, task_id: str, entry_id: str, action: str,
@@ -1082,7 +1440,7 @@ class Orchestrator:
         apply_to_board: bool = True,
         budget_limit_usd: float | None = None,
     ) -> dict:
-        """Dispatch one turn for the traditional variant.
+        """Dispatch one turn for the classic runtime.
 
         Uses build_turn_payload → _dispatch_agent → parse_agent_response → apply.
         Emits turn_start/turn_end SSE events for WorkerLane + AgentTrace.
@@ -1202,6 +1560,7 @@ class Orchestrator:
                 if candidate
             ],
             timeout_s=turn_timeout_s,
+            model_pricing=getattr(variant, "model_pricing", MODEL_PRICING),
         )
 
         # Account for every worker call here. Conflict turns call this method
@@ -1216,7 +1575,10 @@ class Orchestrator:
                 variant.set_actor_node(activation.actor, str(actual_endpoint))
             usage = response.get("usage")
             if usage:
-                variant.track_cost(self._compute_cost(usage, MODEL_PRICING))
+                variant.track_cost(self._compute_cost(
+                    usage,
+                    getattr(variant, "model_pricing", MODEL_PRICING),
+                ))
                 await variant.gateway.set_meta(
                     task_id,
                     budget_spent=variant.budget_spent,
@@ -1475,8 +1837,9 @@ class Orchestrator:
         activation_id: str | None = None,
         endpoints: list[str] | None = None,
         timeout_s: int = AGENT_TURN_TIMEOUT_S,
+        model_pricing: dict[str, dict[str, Any]] | None = None,
     ) -> dict:
-        """HTTP dispatch to a Hermes agent node for the traditional variant.
+        """Send one classic activation to a Hermes agent node.
 
         Handles endpoint resolution (role registry → AGENT_ENDPOINTS fallback),
         turn tracking in SQLite, 3-attempt retry with backoff, and best-effort
@@ -1552,12 +1915,17 @@ class Orchestrator:
                     if BMAS_EXECUTE_KEY
                     else None
                 )
-                resp = await self.http.post(
-                    f"{url}/execute",
-                    json=payload,
-                    headers=headers,
-                    timeout=float(payload["timeout"]) + 15.0,
-                )
+                endpoint_slot = await self._acquire_endpoint_slot(url)
+                try:
+                    await self._assert_dispatch_lease(task_id)
+                    resp = await self.http.post(
+                        f"{url}/execute",
+                        json=payload,
+                        headers=headers,
+                        timeout=float(payload["timeout"]) + 15.0,
+                    )
+                finally:
+                    self._release_endpoint_slot(url, endpoint_slot)
                 resp.raise_for_status()
                 data = resp.json()
                 if not isinstance(data, dict) or not data:
@@ -1583,7 +1951,12 @@ class Orchestrator:
                 cost_usd = 0.0
                 if usage and isinstance(usage, dict):
                     model_used = usage.get("model", model or "unknown")
-                    pricing = MODEL_PRICING.get(model_used, {})
+                    effective_pricing = (
+                        MODEL_PRICING
+                        if model_pricing is None
+                        else model_pricing
+                    )
+                    pricing = effective_pricing.get(model_used, {})
                     if pricing:
                         cost_usd = round(
                             usage.get("prompt_tokens", 0) * float(pricing.get("input_cost_per_token", 0))
@@ -1612,9 +1985,41 @@ class Orchestrator:
                         turn_id=turn_id, status=turn_status,
                         entries_added=len(data.get("entries") or []),
                         cost_usd=cost_usd, joules_estimate=0.0,
+                        node=url,
                     )
                 return data
 
+            except LeaseLostError:
+                raise
+            except EndpointOverloadedError as e:
+                await self._safe_log(
+                    role,
+                    str(e),
+                    task_id=task_id,
+                    level="warning",
+                    node=url,
+                    turn_id=turn_id,
+                    fields={
+                        "event": "endpoint_overloaded",
+                        "role": role,
+                        "node": url,
+                        "limit": AGENT_ENDPOINT_MAX_CONCURRENCY,
+                        "wait_timeout_s": AGENT_ENDPOINT_WAIT_TIMEOUT_S,
+                    },
+                )
+                if candidate_index + 1 < len(candidate_urls):
+                    candidate_index += 1
+                    continue
+                with contextlib.suppress(Exception):
+                    await db.complete_turn(
+                        turn_id, "failed", 0, 0.0, node=url,
+                    )
+                return {
+                    "task_id": task_id,
+                    "status": "failed",
+                    "error_code": "endpoint_overloaded",
+                    "result": str(e),
+                }
             except Exception as e:
                 circuits.record_failure(url)
                 # A connect failure proves that the selected node did not
@@ -1655,7 +2060,9 @@ class Orchestrator:
                         "error_type": type(e).__name__,
                     })
                 with contextlib.suppress(Exception):
-                    await db.complete_turn(turn_id, "failed", 0, 0.0)
+                    await db.complete_turn(
+                        turn_id, "failed", 0, 0.0, node=url,
+                    )
                 return {"task_id": task_id, "status": "failed", "result": str(e)}
 
         return {"task_id": task_id, "status": "failed", "result": "max retries"}  # pragma: no cover

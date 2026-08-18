@@ -54,6 +54,7 @@ async def get_task_detail(task_id: str):
         return JSONResponse({"error": "Task not found"}, status_code=404)
 
     sub_tasks = await db.get_sub_tasks(task_id)
+    task["event_delivery"] = await db.get_event_delivery_health(task_id)
     return {"task": task, "sub_tasks": sub_tasks}
 
 
@@ -72,9 +73,8 @@ async def get_task_debate(task_id: str):
 async def get_task_board(task_id: str):
     """Fetch the durable board snapshot for a task.
 
-    Reads the persistent Redis snapshot written by the board-persist hook
-    (no TTL).  Available for live AND completed tasks, so the Blackboard
-    view never loses content on refetch/reload.
+    Reads SQLite first because SQLite owns the durable board. Redis remains a
+    compatibility fallback for legacy tasks that only have an old projection.
 
     Returns {entries: [...], meta: {...}}.  Entries carry full envelope
     fields (type, author, body, refs, confidence, salience, status, round)
@@ -82,21 +82,44 @@ async def get_task_board(task_id: str):
     """
     import re
 
-    from app import app
-
     if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", task_id):
         return JSONResponse({"error": "Invalid task_id"}, status_code=400)
 
+    task = await db.get_task(task_id)
+    if not task:
+        return JSONResponse({"error": "Task not found"}, status_code=404)
+
     try:
-        orch = app.state.orchestrator
-        snapshot = await orch.bb.get_board_snapshot(task_id)
-    except Exception as e:
+        entries = await db.get_board_entries(task_id)
+        meta = await db.get_board_meta(task_id)
+    except Exception as exc:
         return JSONResponse(
-            {"error": "Failed to read board snapshot", "detail": str(e)},
+            {"error": "Failed to read board snapshot", "detail": str(exc)},
             status_code=503,
         )
 
-    return snapshot
+    if entries or meta:
+        for entry in entries:
+            entry_id = str(entry.get("id", ""))
+            tail = entry_id.rsplit("-", 1)[-1]
+            entry["seq"] = int(tail) if tail.isdigit() else 0
+        entries.sort(key=lambda entry: (
+            int(entry.get("seq", 0)),
+            str(entry.get("id", "")),
+        ))
+        return {"entries": entries, "meta": meta}
+
+    # Databases from before the durable board migration can contain only the
+    # old Redis projection. Preserve that read path until those tasks migrate.
+    try:
+        from app import app
+
+        return await app.state.orchestrator.bb.get_board_snapshot(task_id)
+    except Exception as exc:
+        return JSONResponse(
+            {"error": "Failed to read board snapshot", "detail": str(exc)},
+            status_code=503,
+        )
 
 
 @router.get("/tasks/{task_id}/cost")
@@ -153,4 +176,3 @@ async def get_task_turns_endpoint(task_id: str):
 
     turns = await db.get_turns(task_id)
     return {"turns": turns}
-

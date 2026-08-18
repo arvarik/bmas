@@ -11,21 +11,22 @@
  */
 
 import { useState, useCallback, useRef, useEffect, Fragment, useMemo } from "react";
+import type { ComponentType } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { useTaskData } from "./TaskStreamContext";
 import { Panel } from "@/components/ui/Panel";
 import { MetricCard } from "@/components/ui/MetricCard";
 import {
   Activity, Check, Circle, AlertTriangle, Pause, Play, XCircle,
-  Send, ArrowRight, ChevronDown, ChevronRight, Clock, Users,
+  Send, ChevronDown, Clock, Users,
   Layers, Zap, Radio, MessageSquare, Cpu, Cloud,
 } from "lucide-react";
 import { authorColor } from "@/lib/design-tokens";
 import type { CostData, TurnRecord, CoordinatorNarration } from "@/hooks/useTaskStream";
 import { ProcessFlowGraph } from "@/components/features/ProcessFlowGraph";
+import { getActiveAdapter } from "@/lib/variants";
+import { UnsupportedVariantState } from "@/components/features/UnsupportedVariantState";
 
 
 // ── Input Prompt Box (collapsible) ───────────────────────────────────
@@ -134,7 +135,7 @@ interface ProcessStage {
   detail?: string;
 }
 
-// Canonical traditional-blackboard role ordering for the process summary.
+// Stable role ordering for process summaries that contain these roles.
 const ROLE_STAGE_ORDER = [
   "planner", "expert", "critic", "conflict_resolver", "cleaner", "decider",
 ];
@@ -206,11 +207,8 @@ function ModelBadge({ model }: { model?: string }) {
 /**
  * Build the process summary from the *actual* stages that occurred.
  *
- * The daemon writes four static sub-tasks (triage/plan/exec/audit) but the
- * traditional blackboard loop only ever marks triage complete — so keying
- * the summary off sub-tasks made every task look like "triage only". The
- * real signal is the per-turn record (planner → experts → critic → decider,
- * across rounds), which we group into named stages here.
+ * Build a process summary from actual turn records.
+ * Static sub-tasks do not describe every coordination runtime accurately.
  */
 function buildProcessStages(
   subTasks: ReturnType<typeof useTaskData>["subTasks"],
@@ -308,210 +306,6 @@ function fmtDuration(ms: number): string {
   const m = Math.floor(s / 60);
   const rem = s % 60;
   return `${m}m ${rem}s`;
-}
-
-// ── Smart Result Renderer ─────────────────────────────────────────────
-// The BMAS daemon stores result_summary as a markdown-fenced JSON blob
-// containing a board entry: ```json\n{ "body": "...", "title": "...", ... }\n```
-// We extract the `body` (the actual human answer) and render it properly.
-// Falls back to rendering the raw content as markdown or plain text.
-
-/** Extract JSON from a ```json ... ``` markdown code fence */
-function extractFencedJson(text: string): unknown | null {
-  const fenceMatch = text.match(/```(?:json)?\s*\n([\s\S]+?)\n```/);
-  if (fenceMatch) {
-    try { return JSON.parse(fenceMatch[1]); } catch { /* not valid JSON */ }
-  }
-  return null;
-}
-
-/** Pull the human-readable answer from a BMAS board entry object */
-function extractBoardBody(obj: unknown): string | null {
-  if (typeof obj !== "object" || obj === null) return null;
-  const entry = obj as Record<string, unknown>;
-  // board entry: { body: "...", title: "...", type: "solution", ... }
-  if (typeof entry.body === "string" && entry.body.trim()) {
-    return entry.body.trim();
-  }
-  // array of board entries — pick the solution/finding with highest confidence
-  return null;
-}
-
-/** Same extraction for arrays */
-function extractFromArray(arr: unknown[]): string | null {
-  // Look for the solution-type entry first
-  const solution = arr.find(
-    (e) => typeof e === "object" && e !== null && (e as Record<string,unknown>).type === "solution"
-  ) ?? arr[arr.length - 1];
-  return extractBoardBody(solution);
-}
-
-function ResultRenderer({ content }: { content: string }) {
-  const trimmed = content.trim();
-
-  // Step 1: Try to extract from markdown-fenced JSON (BMAS primary format)
-  const fencedObj = extractFencedJson(trimmed);
-  if (fencedObj !== null) {
-    // Array of board entries
-    if (Array.isArray(fencedObj)) {
-      const body = extractFromArray(fencedObj);
-      if (body) return <MarkdownResultCard content={body} />;
-    }
-    // Single board entry
-    const body = extractBoardBody(fencedObj);
-    if (body) return <MarkdownResultCard content={body} />;
-    // Fallback: render the JSON structure
-    return <JsonResultCard data={fencedObj} />;
-  }
-
-  // Step 2: Bare JSON (no fence)
-  let parsed: unknown = null;
-  try { parsed = JSON.parse(trimmed); } catch { /* not JSON */ }
-  if (parsed !== null) {
-    if (Array.isArray(parsed)) {
-      const body = extractFromArray(parsed);
-      if (body) return <MarkdownResultCard content={body} />;
-    }
-    const body = extractBoardBody(parsed);
-    if (body) return <MarkdownResultCard content={body} />;
-    return <JsonResultCard data={parsed} />;
-  }
-
-  // Step 3: Markdown-like plain text
-  if (looksLikeMarkdown(trimmed)) {
-    return <MarkdownResultCard content={trimmed} />;
-  }
-
-  // Step 4: Plain text
-  return <PlainResultCard content={trimmed} />;
-}
-
-/** Heuristic: does this string contain markdown syntax worth rendering? */
-function looksLikeMarkdown(text: string): boolean {
-  return (
-    /^#{1,6}\s/m.test(text) ||      // headings (any level)
-    /^\s*[-*+]\s/m.test(text) ||    // bullet lists
-    /`[^`]+`/.test(text) ||         // inline code
-    /^\d+\.\s/m.test(text) ||       // numbered lists
-    /\*\*[^*]+\*\*/.test(text) ||   // bold
-    /\[[^\]]+\]\([^)]+\)/.test(text) || // links
-    /^\s*\|.+\|/m.test(text)        // tables
-  );
-}
-
-// ── JSON result card ─────────────────────────────────────────────────
-
-function JsonResultCard({ data }: { data: unknown }) {
-  if (typeof data === "string") {
-    return <PlainResultCard content={data} />;
-  }
-  if (Array.isArray(data)) {
-    return (
-      <div className="result-json-array">
-        {data.map((item, i) => (
-          <div key={i} className="result-json-array__item">
-            <span className="result-json-array__index">{i + 1}</span>
-            <span className="result-json-value">
-              {typeof item === "object" && item !== null
-                ? <JsonObjectCard data={item as Record<string, unknown>} depth={1} />
-                : String(item)}
-            </span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-  if (typeof data === "object" && data !== null) {
-    return <JsonObjectCard data={data as Record<string, unknown>} depth={0} />;
-  }
-  return <PlainResultCard content={String(data)} />;
-}
-
-function JsonObjectCard({ data, depth }: { data: Record<string, unknown>; depth: number }) {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const entries = Object.entries(data);
-
-  const toggleKey = (k: string) => setExpanded(prev => ({ ...prev, [k]: !prev[k] }));
-
-  return (
-    <div className={`result-json-object ${depth === 0 ? "result-json-object--root" : ""}`}>
-      {entries.map(([key, value]) => {
-        const isNested = typeof value === "object" && value !== null && !Array.isArray(value);
-        const isArray = Array.isArray(value);
-        const isComplex = isNested || isArray;
-        const isOpen = expanded[key] !== false; // default open at depth 0
-
-        return (
-          <div key={key} className="result-json-row">
-            <div
-              className={`result-json-row__header ${isComplex ? "result-json-row__header--clickable" : ""}`}
-              onClick={isComplex ? () => toggleKey(key) : undefined}
-            >
-              {isComplex && (
-                <span className="result-json-row__chevron">
-                  {isOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                </span>
-              )}
-              <span className="result-json-row__key">{key}</span>
-              {!isComplex && (
-                <span className="result-json-row__value">
-                  {typeof value === "string"
-                    ? (looksLikeMarkdown(value)
-                        ? <MarkdownResultCard content={value} />
-                        : value)
-                    : JSON.stringify(value)}
-                </span>
-              )}
-              {isComplex && !isOpen && (
-                <span className="result-json-row__collapsed-hint">
-                  {isArray ? `[${(value as unknown[]).length} items]` : "{…}"}
-                </span>
-              )}
-            </div>
-            {isComplex && isOpen && (
-              <div className="result-json-row__children">
-                {isArray
-                  ? <JsonResultCard data={value} />
-                  : <JsonObjectCard data={value as Record<string, unknown>} depth={depth + 1} />
-                }
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ── Markdown result card ──────────────────────────────────────────────
-// Full CommonMark + GitHub-flavored markdown (headings of any level,
-// tables, task lists, strikethrough, fenced code, etc.). The previous
-// hand-rolled renderer only understood h1–h3, so deeper headings (####)
-// and tables leaked through as raw text.
-
-function MarkdownResultCard({ content }: { content: string }) {
-  return (
-    <div className="result-markdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-    </div>
-  );
-}
-
-// ── Plain text result card ────────────────────────────────────────────
-
-function PlainResultCard({ content }: { content: string }) {
-  // Split paragraphs on double newlines
-  const paragraphs = content.split(/\n\n+/);
-  if (paragraphs.length === 1) {
-    return <p className="result-plain">{content}</p>;
-  }
-  return (
-    <div className="result-plain-multi">
-      {paragraphs.map((para, i) => (
-        <p key={i} className="result-plain-para">{para}</p>
-      ))}
-    </div>
-  );
 }
 
 // ── Cost display helper (interactive breakdowns) ──────────────────────
@@ -935,8 +729,6 @@ function useElapsed(startIso: string | undefined, isLive: boolean): string {
 // ── Live Running View ─────────────────────────────────────────────────
 
 interface LiveRunningViewProps {
-  phase: string | null;
-  subTasks: ReturnType<typeof useTaskData>["subTasks"];
   taskMeta: ReturnType<typeof useTaskData>["taskMeta"];
   cost: CostData | null;
   taskId: string;
@@ -945,11 +737,11 @@ interface LiveRunningViewProps {
   boardEntries: ReturnType<typeof useTaskData>["boardEntries"];
   coordinatorNarrations: CoordinatorNarration[];
   consensus: ReturnType<typeof useTaskData>["consensus"];
+  progressLabel: string;
+  controls: readonly string[];
 }
 
 function LiveRunningView({
-  phase,
-  subTasks,
   taskMeta,
   cost,
   taskId,
@@ -958,6 +750,8 @@ function LiveRunningView({
   boardEntries,
   coordinatorNarrations,
   consensus,
+  progressLabel,
+  controls,
 }: LiveRunningViewProps) {
   const allTurns = useMemo(() => [...completedTurns, ...activeTurns], [completedTurns, activeTurns]);
   const elapsed = useElapsed(taskMeta?.created_at, true);
@@ -990,7 +784,7 @@ function LiveRunningView({
         <div className="overview__live-header">
           <Radio size={14} style={{ color: "hsl(142, 71%, 45%)", animation: "pulse 2s infinite" }} />
           <span className="overview__live-label">Live</span>
-          <span className="overview__live-phase">{phase ?? "Initializing…"}</span>
+          <span className="overview__live-phase">{progressLabel}</span>
         </div>
 
         <div className="overview__live-grid">
@@ -1087,7 +881,7 @@ function LiveRunningView({
       )}
 
       {/* HITL Controls */}
-      <HITLControls taskId={taskId} />
+      <HITLControls taskId={taskId} controls={controls} />
 
       {/* Running cost breakdown */}
       <CostDisplay cost={cost} />
@@ -1133,10 +927,16 @@ function LiveStat({
 export default function TaskOverviewPage() {
   const { taskId } = useParams();
   const router = useRouter();
+  const streamData = useTaskData();
   const {
-    phase, subTasks, result, error, isLive, taskMeta, cost,
+    result, error, isLive, taskMeta, cost,
     completedTurns, activeTurns, boardEntries, coordinatorNarrations, consensus,
-  } = useTaskData();
+    runtime,
+  } = streamData;
+  const adapter = getActiveAdapter(runtime.adapterId);
+  const progressLabel = adapter
+    ? adapter.progressLabel(streamData, runtime.capability?.features.progress ?? [])
+    : "Initializing…";
 
   // Infer model from turns or cost data if it's missing from the initial task state
   const allTurns = useMemo(() => [...completedTurns, ...activeTurns], [completedTurns, activeTurns]);
@@ -1156,12 +956,12 @@ export default function TaskOverviewPage() {
     return { ...taskMeta, model: inferredModel ?? taskMeta.model };
   }, [taskMeta, inferredModel]);
 
+  if (!adapter) return <UnsupportedVariantState runtime={runtime} />;
+
   // ── Running: live progress + HITL ─────────────────────────────────
   if (isLive) {
     return (
       <LiveRunningView
-        phase={phase}
-        subTasks={subTasks}
         taskMeta={patchedTaskMeta}
         cost={cost}
         taskId={taskId as string}
@@ -1170,6 +970,8 @@ export default function TaskOverviewPage() {
         boardEntries={boardEntries}
         coordinatorNarrations={coordinatorNarrations}
         consensus={consensus}
+        progressLabel={progressLabel}
+        controls={runtime.capability?.features.controls ?? []}
       />
     );
   }
@@ -1178,11 +980,12 @@ export default function TaskOverviewPage() {
   if (result && !error) {
     return <CompletedView
       result={result}
-      subTasks={subTasks}
       taskMeta={patchedTaskMeta}
       cost={cost}
       completedTurns={completedTurns}
       coordinatorNarrations={coordinatorNarrations}
+      ResultRenderer={adapter.ResultRenderer}
+      resultFormats={runtime.capability?.features.result ?? []}
     />;
   }
 
@@ -1206,6 +1009,7 @@ export default function TaskOverviewPage() {
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
                     task: taskMeta?.label ?? "",
+                    variant: runtime.capability?.id,
                   }),
                 });
                 if (res.ok) {
@@ -1244,18 +1048,20 @@ export default function TaskOverviewPage() {
 
 function CompletedView({
   result,
-  subTasks,
   taskMeta,
   cost,
   completedTurns,
   coordinatorNarrations = [],
+  ResultRenderer: AdapterResultRenderer,
+  resultFormats,
 }: {
   result: string;
-  subTasks: ReturnType<typeof useTaskData>["subTasks"];
   taskMeta: ReturnType<typeof useTaskData>["taskMeta"];
   cost: CostData | null;
   completedTurns: TurnRecord[];
   coordinatorNarrations?: CoordinatorNarration[];
+  ResultRenderer: ComponentType<{ content: string; formats: readonly string[] }>;
+  resultFormats: readonly string[];
 }) {
   return (
     <div className="view-container overview">
@@ -1264,7 +1070,7 @@ function CompletedView({
       <div className="overview__result-card">
         <h3 className="overview__result-title">Result</h3>
         <div className="overview__result-body">
-          <ResultRenderer content={result} />
+          <AdapterResultRenderer content={result} formats={resultFormats} />
         </div>
       </div>
 
@@ -1294,20 +1100,32 @@ function CompletedView({
 
 // ── HITL Controls ─────────────────────────────────────────────────────
 
-function HITLControls({ taskId }: { taskId: string }) {
+function HITLControls({
+  taskId,
+  controls,
+}: {
+  taskId: string;
+  controls: readonly string[];
+}) {
   const [isPaused, setIsPaused] = useState(false);
   const [isAborting, setIsAborting] = useState(false);
   const [hintText, setHintText] = useState("");
   const [hintSending, setHintSending] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const canTogglePause = isPaused
+    ? controls.includes("resume")
+    : controls.includes("pause");
+  const canAbort = controls.includes("abort");
+  const canSendDirective = controls.includes("directive");
 
   // Check current pause state on mount
   useEffect(() => {
+    if (!controls.includes("pause") && !controls.includes("resume")) return;
     fetch(`/api/hitl?task_id=${encodeURIComponent(taskId)}`)
       .then((r) => r.json())
       .then((d) => setIsPaused(d.paused ?? false))
       .catch(() => {});
-  }, [taskId]);
+  }, [controls, taskId]);
 
   const handlePauseToggle = useCallback(async () => {
     const action = isPaused ? "resume" : "pause";
@@ -1351,29 +1169,31 @@ function HITLControls({ taskId }: { taskId: string }) {
     finally { setHintSending(false); }
   }, [taskId, hintText]);
 
+  if (!canTogglePause && !canAbort && !canSendDirective) return null;
+
   return (
     <div className="overview__hitl">
       <h4 className="overview__section-label">Operator Controls</h4>
       <div className="overview__hitl-buttons">
-        <button
+        {canTogglePause ? <button
           className={`overview__hitl-btn ${isPaused ? "overview__hitl-btn--resume" : "overview__hitl-btn--pause"}`}
           onClick={handlePauseToggle}
         >
           {isPaused ? <Play size={14} /> : <Pause size={14} />}
           {isPaused ? "Resume Swarm" : "Pause Swarm"}
-        </button>
-        <button
+        </button> : null}
+        {canAbort ? <button
           className="overview__hitl-btn overview__hitl-btn--abort"
           onClick={handleAbort}
           disabled={isAborting}
         >
           <XCircle size={14} />
           {isAborting ? "Aborting…" : "Abort Task"}
-        </button>
+        </button> : null}
       </div>
 
       {/* Hint injection */}
-      <div className="overview__hint">
+      {canSendDirective ? <div className="overview__hint">
         <label className="overview__hint-label" htmlFor="hint-input">
           Inject Hint
         </label>
@@ -1396,7 +1216,7 @@ function HITLControls({ taskId }: { taskId: string }) {
             <Send size={14} />
           </button>
         </div>
-      </div>
+      </div> : null}
     </div>
   );
 }

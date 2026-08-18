@@ -39,8 +39,8 @@ class EndpointCircuitBreaker:
 
     def allow(self, endpoint: str) -> bool:
         """Return true when a new activation can use this endpoint."""
-        state = self._states.setdefault(endpoint, _CircuitState())
-        if state.opened_at is None:
+        state = self._states.get(endpoint)
+        if state is None or state.opened_at is None:
             return True
         if self._clock() - state.opened_at < self.recovery_timeout_s:
             return False
@@ -51,7 +51,7 @@ class EndpointCircuitBreaker:
 
     def record_success(self, endpoint: str) -> None:
         """Close the endpoint circuit after one valid response."""
-        self._states[endpoint] = _CircuitState()
+        self._states.pop(endpoint, None)
 
     def record_failure(self, endpoint: str) -> None:
         """Record one transport or protocol failure."""

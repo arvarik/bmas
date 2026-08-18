@@ -409,3 +409,68 @@ async def test_trace_ingest_publishes_only_after_durable_archive(monkeypatch):
 
     assert response.status_code == 200
     assert events == ["archive", "publish"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_trace_batch_uses_stable_event_keys(monkeypatch):
+    """An at-least-once trace batch reuses each durable event identity."""
+    import database as db
+
+    board = _install_ingest_app(monkeypatch)
+    monkeypatch.setattr(db, "insert_agent_traces", AsyncMock())
+    monkeypatch.setattr(db, "insert_cost_entry_v2", AsyncMock())
+    monkeypatch.setattr(db, "update_task_cost_totals", AsyncMock(return_value=True))
+    traces = [
+        {"seq": 1, "type": "reasoning", "data": {"text": "step"}},
+        {
+            "seq": 2,
+            "type": "final",
+            "node": "node-1",
+            "data": {
+                "usage": {
+                    "model": "gemini-pro",
+                    "prompt_tokens": 10,
+                    "completion_tokens": 2,
+                },
+            },
+        },
+    ]
+
+    for _ in range(2):
+        response = await ingest_traces(
+            "task-1",
+            "turn-1",
+            _JsonRequest(traces),
+        )
+        assert response.status_code == 200
+
+    keys = [
+        call.kwargs["idempotency_key"]
+        for call in board.publish_event.await_args_list
+    ]
+    assert keys == [
+        "trace:turn-1:1",
+        "trace:turn-1:2",
+        "trace-cost:turn-1",
+    ] * 2
+
+
+@pytest.mark.asyncio
+async def test_trace_journal_failure_returns_503(monkeypatch):
+    """The route does not acknowledge a batch with a missing journal event."""
+    from fastapi import HTTPException
+
+    import database as db
+
+    board = _install_ingest_app(monkeypatch)
+    monkeypatch.setattr(db, "insert_agent_traces", AsyncMock())
+    board.publish_event.side_effect = RuntimeError("journal unavailable")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await ingest_traces(
+            "task-1",
+            "turn-1",
+            _JsonRequest([{"seq": 1, "type": "reasoning", "data": {}}]),
+        )
+
+    assert exc_info.value.status_code == 503

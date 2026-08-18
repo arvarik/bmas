@@ -20,7 +20,7 @@
  * with the durable Redis snapshot so content never disappears.
  */
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   LayoutList,
   Search,
@@ -50,6 +50,7 @@ interface BlackboardBoardProps {
   phase?: string | null;
   consensus?: ConsensusState | null;
   allTurns?: TurnRecord[];
+  controls?: readonly string[];
 }
 
 export function BlackboardBoard({
@@ -60,6 +61,7 @@ export function BlackboardBoard({
   phase,
   consensus,
   allTurns = [],
+  controls = [],
 }: BlackboardBoardProps) {
   const { entries, synced } = useBoardEntries(taskId, liveEntries, removedEntryIds, isLive);
 
@@ -144,6 +146,14 @@ export function BlackboardBoard({
   );
 
   const empty = entries.length === 0;
+  const handleSteer = useCallback(async (action: "boost" | "retract", entryId: string) => {
+    const response = await fetch("/api/hitl", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, task_id: taskId, entry_id: entryId }),
+    });
+    if (!response.ok) throw new Error(`${action} returned HTTP ${response.status}`);
+  }, [taskId]);
 
   return (
     <div className="bb-board" style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -342,6 +352,8 @@ export function BlackboardBoard({
             allEntries={entries}
             onClose={() => setSelectedId(null)}
             onSelect={(id) => setSelectedId(id)}
+            controls={controls}
+            onSteer={handleSteer}
           />
         )}
       </div>

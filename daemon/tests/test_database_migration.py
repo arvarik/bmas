@@ -99,8 +99,8 @@ async def _get_schema_version(db_path: str) -> int:
 
 class TestSchemaVersion:
 
-    def test_schema_version_is_5(self):
-        assert SCHEMA_VERSION == 5
+    def test_schema_version_is_6(self):
+        assert SCHEMA_VERSION == 6
 
     @pytest.mark.asyncio
     async def test_fresh_db_is_v1(self, fresh_db):
@@ -191,7 +191,7 @@ class TestTasksColumns:
 
     @pytest.mark.asyncio
     async def test_variant_default(self, v2_db):
-        """New tasks should get variant='traditional' by default."""
+        """New tasks get the canonical classic variant by default."""
         async with aiosqlite.connect(v2_db) as db:
             await db.execute("PRAGMA foreign_keys=ON")
             await db.execute(
@@ -200,7 +200,7 @@ class TestTasksColumns:
             await db.commit()
             cursor = await db.execute("SELECT variant FROM tasks WHERE id='t1'")
             row = await cursor.fetchone()
-            assert row[0] == "traditional"
+            assert row[0] == "classic"
 
 
 # ── Tests: cost_entries column additions ─────────────────────────────
@@ -324,7 +324,7 @@ class TestInitDb:
         await init_db()
 
         v = await _get_schema_version(db_path)
-        assert v == 5
+        assert v == 6
         tables = await _get_tables(db_path)
         assert "board_entries" in tables
 
@@ -335,7 +335,7 @@ class TestInitDb:
         await init_db()
 
         v = await _get_schema_version(fresh_db)
-        assert v == 5
+        assert v == 6
         tables = await _get_tables(fresh_db)
         assert "board_entries" in tables
 
@@ -346,7 +346,7 @@ class TestInitDb:
         await init_db()
 
         v = await _get_schema_version(v2_db)
-        assert v == 5
+        assert v == 6
 
 
 class TestV3Durability:

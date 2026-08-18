@@ -1,162 +1,329 @@
-"""Coordination variant seam (doc 03 §6).
+"""Runtime contracts and registry for coordination variants.
 
-A coordination paradigm owns scheduling, the agent I/O contract,
-and termination.  It never owns the board store, transport, traces,
-or UI shell.
-
-This module defines:
-  - CoordinationVariant  — the Protocol every variant must satisfy
-  - SEAMS_CHECKLIST      — the 8 invariants enforced as a merge gate
-  - A simple variant registry for runtime lookup
+The orchestrator owns the durable task lifecycle. A registered variant owns
+its coordination loop and returns one stable task result.
 """
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+import importlib
+import logging
+from dataclasses import dataclass, field
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
-# ── The Variant Protocol ─────────────────────────────────────────────
+logger = logging.getLogger("bmas.variants")
+
+CLASSIC_VARIANT = "classic"
+LEGACY_CLASSIC_VARIANT = "traditional"
+VARIANT_API_VERSION = "1"
+
+
+class UnknownVariantError(ValueError):
+    """The requested coordination variant has no registered runtime."""
+
+
+class VariantConfigurationError(ValueError):
+    """A saved task configuration is incompatible with this runtime."""
+
+
+@dataclass(frozen=True)
+class VariantFeatures:
+    """List the public interface features that one variant supports."""
+
+    events: tuple[str, ...] = ()
+    panels: tuple[str, ...] = ()
+    graphs: tuple[str, ...] = ()
+    controls: tuple[str, ...] = ()
+    progress: tuple[str, ...] = ()
+    result: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, list[str]]:
+        """Return the JSON response shape for this feature set."""
+        return {
+            "events": list(self.events),
+            "panels": list(self.panels),
+            "graphs": list(self.graphs),
+            "controls": list(self.controls),
+            "progress": list(self.progress),
+            "result": list(self.result),
+        }
+
+
+@dataclass(frozen=True)
+class VariantDescriptor:
+    """Describe one registered coordination runtime."""
+
+    id: str
+    label: str
+    contract_version: str
+    aliases: tuple[str, ...] = ()
+    features: VariantFeatures = field(default_factory=VariantFeatures)
+    configuration_schema_version: str = "1"
+    supports_recovery: bool = False
+    required_agent_features: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the authoritative public capability record."""
+        return {
+            "id": self.id,
+            "label": self.label,
+            "available": True,
+            "contract_version": self.contract_version,
+            "aliases": list(self.aliases),
+            "features": self.features.to_dict(),
+            "configuration_schema_version": self.configuration_schema_version,
+            "supports_recovery": self.supports_recovery,
+            "required_agent_features": list(self.required_agent_features),
+        }
+
+
+@dataclass(frozen=True)
+class VariantExecutionRequest:
+    """Provide immutable input to one coordination runtime."""
+
+    task_id: str
+    session_id: str
+    user_task: str
+    triage: Any
+    overrides: dict[str, Any] | None = None
+    resume: bool = False
+    effective_configuration: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class VariantOutcome:
+    """Return one coordination result to the shared terminal lifecycle."""
+
+    variant_id: str
+    answer: str
+    result: dict[str, Any]
+    public_result: dict[str, Any]
+    cost_usd: float = 0.0
+    completed_subtasks: tuple[dict[str, Any], ...] = ()
+
+
+@runtime_checkable
+class VariantHost(Protocol):
+    """Expose shared daemon services to coordination runtimes."""
+
+    async def publish_phase(
+        self, phase: str, iteration: int, task_id: str,
+    ) -> None:
+        """Publish and persist one task phase."""
+        ...
+
+    async def check_abort(self, task_id: str) -> None:
+        """Raise an error when a task must stop."""
+        ...
+
+    async def log_event(
+        self,
+        node_id: str,
+        message: str,
+        task_id: str,
+        **kwargs: Any,
+    ) -> None:
+        """Write one structured task log."""
+        ...
+
+    async def dispatch_agent(
+        self,
+        *,
+        task_id: str,
+        activation_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Dispatch one activation with a stable idempotency identity."""
+        ...
+
+    async def publish_progress(
+        self,
+        task_id: str,
+        label: str,
+        status: str,
+        items: list[dict[str, Any]],
+    ) -> None:
+        """Publish variant-defined progress items for one task."""
+        ...
+
+    def task_lease_token(self, task_id: str) -> str | None:
+        """Return the current fenced lease token for a task."""
+        ...
+
 
 @runtime_checkable
 class CoordinationVariant(Protocol):
-    """A coordination paradigm.
+    """Define the complete outer interface for a coordination runtime."""
 
-    Owns scheduling, the agent I/O contract, and termination.
-    Never owns the board store, transport, traces, or UI shell.
+    descriptor: ClassVar[VariantDescriptor]
 
-    Variant implementations:
-      - traditional  (doc 05, Phase 3)
-      - patchboard   (doc 11, Phase 6)
-      - stigmergic   (doc 16, Phase 6)
-    """
-
-    name: str  # "traditional" | "patchboard" | "stigmergic"
-
-    async def genesis(self, task: Any) -> None:
-        """Initialize a task: triage, generate agents, write objective."""
+    @classmethod
+    async def capture_configuration(
+        cls, overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Capture the complete effective configuration for a new task."""
         ...
 
-    def build_turn_payload(
-        self, task: Any, actor: str, board: Any
-    ) -> dict:
-        """Build the payload dispatched to a KS for this turn."""
+    @classmethod
+    def configuration_from_metadata(
+        cls, metadata: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Load and migrate a saved configuration from task metadata."""
         ...
 
-    def parse_agent_response(
-        self, task: Any, actor: str, raw: Any
-    ) -> list:
-        """Parse the agent's response into BoardMutations."""
+    @classmethod
+    async def run(
+        cls, host: VariantHost, request: VariantExecutionRequest,
+    ) -> VariantOutcome:
+        """Start or resume one task and return its coordination outcome."""
         ...
 
-    async def apply(
-        self, task: Any, mutations: list
-    ) -> list:
-        """Apply mutations through the Gateway; return BoardEvents."""
-        ...
-
-    async def step(self, task: Any, board: Any) -> dict:
-        """Run one round: guard checks → CU selection → activations.
-
-        Returns StepResult: { activations, terminal, reason }
-        """
-        ...
-
-    def is_terminal(self, board: Any) -> tuple[bool, str | None]:
-        """Check if the board state is terminal.
-
-        Returns (is_done, reason_or_none).
-        """
-        ...
-
-
-# ── Seams Checklist (doc 03 §6) — enforced as merge gate ─────────────
-#
-# Every core PR must pass this checklist (doc 10 §1).  The checklist
-# items are the invariants that guarantee PatchBoard and stigmergic
-# variants can plug in without rewriting engine code.
 
 SEAMS_CHECKLIST: list[str] = [
     (
-        "1. Coordination lives behind CoordinationVariant — the daemon's "
-        "task runner calls variant.step(); it never hardcodes a sequence, "
-        "a role name, or 'control unit'."
+        "1. The daemon calls the registered CoordinationVariant runtime. "
+        "The daemon does not select actors or define a coordination loop."
     ),
     (
-        "2. The event log is variant-agnostic — board_events stores "
-        "{seq, actor, event_type, payload} with namespaced event types "
-        "(entry_added, patch_committed, pheromone_decayed, …)."
+        "2. The event log stores variant-neutral envelopes. The saved runtime "
+        "and contract version define each event payload."
     ),
     (
-        "3. actor/author are opaque strings everywhere (board, traces, DB, UI) "
-        "— never enums. Generated experts (expert.valuation), patchboard "
-        "workers (worker.extractor-2), and roleless actors (universal-3) "
-        "must all render."
+        "3. Actor and author identifiers remain opaque strings in every "
+        "storage, transport, and user interface contract."
     ),
     (
-        "4. Write authorization is capability-based, not role-name-based "
-        "— variants assign capabilities to actors however they like."
+        "4. Write authorization uses capabilities and resources. It does not "
+        "depend on a fixed role name."
     ),
     (
-        "5. Derived fields are computed in one pluggable hook "
-        "(recompute_derived(task) after each commit). Traditional registers "
-        "salience; stigmergic registers pressure + decay; patchboard "
-        "registers its state hash."
+        "5. Each variant registers its state projection and derived-field "
+        "hooks behind a shared commit boundary."
     ),
     (
-        "6. Dispatch supports both push and pull (participation_mode per node) "
-        "— push now, pull (crons) for stigmergic later."
+        "6. Dispatch can support push execution and durable pull claims "
+        "without changing the task lifecycle."
     ),
     (
-        "7. Termination is a variant method (is_terminal), not a task-runner "
-        "return."
+        "7. Each variant owns coordination termination. The daemon owns final "
+        "task persistence and delivery."
     ),
     (
-        "8. The UI is registry-driven: variant dropdown options come from the "
-        "daemon's capabilities endpoint, and each variant registers its "
-        "panels/graph adapters instead of being hard-wired into Mission Control."
+        "8. Mission Control reads variants and interface features from the "
+        "daemon capabilities endpoint."
     ),
 ]
 
 
 def verify_seams_checklist() -> list[str]:
-    """Return the seams checklist for merge-gate enforcement.
-
-    Every core PR must pass this checklist (doc 10 §1).
-    CI / review tooling can call this and assert no violations.
-    """
+    """Return a copy of the coordination seam checklist."""
     return list(SEAMS_CHECKLIST)
 
 
-# ── Variant Registry ─────────────────────────────────────────────────
-#
-# Each variant module (traditional.py, patchboard.py, stigmergic.py)
-# calls register_variant() at import time.  The daemon's task runner
-# uses get_variant_class() to instantiate the active variant.
-
-_VARIANTS: dict[str, type] = {}
+_VARIANTS: dict[str, type[CoordinationVariant]] = {}
+_ALIASES: dict[str, str] = {}
+_BUILTINS_LOADED = False
 
 
-def register_variant(name: str, cls: type) -> None:
-    """Register a CoordinationVariant implementation by name.
-
-    Raises TypeError if cls is not a class.
-    Logs a warning if name was already registered (last write wins).
-    """
+def register_variant(
+    name: str,
+    cls: type[CoordinationVariant],
+    *,
+    aliases: tuple[str, ...] = (),
+) -> None:
+    """Register one runtime under a canonical identifier and its aliases."""
     if not isinstance(cls, type):
         raise TypeError(f"register_variant expects a class, got {type(cls)}")
-    if name in _VARIANTS:
-        import logging
-        logging.getLogger("bmas.variants").warning(
-            "Variant '%s' is being re-registered (was %s, now %s). "
-            "Last registration wins.",
-            name, _VARIANTS[name].__name__, cls.__name__,
+    normalized = name.strip().lower()
+    if not normalized:
+        raise ValueError("A variant identifier cannot be empty")
+    descriptor = getattr(cls, "descriptor", None)
+    if not isinstance(descriptor, VariantDescriptor):
+        raise TypeError("A variant runtime must define a VariantDescriptor")
+    if descriptor.id != normalized:
+        raise ValueError(
+            "The variant descriptor identifier must match its registration"
         )
-    _VARIANTS[name] = cls
+    for method_name in (
+        "capture_configuration",
+        "configuration_from_metadata",
+        "run",
+    ):
+        if not callable(getattr(cls, method_name, None)):
+            raise TypeError(
+                f"A variant runtime must define {method_name}()"
+            )
+    previous = _VARIANTS.get(normalized)
+    if previous is not None and previous is not cls:
+        logger.warning(
+            "Variant '%s' is being re-registered from %s to %s",
+            normalized,
+            previous.__name__,
+            cls.__name__,
+        )
+    _VARIANTS[normalized] = cls
+    _ALIASES[normalized] = normalized
+    for alias in aliases:
+        alias_id = alias.strip().lower()
+        if not alias_id:
+            raise ValueError("A variant alias cannot be empty")
+        owner = _ALIASES.get(alias_id)
+        if owner is not None and owner != normalized:
+            raise ValueError(
+                f"Variant alias '{alias_id}' is already owned by '{owner}'"
+            )
+        _ALIASES[alias_id] = normalized
 
 
-def get_variant_class(name: str) -> type | None:
-    """Look up a registered variant class by name.  Returns None if unknown."""
-    return _VARIANTS.get(name)
+def load_builtin_variants() -> None:
+    """Load the built-in runtimes once."""
+    global _BUILTINS_LOADED
+    module = importlib.import_module("core.variants.classic")
+    if CLASSIC_VARIANT not in _VARIANTS:
+        runtime = module.ClassicVariantRuntime
+        register_variant(
+            CLASSIC_VARIANT,
+            runtime,
+            aliases=(LEGACY_CLASSIC_VARIANT,),
+        )
+    _BUILTINS_LOADED = True
+
+
+def canonical_variant_id(name: str) -> str:
+    """Return the registered canonical identifier or raise an error."""
+    load_builtin_variants()
+    normalized = str(name or "").strip().lower()
+    canonical = _ALIASES.get(normalized)
+    if canonical is None or canonical not in _VARIANTS:
+        raise UnknownVariantError(f"Unavailable coordination variant: {name!r}")
+    return canonical
+
+
+def get_variant_class(name: str) -> type[CoordinationVariant] | None:
+    """Return the registered runtime for a canonical identifier or alias."""
+    try:
+        canonical = canonical_variant_id(name)
+    except UnknownVariantError:
+        return None
+    return _VARIANTS[canonical]
+
+
+def require_variant_class(name: str) -> type[CoordinationVariant]:
+    """Return one runtime or raise an explicit fail-closed error."""
+    canonical = canonical_variant_id(name)
+    return _VARIANTS[canonical]
 
 
 def available_variants() -> list[str]:
-    """Return the names of all registered variants."""
-    return list(_VARIANTS.keys())
+    """Return all registered canonical identifiers in stable order."""
+    load_builtin_variants()
+    return sorted(_VARIANTS)
+
+
+def variant_capabilities() -> dict[str, Any]:
+    """Return the authoritative coordination capability document."""
+    load_builtin_variants()
+    descriptors = [
+        _VARIANTS[name].descriptor.to_dict()
+        for name in sorted(_VARIANTS)
+    ]
+    return {"api_version": VARIANT_API_VERSION, "variants": descriptors}

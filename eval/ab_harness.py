@@ -1,12 +1,4 @@
-"""A/B harness — same dataset, swap only coordination.variant, emit side-by-side report.
-
-Same dataset, swap only coordination.variant: traditional vs patchboard now;
-patchboard and stigmergic later. Emit a side-by-side report.
-
-Design: the daemon reads coordination.variant at startup. The A/B harness therefore
-runs each arm as a separate benchmark pass, verifying the daemon's active variant
-between arms via GET /config/active.
-"""
+"""Compare two registered coordination implementations on one daemon."""
 
 from __future__ import annotations
 
@@ -30,8 +22,8 @@ class ABHarness:
         harness = ABHarness(daemon_url="http://192.168.4.240:9000")
         report = await harness.run(
             items=dataset,
-            variant_a="traditional",
-            variant_b="traditional",
+            variant_a="classic",
+            variant_b="classic",
         )
     """
 
@@ -54,27 +46,37 @@ class ABHarness:
     ) -> tuple[list[ScoredResult], RunMetrics]:
         """Run one arm of the A/B test.
 
-        Verifies that the daemon's active variant matches expected_variant
-        before proceeding.
+        Verify availability before the harness submits the selected variant.
         """
         runner = BenchmarkRunner(
             daemon_url=self.daemon_url,
             concurrency=self.concurrency,
+            variant=expected_variant,
         )
 
         try:
-            # Pre-flight: verify active variant
-            config = await runner.verify_daemon()
-            active = config.get("variant", "unknown")
-            if active != expected_variant:
+            capabilities = await runner.verify_daemon()
+            available = {
+                alias
+                for variant in capabilities["variants"]
+                if isinstance(variant, dict) and variant.get("available") is True
+                for alias in [
+                    str(variant.get("id", "")),
+                    *[
+                        str(value)
+                        for value in variant.get("aliases", [])
+                        if isinstance(value, str)
+                    ],
+                ]
+                if alias
+            }
+            if expected_variant not in available:
                 raise RuntimeError(
-                    f"Daemon variant mismatch: expected '{expected_variant}', "
-                    f"got '{active}'. Restart the daemon with the correct "
-                    f"coordination.variant in bmas.yaml."
+                    f"Daemon does not offer variant '{expected_variant}'"
                 )
             logger.info(
-                "A/B arm '%s' verified — daemon running variant '%s'",
-                run_id, active,
+                "A/B arm '%s' selected variant '%s'",
+                run_id, expected_variant,
             )
 
             # Run benchmark
@@ -168,6 +170,8 @@ def _build_report(
         f"| P95 Latency (ms) | {a.p95_latency_ms:.0f} | {b.p95_latency_ms:.0f} | {_delta(a.p95_latency_ms, b.p95_latency_ms)} |",
         f"| Avg Cost/Task ($) | {a.avg_cost_per_task_usd:.6f} | {b.avg_cost_per_task_usd:.6f} | {_delta(a.avg_cost_per_task_usd, b.avg_cost_per_task_usd)} |",
         f"| Avg Rounds | {a.avg_rounds:.1f} | {b.avg_rounds:.1f} | {_delta(a.avg_rounds, b.avg_rounds)} |",
+        f"| Avg Effective Actions | {a.avg_effective_actions:.1f} | {b.avg_effective_actions:.1f} | {_delta(a.avg_effective_actions, b.avg_effective_actions)} |",
+        f"| Total Recoveries | {a.total_recoveries} | {b.total_recoveries} | {_delta_int(a.total_recoveries, b.total_recoveries)} |",
         "",
     ]
 
@@ -180,6 +184,7 @@ def _build_report(
         f"| Tokens | {a.token_observations}/{a.dataset_size} | {b.token_observations}/{b.dataset_size} |",
         f"| Latency | {a.latency_observations}/{a.dataset_size} | {b.latency_observations}/{b.dataset_size} |",
         f"| Rounds | {a.round_observations}/{a.dataset_size} | {b.round_observations}/{b.dataset_size} |",
+        f"| Effective Actions | {a.action_observations}/{a.dataset_size} | {b.action_observations}/{b.dataset_size} |",
         "",
     ])
 

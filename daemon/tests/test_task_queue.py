@@ -54,7 +54,9 @@ async def test_workers_enforce_global_concurrency_limit(monkeypatch):
 @pytest.mark.asyncio
 async def test_queued_abort_reaches_terminal_database_state(monkeypatch):
     fail_task = AsyncMock()
+    rollup = AsyncMock()
     monkeypatch.setattr(submit.db, "fail_task", fail_task)
+    monkeypatch.setattr(submit.db, "update_task_cost_totals", rollup)
     submit._scheduled_ids.add("task-queued")
 
     scheduled = await submit.abort_scheduled_task(
@@ -65,6 +67,7 @@ async def test_queued_abort_reaches_terminal_database_state(monkeypatch):
     fail_task.assert_awaited_once_with(
         "task-queued", "Task aborted: evaluation_timeout",
     )
+    rollup.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -99,6 +102,7 @@ async def test_unknown_abort_does_not_leak_a_cancel_reason(monkeypatch):
 async def test_worker_survives_an_active_task_abort(monkeypatch):
     first_started = asyncio.Event()
     second_completed = asyncio.Event()
+    terminal_steps = []
 
     async def process_task(_user_task, task_id, **kwargs):
         if task_id == "task-first":
@@ -106,12 +110,28 @@ async def test_worker_survives_an_active_task_abort(monkeypatch):
             await asyncio.Event().wait()
         second_completed.set()
 
-    orch = SimpleNamespace(process_task=process_task)
+    async def rollup_task_cost(task_id, lease_token):
+        terminal_steps.append(("rollup", task_id, lease_token))
+        return True
+
+    def task_lease_token(task_id):
+        assert task_id == "task-first"
+        return "lease-first"
+
+    orch = SimpleNamespace(
+        process_task=process_task,
+        rollup_task_cost=rollup_task_cost,
+        task_lease_token=task_lease_token,
+    )
     monkeypatch.setattr(submit, "MAX_ACTIVE_TASKS", 1)
     monkeypatch.setattr(
         submit.db, "get_resumable_tasks", AsyncMock(return_value=[]),
     )
-    fail_task = AsyncMock(return_value=True)
+    async def fail_task(task_id, message):
+        terminal_steps.append(("fail", task_id, message))
+        return True
+
+    fail_task = AsyncMock(side_effect=fail_task)
     monkeypatch.setattr(submit.db, "fail_task", fail_task)
 
     await submit.start_task_workers(orch)
@@ -134,6 +154,69 @@ async def test_worker_survives_an_active_task_abort(monkeypatch):
     fail_task.assert_awaited_once_with(
         "task-first", "Task aborted: operator",
     )
+    assert terminal_steps == [
+        ("rollup", "task-first", "lease-first"),
+        ("fail", "task-first", "Task aborted: operator"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_blocked_recovery_rotates_past_an_incompatible_full_page(
+    monkeypatch,
+):
+    first_page = [
+        {
+            "id": f"task-missing-{index:03d}",
+            "variant": "missing-runtime",
+            "created_at": f"2026-01-01T00:00:{index:03d}Z",
+        }
+        for index in range(100)
+    ]
+    compatible_task = {
+        "id": "task-compatible",
+        "variant": "compatible-runtime",
+        "created_at": "2026-01-02T00:00:00Z",
+    }
+    observed_cursors = []
+
+    async def load_blocked(*, limit, after):
+        assert limit == 100
+        observed_cursors.append(after)
+        if after is None:
+            return first_page
+        return [compatible_task]
+
+    class CompatibleRuntime:
+        @classmethod
+        def configuration_from_metadata(cls, metadata):
+            return metadata["effective_configuration"]
+
+    def require_runtime(variant_id):
+        if variant_id == "compatible-runtime":
+            return CompatibleRuntime
+        raise submit.UnknownVariantError(variant_id)
+
+    retry = AsyncMock(return_value=True)
+    monkeypatch.setattr(submit.db, "get_blocked_tasks", load_blocked)
+    monkeypatch.setattr(
+        submit.db,
+        "get_board_meta",
+        AsyncMock(return_value={"effective_configuration": {"version": "1"}}),
+    )
+    monkeypatch.setattr(submit.db, "retry_blocked_task", retry)
+    monkeypatch.setattr(submit, "require_variant_class", require_runtime)
+
+    await submit._retry_compatible_blocked_tasks()
+    await submit._retry_compatible_blocked_tasks()
+
+    assert observed_cursors == [
+        None,
+        (
+            first_page[-1]["created_at"],
+            first_page[-1]["id"],
+        ),
+    ]
+    retry.assert_awaited_once_with("task-compatible")
 
 
 @pytest.mark.asyncio
@@ -163,6 +246,7 @@ async def test_recovery_restores_persisted_task_overrides(monkeypatch):
         "full_input": "question",
         "status": "running",
     }]))
+    monkeypatch.setattr(submit.db, "get_blocked_tasks", AsyncMock(return_value=[]))
     monkeypatch.setattr(submit.db, "get_board_meta", AsyncMock(return_value={
         "submission_overrides": {
             "routing": {"complex": "chosen-model"},

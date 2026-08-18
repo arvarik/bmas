@@ -12,7 +12,7 @@ same board_entries snapshot, including removed statuses (durability
 contract, doc 04 §5.1).
 
 Authors are opaque strings (seam rule 3).
-Event types are variant-namespaced (seam rule 2).
+The task runtime and its contract version define the event payloads.
 """
 from __future__ import annotations
 
@@ -120,6 +120,12 @@ class BoardStore(Protocol):
         self, task_id: str, entry_id: str, score: float
     ) -> None:
         """Update the salience score for an entry."""
+        ...
+
+    async def set_salience_many(
+        self, task_id: str, scores: dict[str, float]
+    ) -> None:
+        """Update all salience scores in one storage operation."""
         ...
 
     async def entry_exists(
@@ -266,6 +272,18 @@ class InMemoryBoardStore:
         entry = self._entries.get(task_id, {}).get(entry_id)
         if entry:
             entry.salience = score
+
+    async def set_salience_many(
+        self, task_id: str, scores: dict[str, float]
+    ) -> None:
+        """Update all salience scores without repeated store calls."""
+        salience = self._salience.setdefault(task_id, {})
+        entries = self._entries.get(task_id, {})
+        salience.update(scores)
+        for entry_id, score in scores.items():
+            entry = entries.get(entry_id)
+            if entry is not None:
+                entry.salience = score
 
     async def entry_exists(
         self, task_id: str, entry_id: str
@@ -572,6 +590,15 @@ class SqliteRedisBoardStore(InMemoryBoardStore):
                 and event["payload"].get("_mutation_id")
             }
             await self._fold_events(task_id)
+            # The event log owns entry identity and status. Salience is a
+            # derived projection, so restore its last committed cache value.
+            persisted_entries = await db.get_board_entries(task_id)
+            persisted_salience = {
+                str(entry["id"]): float(entry.get("salience") or 0.0)
+                for entry in persisted_entries
+                if entry.get("id") in self._entries[task_id]
+            }
+            await super().set_salience_many(task_id, persisted_salience)
             self._loaded_tasks.add(task_id)
 
     async def append_event(self, task_id: str, event: dict[str, Any]) -> int:
@@ -653,6 +680,20 @@ class SqliteRedisBoardStore(InMemoryBoardStore):
         )
         await super().set_salience(task_id, entry_id, score)
 
+    async def set_salience_many(
+        self, task_id: str, scores: dict[str, float]
+    ) -> None:
+        """Save one complete score set in one SQLite transaction."""
+        if not scores:
+            return
+        await self._ensure_loaded(task_id)
+        import database as db
+
+        await db.update_board_entry_saliences(
+            task_id, scores, lease_token=self._lease_token,
+        )
+        await super().set_salience_many(task_id, scores)
+
     async def entry_exists(self, task_id: str, entry_id: str) -> bool:
         await self._ensure_loaded(task_id)
         return await super().entry_exists(task_id, entry_id)
@@ -686,13 +727,12 @@ def make_board_persist_hook(
 ) -> Callable[[str, BoardStore], Awaitable[None]]:
     """Build a recompute hook that mirrors the snapshot into Redis.
 
-    The traditional variant keeps its working board in an in-process
-    store; this hook fires after every gateway commit batch (seam rule 5)
-    and writes the full materialized snapshot to a durable Redis key with
-    NO expiry, so the board is never lost — for live OR completed tasks.
+    The classic runtime keeps its active board in an in-process store.
+    This hook runs after each gateway commit and writes the materialized
+    snapshot to Redis for low-latency reads.
 
-    Persistence failures are swallowed: durability mirroring must never
-    break the coordination loop.
+    SQLite remains authoritative. A Redis projection failure does not stop
+    the coordination loop.
     """
 
     async def _hook(task_id: str, store: BoardStore) -> None:

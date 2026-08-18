@@ -69,7 +69,7 @@ export function mapLog(
   index: number,
 ): LogEntry {
   return {
-    id: (raw.id as string) ?? `log-${index}`,
+    id: raw.id == null ? `log-${index}` : String(raw.id),
     agent_role: (raw.agent_role as string) ?? "daemon",
     level: (raw.level as string) ?? "info",
     message: (raw.message as string) ?? "",

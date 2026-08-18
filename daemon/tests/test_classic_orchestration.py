@@ -13,13 +13,14 @@ from core.board_store import InMemoryBoardStore
 from core.entry import BoardEntry
 from core.event_emitter import InMemoryEventEmitter
 from core.gateway import BoardGateway, LeaseLostError
-from core.orchestrator import Orchestrator
+from core.orchestrator import EndpointOverloadedError, Orchestrator
 from core.variants.traditional import Activation, TraditionalVariant
 
 
 def _orchestrator_without_clients() -> Orchestrator:
     orch = object.__new__(Orchestrator)
     orch._safe_log = AsyncMock()
+    orch._assert_dispatch_lease = AsyncMock()
     orch.bb = SimpleNamespace(publish_event=AsyncMock())
     return orch
 
@@ -67,6 +68,9 @@ async def test_failed_turn_never_becomes_board_entry(status):
     )
 
     assert response["status"] == status
+    dispatch_kwargs = orch._dispatch_turn.await_args.kwargs
+    assert dispatch_kwargs["activation_id"] == dispatch_kwargs["turn_id"]
+    assert dispatch_kwargs["activation_id"].startswith("activation-")
     variant.parse_agent_response.assert_not_called()
     variant.apply.assert_not_awaited()
     end_event = orch.bb.publish_event.await_args_list[-1].args[2]
@@ -147,10 +151,17 @@ async def test_dispatch_records_usage_before_late_trace_ingestion(monkeypatch):
         persona="persona",
         model="test-model",
         endpoint="http://node:8000",
+        model_pricing={
+            "test-model": {
+                "input_cost_per_token": 0.01,
+                "output_cost_per_token": 0.02,
+            }
+        },
     )
 
     insert_cost.assert_awaited_once()
     assert insert_cost.await_args.kwargs["phase"] == "trace"
+    assert insert_cost.await_args.kwargs["cost_usd"] == pytest.approx(0.2)
 
 
 @pytest.mark.asyncio
@@ -170,7 +181,8 @@ async def test_dispatch_fails_over_without_changing_activation_id(monkeypatch):
     orch.http = SimpleNamespace(post=post)
     monkeypatch.setattr(asyncio, "sleep", AsyncMock())
     monkeypatch.setattr(db, "create_turn", AsyncMock())
-    monkeypatch.setattr(db, "complete_turn", AsyncMock())
+    complete_turn = AsyncMock()
+    monkeypatch.setattr(db, "complete_turn", complete_turn)
     monkeypatch.setattr("core.orchestrator.BMAS_EXECUTE_KEY", "execute-secret")
 
     result = await orch._dispatch_turn(
@@ -196,6 +208,45 @@ async def test_dispatch_fails_over_without_changing_activation_id(monkeypatch):
     assert calls[1][1]["headers"] == {
         "Authorization": "Bearer execute-secret",
     }
+    assert complete_turn.await_args.kwargs["node"] == "http://node-b:8000"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_uses_next_endpoint_when_first_is_overloaded(monkeypatch):
+    orch = _orchestrator_without_clients()
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"status": "completed", "result": "ok"}
+    orch.http = SimpleNamespace(post=AsyncMock(return_value=response))
+
+    async def acquire(endpoint):
+        if endpoint == "http://node-a:8000":
+            raise EndpointOverloadedError("node a is full")
+        slot = asyncio.BoundedSemaphore(1)
+        await slot.acquire()
+        return slot
+
+    orch._acquire_endpoint_slot = acquire
+    orch._endpoint_active = {}
+    orch._endpoint_waiting = {}
+    orch._endpoint_slots = {}
+    monkeypatch.setattr(db, "create_turn", AsyncMock())
+    complete_turn = AsyncMock()
+    monkeypatch.setattr(db, "complete_turn", complete_turn)
+
+    result = await orch._dispatch_turn(
+        role="expert",
+        task_id="task-1",
+        description="question",
+        persona="persona",
+        endpoints=["http://node-a:8000", "http://node-b:8000"],
+    )
+
+    assert result["status"] == "completed"
+    assert result["endpoint"] == "http://node-b:8000"
+    orch.http.post.assert_awaited_once()
+    assert orch.http.post.await_args.args[0] == "http://node-b:8000/execute"
+    assert complete_turn.await_args.kwargs["node"] == "http://node-b:8000"
 
 
 @pytest.mark.asyncio
@@ -396,6 +447,42 @@ async def test_completion_survives_a_cost_rollup_error(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_completion_saves_both_terminal_event_scopes(monkeypatch):
+    orch = _orchestrator_without_clients()
+    orch._task_lock_ids = {"task-1": "owner"}
+    orch._publish_task_state = AsyncMock()
+    orch.bb = SimpleNamespace(
+        redis=object(),
+        publish_result=AsyncMock(),
+    )
+    terminal_task = {
+        "id": "task-1",
+        "status": "completed",
+        "label": "question",
+    }
+    task_terminal = AsyncMock()
+    system_terminal = AsyncMock()
+    monkeypatch.setattr(db, "update_task_cost_totals", AsyncMock(return_value=True))
+    monkeypatch.setattr(db, "complete_task", AsyncMock(return_value=True))
+    monkeypatch.setattr(db, "get_task", AsyncMock(return_value=terminal_task))
+    monkeypatch.setattr("core.orchestrator.ensure_terminal_event", task_terminal)
+    monkeypatch.setattr(
+        "core.orchestrator.ensure_system_terminal_event",
+        system_terminal,
+    )
+
+    await orch._complete_traditional_task(
+        "task-1",
+        "question",
+        {"answer": "answer", "rounds_completed": 2},
+        0.1,
+    )
+
+    task_terminal.assert_awaited_once_with(orch.bb.redis, terminal_task)
+    system_terminal.assert_awaited_once_with(orch.bb.redis, terminal_task)
+
+
+@pytest.mark.asyncio
 async def test_genesis_keeps_configured_round_limit_and_existing_spend():
     gateway = SimpleNamespace(append=AsyncMock(), set_meta=AsyncMock())
     variant = TraditionalVariant(
@@ -434,6 +521,108 @@ async def test_genesis_keeps_configured_round_limit_and_existing_spend():
     meta = gateway.set_meta.await_args.kwargs
     assert meta["budget_spent"] == 0.125
     assert meta["budget_reserved"] == 0.0
+    assert meta["genesis_complete"] is True
+
+
+def test_genesis_completion_marker_supports_legacy_rosters():
+    assert TraditionalVariant.genesis_checkpoint_complete({}) is False
+    assert TraditionalVariant.genesis_checkpoint_complete({
+        "budget_spent": 0.1,
+    }) is False
+    assert TraditionalVariant.genesis_checkpoint_complete({
+        "genesis_complete": False,
+        "roster": {"constants": {"planner": "Plans"}, "experts": []},
+    }) is False
+    assert TraditionalVariant.genesis_checkpoint_complete({
+        "genesis_complete": True,
+    }) is True
+    assert TraditionalVariant.genesis_checkpoint_complete({
+        "roster": {"constants": {"planner": "Plans"}, "experts": []},
+    }) is True
+
+
+@pytest.mark.asyncio
+async def test_genesis_retry_does_not_duplicate_entries():
+    store = InMemoryBoardStore()
+    gateway = BoardGateway(store, InMemoryEventEmitter())
+    variant = TraditionalVariant(
+        gateway=gateway,
+        board_store=store,
+        event_emitter=None,
+        triage=None,
+        config={"experts_per_tier": {"simple": 0}},
+        litellm_url="http://litellm.test",
+        litellm_key="key",
+        node_endpoints=[],
+        role_registry={},
+        model_routing={"simple": "test-model"},
+    )
+    task = {
+        "task_id": "task-genesis-retry",
+        "query": "question",
+        "triage_result": SimpleNamespace(
+            complexity=SimpleNamespace(value="simple"),
+        ),
+        "attachments": [
+            {"id": "file-a", "name": "a.txt", "text_preview": "A"},
+            {"id": "file-b", "name": "b.txt", "text_preview": "B"},
+        ],
+    }
+
+    try:
+        await variant.genesis(task)
+        first_started_at = (
+            await store.get_meta("task-genesis-retry")
+        )["genesis_started_at"]
+        await variant.genesis(task)
+        snapshot = await store.get_snapshot("task-genesis-retry")
+        meta = await store.get_meta("task-genesis-retry")
+    finally:
+        await variant.close()
+
+    assert [entry.type for entry in snapshot.values()].count("objective") == 1
+    assert [entry.type for entry in snapshot.values()].count("attachment") == 2
+    assert meta["genesis_complete"] is True
+    assert meta["genesis_started_at"] == first_started_at
+
+
+@pytest.mark.asyncio
+async def test_genesis_does_not_mark_an_incomplete_attachment_write():
+    gateway = SimpleNamespace(
+        append=AsyncMock(side_effect=[[], RuntimeError("attachment failed")]),
+        set_meta=AsyncMock(),
+    )
+    variant = TraditionalVariant(
+        gateway=gateway,
+        board_store=SimpleNamespace(),
+        event_emitter=None,
+        triage=None,
+        config={"experts_per_tier": {"simple": 0}},
+        litellm_url="http://litellm.test",
+        litellm_key="key",
+        node_endpoints=[],
+        role_registry={},
+        model_routing={"simple": "test-model"},
+    )
+    task = {
+        "task_id": "task-genesis-failure",
+        "query": "question",
+        "triage_result": SimpleNamespace(
+            complexity=SimpleNamespace(value="simple"),
+        ),
+        "attachments": [
+            {"id": "file-a", "name": "a.txt", "text_preview": "A"},
+        ],
+    }
+
+    try:
+        with pytest.raises(RuntimeError, match="attachment failed"):
+            await variant.genesis(task)
+    finally:
+        await variant.close()
+
+    assert gateway.set_meta.await_count == 1
+    assert gateway.set_meta.await_args.kwargs["genesis_complete"] is False
 
 
 @pytest.mark.asyncio

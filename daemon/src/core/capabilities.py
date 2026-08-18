@@ -6,7 +6,7 @@ The gateway calls authorize() with the actor's capability list; it
 never inspects the actor string to decide authorization.
 
 The variant decides which capabilities an actor gets —
-capabilities_for_role() is a convenience for the traditional variant,
+capabilities_for_role() is a convenience for the classic runtime,
 never used by the gateway itself.
 """
 from __future__ import annotations
@@ -177,7 +177,7 @@ def authorize_remove(
 
 # ── Traditional Variant Convenience ──────────────────────────────────
 #
-# The traditional variant maps roles to capability profiles.
+# The classic runtime maps roles to capability profiles.
 # This is a convenience; the gateway itself never calls this.
 
 ROLE_CAPABILITIES: dict[str, list[str]] = {
@@ -196,12 +196,12 @@ _EXPERT_CAP_PREFIX = "expert."
 
 
 def capabilities_for_role(role: str) -> list[str]:
-    """Map a traditional-variant role to its capability profile(s).
+    """Map a classic runtime role to its capability profiles.
 
     For generated experts (expert.*), returns ["finding_writer"].
     For unknown roles, returns an empty list (the gateway will reject).
 
-    This function is used ONLY by the traditional variant to populate
+    This function is used only by the classic runtime to populate
     the capabilities list before calling the gateway.  The gateway
     itself is capability-agnostic.
     """

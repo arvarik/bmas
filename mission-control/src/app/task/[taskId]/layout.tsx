@@ -20,20 +20,12 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { AttachmentRail } from "@/components/features/AttachmentRail";
 import type { StatusType } from "@/lib/design-tokens";
 import { ArrowLeft } from "lucide-react";
+import { UnsupportedVariantState } from "@/components/features/UnsupportedVariantState";
+import { getActiveAdapter, visibleNavigationPanels } from "@/lib/variants";
 
 // Re-export useTaskData for convenience (child pages should import
 // from TaskStreamContext.tsx directly, but this keeps backward compat).
 export { useTaskData } from "./TaskStreamContext";
-
-// ── Tab definitions ──────────────────────────────────────────────────
-
-const TABS = [
-  { label: "Overview",    segment: null },            // /task/[id]
-  { label: "Blackboard",  segment: "mission" },        // /task/[id]/mission — live command center + board
-  { label: "Graph",       segment: "dag" },             // /task/[id]/dag — execution graph (may have cycles)
-  { label: "Logs",        segment: "logs" },            // /task/[id]/logs
-  { label: "Artifacts",   segment: "artifacts" },       // /task/[id]/artifacts
-];
 
 // ── Status mapping ───────────────────────────────────────────────────
 
@@ -164,6 +156,13 @@ export default function TaskLayout({
 
   // ── SSE stream lives here (layout persists across tab switches) ──
   const streamData = useTaskStream(taskId as string);
+  const adapter = getActiveAdapter(streamData.runtime.adapterId);
+  const capability = streamData.runtime.capability;
+  const tabs = adapter && capability
+    ? visibleNavigationPanels(adapter, capability)
+    : [];
+  const requestedPanel = adapter?.navigationPanels.find((panel) => panel.segment === segment);
+  const panelAvailable = tabs.some((panel) => panel.segment === segment);
 
   // Clear optimistic state when real data arrives
   useEffect(() => {
@@ -182,9 +181,12 @@ export default function TaskLayout({
           pending={pending}
           cost={streamData.cost}
         />
-        <AttachmentRail taskId={taskId as string} />
-        <nav className="task-tabs" role="tablist">
-          {TABS.map((tab) => (
+        <AttachmentRail
+          taskId={taskId as string}
+          liveFiles={streamData.liveFiles}
+        />
+        {tabs.length > 0 ? <nav className="task-tabs" role="tablist">
+          {tabs.map((tab) => (
             <Link
               key={tab.label}
               href={tab.segment ? `${basePath}/${tab.segment}` : basePath}
@@ -195,8 +197,22 @@ export default function TaskLayout({
               {tab.label}
             </Link>
           ))}
-        </nav>
-        <div className="task-content">{children}</div>
+        </nav> : null}
+        <div className="task-content">
+          {streamData.runtime.status === "ready" && streamData.hydrationError ? (
+            <div className="task-hydration-warning" role="alert">
+              Saved task data could not refresh. {streamData.hydrationError}
+            </div>
+          ) : null}
+          {streamData.runtime.status !== "ready" ? (
+            <UnsupportedVariantState runtime={streamData.runtime} />
+          ) : panelAvailable ? children : (
+            <UnsupportedVariantState
+              runtime={streamData.runtime}
+              feature={requestedPanel?.label ?? String(segment ?? "overview")}
+            />
+          )}
+        </div>
       </div>
     </TaskStreamContext.Provider>
   );

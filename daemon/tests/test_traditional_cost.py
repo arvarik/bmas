@@ -15,7 +15,10 @@ from core.event_emitter import InMemoryEventEmitter
 from core.variants.traditional import TraditionalVariant
 
 
-def _make_variant(emitter: InMemoryEventEmitter) -> TraditionalVariant:
+def _make_variant(
+    emitter: InMemoryEventEmitter,
+    model_pricing: dict | None = None,
+) -> TraditionalVariant:
     cfg = {
         "max_rounds": 4,
         "max_duration_s": 1800,
@@ -39,6 +42,7 @@ def _make_variant(emitter: InMemoryEventEmitter) -> TraditionalVariant:
         node_endpoints=[],
         role_registry={},
         model_routing={"light": "test-light", "medium": "test-medium"},
+        model_pricing=model_pricing,
     )
 
 
@@ -111,3 +115,40 @@ async def test_record_llm_cost_zero_when_pricing_missing(monkeypatch):
     assert events[0]["input_tokens"] == 10
     assert events[0]["output_tokens"] == 5
     assert events[0]["cost_usd"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_record_llm_cost_uses_saved_pricing_after_config_changes(
+    monkeypatch,
+):
+    saved_pricing = {
+        "test-light": {
+            "input_cost_per_token": 1e-6,
+            "output_cost_per_token": 2e-6,
+        }
+    }
+    monkeypatch.setattr(
+        config,
+        "MODEL_PRICING",
+        {
+            "test-light": {
+                "input_cost_per_token": 0.5,
+                "output_cost_per_token": 0.5,
+            }
+        },
+    )
+    emitter = InMemoryEventEmitter()
+    variant = _make_variant(emitter, model_pricing=saved_pricing)
+
+    await variant._record_llm_cost(
+        "t1",
+        {
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "model": "test-light",
+        },
+        "test-light",
+        "control_plane:cu",
+    )
+
+    assert variant.budget_spent == pytest.approx(0.0002)

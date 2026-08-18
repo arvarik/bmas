@@ -6,8 +6,15 @@
 
 import { useParams } from "next/navigation";
 import { ArtifactBrowser } from "@/components/features/ArtifactBrowser";
+import { useTaskData } from "../TaskStreamContext";
 
 export default function ArtifactsPage() {
   const { taskId } = useParams();
-  return <ArtifactBrowser taskId={taskId as string} />;
+  const { liveArtifacts } = useTaskData();
+  return (
+    <ArtifactBrowser
+      taskId={taskId as string}
+      liveArtifacts={liveArtifacts}
+    />
+  );
 }

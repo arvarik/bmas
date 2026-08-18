@@ -13,6 +13,7 @@ import asyncio
 import pytest
 from test_helpers import make_critique_entry, make_proposed_entry, make_solution_entry
 
+from core.board_store import InMemoryBoardStore
 from core.entry import envelope_fallback
 from core.gateway import BoardGateway, salience_recompute_hook
 from core.protocol import (
@@ -508,6 +509,76 @@ class TestSalienceRecompute:
         entry = await board_store.get_entry("task-1", ref_id)
         assert entry.salience > salience_before
 
+    @pytest.mark.asyncio
+    async def test_recompute_saves_scores_as_one_batch(self, event_emitter):
+        """A large board causes one storage update per recomputation."""
+        class CountingStore(InMemoryBoardStore):
+            def __init__(self):
+                super().__init__()
+                self.batch_calls = 0
+                self.single_calls = 0
+
+            async def set_salience(self, task_id, entry_id, score):
+                self.single_calls += 1
+                await super().set_salience(task_id, entry_id, score)
+
+            async def set_salience_many(self, task_id, scores):
+                self.batch_calls += 1
+                await super().set_salience_many(task_id, scores)
+
+        store = CountingStore()
+        await store.set_meta("task-1", round=1)
+        gateway = BoardGateway(
+            store, event_emitter, recompute_hooks=[salience_recompute_hook],
+        )
+
+        await gateway.append(
+            task_id="task-1",
+            actor="expert.x",
+            capabilities=["finding_writer"],
+            proposed=[
+                make_proposed_entry(body=f"Finding {index}")
+                for index in range(100)
+            ],
+            turn_id="turn-batch",
+            round_no=1,
+        )
+
+        assert store.batch_calls == 1
+        assert store.single_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_recompute_skips_unchanged_scores(self, event_emitter):
+        """A repeated projection does not write unchanged derived values."""
+        class CountingStore(InMemoryBoardStore):
+            def __init__(self):
+                super().__init__()
+                self.saved_scores: list[dict[str, float]] = []
+
+            async def set_salience_many(self, task_id, scores):
+                self.saved_scores.append(dict(scores))
+                await super().set_salience_many(task_id, scores)
+
+        store = CountingStore()
+        await store.set_meta("task-1", round=1)
+        gateway = BoardGateway(
+            store, event_emitter, recompute_hooks=[salience_recompute_hook],
+        )
+        entries = await gateway.append(
+            task_id="task-1",
+            actor="expert.x",
+            capabilities=["finding_writer"],
+            proposed=[make_proposed_entry()],
+            turn_id="turn-one",
+            round_no=1,
+        )
+        first_score = entries[0].salience
+
+        await salience_recompute_hook("task-1", store)
+
+        assert first_score > 0
+        assert store.saved_scores == [{entries[0].id: first_score}]
+
 
 # ── Remove Tests ─────────────────────────────────────────────────────
 
@@ -742,3 +813,197 @@ class TestReplayDeterminism:
             assert live_snapshot[entry_id].status == replayed_snapshot[entry_id].status
             assert live_snapshot[entry_id].type == replayed_snapshot[entry_id].type
             assert live_snapshot[entry_id].body == replayed_snapshot[entry_id].body
+
+
+class TestDurableEventIdentity:
+    """Test stable journal identities for board mutations."""
+
+    @pytest.mark.asyncio
+    async def test_committed_mutation_supplies_event_idempotency_key(self):
+        """One mutation supplies one stable event delivery key."""
+
+        class CapturingEmitter:
+            def __init__(self):
+                self.calls = []
+
+            async def emit(
+                self,
+                task_id,
+                event_type,
+                data,
+                *,
+                idempotency_key=None,
+            ):
+                self.calls.append(
+                    (task_id, event_type, data, idempotency_key)
+                )
+
+        emitter = CapturingEmitter()
+        gateway = BoardGateway(InMemoryBoardStore(), emitter)
+        proposed = make_proposed_entry()
+        proposed["_mutation_id"] = "turn-1:0"
+
+        await gateway.append(
+            task_id="task-1",
+            actor="expert.x",
+            capabilities=["finding_writer"],
+            proposed=[proposed],
+            turn_id="turn-1",
+        )
+
+        assert len(emitter.calls) == 1
+        assert emitter.calls[0][3] == (
+            "mutation:turn-1:0:board_entry"
+        )
+
+    @pytest.mark.asyncio
+    async def test_board_entry_uses_final_salience_and_retry_does_not_duplicate(self):
+        """The live board entry matches the final durable projection."""
+        store = InMemoryBoardStore()
+        from core.event_emitter import InMemoryEventEmitter
+
+        emitter = InMemoryEventEmitter()
+        gateway = BoardGateway(
+            store,
+            emitter,
+            recompute_hooks=[salience_recompute_hook],
+        )
+        await store.set_meta("task-1", round=1)
+        proposed = make_proposed_entry(confidence=0.8)
+        proposed["_mutation_id"] = "turn-final:0"
+
+        first = await gateway.append(
+            "task-1",
+            "expert.x",
+            ["finding_writer"],
+            [proposed],
+            turn_id="turn-final",
+            round_no=1,
+        )
+        second = await gateway.append(
+            "task-1",
+            "expert.x",
+            ["finding_writer"],
+            [proposed],
+            turn_id="turn-final",
+            round_no=1,
+        )
+
+        delivered = emitter.events_of_type(EVENT_BOARD_ENTRY)
+        stored = await store.get_entry("task-1", first[0].id)
+        assert stored is not None
+        assert stored.salience > 0
+        assert len(delivered) == 1
+        assert delivered[0]["salience"] == stored.salience
+        assert second[0].id == first[0].id
+
+    @pytest.mark.asyncio
+    async def test_retry_repairs_event_failure_after_board_commit(self):
+        """A retry repairs the journal without a second board mutation."""
+        class FailsOnceEmitter:
+            def __init__(self):
+                self.failed = False
+                self.keys = set()
+                self.events = []
+
+            async def contains(self, task_id, idempotency_key):
+                return (task_id, idempotency_key) in self.keys
+
+            async def emit(
+                self,
+                task_id,
+                event_type,
+                data,
+                *,
+                idempotency_key=None,
+            ):
+                if not self.failed:
+                    self.failed = True
+                    raise RuntimeError("journal unavailable")
+                self.keys.add((task_id, idempotency_key))
+                self.events.append((event_type, data))
+
+        store = InMemoryBoardStore()
+        emitter = FailsOnceEmitter()
+        gateway = BoardGateway(store, emitter)
+        proposed = make_proposed_entry()
+        proposed["_mutation_id"] = "turn-repair:0"
+
+        with pytest.raises(RuntimeError, match="journal unavailable"):
+            await gateway.append(
+                "task-1",
+                "expert.x",
+                ["finding_writer"],
+                [proposed],
+                turn_id="turn-repair",
+            )
+        repaired = await gateway.append(
+            "task-1",
+            "expert.x",
+            ["finding_writer"],
+            [proposed],
+            turn_id="turn-repair",
+        )
+
+        assert len(await store.get_events("task-1")) == 1
+        assert len(await store.get_snapshot("task-1")) == 1
+        assert len(emitter.events) == 1
+        assert repaired[0].id == "e-1"
+
+    @pytest.mark.asyncio
+    async def test_in_memory_emitter_clear_resets_event_keys(self):
+        """A cleared test emitter accepts the same event identity again."""
+        from core.event_emitter import InMemoryEventEmitter
+
+        emitter = InMemoryEventEmitter()
+        await emitter.emit(
+            "task-1",
+            EVENT_BOARD_ENTRY,
+            {"id": "e-1"},
+            idempotency_key="mutation:turn-1:0:board_entry",
+        )
+        emitter.clear()
+        await emitter.emit(
+            "task-1",
+            EVENT_BOARD_ENTRY,
+            {"id": "e-1"},
+            idempotency_key="mutation:turn-1:0:board_entry",
+        )
+
+        assert len(emitter.events) == 1
+
+    @pytest.mark.asyncio
+    async def test_replayed_remove_rejection_stays_rejected_and_unique(self):
+        """A denied remove retry does not become a successful removal."""
+        from core.event_emitter import InMemoryEventEmitter
+
+        store = InMemoryBoardStore()
+        emitter = InMemoryEventEmitter()
+        gateway = BoardGateway(store, emitter)
+        entries = await gateway.append(
+            "task-1",
+            "expert.x",
+            ["finding_writer"],
+            [make_proposed_entry()],
+            turn_id="turn-add",
+        )
+
+        for _ in range(2):
+            removed = await gateway.remove(
+                "task-1",
+                "expert.x",
+                ["finding_writer"],
+                [entries[0].id],
+                "not authorized",
+                turn_id="turn-remove",
+                mutation_id="turn-remove:0",
+            )
+            assert removed == []
+
+        rejections = [
+            event
+            for event in await store.get_events("task-1")
+            if event["event_type"] == "entry_rejected"
+        ]
+        assert len(rejections) == 1
+        assert len(emitter.events_of_type(EVENT_ENTRY_REJECTED)) == 1

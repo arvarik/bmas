@@ -141,7 +141,20 @@ class TestVariantRegistry:
         from core.variants import available_variants, get_variant_class, register_variant
 
         class FakeVariant:
-            name = "test-fake"
+            from core.variants import VariantDescriptor
+
+            descriptor = VariantDescriptor(
+                "_test_fake_", "Test fake", "1"
+            )
+
+            @classmethod
+            async def capture_configuration(cls, overrides=None): ...
+
+            @classmethod
+            def configuration_from_metadata(cls, metadata): ...
+
+            @classmethod
+            async def run(cls, host, request): ...
 
         original_count = len(available_variants())
         register_variant("_test_fake_", FakeVariant)
@@ -159,13 +172,35 @@ class TestVariantRegistry:
 
     def test_register_duplicate_warns(self, caplog):
         """Registering the same name twice logs a warning."""
-        from core.variants import register_variant
+        from core.variants import VariantDescriptor, register_variant
 
         class V1:
-            name = "dup"
+            descriptor = VariantDescriptor(
+                "_test_dup_v1_", "Duplicate one", "1"
+            )
+
+            @classmethod
+            async def capture_configuration(cls, overrides=None): ...
+
+            @classmethod
+            def configuration_from_metadata(cls, metadata): ...
+
+            @classmethod
+            async def run(cls, host, request): ...
 
         class V2:
-            name = "dup"
+            descriptor = VariantDescriptor(
+                "_test_dup_v1_", "Duplicate two", "1"
+            )
+
+            @classmethod
+            async def capture_configuration(cls, overrides=None): ...
+
+            @classmethod
+            def configuration_from_metadata(cls, metadata): ...
+
+            @classmethod
+            async def run(cls, host, request): ...
 
         register_variant("_test_dup_v1_", V1)
 

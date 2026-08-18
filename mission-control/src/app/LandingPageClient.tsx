@@ -94,7 +94,8 @@ function formatRelativeTime(iso: string): string {
 
 export function LandingPageClient({ projectName }: { projectName: string }) {
   const [task, setTask] = useState("");
-  const [variant, setVariant] = useState("traditional");
+  const [variant, setVariant] = useState("classic");
+  const [variantAvailable, setVariantAvailable] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -130,7 +131,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
   // ── Submit handler ────────────────────────────────────────────────
   const handleSubmit = useCallback(async () => {
     const input = task.trim();
-    if (!input || submitting) return;
+    if (!input || submitting || !variantAvailable) return;
     setSubmitting(true);
 
     try {
@@ -183,7 +184,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
     } finally {
       setSubmitting(false);
     }
-  }, [task, variant, submitting, attachedFiles, setPending, router, toast]);
+  }, [task, variant, variantAvailable, submitting, attachedFiles, setPending, router, toast]);
 
   // ── Example pill click ────────────────────────────────────────────
   const handleExampleClick = useCallback((prompt: string) => {
@@ -263,14 +264,18 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
               >
                 <Paperclip size={13} />
               </button>
-              <VariantSelect value={variant} onChange={setVariant} />
+              <VariantSelect
+                value={variant}
+                onChange={setVariant}
+                onAvailabilityChange={setVariantAvailable}
+              />
             </div>
             <div className="landing__toolbar-right">
               <span className="landing__shortcut-hint">⌘ Enter</span>
               <button
                 className={`landing__send-btn ${hasInput ? "landing__send-btn--active" : ""}`}
                 onClick={handleSubmit}
-                disabled={!hasInput || submitting}
+                disabled={!hasInput || submitting || !variantAvailable}
                 aria-label="Submit task"
                 title="Submit task (⌘+Enter)"
               >

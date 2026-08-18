@@ -31,11 +31,6 @@ class LockedOnceStore(InMemoryBoardStore):
         return await super().append_event(task_id, event)
 
 
-class FailingEmitter:
-    async def emit(self, task_id, event_type, data):
-        raise ConnectionError("Redis is unavailable")
-
-
 @pytest.mark.asyncio
 async def test_request_loss_before_commit_retries_without_duplicate_entry():
     store = LockedOnceStore()
@@ -132,7 +127,7 @@ async def test_redis_loss_after_commit_preserves_board_and_retry_identity():
 
     gateway = BoardGateway(
         store,
-        FailingEmitter(),
+        InMemoryEventEmitter(),
         recompute_hooks=[failing_hook],
     )
     proposed = [{
@@ -194,6 +189,7 @@ async def test_acknowledgment_loss_retries_one_external_action_and_one_cost(
     orchestrator = object.__new__(Orchestrator)
     orchestrator.http = SimpleNamespace(post=post)
     orchestrator._safe_log = AsyncMock()
+    orchestrator._assert_dispatch_lease = AsyncMock()
     activation_id = "activation-ack-loss"
 
     for _ in range(2):

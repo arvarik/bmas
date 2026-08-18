@@ -1,7 +1,11 @@
-"""Tests for the A/B benchmark report."""
+"""Tests for the capability-driven A/B benchmark harness."""
 
-from eval.ab_harness import _build_report
+import pytest
+
+from eval.ab_harness import ABHarness, _build_report
+from eval.datasets import EvalItem
 from eval.metrics import RunMetrics
+from eval.scorer import ScoredResult
 
 
 def _metrics(run_id: str, completion_rate: float) -> RunMetrics:
@@ -38,3 +42,88 @@ def test_report_shows_completion_and_metric_coverage():
     assert "| Tokens | 2/4 | 2/4 |" in report
     assert "| Latency | 4/4 | 4/4 |" in report
     assert "| Rounds | 1/4 | 1/4 |" in report
+    assert "| Effective Actions | 0/4 | 0/4 |" in report
+
+
+@pytest.mark.asyncio
+async def test_arm_selects_an_available_variant_per_task(monkeypatch, tmp_path):
+    """The harness does not require a daemon restart between comparison arms."""
+    created: list[object] = []
+
+    class FakeRunner:
+        def __init__(self, **kwargs):
+            self.variant = kwargs["variant"]
+            self.closed = False
+            created.append(self)
+
+        async def verify_daemon(self):
+            return {
+                "api_version": "1",
+                "variants": [{
+                    "id": "classic",
+                    "available": True,
+                    "aliases": ["traditional"],
+                }],
+            }
+
+        async def run(self, items, **_kwargs):
+            item = items[0]
+            return [ScoredResult(
+                id=item.id,
+                question=item.question,
+                expected_answer=item.answer,
+                actual_response=item.answer,
+                dataset=item.dataset,
+                subject=item.subject,
+                extracted_answer=item.answer,
+                correct=True,
+                score_method="numeric_match",
+                status="completed",
+                variant="classic",
+            )]
+
+        async def close(self):
+            self.closed = True
+
+    monkeypatch.setattr("eval.ab_harness.BenchmarkRunner", FakeRunner)
+    harness = ABHarness(daemon_url="http://daemon", results_dir=tmp_path)
+    item = EvalItem(
+        id="one", question="One?", answer="1", dataset="gsm8k",
+    )
+
+    results, metrics = await harness.run_arm(
+        items=[item],
+        expected_variant="traditional",
+        run_id="arm",
+        run_config={},
+    )
+
+    assert created[0].variant == "traditional"
+    assert created[0].closed is True
+    assert results[0].correct is True
+    assert metrics.variants == {"classic": 1}
+
+
+@pytest.mark.asyncio
+async def test_arm_rejects_an_unavailable_variant(monkeypatch, tmp_path):
+    """The harness fails before submission when the daemon lacks a variant."""
+    class FakeRunner:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def verify_daemon(self):
+            return {"api_version": "1", "variants": []}
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("eval.ab_harness.BenchmarkRunner", FakeRunner)
+    harness = ABHarness(daemon_url="http://daemon", results_dir=tmp_path)
+
+    with pytest.raises(RuntimeError, match="does not offer"):
+        await harness.run_arm(
+            items=[],
+            expected_variant="missing",
+            run_id="arm",
+            run_config={},
+        )

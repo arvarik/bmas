@@ -348,12 +348,18 @@ print("  Validating coordination config...", file=sys.stderr)
 
 _coordination = _cfg.get("coordination", {})
 
-_VALID_VARIANTS = {"traditional", "patchboard", "stigmergic"}
-COORDINATION_VARIANT: str = _coordination.get("variant", "traditional")
-if COORDINATION_VARIANT not in _VALID_VARIANTS:
+_VARIANT_ALIASES = {"traditional": "classic"}
+_configured_variant = str(_coordination.get("variant", "classic")).strip().lower()
+COORDINATION_VARIANT: str = _VARIANT_ALIASES.get(
+    _configured_variant, _configured_variant,
+)
+if not COORDINATION_VARIANT or any(
+    char not in "abcdefghijklmnopqrstuvwxyz0123456789_-"
+    for char in COORDINATION_VARIANT
+):
     _fatal(
-        f"Invalid coordination.variant: '{COORDINATION_VARIANT}'",
-        f"Must be one of: {', '.join(sorted(_VALID_VARIANTS))}.",
+        f"Invalid coordination.variant identifier: '{_configured_variant}'",
+        "Use lower-case letters, digits, underscores, or hyphens.",
     )
 
 BLACKBOARD_V2: bool = bool(_coordination.get("blackboard_v2", False))
@@ -372,15 +378,37 @@ if ROUND_EXECUTION not in _VALID_ROUND_EXECUTION:
         f"Must be one of: {', '.join(sorted(_VALID_ROUND_EXECUTION))}.",
     )
 
-# Traditional variant sub-config (doc 05 §3)
-_trad = _coordination.get("traditional", {})
+# Classic variant sub-config. The traditional key remains a legacy alias.
+_classic_config = _coordination.get("classic")
+_legacy_classic_config = _coordination.get("traditional")
+if (
+    _classic_config is not None
+    and _legacy_classic_config is not None
+    and _classic_config != _legacy_classic_config
+):
+    _fatal(
+        "coordination.classic conflicts with coordination.traditional",
+        "Remove the legacy traditional block or make both blocks identical.",
+    )
+if _classic_config is not None:
+    _trad = _classic_config
+elif _legacy_classic_config is not None:
+    _warn(
+        "coordination.traditional is deprecated. "
+        "Rename this block to coordination.classic."
+    )
+    _trad = _legacy_classic_config
+else:
+    _trad = {}
+if not isinstance(_trad, dict):
+    _fatal("coordination.classic must be a mapping")
 
 
 def _trad_int(key: str, default: int, min_val: int = 1) -> int:
     val = int(_trad.get(key, default))
     if val < min_val:
         _fatal(
-            f"coordination.traditional.{key} must be >= {min_val}, got {val}",
+            f"coordination.classic.{key} must be >= {min_val}, got {val}",
         )
     return val
 
@@ -389,7 +417,7 @@ def _trad_float(key: str, default: float, min_val: float = 0.0) -> float:
     val = float(_trad.get(key, default))
     if val <= min_val:
         _fatal(
-            f"coordination.traditional.{key} must be > {min_val}, got {val}",
+            f"coordination.classic.{key} must be > {min_val}, got {val}",
         )
     return val
 
@@ -400,14 +428,14 @@ _VALID_SOLE_SIMILARITY = {"auto", "exact", "embedding", "judge"}
 _trad_cu_mode = str(_trad.get("cu_mode", "llm"))
 if _trad_cu_mode not in _VALID_CU_MODES:
     _fatal(
-        f"Invalid coordination.traditional.cu_mode: '{_trad_cu_mode}'",
+        f"Invalid coordination.classic.cu_mode: '{_trad_cu_mode}'",
         f"Must be one of: {', '.join(sorted(_VALID_CU_MODES))}.",
     )
 
 _trad_sole_sim = str(_trad.get("sole_similarity", "auto"))
 if _trad_sole_sim not in _VALID_SOLE_SIMILARITY:
     _fatal(
-        f"Invalid coordination.traditional.sole_similarity: '{_trad_sole_sim}'",
+        f"Invalid coordination.classic.sole_similarity: '{_trad_sole_sim}'",
         f"Must be one of: {', '.join(sorted(_VALID_SOLE_SIMILARITY))}.",
     )
 
@@ -415,23 +443,23 @@ if _trad_sole_sim not in _VALID_SOLE_SIMILARITY:
 _experts_raw = _trad.get("experts_per_tier", {"simple": 0, "light": 1, "medium": 2, "complex": 4})
 if not isinstance(_experts_raw, dict):
     _fatal(
-        "coordination.traditional.experts_per_tier must be a mapping",
+        "coordination.classic.experts_per_tier must be a mapping",
         'Expected: { simple: 0, light: 1, medium: 2, complex: 3 }',
     )
 for _tier_key in ("simple", "light", "medium", "complex"):
     if _tier_key not in _experts_raw:
         _fatal(
-            f"coordination.traditional.experts_per_tier missing key: '{_tier_key}'",
+            f"coordination.classic.experts_per_tier missing key: '{_tier_key}'",
             'Required keys: simple, light, medium, complex',
         )
     try:
         int(_experts_raw[_tier_key])
     except (ValueError, TypeError):
         _fatal(
-            f"coordination.traditional.experts_per_tier.{_tier_key} must be an integer",
+            f"coordination.classic.experts_per_tier.{_tier_key} must be an integer",
         )
 
-TRADITIONAL_CONFIG: dict[str, object] = {
+CLASSIC_CONFIG: dict[str, object] = {
     "max_rounds": _trad_int("max_rounds", 4),
     "max_duration_s": _trad_int("max_duration_s", 1800),
     "budget_ceiling_usd": _trad_float("budget_ceiling_usd", 0.50),
@@ -448,6 +476,9 @@ TRADITIONAL_CONFIG: dict[str, object] = {
     "coordinator_narration": bool(_trad.get("coordinator_narration", False)),
     "sole_similarity": _trad_sole_sim,
 }
+
+# The internal engine and older integrations still import this name.
+TRADITIONAL_CONFIG = CLASSIC_CONFIG
 
 # ── Board Config (Phase 2, doc 04 §4, §7) ────────────────────────────
 
@@ -593,9 +624,16 @@ LOCK_RETRY_DELAY_MS = int(os.getenv("LOCK_RETRY_DELAY_MS", "200"))
 # nodes, and model providers from an unbounded submission burst.
 MAX_ACTIVE_TASKS = max(1, int(os.getenv("BMAS_MAX_ACTIVE_TASKS", "4")))
 MAX_QUEUED_TASKS = max(1, int(os.getenv("BMAS_MAX_QUEUED_TASKS", "100")))
+MAX_TASK_CHARS = max(1, int(os.getenv("BMAS_MAX_TASK_CHARS", "200000")))
 SHUTDOWN_GRACE_S = max(1, int(os.getenv("BMAS_SHUTDOWN_GRACE_S", "30")))
 AGENT_TURN_TIMEOUT_S = max(
     10, min(3600, int(os.getenv("BMAS_AGENT_TURN_TIMEOUT_S", "600")))
+)
+AGENT_ENDPOINT_MAX_CONCURRENCY = max(
+    1, int(os.getenv("BMAS_AGENT_ENDPOINT_MAX_CONCURRENCY", "4"))
+)
+AGENT_ENDPOINT_WAIT_TIMEOUT_S = max(
+    0.0, float(os.getenv("BMAS_AGENT_ENDPOINT_WAIT_TIMEOUT_S", "30"))
 )
 CIRCUIT_BREAKER_FAILURE_THRESHOLD = max(
     1, int(os.getenv("BMAS_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3"))

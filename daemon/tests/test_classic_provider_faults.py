@@ -19,6 +19,7 @@ def _orchestrator(post) -> Orchestrator:
     orchestrator = object.__new__(Orchestrator)
     orchestrator.http = SimpleNamespace(post=post)
     orchestrator._safe_log = AsyncMock()
+    orchestrator._assert_dispatch_lease = AsyncMock()
     orchestrator._agent_circuits = EndpointCircuitBreaker(
         failure_threshold=3,
         recovery_timeout_s=30,

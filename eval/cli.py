@@ -2,7 +2,7 @@
 
 Usage:
   python -m eval.cli benchmark --dataset gsm8k --limit 10
-  python -m eval.cli ab --dataset gsm8k --variant-a traditional --variant-b patchboard
+  python -m eval.cli ab --dataset gsm8k --variant-a classic --variant-b candidate
   python -m eval.cli report --file-a results/run_a_summary.json --file-b results/run_b_summary.json
   python -m eval.cli inject-failure --node node-1 --mode kill --confirm-destructive
 """
@@ -65,10 +65,10 @@ def main() -> None:
         help="Dataset to evaluate",
     )
     ab.add_argument(
-        "--variant-a", type=str, default="traditional", help="First variant"
+        "--variant-a", type=str, default="classic", help="First variant"
     )
     ab.add_argument(
-        "--variant-b", type=str, default="traditional", help="Second variant"
+        "--variant-b", type=str, default="classic", help="Second variant"
     )
     ab.add_argument("--limit", type=int, default=None)
     ab.add_argument("--concurrency", type=int, default=1)
@@ -152,6 +152,7 @@ async def _cmd_benchmark(args: argparse.Namespace) -> None:
     runner = BenchmarkRunner(
         daemon_url=cfg["daemon_url"],
         concurrency=args.concurrency,
+        variant=cfg["coordination_variant"],
     )
     try:
         scored = await runner.run(items, run_id=run_id)
@@ -201,10 +202,8 @@ async def _cmd_ab(args: argparse.Namespace) -> None:
     # Arm A
     print(f"\n{'='*60}")
     print(f"  A/B Test — Arm A: {args.variant_a}")
-    print(f"  Ensure daemon is running with coordination.variant: {args.variant_a}")
+    print("  The daemon validates this implementation before submission.")
     print(f"{'='*60}\n")
-
-    input("Press Enter when the daemon is ready for Arm A...")
 
     scored_a, metrics_a = await harness.run_arm(
         items=items,
@@ -216,10 +215,8 @@ async def _cmd_ab(args: argparse.Namespace) -> None:
     # Arm B
     print(f"\n{'='*60}")
     print(f"  A/B Test — Arm B: {args.variant_b}")
-    print(f"  Change coordination.variant to '{args.variant_b}' and restart daemon.")
+    print("  The same daemon receives this implementation per task.")
     print(f"{'='*60}\n")
-
-    input("Press Enter when the daemon is ready for Arm B...")
 
     scored_b, metrics_b = await harness.run_arm(
         items=items,

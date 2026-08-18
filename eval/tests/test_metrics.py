@@ -74,6 +74,8 @@ class TestComputeRunMetrics:
         assert metrics.token_observations == 0
         assert metrics.latency_observations == 0
         assert metrics.round_observations == 0
+        assert metrics.action_observations == 0
+        assert metrics.recovery_observations == 0
 
     def test_partial_metric_coverage_does_not_count_missing_values_as_zero(self):
         results = [
@@ -179,6 +181,36 @@ class TestComputeRunMetrics:
         )
 
         assert metrics.avg_rounds == 0.0
+
+    def test_generic_lifecycle_metrics_do_not_require_rounds(self):
+        """The summary measures work and recovery for every implementation."""
+        results = [
+            ScoredResult(
+                id="one", question="Q", expected_answer="1",
+                actual_response="1", dataset="gsm8k", subject=None,
+                extracted_answer="1", correct=True, score_method="numeric_match",
+                effective_actions=8, recovery_count=0, variant="classic",
+                phase="completed",
+            ),
+            ScoredResult(
+                id="two", question="Q", expected_answer="1",
+                actual_response="1", dataset="gsm8k", subject=None,
+                extracted_answer="1", correct=True, score_method="numeric_match",
+                effective_actions=12, recovery_count=2, variant="classic",
+                phase="completed",
+            ),
+        ]
+
+        metrics = compute_run_metrics(
+            run_id="generic", dataset="gsm8k", results=results, run_config={},
+        )
+
+        assert metrics.avg_effective_actions == 10
+        assert metrics.action_observations == 2
+        assert metrics.total_recoveries == 2
+        assert metrics.recovery_observations == 2
+        assert metrics.variants == {"classic": 2}
+        assert metrics.terminal_phases == {"completed": 2}
 
     def test_subject_accuracy(self, sample_scored_results):
         metrics = compute_run_metrics(

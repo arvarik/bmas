@@ -15,7 +15,6 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import httpx
 
@@ -46,6 +45,12 @@ class TaskResult:
     error_message: str | None = None
     terminated_by: str | None = None
     rounds: int | None = None
+    effective_actions: int | None = None
+    variant: str | None = None
+    phase: str | None = None
+    state_revision: int | None = None
+    recovery_count: int | None = None
+    variant_metrics: dict[str, object] | None = None
 
 
 class BenchmarkRunner:
@@ -62,11 +67,13 @@ class BenchmarkRunner:
         concurrency: int = 1,
         timeout_per_task_s: float = POLL_TIMEOUT_S,
         api_key: str | None = None,
+        variant: str | None = None,
     ):
         self.daemon_url = daemon_url.rstrip("/")
         self.concurrency = concurrency
         self.timeout_per_task_s = timeout_per_task_s
         self.api_key = api_key if api_key is not None else os.getenv("BMAS_API_KEY", "")
+        self.variant = variant
         self.http = httpx.AsyncClient(timeout=30.0)
 
     def _mutation_headers(self) -> dict[str, str] | None:
@@ -174,6 +181,12 @@ class BenchmarkRunner:
                 status=task_result.status,
                 error_message=task_result.error_message,
                 rounds=task_result.rounds,
+                effective_actions=task_result.effective_actions,
+                variant=task_result.variant,
+                phase=task_result.phase,
+                state_revision=task_result.state_revision,
+                recovery_count=task_result.recovery_count,
+                variant_metrics=task_result.variant_metrics,
             )
 
         # Score
@@ -207,14 +220,23 @@ class BenchmarkRunner:
             status=task_result.status,
             error_message=task_result.error_message,
             rounds=task_result.rounds,
+            effective_actions=task_result.effective_actions,
+            variant=task_result.variant,
+            phase=task_result.phase,
+            state_revision=task_result.state_revision,
+            recovery_count=task_result.recovery_count,
+            variant_metrics=task_result.variant_metrics,
         )
 
     async def _submit_task(self, question: str) -> TaskResult:
         """Submit a question and poll until terminal state."""
         # POST /submit
+        submission = {"task": question}
+        if self.variant:
+            submission["variant"] = self.variant
         resp = await self.http.post(
             f"{self.daemon_url}/submit",
-            json={"task": question},
+            json=submission,
             headers=self._mutation_headers(),
         )
         resp.raise_for_status()
@@ -276,6 +298,16 @@ class BenchmarkRunner:
                     error_message=task_data.get("error_message"),
                     terminated_by=task_data.get("terminated_by"),
                     rounds=task_data.get("rounds_used"),
+                    effective_actions=task_data.get("effective_actions"),
+                    variant=task_data.get("variant"),
+                    phase=task_data.get("phase"),
+                    state_revision=task_data.get("state_revision"),
+                    recovery_count=task_data.get("resume_count"),
+                    variant_metrics=(
+                        task_data.get("variant_metrics")
+                        if isinstance(task_data.get("variant_metrics"), dict)
+                        else None
+                    ),
                 )
 
     async def _abort_task(self, task_id: str) -> bool:
@@ -299,10 +331,16 @@ class BenchmarkRunner:
             return False
 
     async def verify_daemon(self) -> dict:
-        """Check that the daemon is reachable and return its active config."""
-        resp = await self.http.get(f"{self.daemon_url}/config/active")
+        """Return the authoritative coordination capability document."""
+        resp = await self.http.get(f"{self.daemon_url}/capabilities")
         resp.raise_for_status()
-        return resp.json()
+        payload = resp.json()
+        if not isinstance(payload, dict) or payload.get("api_version") != "1":
+            raise ValueError("Daemon returned an unsupported capability contract")
+        variants = payload.get("variants")
+        if not isinstance(variants, list):
+            raise TypeError("Daemon capability document has no variant list")
+        return payload
 
     async def close(self):
         await self.http.aclose()
