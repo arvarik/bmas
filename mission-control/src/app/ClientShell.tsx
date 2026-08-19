@@ -19,6 +19,10 @@ function getBreadcrumb(pathname: string): string {
   if (pathname === "/analytics") return "Analytics";
   if (pathname === "/datasets") return "Datasets";
   if (pathname.startsWith("/datasets/")) return "Dataset detail";
+  if (pathname === "/tests") return "Tests";
+  if (pathname.startsWith("/tests/")) return "Test detail";
+  if (pathname === "/runs") return "Runs";
+  if (pathname.startsWith("/runs/")) return "Run detail";
   if (pathname.startsWith("/task/")) {
     const segments = pathname.split("/");
     const taskId = segments[2] ?? "";

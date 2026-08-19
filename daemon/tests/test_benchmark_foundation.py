@@ -57,6 +57,7 @@ async def test_v8_creates_benchmark_tables_and_scorers(benchmark_db):
         "operator_actions",
     } <= tables
     assert [row[0] for row in scorer_rows] == [
+        "scorer-exact-match-v1",
         "scorer-gsm8k-numeric-v1",
         "scorer-mmlu-letter-v1",
     ]

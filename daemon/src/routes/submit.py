@@ -494,6 +494,8 @@ def task_queue_snapshot() -> dict[str, int | bool]:
 async def _admit_task(
     req: TaskSubmission,
     uploads: list[UploadFile] | None = None,
+    *,
+    captured_configuration: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """Save one task, store initial uploads, and admit the task to the queue."""
     task_id = f"task-{str(uuid.uuid4())[:8]}"
@@ -566,7 +568,11 @@ async def _admit_task(
         if not task_overrides:
             task_overrides = None
 
-    effective_configuration = await variant_class.capture_configuration(task_overrides)
+    effective_configuration = (
+        captured_configuration
+        if captured_configuration is not None
+        else await variant_class.capture_configuration(task_overrides)
+    )
 
     benchmark_context = req.benchmark.model_dump() if req.benchmark else None
     execution_snapshot, snapshot_checksum = build_execution_snapshot(

@@ -10,6 +10,8 @@ import {
   CircleAlert,
   ClipboardList,
   Database,
+  FlaskConical,
+  Gauge,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -42,6 +44,8 @@ const GROUPS = [
   {
     label: "Evaluate",
     links: [
+      { href: "/tests", label: "Tests", icon: FlaskConical },
+      { href: "/runs", label: "Runs", icon: Gauge },
       { href: "/datasets", label: "Datasets", icon: Database },
     ],
   },
