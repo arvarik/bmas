@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from auth import require_api_key
 from benchmarks import records, repository
+from benchmarks import scheduler as benchmark_scheduler
 from benchmarks.analysis import build_run_report, report_csv_rows, safe_csv_cell
 from benchmarks.provenance import content_checksum
 from benchmarks.qualification import qualify_runtime
@@ -55,6 +56,7 @@ class BenchmarkTestInput(BaseModel):
     max_concurrency: int = Field(default=1, ge=1, le=16)
     timeout_seconds: int = Field(default=3600, ge=30, le=86400)
     cost_limit_usd: float | None = Field(default=None, gt=0)
+    practical_difference: float = Field(default=0.01, ge=0, le=1)
     arms: list[BenchmarkArmInput] = Field(min_length=1, max_length=8)
     scorers: list[BenchmarkScorerInput] = Field(min_length=1, max_length=8)
 
@@ -64,6 +66,7 @@ class BenchmarkRunInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     operator_note: str = Field(default="", max_length=2000)
+    priority: int = Field(default=0, ge=-100, le=100)
 
 
 class RegressionRuleInput(BaseModel):
@@ -75,6 +78,12 @@ class RegressionRuleInput(BaseModel):
     metric: str = Field(min_length=1, max_length=300)
     operator: Literal["gte", "lte", "max_drop", "max_increase_ratio"]
     value: float
+    analysis_method: Literal[
+        "point_estimate",
+        "lower_confidence_bound",
+        "upper_confidence_bound",
+        "holm_sign_test",
+    ] = "point_estimate"
 
 
 class BenchmarkBaselineInput(BaseModel):
@@ -99,6 +108,15 @@ class RuntimeQualificationInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     run_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,128}$")
+
+
+class HumanReviewInput(BaseModel):
+    """Record one immutable human judgment for a completed attempt."""
+
+    model_config = ConfigDict(extra="forbid")
+    score: float = Field(ge=0, le=1)
+    passed: bool
+    note: str = Field(default="", max_length=4000)
 
 
 def _slug(value: str, fallback: str) -> str:
@@ -141,6 +159,7 @@ async def _prepare(payload: BenchmarkTestInput) -> dict[str, Any]:
         "max_concurrency": payload.max_concurrency,
         "timeout_seconds": payload.timeout_seconds,
         "cost_limit_usd": payload.cost_limit_usd,
+        "practical_difference": payload.practical_difference,
     }
     return {
         "configuration": configuration,
@@ -253,6 +272,7 @@ async def create_run_endpoint(
             test_id=test_id,
             idempotency_key=idempotency_key[:200] if idempotency_key else None,
             operator_note=payload.operator_note,
+            priority=payload.priority,
         )
     except (repository.BenchmarkNotFound, repository.BenchmarkConflict) as error:
         raise _repository_error(error) from error
@@ -265,12 +285,47 @@ async def list_runs_endpoint(status: str | None = None, limit: int = 50, offset:
     return {"runs": runs, "total": total, "limit": min(max(limit, 1), 200), "offset": max(offset, 0)}
 
 
+@router.get("/capacity")
+async def benchmark_capacity_endpoint():
+    """Return queue pressure and fenced scheduler ownership."""
+    return await benchmark_scheduler.capacity_status()
+
+
 @router.get("/runs/{run_id}")
 async def get_run_endpoint(run_id: str):
     run = await repository.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="The benchmark run does not exist")
     return run
+
+
+@router.post("/attempts/{attempt_id}/reviews", status_code=201)
+async def create_human_review_endpoint(
+    request: Request,
+    attempt_id: str,
+    payload: HumanReviewInput,
+    idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
+    operator_id: str | None = Header(default=None, alias="X-Operator-Id"),
+):
+    """Save one retry-safe human review for statistical calibration."""
+    require_api_key(request, BMAS_API_KEY)
+    if not ID_PATTERN.fullmatch(attempt_id):
+        raise HTTPException(status_code=422, detail="The attempt identifier is invalid")
+    if not idempotency_key:
+        raise HTTPException(status_code=422, detail="X-Idempotency-Key is required")
+    try:
+        review, created = await repository.create_human_review(
+            review_id=f"review-{uuid.uuid4().hex}",
+            attempt_id=attempt_id,
+            reviewer_id=(operator_id or "operator")[:200],
+            score=payload.score,
+            passed=payload.passed,
+            note=payload.note.strip(),
+            idempotency_key=idempotency_key[:200],
+        )
+        return {**review, "created": created}
+    except (repository.BenchmarkNotFound, repository.BenchmarkConflict) as error:
+        raise _repository_error(error) from error
 
 
 def _report_filters(subject: str | None, split: str | None, tag: str | None, scorer_id: str | None) -> dict[str, str]:

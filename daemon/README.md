@@ -1,6 +1,6 @@
 # Daemon
 
-The daemon runs the classic task lifecycle and exposes the main Stigmergic API.
+The daemon runs all registered task runtimes and exposes the main Stigmergic API.
 
 It saves authoritative task state in SQLite. It uses Redis for locks, notifications, and live projections.
 
@@ -9,12 +9,14 @@ It saves authoritative task state in SQLite. It uses Redis for locks, notificati
 1. Validate configuration and required secrets.
 2. Accept and queue task submissions.
 3. Classify task complexity.
-4. Run classic control-unit rounds.
+4. Run Classic, Patchboard, or Stigmergic workspace coordination.
 5. Dispatch role activations to agent endpoints.
 6. Validate and save board entries.
 7. Record usage, costs, logs, traces, files, and artifacts.
 8. Publish durable task events.
 9. Apply operator controls at safe lifecycle points.
+10. Schedule benchmark attempts with fenced, renewable leases.
+11. Build deterministic benchmark reports and regression gates.
 
 ## Service flow
 
@@ -36,9 +38,11 @@ flowchart LR
 | `src/config_schema.py` | Defines the typed `bmas.yaml` schema. |
 | `src/database.py` | Owns SQLite task state and the durable event outbox. |
 | `src/settings_store.py` | Stores supported live setting changes. |
-| `src/core/orchestrator.py` | Runs task admission and classic execution. |
+| `src/core/orchestrator.py` | Runs shared task admission and lifecycle services. |
 | `src/core/variants/classic.py` | Registers the public classic runtime contract. |
+| `src/core/variants/collaborative.py` | Runs Patchboard and Stigmergic workspace coordination. |
 | `src/core/variants/traditional.py` | Contains the internal classic execution engine. |
+| `src/benchmarks/` | Stores tests, schedules attempts, scores output, and builds reports. |
 | `src/core/blackboard.py` | Maintains Redis projections and controls. |
 | `src/core/triage.py` | Classifies tasks through cloud or local triage. |
 | `src/routes/` | Defines API route groups. |
@@ -49,7 +53,7 @@ The internal `traditional.py` name remains for saved-task compatibility. Public 
 
 | Method and path | Purpose |
 |:---|:---|
-| `POST /submit` | Accepts a classic task and returns HTTP 202. |
+| `POST /submit` | Accepts a task for one registered runtime and returns HTTP 202. |
 | `GET /tasks` | Lists durable task history. |
 | `GET /tasks/{id}` | Reads one task and its sub-tasks. |
 | `GET /tasks/{id}/board` | Reads the durable board snapshot. |
@@ -59,7 +63,9 @@ The internal `traditional.py` name remains for saved-task compatibility. Public 
 | `GET /tasks/{id}/trace` | Reads translated agent traces. |
 | `GET /events/{id}` | Streams task events with replay support. |
 | `GET /events/system` | Streams system task-lifecycle events. |
-| `GET /capabilities` | Reports the classic runtime contract. |
+| `GET /capabilities` | Reports all registered runtime contracts. |
+| `/datasets/*` | Imports and reads immutable dataset versions. |
+| `/benchmarks/*` | Authors tests, runs attempts, reviews results, and evaluates gates. |
 | `GET /health` | Reports daemon and dependency health. |
 | `GET /readiness` | Reports actionable full-stack readiness. |
 
@@ -98,7 +104,7 @@ This order prevents a live event from describing task state that SQLite did not 
 
 `GET /health` always reports the current daemon state. A degraded dependency does not make the daemon process disappear.
 
-`GET /readiness` checks Redis, SQLite, LiteLLM, execution agents, the classic runtime, and event delivery.
+`GET /readiness` checks Redis, SQLite, LiteLLM, execution agents, configured runtime availability, and event delivery.
 
 Container health requires the complete `/health` status to equal `healthy`.
 
@@ -109,6 +115,8 @@ The daemon reads `BMAS_CONFIG`, which defaults to `/etc/bmas/bmas.yaml` in Compo
 Docker Compose sets internal Redis, LiteLLM, and triage URLs. External service runs can set `BMAS_REDIS_URL`, `BMAS_LITELLM_URL`, and `BMAS_TRIAGE_URL`.
 
 Read [Configuration](../docs/CONFIGURATION.md) for all source fields and environment limits.
+
+Read [Benchmarking](../docs/BENCHMARKING.md) for benchmark authoring and scheduler limits.
 
 ## Development
 

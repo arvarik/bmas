@@ -19,7 +19,7 @@ export async function benchmarkProxy(
       : {};
     const idempotencyKey = options.request?.headers.get("X-Idempotency-Key");
     if (idempotencyKey) headers["X-Idempotency-Key"] = idempotencyKey;
-    const operatorId = options.request?.headers.get("X-Operator-Id");
+    const operatorId = options.request?.headers.get("X-BMAS-Operator-Id");
     if (operatorId) headers["X-Operator-Id"] = operatorId;
     const response = await fetch(`${DAEMON_BASE_URL}${path}`, {
       method,

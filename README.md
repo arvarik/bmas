@@ -8,11 +8,11 @@
   A self-hosted blackboard multi-agent system.
 </p>
 
-Stigmergic coordinates model-backed agents through a durable shared blackboard. The product uses the bMAS architecture.
+Stigmergic coordinates model-backed agents through durable, versioned runtime contracts. The product uses the bMAS architecture.
 
-This repository implements the **classic runtime only**. The classic runtime selects agents, records their contributions, and repeats until it selects a final answer.
+This repository includes three runtimes. Classic uses a control unit and a shared blackboard. Patchboard integrates independent contributions. Stigmergic workspace applies ordered revisions to one shared artifact.
 
-## Start the classic stack
+## Start the stack
 
 You need Docker 24 or newer, Docker Compose 2.20 or newer, and one provider API key.
 
@@ -39,21 +39,21 @@ The default stack runs on one host.
 |:---|:---|
 | Redis | Supplies locks, notifications, and live projections. |
 | LiteLLM | Routes model requests through one API. |
-| Starter agent | Executes classic roles through LiteLLM. It does not provide tools. |
-| Daemon | Runs task lifecycles and saves durable state in SQLite. |
-| Mission Control | Shows setup health, task lifecycles, files, logs, board entries, costs, and operator actions. |
+| Starter agent | Executes runtime roles through LiteLLM. It does not provide tools. |
+| Daemon | Runs tasks and benchmark attempts. It saves durable state in SQLite. |
+| Mission Control | Shows tasks, benchmark data, runtime capacity, files, logs, costs, and operator actions. |
 
 The optional GPU profile adds local triage through vLLM. The normal starter does not need a GPU or a separate edge node.
 
-## Classic task flow
+## Runtime choices
 
-1. The daemon classifies the task complexity.
-2. The control unit selects one or more classic roles.
-3. The agent executes each selected role.
-4. The daemon saves each contribution on the blackboard.
-5. The control unit repeats the cycle or selects the final answer.
+| Runtime | Coordination model | Default use |
+|:---|:---|:---|
+| Classic | A control unit selects roles and reads a durable blackboard. | Adaptive work that needs critique and convergence. |
+| Patchboard | Contributors work independently before one integration turn. | Parallel proposals and independent analyses. |
+| Stigmergic workspace | Workers revise one shared artifact in a fixed order. | Iterative drafting and refinement. |
 
-Mission Control reads the durable event stream. It displays the same task state after a restart.
+Each runtime uses stable activation identifiers and durable recovery checkpoints. Mission Control reads the same capability contracts that the daemon enforces.
 
 <p align="center">
   <img src="docs/screenshots/bmas-hero.png" alt="Mission Control task page" width="720" />
@@ -86,6 +86,9 @@ Start with the guide that matches your work.
 | Operate and recover the stack | [Operations](docs/OPERATIONS.md) |
 | Change the source code | [Development](docs/DEVELOPMENT.md) |
 | Add Hermes execution nodes | [Node Setup](docs/NODE_SETUP.md) |
+| Create and operate benchmarks | [Benchmarking](docs/BENCHMARKING.md) |
+| Understand statistical reports | [Benchmark Statistics](docs/BENCHMARK_STATISTICS.md) |
+| Compare runtime behavior | [Runtime Variants](docs/RUNTIME_VARIANTS.md) |
 | Read all documentation | [Documentation index](docs/README.md) |
 
 ## Repository layout
@@ -98,7 +101,7 @@ Start with the guide that matches your work.
 | [`litellm/`](litellm/README.md) | Model gateway configuration generator. |
 | [`redis/`](redis/README.md) | Redis configuration. |
 | [`triage/`](triage/README.md) | Optional local complexity classifier. |
-| [`eval/`](eval/) | Classic runtime evaluation tools. |
+| [`eval/`](eval/) | Legacy command-line evaluation tools. |
 | [`examples/`](examples/) | Supported starter and homelab configurations. |
 
 ## Research basis

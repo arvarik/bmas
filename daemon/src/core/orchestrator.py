@@ -429,6 +429,38 @@ class Orchestrator:
         """Return the current fenced lifecycle token for one task."""
         return self._task_lock_ids.get(task_id)
 
+    async def load_variant_checkpoint(
+        self,
+        task_id: str,
+        variant_id: str,
+    ) -> dict[str, Any] | None:
+        """Load one checkpoint only when it belongs to the selected runtime."""
+        metadata = await db.get_board_meta(task_id)
+        checkpoint = metadata.get("variant_checkpoint")
+        if not isinstance(checkpoint, dict):
+            return None
+        if checkpoint.get("variant_id") != variant_id:
+            return None
+        return checkpoint
+
+    async def save_variant_checkpoint(
+        self,
+        task_id: str,
+        variant_id: str,
+        checkpoint: dict[str, Any],
+    ) -> None:
+        """Save one checkpoint and reject a stale runtime lease."""
+        value = {**checkpoint, "variant_id": variant_id}
+        lease_token = self._task_lock_ids.get(task_id)
+        await db.patch_board_meta(
+            task_id,
+            {"variant_checkpoint": value},
+            lease_token=lease_token,
+        )
+        saved = await db.mark_task_checkpoint(task_id, lease_token)
+        if not saved:
+            raise LeaseLostError(f"Task lease expired: {task_id}")
+
     async def _check_abort(self, task_id: str):
         """Check if the operator requested an abort for this task.
 

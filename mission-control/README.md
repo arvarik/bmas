@@ -1,6 +1,6 @@
 # Mission Control
 
-Mission Control is the Next.js operator interface for the classic runtime.
+Mission Control is the Next.js operator interface for Stigmergic tasks and benchmarks.
 
 The default Compose stack publishes it at [http://localhost:9321](http://localhost:9321).
 
@@ -19,8 +19,13 @@ The default Compose stack publishes it at [http://localhost:9321](http://localho
 | Task header | Uploaded files, extracted-text previews, and original downloads |
 | Artifacts | Agent-created task outputs and immutable version downloads |
 | Infrastructure | Agent health and optional Beszel telemetry |
+| Datasets | Immutable source files, mappings, versions, and item previews |
+| Tests | Versioned runtime arms, scorers, and execution settings |
+| Runs | Attempt provenance, paired statistics, diagnostics, and human review |
+| Baselines | Immutable regression rules and saved gate results |
+| Runtime qualifications | Runtime contracts, evidence, scheduler capacity, and worker health |
 
-The interface exposes only the classic runtime. A single available runtime appears as a fixed status label.
+The task composer exposes Classic, Patchboard, and Stigmergic workspace when the daemon reports compatible contracts.
 
 ## Readiness
 
@@ -64,6 +69,7 @@ Mission Control stores initial attachments before it admits a task to the execut
 | Variable | Purpose |
 |:---|:---|
 | `BMAS_DAEMON_URL` | Selects the internal daemon base URL. |
+| `BMAS_CONFIG` | Selects the server-side YAML path. The default is `/etc/bmas/bmas.yaml`. |
 | `BMAS_REDIS_URL` | Selects the internal Redis URL. |
 | `REDIS_PASSWORD` | Supports a generated Redis URL outside Compose. |
 | `BMAS_API_KEY` | Authenticates daemon mutations. |
@@ -75,7 +81,7 @@ Mission Control stores initial attachments before it admits a task to the execut
 
 Docker Compose sets the internal URLs. Do not put them in a normal starter `.env`.
 
-Docker Compose mounts `bmas.yaml` at `/etc/bmas/bmas.yaml`. Mission Control reads this fixed path.
+Docker Compose mounts `bmas.yaml` at `/etc/bmas/bmas.yaml`. Local tools can set `BMAS_CONFIG` to another reviewed file.
 
 ## API route groups
 
@@ -93,6 +99,8 @@ Docker Compose mounts `bmas.yaml` at `/etc/bmas/bmas.yaml`. Mission Control read
 | `/api/toolsets` | Reads enabled and configured Hermes toolsets. |
 | `/api/sessions/*` | Lists, reads, and forks Hermes sessions. |
 | `/api/settings/*` | Reads and changes supported runtime settings. |
+| `/api/datasets/*` | Imports and reads immutable benchmark datasets. |
+| `/api/benchmarks/*` | Proxies benchmark authoring, execution, analysis, and review. |
 | `/api/telemetry` | Proxies optional Beszel telemetry. |
 
 Each daemon response crosses a server route before a client component uses it.
@@ -105,6 +113,7 @@ Each daemon response crosses a server route before a client component uses it.
 | React | 19.2.7 |
 | TypeScript | 6.x |
 | Vitest | 4.1.x |
+| Playwright | 1.62.x |
 
 The production Dockerfile uses Node.js 22.23.2 on Alpine 3.23.
 
@@ -129,6 +138,7 @@ npm run lint
 npx tsc --noEmit
 npm run test:run
 npm run build
+npm run test:e2e
 ```
 
 Use `npm ci` when the lockfile changes or the dependency directory is absent.
@@ -146,6 +156,8 @@ Read the [Design System](../docs/design/DESIGN.md) before you add a reusable vis
 ## Tests
 
 Route tests mock the daemon boundary. Contract tests reject malformed capability, event, and readiness responses.
+
+Playwright tests mock the same browser API boundary. They verify runtime capacity, analysis, immutable review, and priority submission flows.
 
 The complete repository test command also runs a production Next.js build.
 

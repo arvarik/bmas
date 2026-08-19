@@ -1,12 +1,12 @@
 # Concepts
 
-This document explains the current classic implementation.
+This document explains the current runtime and benchmark implementation.
 
 ## Product names
 
 **Stigmergic** is the product name. **bMAS** is the blackboard multi-agent system architecture inside the product.
 
-The repository implements one coordination runtime named **classic**. The old name `traditional` remains an input alias for saved tasks.
+The repository implements **classic**, **patchboard**, and **stigmergic** runtimes. The old name `traditional` remains an input alias for Classic.
 
 ## Starter services
 
@@ -49,6 +49,24 @@ The task stops when it reaches a final answer, a runtime limit, a cost limit, or
 
 Mission Control shows five operator states: queued, running, blocked, failed, and completed. A blocked task needs an operator or a compatible runtime before it can continue.
 
+## Patchboard runtime
+
+Patchboard sends the same objective to independent contributor roles. It runs those calls concurrently, then sends all contributions to one integrator.
+
+The runtime saves the contribution set before integration. Recovery does not repeat a saved contribution.
+
+## Stigmergic workspace runtime
+
+Stigmergic workspace sends one shared artifact through an ordered role sequence. Each role receives the latest artifact and returns one revision.
+
+The runtime saves each completed revision. Recovery resumes from the next incomplete step.
+
+## Benchmark records
+
+A dataset version stores immutable normalized inputs. A test revision binds one dataset version to runtime arms and scorer versions.
+
+A run creates one trial for each arm and dataset item. Attempts preserve retries, configuration snapshots, task links, costs, scores, and optional human reviews.
+
 ## Roles and nodes
 
 A **role** defines the requested behavior. Examples include `planner`, `expert`, `critic`, and `decider`.
@@ -83,7 +101,7 @@ The daemon can rebuild a live board projection after a restart. The event outbox
 
 The `/health` endpoint reports service state for monitoring tools. It returns HTTP 200 when the daemon runs, even if a dependency fails.
 
-The `/readiness` endpoint reports whether the complete classic stack can accept a task. Each failed check includes one repair command.
+The `/readiness` endpoint reports whether the complete stack can accept a task. Each failed check includes one repair command.
 
 Mission Control uses readiness to disable task submission until the stack can execute the request. Its setup center also shows provider credentials, storage access, queue capacity, and one real test-task action.
 

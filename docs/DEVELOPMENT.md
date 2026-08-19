@@ -64,7 +64,7 @@ The command runs these groups:
 1. Daemon Ruff lint, mypy type checks, and pytest tests.
 2. Agent pytest tests.
 3. Evaluation pytest tests.
-4. Mission Control install, lint, type checks, tests, and production build.
+4. Mission Control install, lint, type checks, tests, production build, and browser tests.
 5. Configuration, generated schema, documentation link, and Compose checks.
 
 The command stops after it reports all failed groups. It returns a nonzero status when one group fails.
@@ -93,9 +93,11 @@ npm run lint
 npx tsc --noEmit
 npm run test:run
 npm run build
+npx playwright install chromium
+npm run test:e2e
 ```
 
-The Vitest environment uses Node. Add a browser environment only when a test requires browser APIs.
+The Vitest environment uses Node. Playwright starts Mission Control and tests browser flows through mocked API contracts.
 
 ## Change `bmas.yaml` fields
 

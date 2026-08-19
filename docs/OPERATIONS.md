@@ -1,6 +1,6 @@
 # Operations
 
-Use this guide after the classic stack has a valid `bmas.yaml` and `.env`.
+Use this guide after the stack has a valid `bmas.yaml` and `.env`.
 
 ## Daily checks
 
@@ -29,7 +29,7 @@ The daemon provides two different endpoints.
 | Endpoint | Meaning |
 |:---|:---|
 | `GET /health` | Reports daemon and dependency state for monitoring. |
-| `GET /readiness` | Reports whether the complete classic stack can accept a task. |
+| `GET /readiness` | Reports whether the complete stack can accept a task. |
 
 Read readiness directly:
 
@@ -37,7 +37,7 @@ Read readiness directly:
 curl -fsS http://127.0.0.1:9000/readiness
 ```
 
-The response checks Redis, SQLite, the model gateway, provider credentials, execution agents, the classic runtime, storage, and event delivery.
+The response checks Redis, SQLite, the model gateway, provider credentials, execution agents, runtime availability, storage, and event delivery.
 
 Mission Control uses the same response. It disables submission when one required check fails.
 
@@ -157,6 +157,28 @@ The Files tab combines user uploads and agent outputs.
 - The comparison view shows two saved output versions side by side.
 
 Use the download action for a file type that has no safe inline preview.
+
+## Benchmark operations
+
+Open **Evaluate → Runtime qualifications** to inspect scheduler capacity. The page lists queued attempts, active slots, resource limits, workers, and heartbeat state.
+
+Pause a run to stop new attempt admission. Active tasks continue until they reach a terminal state.
+
+Cancel a run to cancel queued attempts and request safe-boundary cancellation for active tasks. Retry creates new attempts and preserves prior attempt records.
+
+Use a higher priority only for urgent work. Priority does not interrupt an active attempt.
+
+An expired lease lets another scheduler worker take an attempt. The fence token rejects writes from the old worker.
+
+Check these values when attempts remain queued:
+
+1. Read `GET /benchmarks/capacity`.
+2. Compare the global active count with its limit.
+3. Inspect runtime, model, and provider resource rows.
+4. Inspect worker heartbeat times.
+5. Confirm that the normal task queue also has capacity.
+
+The scheduler supports multiple processes on one host. Do not share the SQLite file through a network filesystem.
 
 ## Backup
 
@@ -295,6 +317,8 @@ Replace the old `traditional` name with `classic`. Replace `triage.backend: gemi
 Capture a baseline before you change admission or endpoint limits.
 
 Use the [Classic Harness](CLASSIC_HARNESS.md) for lifecycle and soak checks. Change one limit, repeat the test, and compare queue plus cost data.
+
+Use a completed benchmark baseline before you change benchmark capacity. Keep the dataset version, test revision, and runtime configuration unchanged.
 
 ## Data deletion warning
 

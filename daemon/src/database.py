@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -773,6 +773,51 @@ END;
 """
 
 
+MIGRATION_V11_BENCHMARK_SCHEDULER_DDL = """
+CREATE TABLE IF NOT EXISTS benchmark_scheduler_workers (
+    worker_id           TEXT PRIMARY KEY,
+    hostname            TEXT NOT NULL,
+    process_id          INTEGER NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'active'
+                        CHECK (status IN ('active','stopped')),
+    started_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    last_seen_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    stopped_at          TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_scheduler_workers_seen
+ON benchmark_scheduler_workers(status, last_seen_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_attempts_lease
+ON benchmark_attempts(status, lease_expires_at);
+
+CREATE TABLE IF NOT EXISTS benchmark_human_reviews (
+    id                  TEXT PRIMARY KEY,
+    attempt_id          TEXT NOT NULL REFERENCES benchmark_attempts(id) ON DELETE CASCADE,
+    reviewer_id         TEXT NOT NULL,
+    score               REAL NOT NULL CHECK (score >= 0 AND score <= 1),
+    passed              INTEGER NOT NULL CHECK (passed IN (0,1)),
+    note                TEXT NOT NULL DEFAULT '',
+    idempotency_key     TEXT NOT NULL UNIQUE,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(attempt_id, reviewer_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_human_reviews_attempt
+ON benchmark_human_reviews(attempt_id, created_at);
+
+CREATE TRIGGER IF NOT EXISTS prevent_benchmark_human_review_update
+BEFORE UPDATE ON benchmark_human_reviews BEGIN
+    SELECT RAISE(ABORT, 'benchmark human reviews are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_benchmark_human_review_delete
+BEFORE DELETE ON benchmark_human_reviews BEGIN
+    SELECT RAISE(ABORT, 'benchmark human reviews are immutable');
+END;
+"""
+
+
 # ── Connection Infrastructure ────────────────────────────────────────
 
 
@@ -1122,6 +1167,44 @@ async def _migrate_to_v10(db: aiosqlite.Connection) -> None:
     logger.info("Migration v10 applied: benchmark analysis and regression gates")
 
 
+async def _migrate_to_v11(db: aiosqlite.Connection) -> None:
+    """Add fenced benchmark attempt leases and queue priorities."""
+    db.row_factory = aiosqlite.Row
+    cursor = await db.execute("PRAGMA table_info(benchmark_runs)")
+    run_columns = {row[1] for row in await cursor.fetchall()}
+    if "priority" not in run_columns:
+        await db.execute(
+            "ALTER TABLE benchmark_runs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0"
+        )
+
+    cursor = await db.execute("PRAGMA table_info(benchmark_attempts)")
+    attempt_columns = {row[1] for row in await cursor.fetchall()}
+    for column, ddl in (
+        (
+            "lease_owner",
+            "ALTER TABLE benchmark_attempts ADD COLUMN lease_owner TEXT",
+        ),
+        (
+            "lease_token",
+            "ALTER TABLE benchmark_attempts ADD COLUMN lease_token TEXT",
+        ),
+        (
+            "lease_expires_at",
+            "ALTER TABLE benchmark_attempts ADD COLUMN lease_expires_at TEXT",
+        ),
+        (
+            "lease_fence",
+            "ALTER TABLE benchmark_attempts ADD COLUMN lease_fence INTEGER NOT NULL DEFAULT 0",
+        ),
+    ):
+        if column not in attempt_columns:
+            await db.execute(ddl)
+    await db.executescript(MIGRATION_V11_BENCHMARK_SCHEDULER_DDL)
+    db.row_factory = aiosqlite.Row
+    await db.commit()
+    logger.info("Migration v11 applied: fenced benchmark scheduling")
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -1134,6 +1217,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         8: _migrate_to_v8,
         9: _migrate_to_v9,
         10: _migrate_to_v10,
+        11: _migrate_to_v11,
     }
     fn = migrations.get(version)
     if fn is None:
@@ -2991,6 +3075,44 @@ async def upsert_board_meta(
                 (task_id, json.dumps(meta)),
             )
             await db.commit()
+        except BaseException:
+            await db.rollback()
+            raise
+
+
+async def patch_board_meta(
+    task_id: str,
+    patch: dict,
+    lease_token: str | None = None,
+) -> dict:
+    """Merge selected task metadata fields inside one fenced transaction."""
+    async with _connect() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await _assert_task_lease(db, task_id, lease_token)
+            cursor = await db.execute(
+                "SELECT data FROM board_meta WHERE task_id = ?",
+                (task_id,),
+            )
+            row = await cursor.fetchone()
+            current: dict = {}
+            if row and row["data"]:
+                try:
+                    decoded = json.loads(row["data"])
+                    if isinstance(decoded, dict):
+                        current = decoded
+                except (json.JSONDecodeError, TypeError):
+                    current = {}
+            current.update(patch)
+            await db.execute(
+                "INSERT INTO board_meta (task_id, data, updated_at) "
+                "VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now')) "
+                "ON CONFLICT(task_id) DO UPDATE SET "
+                "data = excluded.data, updated_at = excluded.updated_at",
+                (task_id, json.dumps(current)),
+            )
+            await db.commit()
+            return current
         except BaseException:
             await db.rollback()
             raise

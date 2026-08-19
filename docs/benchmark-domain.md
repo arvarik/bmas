@@ -1,6 +1,6 @@
 # Benchmark domain foundation
 
-This document defines the stable records for the benchmark system. The foundation starts at database version 8. Analysis records use version 10.
+This document defines the stable benchmark records. Database version 11 includes datasets, tests, runs, leases, baselines, qualifications, and human reviews.
 
 ## Design goals
 
@@ -45,7 +45,7 @@ The benchmark core does not interpret the configuration. The selected runtime va
 
 The authoring preflight resolves each arm before publication. It stores a secret-free runtime envelope and a checksum. A published revision cannot change.
 
-This design supports `classic`, Patchboard, and future Stigmergic variants. A new runtime does not require a benchmark schema change.
+This design supports `classic`, `patchboard`, `stigmergic`, and later runtimes. A new runtime does not require a benchmark schema change.
 
 ## Execution identity
 
@@ -100,7 +100,7 @@ The event journal exposes both records in the task timeline. The audit record in
 
 A run materializes all trials and initial attempts in one transaction. An idempotency key prevents duplicate runs after a client retry.
 
-The scheduler applies a global active-attempt limit. Each test revision also defines its own concurrency limit.
+The scheduler applies global, test, runtime, model, and provider limits. It considers the run priority before creation time.
 
 The scheduler admits attempts through the normal task queue. Each task receives its saved runtime configuration and benchmark identifiers.
 
@@ -110,7 +110,9 @@ A cancellation cancels queued attempts first. It then asks active tasks to stop 
 
 Each repetition has a stable repeat index and random seed. A retry creates a new attempt with a higher retry index. The prior attempt remains available.
 
-The scheduler recovers a claimed attempt without a task after a daemon restart. The scheduler returns that attempt to the queue.
+Each claim has an owner, a token, an expiration time, and an increasing fence number. A stale owner cannot update a transferred attempt.
+
+The scheduler renews active leases. Another worker recovers an expired attempt. A stable task identifier prevents duplicate admission after an uncertain response.
 
 ## Scoring contract
 
@@ -126,11 +128,17 @@ Reports must use only the latest retry for each repetition. Reports must keep pr
 
 A run report uses the latest retry for each trial and repetition. The report keeps the count of prior retries for provenance.
 
-Each arm reports the failure rate, score, cost, duration, and token use. Continuous metrics include the mean, median, p95, and a 95 percent estimate.
+Each arm reports the failure rate, score, cost, duration, and token use. Continuous metrics include a 95 percent BCa bootstrap estimate.
 
 The report returns no interval bounds for one sample. This rule prevents a single result from appearing certain.
 
 An arm comparison pairs results by the dataset item and repetition. The delta uses the right arm minus the left arm.
+
+The report applies an exact two-sided sign test to non-tied paired differences. It applies Holm-Bonferroni correction across the report family.
+
+The report separates statistical evidence from practical importance. Each test revision stores the minimum practical score difference.
+
+The report adds subject, split, and tag slices. It also adds failure categories, per-item differences, scorer agreement, and human-review calibration.
 
 The report accepts subject, split, tag, and scorer filters. Mission Control stores these filters in the URL and exports the same selection as CSV.
 
@@ -140,7 +148,9 @@ Every report includes the dataset, test revision, execution plan, and report che
 
 A baseline pins one completed run and one regression rule set. The database prevents updates and deletes for that baseline.
 
-A gate compares a candidate run with the pinned run. Each rule uses one exact metric path and one operator.
+A gate compares a candidate run with the pinned run. Each rule uses one exact metric path, one analysis method, and one operator.
+
+The analysis method selects a point estimate, a lower bound, an upper bound, or a Holm-corrected sign-test value.
 
 The supported operators are minimum value, maximum value, maximum score drop, and maximum relative increase.
 
@@ -167,12 +177,20 @@ A static qualification checks the contract and a stable preflight checksum. It r
 
 A run qualification also checks a completed run and each latest attempt snapshot. It returns `passed` only when every required check passes.
 
-Mission Control lists Patchboard and Stigmergic as planned runtimes. The daemon does not advertise them as available until their runtime adapters register.
+Mission Control lists Classic, Patchboard, and Stigmergic workspace as available runtimes. A qualification remains provisional until a completed evidence run passes each contract check.
 
-## Current phase boundary
+## Human review contract
+
+A completed attempt can receive one review from each reviewer identifier. The request needs an idempotency key.
+
+The database rejects review updates and deletes. A repeated identical request returns the saved review. A conflicting request fails.
+
+The report compares automatic scores with human scores and decisions. It reports agreement, Cohen kappa, mean absolute error, and Brier score when data exists.
+
+## Current capability boundary
 
 Mission Control authors tests and revisions. It controls durable runs and provides paired reports, immutable baselines, regression gates, and runtime qualifications.
 
-The current scheduler uses one daemon owner. A later scale phase adds distributed ownership and durable leases for multiple daemon replicas.
+Multiple scheduler workers on one daemon host coordinate through atomic SQLite transactions and fenced leases. SQLite does not support the future multi-host control plane.
 
-Patchboard and Stigmergic still need concrete runtime adapters. Their adapters must pass a run qualification before users can compare them.
+Classic, Patchboard, and Stigmergic workspace have concrete adapters. Operators must run evidence qualifications before they treat a runtime as qualified.

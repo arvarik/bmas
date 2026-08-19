@@ -113,7 +113,7 @@ const BUILD_TIME_DEFAULTS: BmasConfig = {
 
 // ── Load Config ───────────────────────────────────────────────────────
 
-const CONFIG_PATH = "/etc/bmas/bmas.yaml";
+const CONFIG_PATH = process.env.BMAS_CONFIG ?? "/etc/bmas/bmas.yaml";
 
 /**
  * Detect whether we are in Next.js's static generation / build phase.

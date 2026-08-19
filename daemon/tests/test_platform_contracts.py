@@ -285,7 +285,7 @@ async def test_submission_rejects_unavailable_variant(monkeypatch):
     try:
         with pytest.raises(HTTPException) as exc_info:
             await submit.submit_task(
-                submit.TaskSubmission(task="test", variant="patchboard"),
+                submit.TaskSubmission(task="test", variant="unregistered"),
                 cast("Request", None),
             )
     finally:
@@ -293,6 +293,42 @@ async def test_submission_rejects_unavailable_variant(monkeypatch):
 
     assert exc_info.value.status_code == 422
     assert exc_info.value.detail["code"] == "variant_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_stable_benchmark_task_identity_replays_before_queue_checks(monkeypatch):
+    benchmark = submit.BenchmarkContext(
+        run_id="run-one",
+        trial_id="trial-one",
+        attempt_id="attempt-one",
+    )
+    monkeypatch.setattr(submit.db, "get_task", AsyncMock(return_value={
+        "id": "task-benchmark-stable",
+        "variant": "patchboard",
+        "status": "pending",
+    }))
+    monkeypatch.setattr(submit.db, "get_board_meta", AsyncMock(return_value={
+        "benchmark": benchmark.model_dump(),
+    }))
+    previous_queue = submit._task_queue
+    submit._task_queue = None
+    try:
+        response = await submit._admit_task(
+            submit.TaskSubmission(
+                task="Compare this result",
+                variant="patchboard",
+                benchmark=benchmark,
+            ),
+            task_id="task-benchmark-stable",
+        )
+    finally:
+        submit._task_queue = previous_queue
+
+    assert response == {
+        "task_id": "task-benchmark-stable",
+        "variant": "patchboard",
+        "status": "pending",
+    }
 
 
 @pytest.mark.asyncio
