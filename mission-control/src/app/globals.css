@@ -3,8 +3,6 @@
    Source of truth: DESIGN.md
    ───────────────────────────────────────────────────────────────────── */
 
-/* Google Fonts loaded via next/font/google in layout.tsx (self-hosted) */
-
 @import "tailwindcss";
 @import "./views.css";
 
@@ -48,8 +46,8 @@
   --agent-decider: hsl(150 45% 50%);
 
   /* ── Typography (§3) ───────────────────────────────────────────── */
-  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", monospace;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 
   /* Type Scale */
   --text-xs: 0.6875rem;

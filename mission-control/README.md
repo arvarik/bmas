@@ -1,249 +1,142 @@
-# Mission Control — bMAS Dashboard
+# Mission Control
 
-The real-time operations dashboard for **bMAS**. A task-scoped interface for monitoring, debugging, and controlling the AI swarm, with live SSE streaming, execution graphs, structured log viewers, and a blackboard command center. Built with Next.js 16, React 19, TypeScript, and vanilla CSS.
+Mission Control is the Next.js operator interface for the classic runtime.
 
-> Runs as Docker container `bmas-dashboard` on the control plane at port 9321.
+The default Compose stack publishes it at [http://localhost:9321](http://localhost:9321).
 
-## Access Control
+## Main views
 
-Set `BMAS_DASHBOARD_KEY` to protect all pages and API routes. The browser asks
-for HTTP Basic credentials. Enter any username and the dashboard key as the
-password. Keep this key separate from the daemon `BMAS_API_KEY`.
-Use HTTPS whenever a client connects outside the local host. HTTP Basic sends
-reusable credentials with each request.
+| View | Data |
+|:---|:---|
+| Landing page | Readiness, task submission, recent tasks, and summary counts |
+| Task overview | Status, phase, process summary, and final result |
+| Execution graph | Classic rounds, role turns, and control-unit narration |
+| Logs | Daemon logs and agent traces |
+| Blackboard | Durable board entries, references, and debate threads |
+| Mission | Live board, role activity, events, and convergence |
+| Artifacts | Uploaded files and task outputs |
+| Infrastructure | Agent health and optional Beszel telemetry |
 
-Mission Control keeps `BMAS_API_KEY` on the server. Client JavaScript never
-receives that key. An empty `BMAS_DASHBOARD_KEY` permits unauthenticated access
-for trusted-network deployments.
+The interface exposes only the classic runtime. A single available runtime appears as a fixed status label.
 
-## Features
+## Readiness
 
-| # | Feature | Technology | Data Source |
-|:---|:---|:---|:---|
-| 1 | **Task Overview** | React + Markdown renderer | REST `/api/tasks/{id}` + SSE |
-| 2 | **Execution Graph (DAG)** | React Flow (`@xyflow/react`) | SSE `turn`, `narration` events |
-| 3 | **Distributed Log Stream** | TanStack Virtual + detail drawer | SSE `log` events + REST fallback |
-| 4 | **Agent Trace Inspector** | TanStack Virtual + structured viewer | REST `/api/tasks/{id}/trace` |
-| 5 | **Blackboard Board** | Timeline / Threads / Graph views | SSE `board_*` events + REST `/api/tasks/{id}/board` |
-| 6 | **Mission Cockpit** | 4-panel live layout | Composite: blackboard graph + agent minds + firehose + convergence |
-| 7 | **Operator Controls (HITL)** | ActionButton + directive injection | POST `/api/hitl/{action}` |
-| 8 | **Artifact Browser** | File tree + download links | REST `/api/tasks/{id}/artifacts` |
-| 9 | **Cost Tracking** | Budget gauge + per-model breakdown | SSE `cost` events |
-| 10 | **Skills Explorer** | Tabbed panel (per agent) | GET `/api/skills` |
-| 11 | **Hardware Telemetry** | Multi-node cards + gauges | GET `/api/telemetry` (Beszel Hub) |
+The landing page requests `/api/readiness`. This route proxies the daemon `/readiness` endpoint.
 
-## Architecture
+Mission Control disables task submission until each required service passes its check. A failed check shows the daemon repair command.
 
-```
-Browser (React 19)
-    │
-    ▼
-┌──────────────────────────────────────────────────────────┐
-│  Next.js 16 App Router                                    │
-│                                                          │
-│  ┌────────────────────┐  ┌──────────────────────────┐    │
-│  │ src/app/api/       │  │ src/app/task/[taskId]/   │    │
-│  │                    │  │                          │    │
-│  │  /api/stream/*   ──┤  │  Overview (process+result)│   │
-│  │  /api/tasks/*    ──┤  │  DAG (TurnGraph)         │    │
-│  │  /api/hitl       ──┤  │  Logs (DistributedLog)   │    │
-│  │  /api/submit     ──┤  │  Blackboard (Board)      │    │
-│  │  /api/skills     ──┤  │  Mission (Cockpit)       │    │
-│  │  /api/telemetry  ──┤  │  Artifacts (Browser)     │    │
-│  └────────────────────┘  └──────────────────────────┘    │
-│             │                                            │
-└─────────────┼────────────────────────────────────────────┘
-              │
-    ┌─────────┼──────────────────┐
-    │         │                  │
-    ▼         ▼                  ▼
- Daemon    Redis            Beszel Hub
- :9000     :6379            :8090
+## Data flow
+
+```mermaid
+flowchart LR
+    B["Browser"] --> N["Next.js routes"]
+    N --> D["Daemon REST API"]
+    N --> E["Daemon event stream"]
+    N --> R["Redis live projections"]
+    N --> Z["Optional Beszel API"]
 ```
 
-## Project Structure
+Server routes keep daemon and Redis credentials out of browser JavaScript.
 
-```
-mission-control/
-├── src/
-│   ├── app/
-│   │   ├── layout.tsx             # Root layout — fonts, metadata
-│   │   ├── page.tsx               # Landing page — task list + submit
-│   │   ├── ClientShell.tsx        # Client-side app shell wrapper
-│   │   ├── LandingPageClient.tsx  # Landing page client component
-│   │   ├── globals.css            # Design tokens (CSS custom properties)
-│   │   ├── views.css              # View-specific styles
-│   │   ├── task/[taskId]/         # Task-scoped pages (tabbed navigation)
-│   │   │   ├── layout.tsx         #   Shared task layout with tab bar
-│   │   │   ├── TaskStreamContext.tsx #   SSE stream provider for all tabs
-│   │   │   ├── page.tsx           #   Overview — process summary + result
-│   │   │   ├── dag/page.tsx       #   Execution Graph — TurnGraph swimlane
-│   │   │   ├── logs/page.tsx      #   Distributed logs + agent trace
-│   │   │   ├── blackboard/page.tsx #  Blackboard Board command center
-│   │   │   ├── mission/page.tsx   #   Mission Cockpit (4-panel live)
-│   │   │   └── artifacts/page.tsx #   Artifact browser + downloads
-│   │   ├── agents/                #   Agent management pages
-│   │   ├── skills/                #   Skills explorer page
-│   │   ├── infra/                 #   Infrastructure telemetry page
-│   │   └── api/                   # 20+ API route handlers
-│   │       ├── stream/
-│   │       │   ├── system/route.ts    # System-wide SSE (task lifecycle)
-│   │       │   └── task/[taskId]/route.ts  # Task-scoped SSE (18 event types)
-│   │       ├── tasks/
-│   │       │   ├── route.ts           # GET /api/tasks (list)
-│   │       │   └── [taskId]/
-│   │       │       ├── route.ts       # GET /api/tasks/{id} (detail)
-│   │       │       ├── board/route.ts # GET /api/tasks/{id}/board
-│   │       │       ├── cost/route.ts  # GET /api/tasks/{id}/cost
-│   │       │       ├── debate/route.ts# GET /api/tasks/{id}/debate
-│   │       │       ├── logs/route.ts  # GET /api/tasks/{id}/logs
-│   │       │       ├── trace/route.ts # GET /api/tasks/{id}/trace
-│   │       │       ├── turns/route.ts # GET /api/tasks/{id}/turns
-│   │       │       ├── files/         # File upload/download proxy
-│   │       │       └── artifacts/     # Artifact retrieval proxy
-│   │       ├── submit/route.ts        # POST /api/submit
-│   │       ├── hitl/route.ts          # POST /api/hitl (pause/resume/directive)
-│   │       ├── skills/route.ts        # GET/POST /api/skills
-│   │       ├── capabilities/route.ts  # GET /api/capabilities
-│   │       ├── profiles/route.ts      # GET /api/profiles
-│   │       └── telemetry/route.ts     # GET /api/telemetry (Beszel proxy)
-│   ├── components/
-│   │   ├── features/              # 18 feature components
-│   │   │   ├── TurnGraph.tsx          # Swimlane execution graph (rounds × agents)
-│   │   │   ├── DistributedLogStream.tsx # Unified chronological log viewer
-│   │   │   ├── BlackboardBoard.tsx    # Board command center (Timeline/Threads/Graph)
-│   │   │   ├── AgentTrace.tsx         # Structured turn trace viewer (TanStack Virtual)
-│   │   │   ├── AgentMindCard.tsx      # Per-agent live status card
-│   │   │   ├── BlackboardGraph.tsx    # Force-directed board entry graph
-│   │   │   ├── GlobalFirehose.tsx     # Unfiltered live event feed
-│   │   │   ├── ConvergenceStrip.tsx   # Convergence progress indicator
-│   │   │   ├── ConsensusMeter.tsx     # Consensus scoring visualization
-│   │   │   ├── BudgetGauge.tsx        # Budget usage gauge
-│   │   │   ├── ArtifactBrowser.tsx    # Grouped file tree with downloads
-│   │   │   ├── AttachmentRail.tsx     # File preview slide-over
-│   │   │   ├── SkillsExplorer.tsx     # Agent skills (per node)
-│   │   │   ├── Telemetry.tsx          # Hardware health gauges
-│   │   │   ├── TurnInspector.tsx      # Turn detail side panel
-│   │   │   ├── ToolCallCard.tsx       # Tool call visualization
-│   │   │   ├── VariantSelect.tsx      # Variant selector dropdown
-│   │   │   ├── ReplayScrubber.tsx     # Timeline replay controls
-│   │   │   ├── WorkerLane.tsx         # Per-agent swimlane in TurnGraph
-│   │   │   └── board/                 # Board sub-components
-│   │   │       ├── boardModel.ts      #   Merge-never-delete data model
-│   │   │       ├── BoardEntryCard.tsx  #   Individual board entry card
-│   │   │       ├── BoardEntryDetail.tsx#   Entry detail drawer
-│   │   │       └── DebateThread.tsx    #   Debate thread visualization
-│   │   ├── ui/                    # Design system primitives (9 components)
-│   │   │   ├── Panel.tsx              # Container with header/body/states
-│   │   │   ├── StatusBadge.tsx        # Status pill
-│   │   │   ├── MetricCard.tsx         # Numeric display with trend
-│   │   │   ├── ActionButton.tsx       # Button variants (Primary/Secondary/Danger)
-│   │   │   ├── Skeleton.tsx           # Loading placeholder with shimmer
-│   │   │   ├── EmptyState.tsx         # No-data placeholder
-│   │   │   ├── Toast.tsx              # Notification system
-│   │   │   ├── TaskSidebar.tsx        # Task navigation sidebar
-│   │   │   └── TerminalPane.tsx       # Terminal-style output pane
-│   │   └── layout/
-│   │       └── TopBar.tsx             # App header bar
-│   ├── hooks/
-│   │   ├── useTaskStream.ts       # Task-scoped SSE — 18 event types, rAF batching, REST fallback
-│   │   ├── useSystemStream.ts     # System-level SSE — task lifecycle events
-│   │   ├── useTaskHistory.ts      # REST-based task list fetching
-│   │   └── useToast.ts            # Toast notification state
-│   └── lib/
-│       ├── config.ts              # Server-side config loader (bmas.yaml)
-│       ├── redis.ts               # Redis client singleton (API routes)
-│       ├── mappers.ts             # SSE → component data transforms
-│       ├── variants.ts            # Coordination variant metadata
-│       ├── design-tokens.ts       # Programmatic design token access
-│       └── dummy-adapter.tsx      # Development stub adapter
-├── package.json
-├── tsconfig.json
-└── next.config.ts
-```
+The task stream hydrates saved REST data before it applies live events. It reconnects with an event cursor after a temporary interruption.
 
-## Real-Time Data Flow
+## Access control
 
-Mission Control uses **Server-Sent Events (SSE)** for all real-time data, not WebSockets or polling:
+Set `BMAS_DASHBOARD_KEY` to protect every page and proxy route. The starter command creates this value.
 
-```
-Daemon events (Redis Pub/Sub)
-        │
-        ▼
-  /api/stream/task/{id}    ← Task-scoped SSE (18 event types)
-  /api/stream/system       ← System-wide SSE (task lifecycle)
-        │
-        ▼
-  useTaskStream.ts          ← Client hook: rAF batching, REST hydration
-        │
-        ├──▶ turns[]          → TurnGraph, TurnInspector
-        ├──▶ boardEntries[]   → BlackboardBoard, boardModel
-        ├──▶ logs[]           → DistributedLogStream
-        ├──▶ costEvents[]     → BudgetGauge, CostTracker
-        ├──▶ traces[]         → AgentTrace
-        ├──▶ narrations[]     → TurnGraph coordinator spine
-        ├──▶ files[]          → ArtifactBrowser, AttachmentRail
-        └──▶ status           → StatusBadge, TopBar
-```
+The browser uses HTTP Basic authentication. Enter any username and the dashboard key as the password.
 
-### SSE Event Types (18)
+The `/api/health` route stays public for container and load-balancer checks. It returns only a fixed status value.
 
-`status`, `phase`, `log`, `cost`, `turn`, `board_entry`, `board_event`, `narration`, `trace`, `debate`, `error`, `hitl`, `file`, `artifact`, `convergence`, `steer`, `approval`, `complete`
+Use HTTPS whenever a browser connects outside the local computer. HTTP Basic sends a reusable credential with each request.
 
-## Design System
+Mission Control sends `BMAS_API_KEY` only from server routes to daemon mutation routes.
 
-The UI follows a dark-mode-first design system defined in [DESIGN.md](../docs/design/DESIGN.md):
+## Server environment
 
-- **HSL-based surface elevation** — 5 layers, no borders
-- **Design tokens** — All colors, spacing, typography, and radii as CSS custom properties in `globals.css`
-- **Primitive-first** — All features compose from shared `ui/` primitives
-- **Five-state coverage** — Every component: empty, loading, active, error, disabled
-- **Agent identity colors** — Dynamically assigned per agent role
+| Variable | Purpose |
+|:---|:---|
+| `BMAS_DAEMON_URL` | Selects the internal daemon base URL. |
+| `BMAS_REDIS_URL` | Selects the internal Redis URL. |
+| `REDIS_PASSWORD` | Supports a generated Redis URL outside Compose. |
+| `BMAS_API_KEY` | Authenticates daemon mutations. |
+| `BMAS_DASHBOARD_KEY` | Protects browser and proxy access. |
+| `BESZEL_EMAIL` | Authenticates optional Beszel requests. |
+| `BESZEL_PASSWORD` | Authenticates optional Beszel requests. |
+| `ALLOWED_DEV_ORIGINS` | Allows named LAN origins during Next.js development. |
 
-> See [docs/design/DESIGN.md](../docs/design/DESIGN.md) for the complete specification.
+Docker Compose sets the internal URLs. Do not put them in a normal starter `.env`.
 
-## Tech Stack
+Docker Compose mounts `bmas.yaml` at `/etc/bmas/bmas.yaml`. Mission Control reads this fixed path.
 
-| Category | Technology | Version |
-|:---|:---|:---|
-| Framework | Next.js (App Router) | 16.2.x |
-| React | React | 19.2.x |
-| Language | TypeScript | 5.x |
-| State | Zustand | 5.x |
-| Execution Graph | React Flow (`@xyflow/react`) | 12.x |
-| Virtualization | TanStack Virtual (`@tanstack/react-virtual`) | 3.x |
-| Markdown | react-markdown + remark-gfm | 10.x |
-| Charts | Recharts | 3.x |
-| Icons | Lucide React | 1.x |
-| Redis Client | redis (Node.js) | 5.x |
-| Styling | Vanilla CSS (design tokens) | — |
+## API route groups
+
+| Route group | Purpose |
+|:---|:---|
+| `/api/health` | Returns a public, fixed process health result. |
+| `/api/readiness` | Proxies actionable stack readiness. |
+| `/api/capabilities` | Proxies the daemon runtime contract. |
+| `/api/submit` | Submits a classic task. |
+| `/api/tasks/*` | Reads task state, board data, files, artifacts, costs, logs, and traces. |
+| `/api/stream/*` | Proxies task and system event streams. |
+| `/api/hitl` | Sends pause, resume, abort, and operator directives. |
+| `/api/settings/*` | Reads and changes supported runtime settings. |
+| `/api/telemetry` | Proxies optional Beszel telemetry. |
+
+Each daemon response crosses a server route before a client component uses it.
+
+## Technology
+
+| Part | Version |
+|:---|:---|
+| Next.js App Router | 16.3.1 |
+| React | 19.2.7 |
+| TypeScript | 6.x |
+| Vitest | 4.1.x |
+
+The production Dockerfile uses Node.js 22.23.2 on Alpine 3.23.
 
 ## Development
 
+Prepare the repository environment first.
+
 ```bash
-# Install dependencies
-npm install
-
-# Start dev server
-npm run dev -- -p 9321 --hostname 0.0.0.0
-
-# Lint
-npm run lint
-
-# Type check
-npx tsc --noEmit
-
-# Build for production
-npm run build
-
-# Start production server
-npm start
+../scripts/bmas setup-dev
 ```
 
-Dashboard runs at `http://localhost:9321` (or your control plane IP).
+Run Mission Control through the complete development stack:
 
-## Documentation
+```bash
+../scripts/bmas dev
+```
 
-- **[../docs/design/DESIGN.md](../docs/design/DESIGN.md)** — Complete UI design system specification
-- **[../docs/architecture/README.md](../docs/architecture/README.md)** — System architecture deep-dive
-- **[../examples/stigmergic/CONTEXT.md](../examples/stigmergic/CONTEXT.md)** — Example deployment reference
+Run component checks directly:
+
+```bash
+npm run lint
+npx tsc --noEmit
+npm run test:run
+npm run build
+```
+
+Use `npm ci` when the lockfile changes or the dependency directory is absent.
+
+## Design rules
+
+The design tokens live in `src/app/globals.css`. View-specific styles live in `src/app/views.css`.
+
+Use server components by default. Add `"use client"` only for state, effects, or browser APIs.
+
+Each data view must show loading, empty, active, error, and unavailable states when those states apply.
+
+Read the [Design System](../docs/design/DESIGN.md) before you add a reusable visual pattern.
+
+## Tests
+
+Route tests mock the daemon boundary. Contract tests reject malformed capability, event, and readiness responses.
+
+The complete repository test command also runs a production Next.js build.
+
+```bash
+../scripts/bmas test
+```

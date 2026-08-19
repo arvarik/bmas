@@ -1,0 +1,8 @@
+-r daemon/requirements.txt
+-r agent/requirements.txt
+
+pytest>=9.0
+pytest-asyncio>=1.3
+httpx2>=2.12.0
+mypy>=1.19
+ruff>=0.15

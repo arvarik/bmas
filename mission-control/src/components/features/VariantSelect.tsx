@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   CapabilityContractError,
   parseCapabilities,
@@ -10,13 +10,6 @@ import {
   hasMissionControlAdapter,
   supportsMissionControlVariant,
 } from "@/lib/variant-support";
-
-/**
- * VariantSelect — dropdown for the composer (doc 08 §2.1).
- *
- * Fetches the daemon's capabilities and renders only reported variants.
- * Local adapters decide whether Mission Control can open each variant.
- */
 
 interface VariantSelectProps {
   value: string;
@@ -77,6 +70,28 @@ export function VariantSelect({
     if (selected && selected.id !== value) onChange(selected.id);
   }, [loadState, onAvailabilityChange, onChange, value, variants]);
 
+  const selectableVariants = variants.filter(isSelectable);
+
+  if (loadState === "loading") {
+    return <span className="variant-status">Checking classic runtime…</span>;
+  }
+
+  if (loadState === "error") {
+    return (
+      <span className="variant-status variant-status--error" role="alert">
+        {errorMessage}
+      </span>
+    );
+  }
+
+  if (selectableVariants.length === 1) {
+    return (
+      <span className="variant-status" title="The classic runtime is active">
+        {selectableVariants[0].label}
+      </span>
+    );
+  }
+
   return (
     <select
       id="variant-select"
@@ -89,46 +104,21 @@ export function VariantSelect({
           variants.some((variant) => variant.id === next && isSelectable(variant)),
         );
       }}
-      disabled={loadState !== "ready"}
       aria-label="Coordination variant"
-      style={{
-        padding: "3px 22px 3px 8px",
-        background: "var(--surface-hover)",
-        border: "1px solid var(--border-subtle)",
-        borderRadius: "var(--radius-full)",
-        color: "var(--text-tertiary)",
-        fontSize: "11px",
-        fontFamily: "var(--font-sans)",
-        cursor: "pointer",
-        outline: "none",
-        minWidth: 0,
-        maxWidth: 160,
-        height: 24,
-        transition: "color 150ms ease, border-color 150ms ease",
-        WebkitAppearance: "none",
-        appearance: "none",
-        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
-        backgroundRepeat: "no-repeat",
-        backgroundPosition: "right 6px center",
-      }}
     >
-      {loadState === "loading" ? (
-        <option value={value}>Loading capabilities…</option>
-      ) : null}
-      {loadState === "error" ? (
-        <option value={value}>{errorMessage}</option>
-      ) : null}
-      {variants.map((v) => (
+      {variants.map((variant) => (
         <option
-          key={v.id}
-          value={v.id}
-          disabled={!isSelectable(v)}
-          title={v.reason ? `${v.label} — ${v.reason}` : v.label}
+          key={variant.id}
+          value={variant.id}
+          disabled={!isSelectable(variant)}
+          title={variant.reason ? `${variant.label}: ${variant.reason}` : variant.label}
         >
-          {v.label}
-          {!v.available && v.reason ? ` (${v.reason})` : ""}
-          {!hasMissionControlAdapter(v.id) ? " (interface unavailable)" : ""}
-          {hasMissionControlAdapter(v.id) && !isSelectable(v) ? " (unsupported contract)" : ""}
+          {variant.label}
+          {!variant.available && variant.reason ? ` (${variant.reason})` : ""}
+          {!hasMissionControlAdapter(variant.id) ? " (interface unavailable)" : ""}
+          {hasMissionControlAdapter(variant.id) && !isSelectable(variant)
+            ? " (unsupported contract)"
+            : ""}
         </option>
       ))}
     </select>

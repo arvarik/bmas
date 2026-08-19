@@ -380,6 +380,33 @@ def test_execute_passes_session_model_and_timeout(monkeypatch):
     assert captured["timeout"] == 37
 
 
+def test_execute_uses_direct_litellm_backend(monkeypatch):
+    captured = {}
+
+    async def fake_run(**kwargs):
+        captured.update(kwargs)
+        return api_server.TaskStatus.completed, "done", None, 1, None
+
+    async def scenario():
+        monkeypatch.setattr(api_server, "EXECUTION_BACKEND", "litellm")
+        monkeypatch.setattr(api_server, "_run_via_litellm", fake_run)
+        request = api_server.TaskRequest(
+            task_id="task-1",
+            description="Do the task",
+            turn_id="turn-1",
+            model="starter-model",
+            timeout=37,
+        )
+        return await api_server._execute_task_once(
+            request, "request-1", "turn-1"
+        )
+
+    response = asyncio.run(scenario())
+    assert response.status == api_server.TaskStatus.completed
+    assert captured["model"] == "starter-model"
+    assert captured["timeout"] == 37
+
+
 def test_context_session_remains_backward_compatible(monkeypatch):
     captured = {}
 

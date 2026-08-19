@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$REPO_ROOT"
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/bmas <command> [options]
+
+Commands:
+  init [--provider gemini|anthropic|openai] [--force]
+  up
+  doctor [--wait SECONDS]
+  smoke
+  backup [DIRECTORY]
+  restore ARCHIVE --yes
+  setup-dev
+  dev
+  test
+  docs-check
+EOF
+}
+
+random_hex() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+    return
+  fi
+  od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+env_value() {
+  local name="$1"
+  awk -F= -v key="$name" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' .env
+}
+
+set_env_value() {
+  local name="$1"
+  local value="$2"
+  local temporary
+  temporary="$(mktemp)"
+  awk -v key="$name" -v replacement="$value" '
+    BEGIN {found = 0}
+    $0 ~ "^" key "=" {print key "=" replacement; found = 1; next}
+    {print}
+    END {if (!found) print key "=" replacement}
+  ' .env > "$temporary"
+  mv "$temporary" .env
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "Install $1 and run this command again."
+}
+
+provider_template() {
+  case "$1" in
+    gemini) echo "bmas.example.yaml" ;;
+    anthropic) echo "examples/starters/anthropic.yaml" ;;
+    openai) echo "examples/starters/openai.yaml" ;;
+    *) die "Provider must be gemini, anthropic, or openai." ;;
+  esac
+}
+
+provider_key_name() {
+  case "$1" in
+    gemini) echo "GEMINI_API_KEY" ;;
+    anthropic) echo "ANTHROPIC_API_KEY" ;;
+    openai) echo "OPENAI_API_KEY" ;;
+  esac
+}
+
+init_command() {
+  local provider="gemini"
+  local force="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --provider) provider="${2:-}"; shift 2 ;;
+      --force) force="true"; shift ;;
+      *) die "Unknown init option: $1" ;;
+    esac
+  done
+
+  local template
+  local provider_key
+  template="$(provider_template "$provider")"
+  provider_key="$(provider_key_name "$provider")"
+
+  if [[ "$force" != "true" ]] && { [[ -e bmas.yaml ]] || [[ -e .env ]]; }; then
+    die "bmas.yaml or .env already exists. Use --force to replace both files."
+  fi
+
+  umask 077
+  cp "$template" bmas.yaml
+  cp .env.example .env
+
+  set_env_value REDIS_PASSWORD "$(random_hex)"
+  set_env_value LITELLM_MASTER_KEY "sk-$(random_hex)"
+  set_env_value BMAS_NODE_KEY "$(random_hex)"
+  set_env_value BMAS_EXECUTE_KEY "$(random_hex)"
+  set_env_value BMAS_API_KEY "$(random_hex)"
+  set_env_value BMAS_DASHBOARD_KEY "$(random_hex)"
+
+  local provider_secret="${BMAS_PROVIDER_API_KEY:-}"
+  if [[ -z "$provider_secret" ]] && [[ -t 0 ]]; then
+    read -r -s -p "Enter $provider_key: " provider_secret
+    echo ""
+  fi
+  if [[ -n "$provider_secret" ]]; then
+    set_env_value "$provider_key" "$provider_secret"
+  fi
+
+  chmod 600 .env
+  echo "Created bmas.yaml and .env for $provider."
+  if [[ -z "$provider_secret" ]]; then
+    echo "Set $provider_key in .env before startup."
+  fi
+  echo "Next: ./scripts/bmas up"
+}
+
+doctor_preflight() {
+  require_command docker
+  require_command curl
+  docker compose version >/dev/null 2>&1 || die "Install Docker Compose 2.20 or newer."
+  [[ -f bmas.yaml ]] || die "Run ./scripts/bmas init first."
+  [[ -f .env ]] || die "Run ./scripts/bmas init first."
+
+  local required=(REDIS_PASSWORD LITELLM_MASTER_KEY BMAS_NODE_KEY BMAS_EXECUTE_KEY)
+  local name
+  for name in "${required[@]}"; do
+    [[ -n "$(env_value "$name")" ]] || die "$name is empty in .env."
+  done
+
+  local provider_key
+  provider_key="$(awk '/api_key_env:/ {print $2; exit}' bmas.yaml)"
+  [[ -n "$provider_key" ]] || die "No model api_key_env exists in bmas.yaml."
+  [[ -n "$(env_value "$provider_key")" ]] || die "$provider_key is empty in .env."
+
+  docker compose config --quiet
+  echo "PASS: Files, secrets, and Docker Compose configuration are valid."
+}
+
+doctor_command() {
+  local wait_seconds=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --wait) wait_seconds="${2:-0}"; shift 2 ;;
+      *) die "Unknown doctor option: $1" ;;
+    esac
+  done
+  doctor_preflight
+
+  if ! docker compose ps --status running --quiet | grep -q .; then
+    echo "INFO: The stack is not running."
+    return 0
+  fi
+
+  "$SCRIPT_DIR/healthcheck.sh" --wait "$wait_seconds"
+}
+
+up_command() {
+  doctor_preflight
+  docker compose up -d --build
+  "$SCRIPT_DIR/healthcheck.sh" --wait 180
+  local dashboard_port
+  dashboard_port="$(env_value DASHBOARD_PORT)"
+  echo "Mission Control: http://localhost:${dashboard_port:-9321}"
+}
+
+smoke_command() {
+  doctor_preflight
+  local daemon_port
+  local dashboard_port
+  daemon_port="$(env_value DAEMON_PORT)"
+  dashboard_port="$(env_value DASHBOARD_PORT)"
+  daemon_port="${daemon_port:-9000}"
+  dashboard_port="${dashboard_port:-9321}"
+  local api_key
+  api_key="$(env_value BMAS_API_KEY)"
+  local response
+  response="$(curl -fsS -X POST "http://localhost:${daemon_port}/submit" \
+    -H "Authorization: Bearer ${api_key}" \
+    -H "Content-Type: application/json" \
+    -d '{"task":"Explain the classic blackboard workflow in three concise bullets.","variant":"classic"}')"
+
+  local task_id
+  task_id="$(printf '%s' "$response" | sed -n 's/.*"task_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  [[ -n "$task_id" ]] || die "The smoke submission did not return a task_id: $response"
+  echo "Submitted $task_id."
+
+  local deadline=$((SECONDS + 900))
+  while [[ $SECONDS -lt $deadline ]]; do
+    local task_json
+    local status
+    task_json="$(curl -fsS "http://localhost:${daemon_port}/tasks/${task_id}")"
+    status="$(printf '%s' "$task_json" | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+    case "$status" in
+      completed)
+        echo "PASS: $task_id completed."
+        echo "Open: http://localhost:${dashboard_port}/task/${task_id}"
+        return 0
+        ;;
+      failed|aborted)
+        die "$task_id ended with status $status. Run docker compose logs daemon agent litellm."
+        ;;
+    esac
+    sleep 3
+  done
+  die "$task_id did not finish within 900 seconds."
+}
+
+case "${1:-}" in
+  init) shift; init_command "$@" ;;
+  up) shift; up_command "$@" ;;
+  doctor) shift; doctor_command "$@" ;;
+  smoke) shift; smoke_command "$@" ;;
+  backup) shift; "$SCRIPT_DIR/backup.sh" "$@" ;;
+  restore) shift; "$SCRIPT_DIR/restore.sh" "$@" ;;
+  setup-dev) shift; "$SCRIPT_DIR/setup-dev.sh" "$@" ;;
+  dev) shift; doctor_preflight; docker compose -f docker-compose.yml -f docker-compose.dev.yml up "$@" ;;
+  test) shift; "$SCRIPT_DIR/check-ci.sh" "$@" ;;
+  docs-check) shift; python3 "$SCRIPT_DIR/validate_docs.py" "$@" ;;
+  help|-h|--help) usage ;;
+  *) usage; exit 1 ;;
+esac

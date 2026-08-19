@@ -7,7 +7,7 @@ The classic harness verifies the complete blackboard lifecycle with deterministi
 Run the complete daemon harness from the `daemon` directory.
 
 ```bash
-pytest tests/ -q
+../.venv/bin/python -m pytest tests/ -q
 ```
 
 The suites cover these areas.

@@ -1,29 +1,9 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { ClientShell } from "./ClientShell";
-import { PROJECT_NAME, PROJECT_DESCRIPTION } from "@/lib/config";
+import { PROJECT_DESCRIPTION, PROJECT_NAME } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
-
-// ── Font Loading ─────────────────────────────────────────────────────
-// next/font/google self-hosts fonts — no external requests at runtime.
-
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-inter",
-  display: "swap",
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400"],
-  variable: "--font-jetbrains-mono",
-  display: "swap",
-});
-
-// ── Metadata ─────────────────────────────────────────────────────────
 
 export async function generateMetadata(): Promise<Metadata> {
   return {
@@ -36,8 +16,8 @@ export async function generateMetadata(): Promise<Metadata> {
       "bMAS",
       "Multi-Agent Swarm",
       "Blackboard AI",
-      "Stigmergy",
-      "Decentralized AI Swarm",
+      "Classic Multi-Agent Runtime",
+      "Durable Blackboard",
       "Autonomous Agents",
       "Blackboard Architecture",
     ],
@@ -61,9 +41,7 @@ export async function generateMetadata(): Promise<Metadata> {
       description: PROJECT_DESCRIPTION,
     },
     icons: {
-      icon: [
-        { url: "/icon.png", type: "image/png" },
-      ],
+      icon: [{ url: "/icon.png", type: "image/png" }],
       apple: [
         { url: "/apple-icon.png", sizes: "180x180", type: "image/png" },
       ],
@@ -71,19 +49,13 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-
-// ── Root Layout ──────────────────────────────────────────────────────
-
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${inter.variable} ${jetbrainsMono.variable}`}
-    >
+    <html lang="en">
       <body>
         <ClientShell>{children}</ClientShell>
       </body>

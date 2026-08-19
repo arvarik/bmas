@@ -1,137 +1,111 @@
-# Quick Start Guide
+# Quick Start
 
-Get a bMAS swarm running in under 5 minutes.
+This guide starts the classic runtime on one computer. The starter uses one cloud provider and one tool-free execution agent.
 
 ## Prerequisites
 
-- **Docker** ≥ 24.0 and **Docker Compose** ≥ 2.20
-- At least one cloud API key (Gemini, Anthropic, or OpenAI)
-- *Optional:* NVIDIA GPU + drivers for local triage classification
-- *Optional:* Edge nodes (separate machines) for local inference
+Install these tools:
 
-## 1. Clone the Repository
+- Docker 24 or newer
+- Docker Compose 2.20 or newer
+- `curl`
+- One Gemini, Anthropic, or OpenAI API key
+
+The starter does not need a GPU. It does not need a separate agent computer.
+
+## 1. Get the source
 
 ```bash
 git clone https://github.com/arvarik/bmas.git
 cd bmas
 ```
 
-## 2. Configure Your Deployment
+## 2. Create the starter files
+
+Choose your provider.
 
 ```bash
-# Copy the example config and secrets template
-cp bmas.example.yaml bmas.yaml
-cp .env.example .env
+./scripts/bmas init --provider gemini
 ```
 
-### Edit `bmas.yaml`
+You can replace `gemini` with `anthropic` or `openai`. The command requests your provider key without displaying it.
 
-This file defines your entire deployment. At minimum, set:
+The command creates two local files:
 
-```yaml
-project:
-  name: "My bMAS"            # Your deployment name
+- `bmas.yaml` contains the non-secret runtime configuration.
+- `.env` contains the provider key and generated local secrets.
 
-control_plane:
-  host: "localhost"           # Or your server IP
-  ports:
-    redis: 6379
-    litellm: 4000
-    daemon: 9000
-    dashboard: 9321
+The command sets `.env` permissions to `0600`. Git ignores both files.
 
-coordination:
-  variant: classic            # The cyclic blackboard runtime
-```
-
-If you have edge nodes with Hermes agents, add them under `nodes:`.
-If not, set `nodes: []` and all routing will go to cloud models.
-
-See [CONFIGURATION.md](CONFIGURATION.md) for the full reference.
-
-### Edit `.env`
-
-Fill in your secrets:
-
-```env
-REDIS_PASSWORD=your-secure-password
-LITELLM_MASTER_KEY=sk-your-litellm-key
-GEMINI_API_KEY=your-gemini-key
-BMAS_NODE_KEY=                        # Generate with: openssl rand -hex 32
-```
-
-## 3. Start the Swarm
+For a non-interactive shell, pass the provider key through one temporary variable.
 
 ```bash
-# Without GPU (no local triage)
-docker compose up -d
-
-# With GPU (enables local triage classifier)
-docker compose --profile gpu up -d
+BMAS_PROVIDER_API_KEY="your-provider-key" ./scripts/bmas init --provider gemini
 ```
 
-## 4. Verify
+Do not use `--force` unless you want to replace the existing `bmas.yaml` and `.env` files.
 
-Check that all services are healthy:
+## 3. Check the configuration
 
 ```bash
-docker compose ps
+./scripts/bmas doctor
 ```
 
-You should see:
+The command checks Docker, Compose, required files, required secrets, the selected provider key, and the Compose document.
 
-| Service | Status |
-|:---|:---|
-| `bmas-redis` | Up (healthy) |
-| `bmas-litellm` | Up (healthy) |
-| `bmas-daemon` | Up (healthy) |
-| `bmas-dashboard` | Up (healthy) |
-| `bmas-triage` | Up *(only with `--profile gpu`)* |
-
-Check the daemon health endpoint:
+## 4. Start the stack
 
 ```bash
-curl http://localhost:9000/health
-# {"status":"healthy","redis_connected":true,"sqlite_connected":true,"agents":[...]}
+./scripts/bmas up
 ```
 
-Open Mission Control:
+This command builds each local image. It waits up to three minutes for the full stack.
 
+The final output must include these results:
+
+```text
+PASS: Redis, SQLite, LiteLLM, the starter agent, and classic are ready.
+PASS: Mission Control is reachable.
 ```
-http://localhost:9321
-```
 
-## 5. Submit a Test Task
-
-From the Mission Control dashboard, type a task in the command bar, or use the API directly:
+If startup fails, run this command:
 
 ```bash
-curl -X POST http://localhost:9000/submit \
-  -H "Content-Type: application/json" \
-  -d '{"task": "Explain the architecture of a blackboard multi-agent system"}'
+./scripts/bmas doctor --wait 30
 ```
 
-The response returns a `task_id` you can track:
+The readiness output identifies the failed service. The [Operations guide](OPERATIONS.md) lists exact log commands.
 
-```json
-{"task_id": "task-a1b2c3d4"}
-```
-
-Open `http://localhost:9321/task/task-a1b2c3d4` to watch the execution in real time — you'll see the execution graph, distributed logs, and blackboard entries update live as agents work.
-
-## 6. Run Local CI (Optional)
-
-Verify everything is correctly integrated:
+## 5. Submit a smoke task
 
 ```bash
-./scripts/check-ci.sh
-# Runs: ruff + mypy + pytest (daemon/agent) + eslint + tsc + build (mission-control)
+./scripts/bmas smoke
 ```
 
-## Next Steps
+The command submits one classic task. It waits for the final task status and prints the Mission Control URL.
 
-- **Add edge nodes:** See [NODE_SETUP.md](NODE_SETUP.md) for provisioning agents
-- **Tune the runtime:** See [CONFIGURATION.md](CONFIGURATION.md) for `coordination.classic.*` settings.
-- **Multi-provider routing:** See [CONFIGURATION.md](CONFIGURATION.md) for mixing Gemini + Claude + OpenAI
-- **Development:** Use `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` for hot reload
-- **Architecture:** See [architecture/README.md](architecture/README.md) for the full system deep-dive
+This test can use several provider requests. Check `coordination.classic.budget_ceiling_usd` before you use an expensive model.
+
+## 6. Open Mission Control
+
+Open [http://localhost:9321](http://localhost:9321).
+
+The browser requests a username and password. Enter any username. Use the `BMAS_DASHBOARD_KEY` value from `.env` as the password.
+
+Mission Control checks readiness before it enables task submission. A failed check includes one repair command.
+
+## Stop the stack
+
+```bash
+docker compose down
+```
+
+This command keeps Redis data, SQLite data, uploads, artifacts, and agent state in named Docker volumes.
+
+## Next steps
+
+- Read [Concepts](CONCEPTS.md) to understand the five starter services.
+- Read [Configuration](CONFIGURATION.md) to change models, budgets, or role limits.
+- Read [Deployment](DEPLOYMENT.md) before you expose any port outside the local computer.
+- Read [Node Setup](NODE_SETUP.md) when you need Hermes tools or more execution capacity.
+- Read [Development](DEVELOPMENT.md) before you change the source code.

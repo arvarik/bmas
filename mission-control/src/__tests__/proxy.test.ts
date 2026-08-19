@@ -17,8 +17,10 @@ afterEach(() => {
 });
 
 describe("Mission Control request authentication", () => {
-  it("matches every route except Next.js static asset paths", () => {
-    expect(config.matcher).toEqual(["/((?!_next/static|_next/image).*)"]);
+  it("leaves only health and Next.js asset paths public", () => {
+    expect(config.matcher).toEqual([
+      "/((?!api/health|_next/static|_next/image).*)",
+    ]);
   });
 
   it("keeps trusted deployments compatible when no key is configured", () => {

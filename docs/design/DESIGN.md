@@ -1,4 +1,4 @@
-[🏠 Index](../README.md) | [📋 Context](../../examples/stigmergic/CONTEXT.md)
+[Documentation index](../README.md)
 
 # Mission Control — Design System
 
@@ -94,7 +94,7 @@ Each agent role has a unique identity color used in terminal headers, DAG node a
 
 #### Dynamic Author Fallback (`authorColor()`)
 
-The blackboard supports dynamic agent identities (e.g., `expert.valuation_analyst`, `worker.3`, `universal-7`) that are not in the fixed token table. The `authorColor()` function in [design-tokens.ts](file:///opt/bmas/mission-control/src/lib/design-tokens.ts) provides a deterministic color for any author string:
+The blackboard supports dynamic agent identities, such as `expert.valuation_analyst` and `worker.3`. The [design token helper](../../mission-control/src/lib/design-tokens.ts) provides a deterministic color for any author string:
 
 1. **Known roles** → returns the fixed `AGENT_COLORS` entry from the table above.
 2. **Unknown authors** → computes a stable HSL color from a hash of the author string, using fixed `S=45%` and `L=58%` to match the muted palette. The hue is derived from the hash modulo 360°.
@@ -109,8 +109,8 @@ This ensures every unique author always renders the same color, and that dynamic
 
 | Purpose | Font | Fallback | Notes |
 |:---|:---|:---|:---|
-| **UI / Body** | `Inter` | `system-ui, -apple-system, sans-serif` | Load weights 400, 500, 600 from Google Fonts |
-| **Monospace** | `JetBrains Mono` | `ui-monospace, 'Cascadia Code', monospace` | Terminals, code, metric values. Load weight 400 only |
+| **UI / Body** | System sans-serif | `ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif` | Requires no font download |
+| **Monospace** | System monospace | `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace` | Terminals, code, and metric values |
 
 ### 3.2 Type Scale
 
@@ -131,7 +131,7 @@ All sizes in `rem` (base 16px). Line heights are unitless multipliers.
 
 ### 3.3 Numeric Typography
 
-Apply `font-variant-numeric: tabular-nums` to **all live-updating numeric values** — cost tickers, token counts, durations, and any other number that changes in real-time. Without this, proportional digit widths in Inter cause layout jitter as values tick (e.g., `$0.0129` → `$0.0134` shifts by 1-3px because `1` is narrower than `3`). Tabular-nums forces monospace digit widths while preserving the font's proportional letter spacing for surrounding text.
+Apply `font-variant-numeric: tabular-nums` to all live numeric values. This rule prevents width changes when a value changes.
 
 ```css
 /* Apply globally to elements with changing numbers */
@@ -143,7 +143,7 @@ Apply `font-variant-numeric: tabular-nums` to **all live-updating numeric values
 }
 ```
 
-Inter supports this OpenType feature natively — no fallback needed. This is a zero-cost CSS declaration that eliminates an entire class of layout shifts.
+Modern system fonts support this OpenType feature. The declaration prevents numeric layout shifts without a font download.
 
 > [!NOTE]
 > This only applies to **live-updating** values where jitter is visible. Static numeric values (e.g., a completed task's final cost in a table row) don't need it, though applying it globally to all mono-font numbers is harmless and recommended for consistency.

@@ -2,6 +2,7 @@
 
 import React, { useEffect } from "react";
 import Link from "next/link";
+import Image from "next/image";
 
 export default function Error({
   error,
@@ -26,7 +27,7 @@ export default function Error({
       >
         <div className="landing__hero">
           <div className="landing__logo-container">
-            <img
+            <Image
               src="/ant-head.png"
               alt="Swarm Error Mascot"
               className="landing__logo animate-float"

@@ -1,275 +1,258 @@
-# Edge Node Setup Guide
+# Hermes Node Setup
 
-This guide covers manually provisioning edge nodes for your bMAS swarm.
-Each node consists of two components:
+This guide adds an advanced Hermes execution node to the classic runtime.
 
-1. **Inference Server** — Runs `llama.cpp` (or vLLM) serving a local model
-2. **Hermes Agent** — Runs the bMAS agent process that receives tasks from the daemon
+Do not use this guide for a first installation. The normal starter already includes a tool-free execution agent.
 
-> **Future:** Automated provisioning via `bmas provision` is planned.
+## Use a Hermes node when
 
----
+Add a Hermes node when one or more tasks require these features:
 
-## Prerequisites (Per Node)
+- shell or file tools
+- a persistent agent workspace
+- node isolation
+- role-specific capacity
+- a separate local inference server
 
-- Linux host (bare metal, VM, or LXC container)
-- Python 3.11+
-- For inference: GPU with Vulkan support (AMD/NVIDIA/Intel) OR NVIDIA GPU with CUDA
-- Network access to the control plane (Redis, LiteLLM, Daemon)
+Hermes adds a larger security boundary. Review each enabled tool before you connect the node.
 
----
+## Network flow
 
-## Architecture
-
-Each logical "node" in `bmas.yaml` typically maps to two hosts:
-
-```
-┌─────────────────────┐     ┌─────────────────────┐
-│   Inference LXC     │     │    Agent LXC         │
-│                     │     │                      │
-│  llama-server       │────▶│  Hermes agent        │
-│  :8080              │     │  :8000               │
-│  (runs the model)   │     │  (processes tasks)   │
-└─────────────────────┘     └──────────┬───────────┘
-                                       │
-                                       │ POST /ingest/traces
-                                       │ POST /ingest/logs
-                                       ▼
-                               ┌───────────────┐
-                               │ Daemon :9000  │
-                               │ (control plane)│
-                               └───────────────┘
+```mermaid
+flowchart LR
+    D["Daemon"] -->|"POST /execute"| A["Agent API"]
+    A --> H["Hermes Gateway or CLI"]
+    H --> L["LiteLLM or local inference"]
+    A -->|"logs and traces"| D
 ```
 
-You can also run both on the same machine if resources allow.
+The daemon must reach the agent API port. The agent must reach LiteLLM and the daemon.
 
----
+Use private addresses, a private tunnel, or a service network. Do not expose the agent API to the internet.
 
-## Part 1: Inference Server Setup
+## Prerequisites
 
-### Option A: llama.cpp with Vulkan (Recommended for AMD GPUs)
+Prepare one Linux host with these items:
+
+- Python 3.13
+- the reviewed Hermes installation for your environment
+- a working Hermes Runs API or `hermes` executable
+- network access to the control plane
+- a dedicated non-root service account
+
+The repository does not install Hermes. Install the Hermes version that matches your gateway contract.
+
+Read [Hermes API](HERMES_API.md) before you select the Runs API path.
+
+## 1. Install the agent source
+
+Place the `agent` directory from the same reviewed Stigmergic commit at `/opt/bmas-agent`.
+
+Create a virtual environment and install the API dependencies.
 
 ```bash
-# Install build dependencies
-apt update && apt install -y git cmake build-essential libvulkan-dev
-
-# Clone and build llama.cpp
-git clone https://github.com/ggml-org/llama.cpp.git
-cd llama.cpp
-cmake -B build -DGGML_VULKAN=ON
-cmake --build build --config Release -j$(nproc)
-
-# Download a model (example: Gemma 4B)
-mkdir -p models
-# Use huggingface-cli or wget to download your model
-# huggingface-cli download google/gemma-4-e4b-it-gguf --local-dir models/
-
-# Start the server
-./build/bin/llama-server \
-  --model models/your-model.gguf \
-  --host 0.0.0.0 \
-  --port 8080 \
-  --n-gpu-layers 99 \
-  --ctx-size 8192
+cd /opt/bmas-agent
+python3.13 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
-### Option B: vLLM with CUDA (For NVIDIA GPUs)
+Install Hermes into the same environment, or set `HERMES_BIN` to its reviewed executable path.
+
+## 2. Create a service account
 
 ```bash
-pip install vllm
-python -m vllm.entrypoints.openai.api_server \
-  --model google/gemma-4-e4b \
-  --host 0.0.0.0 \
-  --port 8080
+sudo useradd --system --create-home --home-dir /var/lib/bmas-agent bmas-agent
+sudo install -d -o bmas-agent -g bmas-agent /var/lib/bmas-agent/traces
+sudo install -d -o bmas-agent -g bmas-agent /var/lib/bmas-agent/activations
 ```
 
-### Create a systemd Service
+Copy the required profiles to the service account.
 
 ```bash
-cat > /etc/systemd/system/llama-server.service << 'EOF'
+sudo install -d -o bmas-agent -g bmas-agent /var/lib/bmas-agent/.hermes/profiles
+sudo cp -R /opt/bmas-agent/profiles/. /var/lib/bmas-agent/.hermes/profiles/
+sudo chown -R bmas-agent:bmas-agent /var/lib/bmas-agent/.hermes
+```
+
+Review each `SOUL.md` and `config.yaml` before startup. Remove tools that the role does not need.
+
+## 3. Create the environment file
+
+Create `/etc/bmas/agent.env` with root ownership and mode `0640`.
+
+```env
+BMAS_EXECUTION_BACKEND=hermes
+NODE_ID=hermes-node-1
+LITELLM_URL=http://192.168.1.10:4000/v1
+LITELLM_MODEL=starter-model
+LITELLM_API_KEY=replace-with-litellm-master-key
+DAEMON_INGEST_URL=http://192.168.1.10:9000
+BMAS_NODE_KEY=replace-with-control-plane-node-key
+BMAS_EXECUTE_KEY=replace-with-control-plane-execute-key
+TRACE_SPOOL_DIR=/var/lib/bmas-agent/traces
+ACTIVATION_CACHE_DIR=/var/lib/bmas-agent/activations
+```
+
+Add one Hermes execution method.
+
+For the Runs API:
+
+```env
+HERMES_GATEWAY_URL=http://127.0.0.1:8642
+HERMES_GATEWAY_KEY=replace-with-gateway-key
+```
+
+For the CLI fallback:
+
+```env
+HERMES_BIN=/path/to/hermes
+```
+
+The Runs API supports structured run state and event streaming. The CLI fallback executes one process for each activation.
+
+Protect the environment file.
+
+```bash
+sudo chown root:bmas-agent /etc/bmas/agent.env
+sudo chmod 0640 /etc/bmas/agent.env
+```
+
+## 4. Create the system service
+
+Create `/etc/systemd/system/bmas-agent.service`.
+
+```ini
 [Unit]
-Description=llama.cpp Inference Server
-After=network.target
+Description=Stigmergic Hermes execution agent
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/path/to/llama.cpp
-ExecStart=/path/to/llama.cpp/build/bin/llama-server \
-  --model /path/to/model.gguf \
-  --host 0.0.0.0 --port 8080 \
-  --n-gpu-layers 99 --ctx-size 8192
+User=bmas-agent
+Group=bmas-agent
+WorkingDirectory=/opt/bmas-agent
+Environment=HOME=/var/lib/bmas-agent
+EnvironmentFile=/etc/bmas/agent.env
+ExecStart=/opt/bmas-agent/.venv/bin/uvicorn api_server:app --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable --now llama-server
 ```
 
-### Verify
+Start the service.
 
 ```bash
-curl http://localhost:8080/v1/models
-# Should return the model info
+sudo systemctl daemon-reload
+sudo systemctl enable --now bmas-agent
+sudo systemctl status bmas-agent
 ```
 
----
+## 5. Verify the node
 
-## Part 2: Hermes Agent Setup
-
-### Install Hermes
+Run these checks on the node:
 
 ```bash
-# Create a virtual environment
-python3 -m venv /opt/hermes-agent/.venv
-source /opt/hermes-agent/.venv/bin/activate
-
-# Install Hermes (from your agent framework)
-pip install hermes-agent  # or clone from your repo
+curl -fsS http://127.0.0.1:8000/health
+sudo journalctl -u bmas-agent -n 100 --no-pager
 ```
 
-### Deploy the Agent API Server
+The health response must show `status: healthy`. It must show `hermes-runs-api` or `hermes-cli` as the execution backend.
 
-The bMAS repo contains the canonical agent code at `agent/api_server.py`. Copy it to the node:
+Check the agent from the control-plane host:
 
 ```bash
-# From the control plane (where the bmas repo lives)
-scp /opt/bmas/agent/api_server.py root@NODE_IP:/opt/bmas/api_server.py
-scp /opt/bmas/agent/requirements.txt root@NODE_IP:/opt/bmas/requirements.txt
-
-# On the node: install dependencies
-ssh root@NODE_IP 'cd /opt/bmas && pip install -r requirements.txt'
+curl -fsS http://192.168.1.21:8000/health
 ```
 
-### Deploy Hermes Profiles
+If this request fails, correct the node firewall or route before you change `bmas.yaml`.
 
-Each agent role needs its Hermes profile (planner, expert, critic, etc.). Use the deploy script:
+## 6. Register the node
 
-```bash
-# From the control plane
-./scripts/deploy_profiles.sh
-```
-
-Or manually copy profiles to each node:
-
-```bash
-scp -r /opt/bmas/agent/profiles/* root@NODE_IP:~/.hermes/profiles/
-```
-
-### Configure the Systemd Service
-
-Each agent needs environment variables for its role and the daemon ingest connection:
-
-```bash
-cat > /etc/systemd/system/hermes-agent.service << 'EOF'
-[Unit]
-Description=Hermes bMAS Agent
-After=network.target
-
-[Service]
-Type=simple
-User=root
-StateDirectory=bmas-agent
-WorkingDirectory=/opt/bmas
-Environment="PATH=/opt/hermes-agent/.venv/bin:/usr/local/bin:/usr/bin"
-Environment="NODE_ID=agent-node1"
-Environment="LITELLM_MODEL=medium"
-Environment="LITELLM_URL=http://<CONTROL_PLANE_IP>:4000/v1"
-Environment="HERMES_GATEWAY_URL=http://localhost:8642"
-Environment="HERMES_GATEWAY_KEY=your-gateway-key"
-Environment="DAEMON_INGEST_URL=http://<CONTROL_PLANE_IP>:9000"
-Environment="BMAS_NODE_KEY=your-node-auth-token"
-Environment="BMAS_EXECUTE_KEY=your-execute-auth-token"
-Environment="TRACE_SPOOL_DIR=/var/lib/bmas-agent/traces"
-Environment="ACTIVATION_CACHE_DIR=/var/lib/bmas-agent/activations"
-ExecStart=/opt/hermes-agent/.venv/bin/uvicorn api_server:app \
-  --host 0.0.0.0 --port 8000
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable --now hermes-agent
-```
-
-#### Environment Variables
-
-| Variable | Required | Description |
-|:---|:---|:---|
-| `NODE_ID` | ✅ | Unique node identifier (e.g., `agent-node1`) |
-| `LITELLM_URL` | ✅ | LiteLLM gateway URL on the control plane |
-| `LITELLM_MODEL` | ❌ | Default model name (default: `medium`) |
-| `HERMES_GATEWAY_URL` | ❌ | Hermes Gateway URL for Runs API path |
-| `HERMES_GATEWAY_KEY` | ❌ | API key for the Hermes Gateway |
-| `DAEMON_INGEST_URL` | ❌ | Daemon URL for trace/log ingest (e.g., `http://192.168.1.100:9000`) |
-| `BMAS_NODE_KEY` | ❌ | Bearer token for authenticating ingest requests (must match `.env` on control plane) |
-| `BMAS_EXECUTE_KEY` | ❌ | Bearer token for daemon execution requests (must match `.env` on the control plane) |
-| `TRACE_SPOOL_DIR` | ✅ | Persistent trace queue directory. Use `/var/lib/bmas-agent/traces`. |
-| `ACTIVATION_CACHE_DIR` | ✅ | Persistent activation state directory. Use `/var/lib/bmas-agent/activations`. |
-| `SSE_READ_TIMEOUT` | ❌ | SSE stream read timeout in seconds (default: `600`) |
-
-> **Note:** Set `NODE_ID` to a unique value per node. Set both shared keys to their matching control-plane values.
-
-`StateDirectory=bmas-agent` creates `/var/lib/bmas-agent` for persistent agent state.
-Do not use `/tmp` for production state. A reboot can erase `/tmp` and remove retry records.
-
-### Verify
-
-```bash
-curl http://localhost:8000/health
-# Should return {"status":"healthy","node_id":"agent-node1",...}
-```
-
----
-
-## Part 3: Register in bmas.yaml
-
-Add the node to your `bmas.yaml` on the control plane:
+Add the agent API address under `nodes`.
 
 ```yaml
 nodes:
-  - name: "my-new-node"
-    host: "192.168.1.101"      # Agent IP
+  - name: hermes-node-1
+    host: 192.168.1.21
     port: 8000
-    role: executor              # or planner, auditor, or any custom role
-    inference:
-      host: "192.168.1.102"    # Inference server IP
-      port: 8080
-      model: "gemma-4-e4b"
+    role: hermes
 ```
 
-If using the role registry, also add the role mapping:
+Pin roles when a specific node must execute them.
 
 ```yaml
 coordination:
   role_registry:
     planner:
-      preferred_host: "192.168.1.101"
+      preferred_host: 192.168.1.21
       profile: planner
       dispatch_port: 8000
 ```
 
-Restart the control plane to pick up the new node:
+Set `preferred_host: null` to load balance across all configured node hosts.
+
+The starter Compose agent uses the Docker host name `agent`. Remove that node entry when the control-plane daemon cannot resolve or reach it.
+
+## 7. Apply the control-plane change
 
 ```bash
-docker compose restart daemon dashboard litellm
+python3 scripts/validate_configs.py
+docker compose up -d --build litellm daemon dashboard
+./scripts/bmas doctor --wait 180
+./scripts/bmas smoke
 ```
 
-The new node should appear in the Mission Control dashboard.
+The validator rejects a `preferred_host` that does not match a node host.
 
----
+## Optional local inference
 
-## Troubleshooting
+An agent node and an inference server are separate services. They can run on the same host or different hosts.
 
-| Issue | Solution |
-|:---|:---|
-| Agent health check fails | Verify `LITELLM_URL` is reachable from the agent node |
-| Traces not appearing in dashboard | Check `DAEMON_INGEST_URL` and `BMAS_NODE_KEY` match the control plane `.env` |
-| Hermes profiles not found | Ensure profiles are deployed to `~/.hermes/profiles/` on the agent node |
-| Runs API not working | Set `HERMES_GATEWAY_URL` to the Hermes Gateway address; falls back to CLI otherwise |
+Register an OpenAI-compatible inference server under the node:
+
+```yaml
+nodes:
+  - name: hermes-node-1
+    host: 192.168.1.21
+    port: 8000
+    role: hermes
+    inference:
+      host: 192.168.1.31
+      port: 8080
+      model: local-model
+      max_tokens: 8192
+```
+
+Set a routing tier to `local` only after LiteLLM can reach that inference address.
+
+## Failure checks
+
+### The agent health endpoint reports no execution backend
+
+1. Hermes did not provide a reachable Runs API or executable.
+2. `HERMES_GATEWAY_URL` is wrong, or `HERMES_BIN` does not exist.
+3. Correct one execution method and restart `bmas-agent`.
+
+### The daemon cannot dispatch
+
+1. The task reports an agent connection failure.
+2. The daemon cannot reach `nodes[].host` and `dispatch_port`.
+3. Test the health URL from the daemon network, then correct routing or firewall rules.
+
+### Logs or traces do not arrive
+
+1. The agent completes work but Mission Control lacks agent detail.
+2. `DAEMON_INGEST_URL` is unreachable, or `BMAS_NODE_KEY` differs.
+3. Compare the control-plane key and node environment, then restart the agent.
+
+### Execution requests return HTTP 401
+
+1. The daemon reaches the node but the node rejects execution.
+2. `BMAS_EXECUTE_KEY` differs between the control plane and the node.
+3. Set the same generated value on both services and restart them.

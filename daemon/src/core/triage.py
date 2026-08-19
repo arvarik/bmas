@@ -150,7 +150,7 @@ class TriageRouter:
                 litellm_model=effective_routing.get(complexity, MODEL_ROUTING.get(complexity, "medium")),
             )
 
-        if TRIAGE_BACKEND == "gemini":
+        if TRIAGE_BACKEND == "cloud":
             raw = await self._classify_gemini(task_description)
         else:
             raw = await self._classify_local(task_description)

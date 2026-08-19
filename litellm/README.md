@@ -1,82 +1,76 @@
-# LiteLLM — Unified Model Gateway
+# LiteLLM Gateway
 
-The centralized AI model router for bMAS. Provides a single OpenAI-compatible API endpoint that abstracts all model backends — local edge nodes, the local triage model, and cloud Gemini APIs — behind unified routing, cost tracking, and retry logic.
+LiteLLM gives the daemon and execution agent one OpenAI-compatible model API.
 
-> Runs as Docker container `bmas-litellm` on the control plane at port 4000.
+The container generates its LiteLLM configuration from `bmas.yaml` during startup.
 
-## Architecture
+## Request flow
 
-```
-bMAS Daemon (:9000)
-       │
-       │  model="gemini-pro"
-       ▼
- ┌───────────┐
- │  LiteLLM  │──── model_group_alias ────▶ gemini-pro       ──▶ Gemini 3.1 Pro (cloud)
- │   :4000   │──── model_group_alias ────▶ gemini-flash     ──▶ Gemini 3 Flash (cloud)
- │           │──── model_group_alias ────▶ gemini-flash-lite ▶ Gemini 3.1 Flash Lite (cloud)
- │           │──── direct ───────────────▶ edge-node-*      ──▶ Local inference (edge nodes)
- └───────────┘
+```mermaid
+flowchart LR
+    D["Daemon"] --> L["LiteLLM"]
+    A["Execution agent"] --> L
+    L --> C["Cloud provider"]
+    L --> E["Optional local inference"]
 ```
 
-## Model Routing
+The daemon selects an alias from `routing` or `model_pools`. The agent receives that selected alias with each activation.
 
-The daemon uses model names from `bmas.yaml`'s `routing` section; LiteLLM resolves them to actual backends:
+## Generated model entries
 
-| Daemon Calls | LiteLLM Routes To | Backend | Cost |
-|:---|:---|:---|:---|
-| `gemini-pro` | `gemini-pro` | Gemini 3.1 Pro (cloud API) | $$$ |
-| `gemini-flash` | `gemini-flash` | Gemini 3 Flash (cloud API) | $$ |
-| `gemini-flash-lite` | `gemini-flash-lite` | Gemini 3.1 Flash Lite (cloud API) | $ |
-| `edge-node-*` | Direct | Local inference via llama-server on edge nodes | Free |
+The generator creates these entries:
 
-> **Note:** Model names and routing are fully configurable in `bmas.yaml`. The table above shows an example deployment. Triage classification uses the vLLM container directly (port 8001), not LiteLLM.
+- One entry for each key under `models`.
+- One `edge-node-N` entry for each node with an `inference` mapping.
+- One shared `edge-local` group for load balancing across local inference servers.
+- One local triage entry when `triage.backend` equals `local`.
+
+The special routing value `local` maps to `edge-local`.
 
 ## Files
 
 | File | Purpose |
 |:---|:---|
-| `Dockerfile` | Extends the official LiteLLM image with the bMAS config generator |
-| `generate_config.py` | Generates LiteLLM `config.yaml` from `bmas.yaml` at container startup |
-| `entrypoint.sh` | Shell entrypoint — runs the generator then starts the LiteLLM proxy |
+| `Dockerfile` | Extends the fixed LiteLLM image version. |
+| `generate_config.py` | Converts `bmas.yaml` to LiteLLM configuration. |
+| `entrypoint.sh` | Generates the file and starts the proxy. |
 
-## Configuration Details
+## Router defaults
 
-### Router Settings
+| Setting | Value |
+|:---|:---|
+| Routing strategy | `simple-shuffle` |
+| Model request retries | `2` |
+| Model request timeout | `120` seconds |
+| Unsupported parameters | Dropped |
+| Authentication | `LITELLM_MASTER_KEY` |
 
-- **Strategy**: `simple-shuffle` — round-robin across available backends in a model group
-- **Retries**: 2 automatic retries per request with 5s backoff
-- **Timeout**: 120s per request (accounts for cold starts on edge nodes)
-- **`drop_params: true`**: Silently drops unsupported parameters instead of erroring (e.g., `guided_choice` sent to Gemini)
-
-### Resource Limits
-
-- **Memory**: 1 GB
-- **CPUs**: 2 cores
-- **Network**: Bound to control plane host (LAN only)
-
-## Deployment
+## Operations
 
 ```bash
-# Start the container (part of root docker-compose.yml)
-docker compose up -d litellm
-
-# Check health
-curl http://localhost:4000/health/readiness
-
-# View logs
-docker compose logs -f litellm
-
-# Test a model route
-curl http://localhost:4000/v1/chat/completions \
-  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "light", "messages": [{"role": "user", "content": "Hello"}]}'
+docker compose up -d --build litellm
+docker compose logs --tail 100 litellm
+curl -fsS http://127.0.0.1:4000/health/readiness
 ```
 
-## Environment Variables
+Run `./scripts/bmas smoke` to test a complete authenticated model route.
 
-| Variable | Description |
-|:---|:---|
-| `GEMINI_API_KEY` | Google AI API key for cloud Gemini models |
-| `LITELLM_MASTER_KEY` | Master API key for authenticating requests to LiteLLM |
+## Provider variables
+
+The Compose service passes `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, and `OPENAI_API_KEY` when those values exist.
+
+Each `models.*.api_key_env` value must name the matching variable.
+
+Custom providers can use `models.*.api_base` when they expose an OpenAI-compatible API.
+
+## Configuration changes
+
+Rebuild LiteLLM after a model, routing, triage, or inference-node change.
+
+```bash
+python3 scripts/validate_configs.py
+docker compose up -d --build litellm daemon agent
+./scripts/bmas doctor --wait 180
+```
+
+Read [Configuration](../docs/CONFIGURATION.md) for the supported source fields.

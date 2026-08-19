@@ -1,0 +1,880 @@
+{
+  "$defs": {
+    "BoardConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "max_entry_chars": {
+          "default": 8000,
+          "minimum": 1,
+          "title": "Max Entry Chars",
+          "type": "integer"
+        },
+        "max_title_len": {
+          "default": 200,
+          "minimum": 1,
+          "title": "Max Title Len",
+          "type": "integer"
+        },
+        "salience_weights": {
+          "$ref": "#/$defs/SalienceWeights"
+        }
+      },
+      "title": "BoardConfig",
+      "type": "object"
+    },
+    "ClassicConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "budget_ceiling_usd": {
+          "default": 0.5,
+          "exclusiveMinimum": 0,
+          "title": "Budget Ceiling Usd",
+          "type": "number"
+        },
+        "cleaner_entry_threshold": {
+          "default": 12,
+          "minimum": 1,
+          "title": "Cleaner Entry Threshold",
+          "type": "integer"
+        },
+        "cleaner_retention_weights": {
+          "$ref": "#/$defs/CleanerWeights"
+        },
+        "cleaner_token_threshold": {
+          "default": 8000,
+          "minimum": 1,
+          "title": "Cleaner Token Threshold",
+          "type": "integer"
+        },
+        "coordinator_narration": {
+          "default": false,
+          "title": "Coordinator Narration",
+          "type": "boolean"
+        },
+        "cu_mode": {
+          "default": "llm",
+          "enum": [
+            "llm",
+            "heuristic_first"
+          ],
+          "title": "Cu Mode",
+          "type": "string"
+        },
+        "experts_per_tier": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Experts Per Tier",
+          "type": "object"
+        },
+        "max_concurrent_activations": {
+          "default": 3,
+          "minimum": 1,
+          "title": "Max Concurrent Activations",
+          "type": "integer"
+        },
+        "max_duration_s": {
+          "default": 1800,
+          "minimum": 1,
+          "title": "Max Duration S",
+          "type": "integer"
+        },
+        "max_replans": {
+          "default": 2,
+          "minimum": 0,
+          "title": "Max Replans",
+          "type": "integer"
+        },
+        "max_rounds": {
+          "default": 4,
+          "minimum": 1,
+          "title": "Max Rounds",
+          "type": "integer"
+        },
+        "sole_similarity": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "exact",
+            "embedding",
+            "judge"
+          ],
+          "title": "Sole Similarity",
+          "type": "string"
+        },
+        "stall_rounds": {
+          "default": 2,
+          "minimum": 1,
+          "title": "Stall Rounds",
+          "type": "integer"
+        }
+      },
+      "title": "ClassicConfig",
+      "type": "object"
+    },
+    "CleanerWeights": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "default": 1.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "recency": {
+          "default": 0.1,
+          "title": "Recency",
+          "type": "number"
+        },
+        "salience": {
+          "default": 2.0,
+          "title": "Salience",
+          "type": "number"
+        },
+        "size_penalty": {
+          "default": 0.01,
+          "title": "Size Penalty",
+          "type": "number"
+        }
+      },
+      "title": "CleanerWeights",
+      "type": "object"
+    },
+    "ControlPlaneConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "minLength": 1,
+          "title": "Host",
+          "type": "string"
+        },
+        "ports": {
+          "$ref": "#/$defs/PortConfig"
+        }
+      },
+      "required": [
+        "host",
+        "ports"
+      ],
+      "title": "ControlPlaneConfig",
+      "type": "object"
+    },
+    "CoordinationConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "blackboard_v2": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "deprecated": true,
+          "description": "Deprecated compatibility field. The durable board is always active.",
+          "title": "Blackboard V2"
+        },
+        "board": {
+          "$ref": "#/$defs/BoardConfig"
+        },
+        "classic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClassicConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "role_registry": {
+          "additionalProperties": {
+            "$ref": "#/$defs/RoleConfig"
+          },
+          "title": "Role Registry",
+          "type": "object"
+        },
+        "round_execution": {
+          "default": "concurrent",
+          "enum": [
+            "concurrent",
+            "sequential"
+          ],
+          "title": "Round Execution",
+          "type": "string"
+        },
+        "traditional": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClassicConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variant": {
+          "default": "classic",
+          "enum": [
+            "classic",
+            "traditional"
+          ],
+          "title": "Variant",
+          "type": "string"
+        },
+        "view_budget_tokens": {
+          "default": 12000,
+          "minimum": 1,
+          "title": "View Budget Tokens",
+          "type": "integer"
+        }
+      },
+      "title": "CoordinationConfig",
+      "type": "object"
+    },
+    "InferenceConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "minLength": 1,
+          "title": "Host",
+          "type": "string"
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Tokens"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "port": {
+          "default": 8080,
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Port",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "host",
+        "model"
+      ],
+      "title": "InferenceConfig",
+      "type": "object"
+    },
+    "ModelConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "api_base": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Base"
+        },
+        "api_key_env": {
+          "minLength": 1,
+          "title": "Api Key Env",
+          "type": "string"
+        },
+        "max_tokens": {
+          "default": 4096,
+          "minimum": 1,
+          "title": "Max Tokens",
+          "type": "integer"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "pricing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PricingConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "provider": {
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "api_key_env"
+      ],
+      "title": "ModelConfig",
+      "type": "object"
+    },
+    "ModelPools": {
+      "additionalProperties": false,
+      "properties": {
+        "complex": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Complex"
+        },
+        "light": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Light"
+        },
+        "medium": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Medium"
+        },
+        "simple": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Simple"
+        }
+      },
+      "title": "ModelPools",
+      "type": "object"
+    },
+    "MonitoringConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "beszel_hub": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Beszel Hub"
+        }
+      },
+      "title": "MonitoringConfig",
+      "type": "object"
+    },
+    "NodeConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Color"
+        },
+        "dashboard_port": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dashboard Port"
+        },
+        "host": {
+          "minLength": 1,
+          "title": "Host",
+          "type": "string"
+        },
+        "inference": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InferenceConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "port": {
+          "default": 8000,
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Port",
+          "type": "integer"
+        },
+        "role": {
+          "minLength": 1,
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "host",
+        "role"
+      ],
+      "title": "NodeConfig",
+      "type": "object"
+    },
+    "PortConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "daemon": {
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Daemon",
+          "type": "integer"
+        },
+        "dashboard": {
+          "default": 9321,
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Dashboard",
+          "type": "integer"
+        },
+        "litellm": {
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Litellm",
+          "type": "integer"
+        },
+        "redis": {
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Redis",
+          "type": "integer"
+        },
+        "triage": {
+          "default": 8001,
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Triage",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "redis",
+        "litellm",
+        "daemon"
+      ],
+      "title": "PortConfig",
+      "type": "object"
+    },
+    "PricingConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "input_cost_per_token": {
+          "minimum": 0,
+          "title": "Input Cost Per Token",
+          "type": "number"
+        },
+        "output_cost_per_token": {
+          "minimum": 0,
+          "title": "Output Cost Per Token",
+          "type": "number"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        }
+      },
+      "required": [
+        "input_cost_per_token",
+        "output_cost_per_token"
+      ],
+      "title": "PricingConfig",
+      "type": "object"
+    },
+    "ProjectConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ProjectConfig",
+      "type": "object"
+    },
+    "RoleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "dispatch_port": {
+          "default": 8000,
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Dispatch Port",
+          "type": "integer"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "preferred_host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preferred Host"
+        },
+        "profile": {
+          "minLength": 1,
+          "title": "Profile",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile"
+      ],
+      "title": "RoleConfig",
+      "type": "object"
+    },
+    "RoutingConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "complex": {
+          "minLength": 1,
+          "title": "Complex",
+          "type": "string"
+        },
+        "light": {
+          "minLength": 1,
+          "title": "Light",
+          "type": "string"
+        },
+        "medium": {
+          "minLength": 1,
+          "title": "Medium",
+          "type": "string"
+        },
+        "simple": {
+          "minLength": 1,
+          "title": "Simple",
+          "type": "string"
+        }
+      },
+      "required": [
+        "simple",
+        "light",
+        "medium",
+        "complex"
+      ],
+      "title": "RoutingConfig",
+      "type": "object"
+    },
+    "SalienceWeights": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "default": 0.4,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "penalty": {
+          "default": 0.3,
+          "title": "Penalty",
+          "type": "number"
+        },
+        "recency": {
+          "default": 0.2,
+          "title": "Recency",
+          "type": "number"
+        },
+        "refs_in": {
+          "default": 0.3,
+          "title": "Refs In",
+          "type": "number"
+        }
+      },
+      "title": "SalienceWeights",
+      "type": "object"
+    },
+    "StorageConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_upload_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Upload Types",
+          "type": "array"
+        },
+        "artifacts_dir": {
+          "default": "/data/output",
+          "title": "Artifacts Dir",
+          "type": "string"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "extraction_max_chars": {
+          "default": 60000,
+          "minimum": 1,
+          "title": "Extraction Max Chars",
+          "type": "integer"
+        },
+        "max_task_output_mb": {
+          "default": 500,
+          "minimum": 1,
+          "title": "Max Task Output Mb",
+          "type": "integer"
+        },
+        "max_upload_mb": {
+          "default": 50,
+          "minimum": 1,
+          "title": "Max Upload Mb",
+          "type": "integer"
+        },
+        "pdf_extraction": {
+          "default": "pymupdf",
+          "enum": [
+            "pymupdf",
+            "pypdf",
+            "off"
+          ],
+          "title": "Pdf Extraction",
+          "type": "string"
+        },
+        "user_media_dir": {
+          "default": "/data/uploads",
+          "title": "User Media Dir",
+          "type": "string"
+        }
+      },
+      "title": "StorageConfig",
+      "type": "object"
+    },
+    "TriageConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "default": "cloud",
+          "enum": [
+            "cloud",
+            "local",
+            "gemini"
+          ],
+          "title": "Backend",
+          "type": "string"
+        },
+        "default_complexity": {
+          "default": "medium",
+          "enum": [
+            "simple",
+            "light",
+            "medium",
+            "complex"
+          ],
+          "title": "Default Complexity",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "gpu_memory_utilization": {
+          "default": 0.35,
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Gpu Memory Utilization",
+          "type": "number"
+        },
+        "local_model": {
+          "default": "Qwen/Qwen3-1.7B",
+          "title": "Local Model",
+          "type": "string"
+        },
+        "max_model_len": {
+          "default": 8192,
+          "minimum": 1,
+          "title": "Max Model Len",
+          "type": "integer"
+        },
+        "model": {
+          "default": "starter-model",
+          "title": "Model",
+          "type": "string"
+        }
+      },
+      "title": "TriageConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "control_plane": {
+      "$ref": "#/$defs/ControlPlaneConfig"
+    },
+    "coordination": {
+      "$ref": "#/$defs/CoordinationConfig"
+    },
+    "model_pools": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ModelPools"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "models": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ModelConfig"
+      },
+      "title": "Models",
+      "type": "object"
+    },
+    "monitoring": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MonitoringConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "nodes": {
+      "items": {
+        "$ref": "#/$defs/NodeConfig"
+      },
+      "minItems": 1,
+      "title": "Nodes",
+      "type": "array"
+    },
+    "project": {
+      "$ref": "#/$defs/ProjectConfig"
+    },
+    "routing": {
+      "$ref": "#/$defs/RoutingConfig"
+    },
+    "storage": {
+      "$ref": "#/$defs/StorageConfig"
+    },
+    "triage": {
+      "$ref": "#/$defs/TriageConfig"
+    }
+  },
+  "required": [
+    "project",
+    "control_plane",
+    "nodes",
+    "models",
+    "routing"
+  ],
+  "title": "BmasConfig",
+  "type": "object"
+}

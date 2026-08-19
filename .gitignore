@@ -36,6 +36,7 @@ next-env.d.ts
 
 # ── Docker (compose overrides, volumes) ────────────────────────────
 docker-compose.override.yml
+backups/
 
 # ── Redis (dump files) ─────────────────────────────────────────────
 dump.rdb
@@ -101,5 +102,4 @@ docs/roadmap/
 # ── Ad-hoc Scripts (personal utilities, not project-relevant) ─────
 scripts/generate_icons.py
 scripts/rebuild.sh
-
 
