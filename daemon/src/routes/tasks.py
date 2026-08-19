@@ -59,7 +59,14 @@ async def list_tasks_endpoint(
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
 
-    if status and status not in ("pending", "running", "completed", "failed", "attention"):
+    if status and status not in (
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "attention",
+    ):
         return JSONResponse(
             {"error": f"Invalid status: {status}"},
             status_code=400,
@@ -67,8 +74,14 @@ async def list_tasks_endpoint(
     if archived not in ("exclude", "include", "only"):
         return JSONResponse({"error": f"Invalid archived filter: {archived}"}, status_code=400)
     allowed_sorts = {
-        "created-desc", "created-asc", "duration-desc", "duration-asc",
-        "cost-desc", "cost-asc", "status", "activity-desc",
+        "created-desc",
+        "created-asc",
+        "duration-desc",
+        "duration-asc",
+        "cost-desc",
+        "cost-asc",
+        "status",
+        "activity-desc",
     }
     if sort not in allowed_sorts:
         return JSONResponse({"error": f"Invalid sort: {sort}"}, status_code=400)
@@ -144,6 +157,9 @@ async def get_task_detail(task_id: str):
     board_meta = await db.get_board_meta(task_id)
     task["effective_configuration"] = board_meta.get("effective_configuration")
     task["submission_overrides"] = board_meta.get("submission_overrides")
+    task["execution_snapshot"] = board_meta.get("execution_snapshot")
+    task["execution_snapshot_checksum"] = board_meta.get("execution_snapshot_checksum")
+    task["benchmark"] = board_meta.get("benchmark")
     task["event_delivery"] = await db.get_event_delivery_health(task_id)
     task["storage"] = {
         "input_bytes": await db.get_task_files_total_bytes(task_id),
@@ -152,6 +168,16 @@ async def get_task_detail(task_id: str):
         "max_output_mb": STORAGE_MAX_TASK_OUTPUT_MB,
     }
     return {"task": task, "sub_tasks": sub_tasks}
+
+
+@router.get("/tasks/{task_id}/operator-actions")
+async def get_task_operator_actions_endpoint(task_id: str, limit: int = 200):
+    """Return durable operator requests and outcomes for one task."""
+    if not await db.get_task(task_id):
+        return JSONResponse({"error": "Task not found"}, status_code=404)
+    return {
+        "events": await db.get_task_operator_actions(task_id, limit=limit),
+    }
 
 
 @router.get("/tasks/{task_id}/debate")
@@ -199,10 +225,12 @@ async def get_task_board(task_id: str):
             entry_id = str(entry.get("id", ""))
             tail = entry_id.rsplit("-", 1)[-1]
             entry["seq"] = int(tail) if tail.isdigit() else 0
-        entries.sort(key=lambda entry: (
-            int(entry.get("seq", 0)),
-            str(entry.get("id", "")),
-        ))
+        entries.sort(
+            key=lambda entry: (
+                int(entry.get("seq", 0)),
+                str(entry.get("id", "")),
+            )
+        )
         return {"entries": entries, "meta": meta}
 
     # Databases from before the durable board migration can contain only the
@@ -245,6 +273,7 @@ async def get_task_logs_endpoint(task_id: str, limit: int = 500, offset: int = 0
 
 
 # ── Phase 1: Trace & Turn read endpoints ─────────────────────────────
+
 
 @router.get("/tasks/{task_id}/trace")
 async def get_task_traces_endpoint(task_id: str, limit: int = 200, offset: int = 0):

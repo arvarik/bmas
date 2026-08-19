@@ -181,9 +181,15 @@ export interface TaskMeta {
   started_at?: string;
   last_heartbeat_at?: string;
   error_message?: string;
+  terminal_kind?: "completed" | "failed" | "cancelled";
+  failure_category?: string;
+  cancel_requested_at?: string;
   resume_count?: number;
   effective_configuration?: Record<string, unknown>;
   submission_overrides?: Record<string, unknown>;
+  execution_snapshot?: Record<string, unknown>;
+  execution_snapshot_checksum?: string;
+  benchmark?: Record<string, string>;
   event_delivery?: {
     status?: string;
     unpublished_events?: number;

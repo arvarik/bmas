@@ -11,11 +11,12 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.datastructures import Headers
 
 import database as db
 from auth import require_api_key
+from benchmarks.provenance import build_execution_snapshot
 from config import (
     BMAS_API_KEY,
     COORDINATION_VARIANT,
@@ -41,6 +42,7 @@ router = APIRouter()
 
 # ── Per-task override models ──────────────────────────────────────────────
 
+
 class TaskRoutingOverride(BaseModel):
     """Optional per-task complexity → model routing overrides.
 
@@ -49,6 +51,7 @@ class TaskRoutingOverride(BaseModel):
     These overrides do NOT persist to the session — they apply only to the
     single submitted task.
     """
+
     model_config = ConfigDict(extra="forbid")
 
     simple: str | None = None
@@ -62,6 +65,7 @@ class TaskRoutingOverride(BaseModel):
 
 class TaskRoleRegistryOverride(BaseModel):
     """Optional per-task role registry overrides (partial entries per role)."""
+
     model_config = ConfigDict(extra="forbid")
 
     preferred_host: str | None = None
@@ -74,6 +78,7 @@ class TaskRoleRegistryOverride(BaseModel):
 
 class TaskOverrides(BaseModel):
     """Task-level settings overrides — apply only to this single task execution."""
+
     model_config = ConfigDict(extra="forbid")
 
     routing: TaskRoutingOverride | None = None
@@ -89,10 +94,18 @@ class TaskOverrides(BaseModel):
         if self.role_registry is None:
             return None
         return {
-            role: entry.to_dict()
-            for role, entry in self.role_registry.items()
-            if entry.to_dict()
+            role: entry.to_dict() for role, entry in self.role_registry.items() if entry.to_dict()
         } or None
+
+
+class BenchmarkContext(BaseModel):
+    """Optional durable benchmark identity for a scheduler-created task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,128}$")
+    trial_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,128}$")
+    attempt_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,128}$")
 
 
 class TaskSubmission(BaseModel):
@@ -101,6 +114,7 @@ class TaskSubmission(BaseModel):
     task: str
     variant: str | None = None
     overrides: TaskOverrides | None = None
+    benchmark: BenchmarkContext | None = None
 
 
 class TaskSubmissionResponse(BaseModel):
@@ -164,17 +178,11 @@ async def _retry_compatible_blocked_tasks() -> None:
     for task in tasks:
         task_id = str(task["id"])
         try:
-            variant_class = require_variant_class(
-                str(task.get("variant") or COORDINATION_VARIANT)
-            )
+            variant_class = require_variant_class(str(task.get("variant") or COORDINATION_VARIANT))
             board_meta = await db.get_board_meta(task_id)
-            configuration = variant_class.configuration_from_metadata(
-                board_meta
-            )
+            configuration = variant_class.configuration_from_metadata(board_meta)
             if configuration is None:
-                raise VariantConfigurationError(
-                    "The blocked task has no saved configuration"
-                )
+                raise VariantConfigurationError("The blocked task has no saved configuration")
         except (UnknownVariantError, VariantConfigurationError):
             _remember_recovery_block(
                 task_id,
@@ -197,15 +205,11 @@ async def resume_blocked_task(task_id: str) -> bool:
     if _task_queue.full():
         raise asyncio.QueueFull
 
-    variant_class = require_variant_class(
-        str(task.get("variant") or COORDINATION_VARIANT)
-    )
+    variant_class = require_variant_class(str(task.get("variant") or COORDINATION_VARIANT))
     board_meta = await db.get_board_meta(task_id)
     configuration = variant_class.configuration_from_metadata(board_meta)
     if configuration is None:
-        raise VariantConfigurationError(
-            "The blocked task has no saved configuration"
-        )
+        raise VariantConfigurationError("The blocked task has no saved configuration")
     persisted_overrides = board_meta.get("submission_overrides")
 
     _scheduled_ids.add(task_id)
@@ -213,20 +217,16 @@ async def resume_blocked_task(task_id: str) -> bool:
         _scheduled_ids.discard(task_id)
         return False
     try:
-        _task_queue.put_nowait(TaskWorkItem(
-            task_id=task_id,
-            user_task=str(task.get("full_input") or task.get("label") or ""),
-            overrides=(
-                persisted_overrides
-                if isinstance(persisted_overrides, dict)
-                else None
-            ),
-            variant_id=canonical_variant_id(
-                str(task.get("variant") or COORDINATION_VARIANT)
-            ),
-            effective_configuration=configuration,
-            resume=task.get("status") == "running",
-        ))
+        _task_queue.put_nowait(
+            TaskWorkItem(
+                task_id=task_id,
+                user_task=str(task.get("full_input") or task.get("label") or ""),
+                overrides=(persisted_overrides if isinstance(persisted_overrides, dict) else None),
+                variant_id=canonical_variant_id(str(task.get("variant") or COORDINATION_VARIANT)),
+                effective_configuration=configuration,
+                resume=task.get("status") == "running",
+            )
+        )
     except Exception:
         _scheduled_ids.discard(task_id)
         await db.block_task_recovery(task_id)
@@ -278,10 +278,10 @@ async def _run_task_safe(
         )
     except Exception as e:
         logger.exception(f"Unhandled crash in background task {task_id}")
-        with contextlib.suppress(Exception):  # Redis may be down — zombie recovery handles this on restart
-            await orch.bb.publish_event(task_id, "error", {
-                "error_message": str(e)
-            })
+        with contextlib.suppress(
+            Exception
+        ):  # Redis may be down — zombie recovery handles this on restart
+            await orch.bb.publish_event(task_id, "error", {"error_message": str(e)})
 
 
 async def _task_worker(worker_no: int) -> None:
@@ -293,7 +293,7 @@ async def _task_worker(worker_no: int) -> None:
         try:
             queued_cancel = _cancel_reasons.pop(item.task_id, None)
             if queued_cancel:
-                await db.fail_task(item.task_id, f"Task aborted: {queued_cancel}")
+                await db.cancel_task(item.task_id, queued_cancel)
                 continue
             job = asyncio.create_task(
                 _run_task_safe(
@@ -337,9 +337,7 @@ async def _recover_unfinished_tasks() -> None:
                     continue
                 board_meta = await db.get_board_meta(task_id)
                 persisted_overrides = board_meta.get("submission_overrides")
-                persisted_configuration = board_meta.get(
-                    "effective_configuration"
-                )
+                persisted_configuration = board_meta.get("effective_configuration")
                 try:
                     variant_id = canonical_variant_id(
                         str(task.get("variant") or COORDINATION_VARIANT)
@@ -360,22 +358,22 @@ async def _recover_unfinished_tasks() -> None:
                         )
                     continue
                 _recovery_blocked.pop(task_id, None)
-                _task_queue.put_nowait(TaskWorkItem(
-                    task_id=task_id,
-                    user_task=str(task.get("full_input") or task.get("label") or ""),
-                    overrides=(
-                        persisted_overrides
-                        if isinstance(persisted_overrides, dict)
-                        else None
-                    ),
-                    variant_id=variant_id,
-                    effective_configuration=(
-                        persisted_configuration
-                        if isinstance(persisted_configuration, dict)
-                        else None
-                    ),
-                    resume=task.get("status") == "running",
-                ))
+                _task_queue.put_nowait(
+                    TaskWorkItem(
+                        task_id=task_id,
+                        user_task=str(task.get("full_input") or task.get("label") or ""),
+                        overrides=(
+                            persisted_overrides if isinstance(persisted_overrides, dict) else None
+                        ),
+                        variant_id=variant_id,
+                        effective_configuration=(
+                            persisted_configuration
+                            if isinstance(persisted_configuration, dict)
+                            else None
+                        ),
+                        resume=task.get("status") == "running",
+                    )
+                )
                 _scheduled_ids.add(task_id)
             await asyncio.sleep(4.0 + random.uniform(0.0, 3.0))
         except asyncio.CancelledError:
@@ -393,10 +391,12 @@ async def start_task_workers(orch: Orchestrator) -> None:
     _orchestrator = orch
     _task_queue = asyncio.Queue(maxsize=MAX_QUEUED_TASKS)
     for worker_no in range(MAX_ACTIVE_TASKS):
-        _workers.append(asyncio.create_task(
-            _task_worker(worker_no),
-            name=f"bmas-task-worker-{worker_no}",
-        ))
+        _workers.append(
+            asyncio.create_task(
+                _task_worker(worker_no),
+                name=f"bmas-task-worker-{worker_no}",
+            )
+        )
     _recovery_task = asyncio.create_task(
         _recover_unfinished_tasks(),
         name="bmas-task-recovery",
@@ -455,7 +455,7 @@ async def abort_scheduled_task(task_id: str, reason: str) -> bool:
                     task_id,
                     exc_info=True,
                 )
-        await db.fail_task(task_id, f"Task aborted: {reason}")
+        await db.cancel_task(task_id, reason, lease_token=lease_token)
         job.cancel()
         return True
     if task_id in _scheduled_ids:
@@ -470,7 +470,7 @@ async def abort_scheduled_task(task_id: str, reason: str) -> bool:
                 _task_queue.task_done()
                 removed = True
                 break
-        await db.fail_task(task_id, f"Task aborted: {reason}")
+        await db.cancel_task(task_id, reason)
         if removed:
             _cancel_reasons.pop(task_id, None)
             _scheduled_ids.discard(task_id)
@@ -540,9 +540,7 @@ async def _admit_task(
         )
 
     try:
-        variant_id = canonical_variant_id(
-            req.variant or COORDINATION_VARIANT
-        )
+        variant_id = canonical_variant_id(req.variant or COORDINATION_VARIANT)
         variant_class = require_variant_class(variant_id)
     except UnknownVariantError as exc:
         raise HTTPException(
@@ -568,13 +566,23 @@ async def _admit_task(
         if not task_overrides:
             task_overrides = None
 
-    effective_configuration = await variant_class.capture_configuration(
-        task_overrides
+    effective_configuration = await variant_class.capture_configuration(task_overrides)
+
+    benchmark_context = req.benchmark.model_dump() if req.benchmark else None
+    execution_snapshot, snapshot_checksum = build_execution_snapshot(
+        runtime_id=variant_id,
+        effective_configuration=effective_configuration,
+        submission_overrides=task_overrides,
+        benchmark_context=benchmark_context,
     )
 
     submission_meta: dict[str, Any] = {
         "effective_configuration": effective_configuration,
+        "execution_snapshot": execution_snapshot,
+        "execution_snapshot_checksum": snapshot_checksum,
     }
+    if benchmark_context:
+        submission_meta["benchmark"] = benchmark_context
     if task_overrides:
         submission_meta["submission_overrides"] = task_overrides
     await db.create_task_with_meta(
@@ -589,9 +597,7 @@ async def _admit_task(
     stored_uploads: list[dict] = []
     try:
         for upload in initial_uploads:
-            stored_uploads.append(
-                await store_task_file(task_id, upload, announce=False)
-            )
+            stored_uploads.append(await store_task_file(task_id, upload, announce=False))
     except FileUploadError as exc:
         await _discard_staged_task(task_id, stored_uploads)
         raise HTTPException(
@@ -615,13 +621,15 @@ async def _admit_task(
     try:
         if initial_uploads and not await db.update_run_state(task_id, "queued"):
             raise RuntimeError("The staged task could not enter the queue")
-        _task_queue.put_nowait(TaskWorkItem(
-            task_id=task_id,
-            user_task=req.task,
-            overrides=task_overrides,
-            variant_id=variant_id,
-            effective_configuration=effective_configuration,
-        ))
+        _task_queue.put_nowait(
+            TaskWorkItem(
+                task_id=task_id,
+                user_task=req.task,
+                overrides=task_overrides,
+                variant_id=variant_id,
+                effective_configuration=effective_configuration,
+            )
+        )
     except asyncio.QueueFull as exc:
         _scheduled_ids.discard(task_id)
         await db.fail_task(task_id, "Task queue became full during submission")
@@ -712,9 +720,7 @@ async def duplicate_task(task_id: str, request: Request):
     metadata = await db.get_board_meta(task_id)
     raw_overrides = metadata.get("submission_overrides")
     overrides = (
-        TaskOverrides.model_validate(raw_overrides)
-        if isinstance(raw_overrides, dict)
-        else None
+        TaskOverrides.model_validate(raw_overrides) if isinstance(raw_overrides, dict) else None
     )
     uploads: list[UploadFile] = []
     try:
@@ -723,14 +729,20 @@ async def duplicate_task(task_id: str, request: Request):
             if not path or not os.path.isfile(path):
                 raise HTTPException(
                     status_code=409,
-                    detail={"message": f"Stored input is unavailable: {stored.get('name', 'file')}"},
+                    detail={
+                        "message": f"Stored input is unavailable: {stored.get('name', 'file')}"
+                    },
                 )
-            uploads.append(UploadFile(
-                file=open(path, "rb"),  # noqa: SIM115 -- UploadFile closes this handle below.
-                filename=str(stored.get("name") or "input"),
-                size=int(stored.get("bytes") or 0),
-                headers=Headers({"content-type": str(stored.get("mime") or "application/octet-stream")}),
-            ))
+            uploads.append(
+                UploadFile(
+                    file=open(path, "rb"),  # noqa: SIM115 -- UploadFile closes this handle below.
+                    filename=str(stored.get("name") or "input"),
+                    size=int(stored.get("bytes") or 0),
+                    headers=Headers(
+                        {"content-type": str(stored.get("mime") or "application/octet-stream")}
+                    ),
+                )
+            )
         return await _admit_task(
             TaskSubmission(
                 task=str(source.get("full_input") or source.get("label") or ""),

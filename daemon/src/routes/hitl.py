@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import logging
 import re
+import uuid
 from typing import Any, Literal
 
 import httpx
@@ -51,7 +52,126 @@ def _validate_id(value: str, label: str) -> str:
     return value
 
 
+def _operator_identity(request: Request) -> str:
+    """Return one bounded non-secret operator identity."""
+    value = request.headers.get("X-Operator-Id", "operator").strip()
+    return value[:128] or "operator"
+
+
+def _action_id(request: Request) -> str:
+    """Return the caller idempotency key or create one action identifier."""
+    supplied = request.headers.get("X-Idempotency-Key", "").strip()
+    if supplied and re.fullmatch(r"[a-zA-Z0-9_.:-]{1,160}", supplied):
+        return supplied
+    return f"action-{uuid.uuid4().hex}"
+
+
+async def _record_operator_action(
+    task_id: str,
+    action: str,
+    action_id: str,
+    actor: str,
+    stage: Literal["requested", "result"],
+    *,
+    status: str,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    """Append one authoritative operator action event before delivery."""
+    await db.append_delivery_event(
+        f"task:{task_id}",
+        f"operator_action_{stage}",
+        {
+            "action_id": action_id,
+            "action": action,
+            "actor": actor,
+            "status": status,
+            "detail": detail or {},
+        },
+        task_id=task_id,
+        idempotency_key=f"operator:{action_id}:{stage}",
+    )
+
+
+async def _begin_operator_action(
+    task_id: str,
+    action: str,
+    request: Request,
+    detail: dict[str, Any] | None = None,
+) -> tuple[str, str, dict[str, Any] | None]:
+    action_id = _action_id(request)
+    actor = _operator_identity(request)
+    request_detail = detail or {}
+    try:
+        record, created = await db.claim_operator_action(
+            action_id=action_id,
+            task_id=task_id,
+            action=action,
+            actor=actor,
+            detail=request_detail,
+        )
+        await _record_operator_action(
+            task_id,
+            action,
+            action_id,
+            actor,
+            "requested",
+            status="requested",
+            detail=request_detail,
+        )
+    except Exception as error:
+        logger.exception("Operator action journal failed for %s", task_id)
+        raise HTTPException(
+            status_code=503,
+            detail="The action was not sent because its audit record could not be saved",
+        ) from error
+    return action_id, actor, None if created else record
+
+
+async def _finish_operator_action(
+    task_id: str,
+    action: str,
+    action_id: str,
+    actor: str,
+    *,
+    status: str,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    try:
+        await db.finish_operator_action(
+            action_id=action_id,
+            status=status,
+            detail=detail or {},
+        )
+        await _record_operator_action(
+            task_id,
+            action,
+            action_id,
+            actor,
+            "result",
+            status=status,
+            detail=detail,
+        )
+    except Exception as error:
+        logger.exception("Operator action result journal failed for %s", task_id)
+        raise HTTPException(
+            status_code=503,
+            detail="The action completed, but its audit outcome could not be saved",
+        ) from error
+
+
+def _replayed_action(task_id: str, action_id: str, record: dict[str, Any]) -> dict:
+    """Return a stable response when an idempotency key already exists."""
+    return {
+        "status": record.get("status", "requested"),
+        "task_id": task_id,
+        "action_id": action_id,
+        "replayed": True,
+        "result": record.get("result_detail"),
+    }
+
+
 # ── Request Models ───────────────────────────────────────────────────
+
 
 class SteerRequest(BaseModel):
     action: str  # "boost" | "retract"
@@ -102,6 +222,7 @@ class AbortRequest(BaseModel):
 
 # ── Steer Endpoint ───────────────────────────────────────────────────
 
+
 @router.post("/{task_id}/steer")
 async def steer_entry(task_id: str, req: SteerRequest, request: Request):
     """Boost or retract a board entry (doc 05 §6 — HITL steer).
@@ -114,24 +235,62 @@ async def steer_entry(task_id: str, req: SteerRequest, request: Request):
     from app import app
 
     orch = app.state.orchestrator
+    action_id, actor, prior = await _begin_operator_action(
+        task_id,
+        f"board_{req.action}",
+        request,
+        {"entry_id": req.entry_id},
+    )
+    if prior is not None:
+        return _replayed_action(task_id, action_id, prior)
     try:
         result = await orch.steer_entry(task_id, req.entry_id, req.action)
         logger.info(
             "Steer %s | task=%s entry=%s",
-            req.action, task_id, req.entry_id,
+            req.action,
+            task_id,
+            req.entry_id,
         )
-        return result
     except KeyError as exc:
+        await _finish_operator_action(
+            task_id,
+            f"board_{req.action}",
+            action_id,
+            actor,
+            status="rejected",
+            detail={"entry_id": req.entry_id, "error": "Entry not found"},
+        )
         raise HTTPException(status_code=404, detail="Entry not found") from exc
     except Exception as exc:
+        await _finish_operator_action(
+            task_id,
+            f"board_{req.action}",
+            action_id,
+            actor,
+            status="failed",
+            detail={"entry_id": req.entry_id, "error": str(exc)[:1000]},
+        )
         logger.warning(
             "Steer %s failed for %s/%s: %s",
-            req.action, task_id, req.entry_id, exc,
+            req.action,
+            task_id,
+            req.entry_id,
+            exc,
         )
         raise HTTPException(status_code=500, detail="Steering failed") from exc
+    await _finish_operator_action(
+        task_id,
+        f"board_{req.action}",
+        action_id,
+        actor,
+        status="accepted",
+        detail={"entry_id": req.entry_id},
+    )
+    return result
 
 
 # ── Pause Endpoint ───────────────────────────────────────────────────
+
 
 @router.post("/{task_id}/abort", status_code=202)
 async def abort_task(task_id: str, req: AbortRequest, request: Request):
@@ -142,9 +301,26 @@ async def abort_task(task_id: str, req: AbortRequest, request: Request):
     from routes.submit import abort_scheduled_task
 
     orch = app.state.orchestrator
+    action_id, actor, prior = await _begin_operator_action(
+        task_id, "cancel", request, {"reason": req.reason}
+    )
+    if prior is not None:
+        return _replayed_action(task_id, action_id, prior)
+    if not await db.request_task_cancellation(task_id):
+        await _finish_operator_action(
+            task_id,
+            "cancel",
+            action_id,
+            actor,
+            status="rejected",
+            detail={"reason": req.reason, "error": "Task is not active"},
+        )
+        raise HTTPException(status_code=409, detail="The task is not active")
     try:
         await orch.bb.redis.set(
-            f"bmas:public:abort:{task_id}", req.reason, ex=3600,
+            f"bmas:public:abort:{task_id}",
+            req.reason,
+            ex=3600,
         )
     except Exception as exc:
         logger.warning("Redis abort marker failed for %s: %s", task_id, exc)
@@ -162,15 +338,29 @@ async def abort_task(task_id: str, req: AbortRequest, request: Request):
         logger.warning("Remote abort failed for %s: %s", task_id, exc)
 
     logger.info("Abort requested for task %s: %s", task_id, req.reason)
-    return {
+    result = {
         "status": "abort_requested",
         "task_id": task_id,
         "scheduled": scheduled,
         "remote_cancelled": remote_cancelled,
     }
+    await _finish_operator_action(
+        task_id,
+        "cancel",
+        action_id,
+        actor,
+        status="accepted",
+        detail={
+            "reason": req.reason,
+            "scheduled": scheduled,
+            "remote_cancelled": remote_cancelled,
+        },
+    )
+    return result
 
 
 # ── Pause Endpoint ───────────────────────────────────────────────────
+
 
 @router.post("/{task_id}/pause")
 async def pause_task(task_id: str, request: Request):
@@ -181,20 +371,34 @@ async def pause_task(task_id: str, request: Request):
 
     orch = app.state.orchestrator
     bb = orch.bb
+    action_id, actor, prior = await _begin_operator_action(task_id, "pause", request)
+    if prior is not None:
+        return _replayed_action(task_id, action_id, prior)
 
     try:
         pause_key = f"bmas:public:pause:{task_id}"
         await bb.redis.set(pause_key, "1", ex=3600)  # TTL 1 hour
         from database import update_run_state
+
         await update_run_state(task_id, "pause_requested")
         logger.info("Pause requested for task %s", task_id)
-        return {"status": "pause_requested", "task_id": task_id}
     except Exception as e:
+        await _finish_operator_action(
+            task_id,
+            "pause",
+            action_id,
+            actor,
+            status="failed",
+            detail={"error": str(e)[:1000]},
+        )
         logger.warning("Pause failed for %s: %s", task_id, e)
         raise HTTPException(status_code=500, detail="Pause failed") from e
+    await _finish_operator_action(task_id, "pause", action_id, actor, status="accepted")
+    return {"status": "pause_requested", "task_id": task_id}
 
 
 # ── Resume Endpoint ──────────────────────────────────────────────────
+
 
 @router.post("/{task_id}/resume")
 async def resume_task(task_id: str, request: Request):
@@ -205,6 +409,11 @@ async def resume_task(task_id: str, request: Request):
 
     orch = app.state.orchestrator
     bb = orch.bb
+    action_id, actor, prior = await _begin_operator_action(task_id, "resume", request)
+    if prior is not None:
+        return _replayed_action(task_id, action_id, prior)
+    response_status = "resumed"
+    response_detail: dict[str, Any] = {}
 
     try:
         task = await db.get_task(task_id)
@@ -212,6 +421,7 @@ async def resume_task(task_id: str, request: Request):
             raise HTTPException(status_code=404, detail="Task not found")
         if task.get("run_state") == "blocked":
             from routes.submit import resume_blocked_task
+
             resumed = await resume_blocked_task(task_id)
             if not resumed:
                 raise HTTPException(
@@ -219,32 +429,83 @@ async def resume_task(task_id: str, request: Request):
                     detail="The task is no longer blocked",
                 )
             logger.info("Blocked task resumed: %s", task_id)
-            return {"status": "recovery_queued", "task_id": task_id}
-        pause_key = f"bmas:public:pause:{task_id}"
-        await bb.redis.delete(pause_key)
-        await db.update_run_state(task_id, "running")
-        logger.info("Resume requested for task %s", task_id)
-        return {"status": "resumed", "task_id": task_id}
-    except HTTPException:
+            response_status = "recovery_queued"
+            response_detail = {"mode": "recovery"}
+        else:
+            pause_key = f"bmas:public:pause:{task_id}"
+            await bb.redis.delete(pause_key)
+            await db.update_run_state(task_id, "running")
+            logger.info("Resume requested for task %s", task_id)
+    except HTTPException as error:
+        await _finish_operator_action(
+            task_id,
+            "resume",
+            action_id,
+            actor,
+            status="rejected",
+            detail={"error": str(error.detail)[:1000]},
+        )
         raise
     except asyncio.QueueFull as exc:
+        await _finish_operator_action(
+            task_id,
+            "resume",
+            action_id,
+            actor,
+            status="rejected",
+            detail={"error": "Task queue is full"},
+        )
         raise HTTPException(
             status_code=429,
             detail="The task queue is full. Retry when capacity is available.",
         ) from exc
     except (UnknownVariantError, VariantConfigurationError) as exc:
+        await _finish_operator_action(
+            task_id,
+            "resume",
+            action_id,
+            actor,
+            status="rejected",
+            detail={"error": str(exc)[:1000]},
+        )
         raise HTTPException(
             status_code=409,
             detail=f"Blocked task recovery is incompatible: {exc}",
         ) from exc
     except RuntimeError as exc:
+        await _finish_operator_action(
+            task_id,
+            "resume",
+            action_id,
+            actor,
+            status="failed",
+            detail={"error": str(exc)[:1000]},
+        )
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as e:
+        await _finish_operator_action(
+            task_id,
+            "resume",
+            action_id,
+            actor,
+            status="failed",
+            detail={"error": str(e)[:1000]},
+        )
         logger.warning("Resume failed for %s: %s", task_id, e)
         raise HTTPException(status_code=500, detail="Resume failed") from e
+    await _finish_operator_action(
+        task_id,
+        "resume",
+        action_id,
+        actor,
+        status="accepted",
+        detail=response_detail,
+    )
+    return {"status": response_status, "task_id": task_id}
 
 
 # ── Directive Endpoint ───────────────────────────────────────────────
+
 
 @router.post("/{task_id}/directive")
 async def inject_directive(task_id: str, req: DirectiveRequest, request: Request):
@@ -259,6 +520,14 @@ async def inject_directive(task_id: str, req: DirectiveRequest, request: Request
 
     orch = app.state.orchestrator
     bb = orch.bb
+    action_id, actor, prior = await _begin_operator_action(
+        task_id,
+        "directive",
+        request,
+        {"character_count": len(req.body)},
+    )
+    if prior is not None:
+        return _replayed_action(task_id, action_id, prior)
 
     try:
         hint_key = f"bmas:public:hints:{task_id}"
@@ -267,15 +536,33 @@ async def inject_directive(task_id: str, req: DirectiveRequest, request: Request
         await bb.redis.expire(hint_key, 3600)
         logger.info(
             "Directive queued for task %s (%d chars)",
-            task_id, len(req.body),
+            task_id,
+            len(req.body),
         )
-        return {"status": "queued", "task_id": task_id}
     except Exception as e:
+        await _finish_operator_action(
+            task_id,
+            "directive",
+            action_id,
+            actor,
+            status="failed",
+            detail={"error": str(e)[:1000]},
+        )
         logger.warning("Directive injection failed for %s: %s", task_id, e)
         raise HTTPException(status_code=500, detail="Directive injection failed") from e
+    await _finish_operator_action(
+        task_id,
+        "directive",
+        action_id,
+        actor,
+        status="accepted",
+        detail={"character_count": len(req.body)},
+    )
+    return {"status": "queued", "task_id": task_id}
 
 
 # ── Approval Request Model ───────────────────────────────────────────
+
 
 class ApprovalRequest(BaseModel):
     run_id: str
@@ -395,6 +682,7 @@ async def _forward_run_action(
 
 # ── Approval Endpoint (doc 12 §5.1) ──────────────────────────────────
 
+
 @router.post("/{task_id}/approval")
 async def handle_approval(task_id: str, req: ApprovalRequest, request: Request):
     """Forward one approval choice to the Hermes agent node."""
@@ -403,33 +691,76 @@ async def handle_approval(task_id: str, req: ApprovalRequest, request: Request):
     from app import app
 
     orch = app.state.orchestrator
-    agent_url, upstream = await _forward_run_action(
-        req.run_id,
+    action_id, actor, prior = await _begin_operator_action(
+        task_id,
         "approval",
-        {"choice": req.choice},
+        request,
+        {"run_id": req.run_id, "choice": req.choice, "reason": req.reason},
     )
+    if prior is not None:
+        return _replayed_action(task_id, action_id, prior)
+    try:
+        agent_url, upstream = await _forward_run_action(
+            req.run_id,
+            "approval",
+            {"choice": req.choice},
+        )
+    except HTTPException as error:
+        await _finish_operator_action(
+            task_id,
+            "approval",
+            action_id,
+            actor,
+            status="rejected",
+            detail={
+                "run_id": req.run_id,
+                "choice": req.choice,
+                "error": str(error.detail)[:1000],
+            },
+        )
+        raise
     logger.info(
         "Approval %s forwarded | task=%s run=%s node=%s",
-        req.choice, task_id, req.run_id, agent_url,
+        req.choice,
+        task_id,
+        req.run_id,
+        agent_url,
     )
 
     # Emit a response event so the UI clears the pending approval.
     with contextlib.suppress(Exception):
-        await orch.bb.publish_event(task_id, "approval_response", {
-            "run_id": req.run_id,
-            "choice": req.choice,
-            "reason": req.reason,
-            "by": "operator",
-            "status": "responded",
-        })
+        await orch.bb.publish_event(
+            task_id,
+            "approval_response",
+            {
+                "run_id": req.run_id,
+                "choice": req.choice,
+                "reason": req.reason,
+                "by": "operator",
+                "status": "responded",
+            },
+        )
 
-    return {
+    result = {
         "status": "forwarded",
         "task_id": task_id,
         "run_id": req.run_id,
         "choice": req.choice,
         "resolved": upstream.get("resolved"),
     }
+    await _finish_operator_action(
+        task_id,
+        "approval",
+        action_id,
+        actor,
+        status="accepted",
+        detail={
+            "run_id": req.run_id,
+            "choice": req.choice,
+            "resolved": upstream.get("resolved"),
+        },
+    )
+    return result
 
 
 @router.post("/{task_id}/run-steer")
@@ -440,26 +771,67 @@ async def steer_run(task_id: str, req: RunSteerRequest, request: Request):
     from app import app
 
     orch = app.state.orchestrator
-    agent_url, upstream = await _forward_run_action(
-        req.run_id,
-        "steer",
-        {"input": req.input},
+    action_id, actor, prior = await _begin_operator_action(
+        task_id,
+        "run_steer",
+        request,
+        {"run_id": req.run_id, "character_count": len(req.input)},
     )
+    if prior is not None:
+        return _replayed_action(task_id, action_id, prior)
+    try:
+        agent_url, upstream = await _forward_run_action(
+            req.run_id,
+            "steer",
+            {"input": req.input},
+        )
+    except HTTPException as error:
+        await _finish_operator_action(
+            task_id,
+            "run_steer",
+            action_id,
+            actor,
+            status="rejected",
+            detail={
+                "run_id": req.run_id,
+                "error": str(error.detail)[:1000],
+            },
+        )
+        raise
     logger.info(
         "Run steer forwarded | task=%s run=%s node=%s chars=%d",
-        task_id, req.run_id, agent_url, len(req.input),
+        task_id,
+        req.run_id,
+        agent_url,
+        len(req.input),
     )
 
     with contextlib.suppress(Exception):
-        await orch.bb.publish_event(task_id, "run_steered", {
-            "run_id": req.run_id,
-            "input": req.input,
-            "by": "operator",
-        })
+        await orch.bb.publish_event(
+            task_id,
+            "run_steered",
+            {
+                "run_id": req.run_id,
+                "input": req.input,
+                "by": "operator",
+            },
+        )
 
-    return {
+    result = {
         "status": "accepted",
         "task_id": task_id,
         "run_id": req.run_id,
         "accepted": bool(upstream.get("accepted", True)),
     }
+    await _finish_operator_action(
+        task_id,
+        "run_steer",
+        action_id,
+        actor,
+        status="accepted",
+        detail={
+            "run_id": req.run_id,
+            "accepted": bool(upstream.get("accepted", True)),
+        },
+    )
+    return result

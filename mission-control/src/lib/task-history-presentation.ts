@@ -24,7 +24,7 @@ export interface SavedTaskView {
 }
 
 export function taskNeedsAttention(task: TaskSummary): boolean {
-  return task.status === "failed"
+  return (task.status === "failed" && task.terminal_kind !== "cancelled")
     || task.pending_approval
     || task.stale
     || ["blocked", "paused", "pause_requested"].includes(task.run_state ?? "");
@@ -57,7 +57,10 @@ export function filterTaskHistory(
   return tasks.filter((task) => {
     if (!matchesSearch(task, filters.search)) return false;
     if (filters.status === "attention" && !taskNeedsAttention(task)) return false;
-    if (filters.status && filters.status !== "attention" && task.status !== filters.status) {
+    if (filters.status === "cancelled" && task.terminal_kind !== "cancelled") {
+      return false;
+    }
+    if (filters.status && filters.status !== "attention" && filters.status !== "cancelled" && task.status !== filters.status) {
       return false;
     }
     if (dateFrom !== null && new Date(task.created_at).getTime() < dateFrom) {

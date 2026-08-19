@@ -40,6 +40,7 @@ function downloadCsv(csv: string, name: string) {
 }
 
 function taskStateLabel(task: TaskSummary): string {
+  if (task.terminal_kind === "cancelled") return "Cancelled";
   if (task.pending_approval) return "Approval required";
   if (task.stale) return "Stale";
   if (["blocked", "paused", "pause_requested"].includes(task.run_state ?? "")) return "Blocked";
@@ -195,7 +196,7 @@ export function TasksPageClient() {
           <span><Search size={15} aria-hidden="true" /><input value={filters.search} onChange={(event) => updateUrl({ q: event.target.value })} placeholder="Objective, result, error, task ID…" /></span>
         </label>
         <label>Status<select value={filters.status} onChange={(event) => updateUrl({ status: event.target.value })}>
-          <option value="">All states</option><option value="attention">Needs attention</option><option value="pending">Queued</option><option value="running">Running</option><option value="completed">Completed</option><option value="failed">Failed</option>
+          <option value="">All states</option><option value="attention">Needs attention</option><option value="pending">Queued</option><option value="running">Running</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option>
         </select></label>
         <label>Sort<select value={filters.sort} onChange={(event) => updateUrl({ sort: event.target.value === "created-desc" ? "" : event.target.value })}>
           <option value="created-desc">Newest created</option><option value="created-asc">Oldest created</option><option value="activity-desc">Latest activity</option><option value="duration-desc">Longest duration</option><option value="duration-asc">Shortest duration</option><option value="cost-desc">Highest cost</option><option value="cost-asc">Lowest cost</option><option value="status">Status</option>

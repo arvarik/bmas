@@ -22,12 +22,6 @@ import {
   useTaskOperatorAction,
 } from "@/hooks/useTaskOperatorAction";
 import { ActionableError } from "@/components/ui/ActionableError";
-import {
-  operatorHistoryKey,
-  parseOperatorHistory,
-  serializeOperatorHistory,
-  type StoredOperatorAction,
-} from "@/lib/operator-action-history";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 interface OperationsStatus {
@@ -54,7 +48,7 @@ function currentStage(task: TaskMeta): StageId {
 }
 
 function branchState(task: TaskMeta): BranchState {
-  if (["aborted", "cancelled"].includes(task.run_state ?? "") || task.error_message?.startsWith("Task aborted")) return "cancelled";
+  if (task.terminal_kind === "cancelled" || ["cancelling", "cancelled"].includes(task.run_state ?? "")) return "cancelled";
   if (task.status === "failed") return "failed";
   if (["blocked", "paused", "pause_requested"].includes(task.run_state ?? "")) return "blocked";
   return null;
@@ -80,11 +74,23 @@ function actionSuccessMessage(action: TaskOperatorAction): string {
   return "Guidance queued. The runtime will apply it at the next supported boundary.";
 }
 
-function actionEventLabel(action: TaskOperatorAction): string {
-  if (action === "pause") return "Operator requested a pause";
-  if (action === "resume") return "Operator requested a resume";
-  if (action === "abort") return "Operator requested a stop";
-  return "Operator queued guidance";
+interface DurableOperatorEvent {
+  cursor: number;
+  event_type: "operator_action_requested" | "operator_action_result";
+  created_at: string;
+  data: {
+    action_id: string;
+    action: string;
+    actor: string;
+    status: string;
+    detail?: Record<string, unknown>;
+  };
+}
+
+function operatorEventLabel(event: DurableOperatorEvent): string {
+  const action = event.data.action.replaceAll("_", " ");
+  if (event.event_type === "operator_action_requested") return `Requested ${action}`;
+  return `${action} ${event.data.status}`;
 }
 
 export function TaskLifecycle({
@@ -113,7 +119,8 @@ export function TaskLifecycle({
   const [guidance, setGuidance] = useState("");
   const [showGuidance, setShowGuidance] = useState(false);
   const [optimisticPaused, setOptimisticPaused] = useState<boolean | null>(null);
-  const [operatorEvents, setOperatorEvents] = useState<StoredOperatorAction[]>([]);
+  const [operatorEvents, setOperatorEvents] = useState<DurableOperatorEvent[]>([]);
+  const [operatorHistoryError, setOperatorHistoryError] = useState("");
   const [operations, setOperations] = useState<OperationsStatus | null>(null);
   const [operationsError, setOperationsError] = useState("");
   const [operationsVersion, setOperationsVersion] = useState(0);
@@ -133,13 +140,28 @@ export function TaskLifecycle({
     onEscape: () => setMetadataOpen(false),
   });
 
-  useEffect(() => {
+  const loadOperatorActions = useCallback(async () => {
     if (!taskId) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- local history loads after hydration to keep server and client markup equal.
-    setOperatorEvents(parseOperatorHistory(
-      window.localStorage.getItem(operatorHistoryKey(taskId)),
-    ));
+    try {
+      const response = await fetch(
+        `/api/tasks/${encodeURIComponent(taskId)}/operator-actions?limit=200`,
+        { cache: "no-store", signal: AbortSignal.timeout(8_000) },
+      );
+      const body = await response.json().catch(() => ({})) as {
+        events?: DurableOperatorEvent[];
+        error?: string;
+      };
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      setOperatorEvents(body.events ?? []);
+      setOperatorHistoryError("");
+    } catch (error) {
+      setOperatorHistoryError(error instanceof Error ? error.message : "Operator history is unavailable.");
+    }
   }, [taskId]);
+
+  useEffect(() => {
+    void Promise.resolve().then(loadOperatorActions);
+  }, [loadOperatorActions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -171,30 +193,6 @@ export function TaskLifecycle({
     };
   }, [operationsVersion]);
 
-  const recordOperatorAction = useCallback((action: TaskOperatorAction) => {
-    const timestamp = new Date().toISOString();
-    setOperatorEvents((events) => {
-      const next = [
-        ...events,
-        { id: `${action}:${timestamp}`, action, label: actionEventLabel(action), timestamp },
-      ].slice(-20);
-      if (taskId) {
-        window.localStorage.setItem(
-          operatorHistoryKey(taskId),
-          serializeOperatorHistory(next),
-        );
-      }
-      return next;
-    });
-  }, [taskId]);
-
-  const clearOperatorHistory = useCallback(() => {
-    setOperatorEvents([]);
-    if (taskId) {
-      window.localStorage.removeItem(operatorHistoryKey(taskId));
-    }
-  }, [taskId]);
-
   const applyOperatorResult = useCallback((
     action: TaskOperatorAction,
     result: TaskOperatorResult,
@@ -206,9 +204,9 @@ export function TaskLifecycle({
       setGuidance("");
       setShowGuidance(false);
     }
-    recordOperatorAction(action);
+    void loadOperatorActions();
     router.refresh();
-  }, [recordOperatorAction, router]);
+  }, [loadOperatorActions, router]);
 
   const runControl = useCallback(async (action: "pause" | "resume" | "abort") => {
     if (!task || operatorAction.status === "pending") return;
@@ -281,7 +279,7 @@ export function TaskLifecycle({
       { id: "created", timestamp: task.created_at, label: "System created the task", kind: "System" },
       ...logs.map((entry) => ({ id: `log:${entry.id}`, timestamp: entry.timestamp, label: entry.message, kind: entry.agent_role || "System" })),
       ...traceEvents.map((entry) => ({ id: `trace:${entry.id}`, timestamp: entry.timestamp, label: entry.content || entry.type, kind: entry.actor || "System" })),
-      ...operatorEvents.map((entry) => ({ id: `operator:${entry.id}`, timestamp: entry.timestamp, label: entry.label, kind: "Operator" })),
+      ...operatorEvents.map((entry) => ({ id: `operator:${entry.cursor}`, timestamp: entry.created_at, label: operatorEventLabel(entry), kind: entry.data.actor || "Operator" })),
       ...(task.completed_at ? [{ id: "terminal", timestamp: task.completed_at, label: terminalBranch === "cancelled" ? "Task cancelled" : task.status === "failed" ? "Task failed" : "Task completed", kind: "System" }] : []),
     ].filter((entry) => entry.timestamp).sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
   }, [logs, operatorEvents, task, traceEvents]);
@@ -381,7 +379,7 @@ export function TaskLifecycle({
         </div>
       ) : null}
 
-      {task.status === "failed" && task.error_message ? (
+      {task.status === "failed" && task.terminal_kind !== "cancelled" && task.error_message ? (
         <div className="task-lifecycle__failure">
           <ActionableError
             component="Task execution"
@@ -404,6 +402,14 @@ export function TaskLifecycle({
       {copyError ? (
         <ActionableError component="Task copy" cause={copyError} compact />
       ) : null}
+      {operatorHistoryError ? (
+        <ActionableError
+          component="Operator action history"
+          cause={operatorHistoryError}
+          onRetry={() => void loadOperatorActions()}
+          compact
+        />
+      ) : null}
       {operatorAction.status === "pending" || operatorAction.status === "success" ? (
         <div className="task-lifecycle__success" role="status" aria-live="polite">
           {operatorAction.message}
@@ -414,19 +420,18 @@ export function TaskLifecycle({
           <summary>Operator action history ({operatorEvents.length})</summary>
           <div
             role="log"
-            aria-label="Operator actions saved in this browser"
+            aria-label="Durable operator actions"
             aria-live="polite"
           >
-            <p>Saved in this browser for this task.</p>
+            <p>Mission Control saved these requests and outcomes in the daemon event journal.</p>
             <ol>
               {[...operatorEvents].reverse().map((event) => (
-                <li key={event.id}>
-                  <strong>{event.label}</strong>{" "}
-                  <time dateTime={event.timestamp}>{new Date(event.timestamp).toLocaleString()}</time>
+                <li key={event.cursor}>
+                  <strong>{operatorEventLabel(event)}</strong>{" "}
+                  <time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time>
                 </li>
               ))}
             </ol>
-            <button type="button" onClick={clearOperatorHistory}>Clear local history</button>
           </div>
         </details>
       ) : null}
@@ -452,6 +457,7 @@ export function TaskLifecycle({
           <header><div><p>Task metadata</p><h3 id="task-metadata-title">Configuration and recovery</h3></div><button type="button" onClick={() => setMetadataOpen(false)} aria-label="Close task data"><X size={18} /></button></header>
           <p className="task-metadata-note">Mission Control captured these settings at submission. Session setting changes do not affect this active task.</p>
           <section><h4>Effective configuration</h4><pre>{JSON.stringify(task.effective_configuration ?? {}, null, 2)}</pre></section>
+          <section><h4>Execution identity</h4><dl><div><dt>Snapshot checksum</dt><dd>{task.execution_snapshot_checksum || "Unavailable"}</dd></div><div><dt>Terminal kind</dt><dd>{task.terminal_kind || "Active"}</dd></div><div><dt>Failure category</dt><dd>{task.failure_category || "None"}</dd></div></dl><pre>{JSON.stringify(task.execution_snapshot ?? {}, null, 2)}</pre></section>
           <section><h4>Submission overrides</h4><pre>{JSON.stringify(task.submission_overrides ?? {}, null, 2)}</pre></section>
           <section><h4>Queue</h4><dl><div><dt>Queued tasks</dt><dd>{operations ? `${operations.queued}/${operations.queueCapacity}` : "Unavailable"}</dd></div><div><dt>Active agents</dt><dd>{operations ? `${operations.agentsOnline}/${operations.agentsTotal}` : "Unavailable"}</dd></div><div><dt>Provider</dt><dd>{operations?.providerReady ? "Healthy" : "Unavailable"}</dd></div></dl></section>
           <section><h4>Recovery</h4><dl><div><dt>Run state</dt><dd>{task.run_state || task.status}</dd></div><div><dt>Resume count</dt><dd>{task.resume_count ?? 0}</dd></div><div><dt>Event delivery</dt><dd>{task.event_delivery?.status || "Unknown"}</dd></div><div><dt>Latest cursor</dt><dd>{task.event_delivery?.latest_cursor ?? "None"}</dd></div></dl></section>
