@@ -1,15 +1,11 @@
-import { NextResponse } from "next/server";
-import { AGENT_DASHBOARD_HOSTS, NODES } from "@/lib/config";
+import { AGENT_HOSTS, NODES } from "@/lib/config";
+import { requestHermesAgent } from "@/lib/hermes-agent-api";
 
 /**
  * GET /api/profiles
  *
- * Returns profile metadata for each agent node.
- * Proxies to each node's Hermes Dashboard:
- *   - GET :9119/api/profiles → list of installed profiles with metadata
- *
- * If a node's dashboard is unreachable, that node is returned with
- * empty profiles and `reachable: false`.
+ * Return the active API-server profile for each agent node.
+ * Hermes selects a profile through the configured gateway URL and key.
  */
 
 interface ProfileInfo {
@@ -36,29 +32,10 @@ interface NodeProfile {
   reachable: boolean;
 }
 
-/**
- * Fetch the ephemeral session token from the Hermes Dashboard.
- */
-async function fetchSessionToken(baseUrl: string): Promise<string | null> {
-  try {
-    const res = await fetch(baseUrl, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!res.ok) return null;
-    const html = await res.text();
-    const match = html.match(/__HERMES_SESSION_TOKEN__="([^"]+)"/);
-    return match?.[1] ?? null;
-  } catch {
-    return null;
-  }
-}
-
 async function fetchNodeProfiles(
   role: string,
   name: string,
   host: string,
-  baseUrl: string,
 ): Promise<NodeProfile> {
   const result: NodeProfile = {
     role,
@@ -68,36 +45,32 @@ async function fetchNodeProfiles(
     reachable: false,
   };
 
-  const token = await fetchSessionToken(baseUrl);
-  if (!token) return result;
-
-  result.reachable = true;
-
-  // Fetch profiles
   try {
-    const res = await fetch(`${baseUrl}/api/profiles`, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(5_000),
-      headers: { "X-Hermes-Session-Token": token },
-    });
-    if (res.ok) {
-      const data: unknown = await res.json();
-      result.profiles = Array.isArray(data)
-        ? data
-        : (data as { profiles?: ProfileInfo[] })?.profiles ?? [];
-    }
+    const body = await requestHermesAgent(role, "/v1/capabilities");
+    const capability = typeof body === "object" && body !== null
+      ? body as Record<string, unknown>
+      : {};
+    const model = typeof capability.model === "string"
+      ? capability.model
+      : role;
+    result.reachable = true;
+    result.profiles = [{
+      name: model,
+      model,
+      is_default: true,
+      gateway_running: true,
+      description: "Active Hermes API-server profile",
+    }];
   } catch {
-    // Profiles endpoint may not exist in this Hermes version
+    return result;
   }
 
   return result;
 }
 
-export async function GET(): Promise<NextResponse> {
-  // Query all nodes in parallel
+export async function GET(): Promise<Response> {
   const promises = NODES.map((node) => {
-    const baseUrl = AGENT_DASHBOARD_HOSTS[node.role];
-    if (!baseUrl) {
+    if (!AGENT_HOSTS[node.role]) {
       return Promise.resolve({
         role: node.role,
         name: node.name,
@@ -106,12 +79,12 @@ export async function GET(): Promise<NextResponse> {
         reachable: false,
       } as NodeProfile);
     }
-    return fetchNodeProfiles(node.role, node.name, node.host, baseUrl);
+    return fetchNodeProfiles(node.role, node.name, node.host);
   });
 
   const nodes = await Promise.all(promises);
 
-  return NextResponse.json(
+  return Response.json(
     { nodes },
     { headers: { "Cache-Control": "no-store" } },
   );

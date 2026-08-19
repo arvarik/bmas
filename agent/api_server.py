@@ -22,10 +22,11 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
+from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 # ── Configuration ──────────────────────────────────────────────────────────
@@ -61,6 +62,32 @@ SSE_READ_TIMEOUT = int(os.getenv("SSE_READ_TIMEOUT", "600"))
 CANCELLATION_TIMEOUT_SECONDS = float(
     os.getenv("CANCELLATION_TIMEOUT_SECONDS", "5")
 )
+HERMES_429_MAX_ATTEMPTS = max(
+    1, int(os.getenv("HERMES_429_MAX_ATTEMPTS", "3"))
+)
+HERMES_429_RETRY_BASE_SECONDS = max(
+    0.05, float(os.getenv("HERMES_429_RETRY_BASE_SECONDS", "0.5"))
+)
+HERMES_429_RETRY_MAX_SECONDS = max(
+    HERMES_429_RETRY_BASE_SECONDS,
+    float(os.getenv("HERMES_429_RETRY_MAX_SECONDS", "5")),
+)
+HERMES_PROXY_MAX_BODY_BYTES = int(
+    os.getenv("HERMES_PROXY_MAX_BODY_BYTES", str(1024 * 1024))
+)
+
+HERMES_REQUIRED_FEATURES = (
+    "run_submission",
+    "run_status",
+    "run_events_sse",
+    "run_stop",
+)
+HERMES_REQUIRED_ENDPOINTS = {
+    "runs": ("POST", "/v1/runs"),
+    "run_status": ("GET", "/v1/runs/{run_id}"),
+    "run_events": ("GET", "/v1/runs/{run_id}/events"),
+    "run_stop": ("POST", "/v1/runs/{run_id}/stop"),
+}
 
 # Trace batch settings
 TRACE_BATCH_SIZE = int(os.getenv("TRACE_BATCH_SIZE", "10"))
@@ -114,6 +141,19 @@ class TaskStatus(str, Enum):
     declined = "declined"
     failed = "failed"
     timeout = "timeout"
+
+
+class HermesCapacityError(RuntimeError):
+    """Report a safe retry after Hermes rejects an unsubmitted run."""
+
+    def __init__(
+        self,
+        retry_after_seconds: float,
+        retry_after_header: Optional[str] = None,
+    ):
+        super().__init__("Hermes has no free run capacity")
+        self.retry_after_seconds = retry_after_seconds
+        self.retry_after_header = retry_after_header
 
 
 class TaskRequest(BaseModel):
@@ -182,7 +222,20 @@ class HealthResponse(BaseModel):
     litellm_url: str
     model: str
     runs_api_available: bool = False
+    runs_api_ready: bool = False
+    ready: bool = False
+    hermes_status: Optional[str] = None
+    missing_required_features: list[str] = Field(default_factory=list)
+    missing_required_endpoints: list[str] = Field(default_factory=list)
     execution_backend: str
+
+
+class DetailedHealthResponse(HealthResponse):
+    """Health response with the upstream Hermes readiness contract."""
+
+    hermes_version: Optional[str] = None
+    capabilities: Optional[dict] = None
+    upstream_readiness: Optional[dict] = None
 
 
 def _selected_execution_backend() -> str:
@@ -320,6 +373,8 @@ def translate(
         "role": role,
         "node": node,
     }
+    if hermes_data.get("run_id"):
+        base["run_id"] = str(hermes_data["run_id"])
 
     if hermes_event == "message.delta":
         return {
@@ -368,15 +423,84 @@ def translate(
         }
 
     elif hermes_event in ("approval.request", "approval.responded"):
+        approval_data = {
+            "event": hermes_event,
+            "action": hermes_data.get("action", "unknown"),
+            "args": hermes_data.get("args", {}),
+        }
+        for field in (
+            "choices",
+            "choice",
+            "resolved",
+            "status",
+            "description",
+            "message",
+        ):
+            if field in hermes_data:
+                approval_data[field] = hermes_data[field]
         return {
             **base,
-            "type": "approval_request",
-            "data": {
-                "action": hermes_data.get("action", "unknown"),
-                "args": hermes_data.get("args", {}),
-            },
+            "type": (
+                "approval_request"
+                if hermes_event == "approval.request"
+                else "approval_response"
+            ),
+            "data": approval_data,
             "tokens": {"in": 0, "out": 0},
             "cost_usd": 0.0,
+        }
+
+    elif hermes_event in ("subagent.start", "subagent.complete"):
+        subagent_fields = (
+            "subagent_id",
+            "parent_id",
+            "child_session_id",
+            "depth",
+            "status",
+            "model",
+            "input_tokens",
+            "output_tokens",
+            "reasoning_tokens",
+            "cost_usd",
+            "duration_seconds",
+            "summary",
+            "tool_count",
+        )
+        subagent_data = {
+            key: hermes_data[key]
+            for key in subagent_fields
+            if key in hermes_data
+        }
+        subagent_data["event"] = hermes_event
+        if "status" not in subagent_data:
+            subagent_data["status"] = (
+                "running" if hermes_event == "subagent.start" else "completed"
+            )
+
+        input_tokens = hermes_data.get("input_tokens", 0)
+        output_tokens = hermes_data.get("output_tokens", 0)
+        reasoning_tokens = hermes_data.get("reasoning_tokens", 0)
+        try:
+            tokens_in = max(0, int(input_tokens or 0))
+        except (TypeError, ValueError):
+            tokens_in = 0
+        try:
+            tokens_out = max(
+                0, int(output_tokens or 0) + int(reasoning_tokens or 0)
+            )
+        except (TypeError, ValueError):
+            tokens_out = 0
+        try:
+            cost_usd = max(0.0, float(hermes_data.get("cost_usd", 0) or 0))
+        except (TypeError, ValueError):
+            cost_usd = 0.0
+
+        return {
+            **base,
+            "type": hermes_event.replace(".", "_"),
+            "data": subagent_data,
+            "tokens": {"in": tokens_in, "out": tokens_out},
+            "cost_usd": cost_usd,
         }
 
     elif hermes_event == "run.completed":
@@ -447,6 +571,17 @@ def _log_hermes_event(log: "LogEmitter", event_name: str, data: dict) -> None:
             log.log(f"Approval {event_name.split('.')[1]}: {data.get('action', 'unknown')}",
                     level="warning", event="approval",
                     action=data.get("action"), args=data.get("args", {}))
+        elif event_name in ("subagent.start", "subagent.complete"):
+            subagent_id = data.get("subagent_id", "unknown")
+            status = data.get("status", event_name.split(".")[1])
+            log.log(
+                f"Subagent {subagent_id}: {status}",
+                level="info",
+                event=event_name.replace(".", "_"),
+                subagent_id=subagent_id,
+                parent_id=data.get("parent_id"),
+                status=status,
+            )
         elif event_name in ("run.failed", "run.cancelled"):
             log.log(f"Run {event_name.split('.')[1]}: {data.get('error', '')}",
                     level="error", event="run_error", error=data.get("error", ""))
@@ -1058,6 +1193,20 @@ app = FastAPI(
 )
 
 
+@app.exception_handler(HermesCapacityError)
+async def hermes_capacity_error_handler(
+    _request: Request, exc: HermesCapacityError,
+) -> JSONResponse:
+    """Return a rescheduling signal when Hermes rejects every safe retry."""
+    retry_after = max(1, int(exc.retry_after_seconds + 0.999))
+    retry_after_header = exc.retry_after_header or str(retry_after)
+    return JSONResponse(
+        status_code=429,
+        content={"detail": str(exc)},
+        headers={"Retry-After": retry_after_header},
+    )
+
+
 # ── Middleware ─────────────────────────────────────────────────────────────
 
 @app.middleware("http")
@@ -1098,6 +1247,52 @@ def _context_for_prompt(context: Optional[dict]) -> dict:
         for key, value in (context or {}).items()
         if key != "attachments"
     }
+
+
+def _stable_hermes_session_key(session_id: str) -> str:
+    """Return a stable Hermes memory key with the upstream size limits."""
+    candidate = str(session_id)
+    is_safe_header_value = all(
+        32 <= ord(character) <= 126 for character in candidate
+    )
+    if candidate and len(candidate) <= 256 and is_safe_header_value:
+        return candidate
+    digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+    return f"bmas-sha256:{digest}"
+
+
+def _hermes_retry_delay(response: httpx.Response, attempt: int) -> float:
+    """Return a bounded delay for one explicit Hermes capacity response."""
+    response_headers = getattr(response, "headers", {}) or {}
+    raw_retry_after = response_headers.get("Retry-After")
+    if raw_retry_after is None:
+        raw_retry_after = response_headers.get("retry-after")
+    try:
+        delay = float(raw_retry_after)
+    except (TypeError, ValueError):
+        delay = HERMES_429_RETRY_BASE_SECONDS * (2 ** attempt)
+    return min(
+        HERMES_429_RETRY_MAX_SECONDS,
+        max(HERMES_429_RETRY_BASE_SECONDS, delay),
+    )
+
+
+def _hermes_retry_after_header(
+    response: httpx.Response, fallback_seconds: float,
+) -> Optional[str]:
+    """Return one safe upstream Retry-After value for the daemon."""
+    response_headers = getattr(response, "headers", {}) or {}
+    value = response_headers.get("Retry-After")
+    if value is None:
+        value = response_headers.get("retry-after")
+    if value is None:
+        return None
+    candidate = str(value).strip()
+    if not candidate or len(candidate) > 64:
+        return str(max(1, int(fallback_seconds + 0.999)))
+    if any(ord(character) < 32 or ord(character) == 127 for character in candidate):
+        return str(max(1, int(fallback_seconds + 0.999)))
+    return candidate
 
 
 async def _run_via_litellm(
@@ -1241,6 +1436,10 @@ async def _run_via_api(
         headers = {}
         if HERMES_GATEWAY_KEY:
             headers["Authorization"] = f"Bearer {HERMES_GATEWAY_KEY}"
+        memory_scope = f"bmas:{actor_session_id}"
+        headers["X-Hermes-Session-Key"] = _stable_hermes_session_key(
+            memory_scope
+        )
         log = LogEmitter(client, task_id, role, turn_id, request_id)
         log.log(
             f"Starting run | model={model} profile={profile or 'default'}",
@@ -1264,11 +1463,23 @@ async def _run_via_api(
         status = TaskStatus.failed
         saw_terminal = False
 
+        def attach_run_id(trace: dict) -> dict:
+            """Keep the live and archived trace run targets consistent."""
+            if not run_id:
+                return trace
+            trace["run_id"] = run_id
+            trace_data = trace.get("data")
+            if isinstance(trace_data, dict):
+                trace_data["run_id"] = run_id
+            return trace
+
         async def consume_events(events: list[tuple[str, dict]]) -> None:
             """Translate events and update the run result."""
             nonlocal trace_seq, final_output, final_usage, status, saw_terminal
             for event_name, event_data in events:
                 trace_data = dict(event_data)
+                if run_id:
+                    trace_data.setdefault("run_id", run_id)
                 if event_name == "run.completed":
                     final_output = str(event_data.get("output", ""))
                     final_usage = _normalize_usage(event_data.get("usage"), model)
@@ -1292,7 +1503,7 @@ async def _run_via_api(
                     node=NODE_ID,
                 )
                 trace_seq += 1
-                await emitter.emit(bmas_trace)
+                await emitter.emit(attach_run_id(bmas_trace))
                 _log_hermes_event(log, event_name, trace_data)
 
         async def poll_until_terminal() -> None:
@@ -1331,12 +1542,47 @@ async def _run_via_api(
             async with asyncio.timeout_at(deadline):
                 if run_id is None:
                     try:
-                        resp = await client.post(
-                            f"{HERMES_GATEWAY_URL}/v1/runs",
-                            json=run_payload,
-                            headers=headers,
-                        )
+                        for attempt in range(HERMES_429_MAX_ATTEMPTS):
+                            resp = await client.post(
+                                f"{HERMES_GATEWAY_URL}/v1/runs",
+                                json=run_payload,
+                                headers=headers,
+                            )
+                            if resp.status_code != 429:
+                                break
+                            retry_delay = _hermes_retry_delay(resp, attempt)
+                            if attempt + 1 >= HERMES_429_MAX_ATTEMPTS:
+                                raise HermesCapacityError(
+                                    retry_delay,
+                                    _hermes_retry_after_header(
+                                        resp, retry_delay
+                                    ),
+                                )
+                            remaining = (
+                                deadline - asyncio.get_running_loop().time()
+                            )
+                            if remaining <= retry_delay + 1.0:
+                                raise HermesCapacityError(
+                                    retry_delay,
+                                    _hermes_retry_after_header(
+                                        resp, retry_delay
+                                    ),
+                                )
+                            logger.warning(
+                                f"[{request_id}] Hermes is at capacity. "
+                                f"Retrying run submission in {retry_delay:.2f}s"
+                            )
+                            log.log(
+                                "Hermes is at run capacity",
+                                level="warning",
+                                event="run_submit_backoff",
+                                attempt=attempt + 1,
+                                retry_after_seconds=retry_delay,
+                            )
+                            await asyncio.sleep(retry_delay)
                         resp.raise_for_status()
+                    except HermesCapacityError:
+                        raise
                     except Exception as exc:
                         logger.error(f"[{request_id}] Failed to submit run: {exc}")
                         log.log(
@@ -1391,12 +1637,13 @@ async def _run_via_api(
                             node=NODE_ID,
                         )
                         turn_start_trace["type"] = "turn_start"
+                        turn_start_trace["run_id"] = run_id
                         turn_start_trace["data"] = {
                             "objective": description[:200],
                             "phase": "execute",
                             "round": int((context or {}).get("round", 1) or 1),
                         }
-                        await emitter.emit(turn_start_trace)
+                        await emitter.emit(attach_run_id(turn_start_trace))
                 else:
                     logger.info(f"[{request_id}] Reconciling Hermes run {run_id}")
                     log.log(
@@ -1484,7 +1731,10 @@ async def _run_via_api(
             if not saw_terminal:
                 cancelled_trace = translate(
                     "run.cancelled",
-                    {"error": "Task cancelled by the daemon"},
+                    {
+                        "error": "Task cancelled by the daemon",
+                        "run_id": run_id,
+                    },
                     task_id,
                     turn_id,
                     seq=trace_seq,
@@ -1492,9 +1742,22 @@ async def _run_via_api(
                     node=NODE_ID,
                 )
                 cancelled_trace["data"]["status"] = "cancelled"
-                await emitter.emit(cancelled_trace)
+                await emitter.emit(attach_run_id(cancelled_trace))
             await emitter.flush_all()
             logger.warning(f"[{request_id}] Task cancelled by the daemon")
+            raise
+        except HermesCapacityError:
+            await emitter.flush_all()
+            remaining = max(
+                0.0, deadline - asyncio.get_running_loop().time()
+            )
+            if remaining > 0:
+                try:
+                    await asyncio.wait_for(log.flush(), timeout=remaining)
+                except TimeoutError:
+                    logger.warning(
+                        f"[{request_id}] Capacity log delivery timed out"
+                    )
             raise
         except (TimeoutError, asyncio.TimeoutError):
             if saw_terminal:
@@ -1509,7 +1772,7 @@ async def _run_via_api(
                     await _stop_remote_run(client, run_id, headers, request_id)
                 timeout_trace = translate(
                     "run.failed",
-                    {"error": final_output},
+                    {"error": final_output, "run_id": run_id},
                     task_id,
                     turn_id,
                     seq=trace_seq,
@@ -1517,7 +1780,7 @@ async def _run_via_api(
                     node=NODE_ID,
                 )
                 timeout_trace["data"]["status"] = "timeout"
-                await emitter.emit(timeout_trace)
+                await emitter.emit(attach_run_id(timeout_trace))
         except httpx.ReadTimeout:
             logger.warning(f"[{request_id}] SSE stream timed out after {SSE_READ_TIMEOUT}s")
             status = TaskStatus.timeout
@@ -1526,7 +1789,7 @@ async def _run_via_api(
                 await _stop_remote_run(client, run_id, headers, request_id)
             timeout_trace = translate(
                 "run.failed",
-                {"error": final_output},
+                {"error": final_output, "run_id": run_id},
                 task_id,
                 turn_id,
                 seq=trace_seq,
@@ -1534,7 +1797,7 @@ async def _run_via_api(
                 node=NODE_ID,
             )
             timeout_trace["data"]["status"] = "timeout"
-            await emitter.emit(timeout_trace)
+            await emitter.emit(attach_run_id(timeout_trace))
         except Exception as exc:
             logger.error(f"[{request_id}] Runs API error: {exc}")
             if resume_run_id and not saw_terminal:
@@ -2284,6 +2547,33 @@ def _claim_activation(
     return True
 
 
+def _release_unsubmitted_activation(key: str, fingerprint: str) -> bool:
+    """Remove one claim after Hermes rejects the run before admission."""
+    path = _activation_cache_path(key)
+    with _activation_cache_lock():
+        current = _load_activation_record_unlocked(key, time.time())
+        if current is None:
+            return True
+        if current.get("state") != "running" or current.get("run_id"):
+            return False
+        saved_fingerprint = str(current.get("fingerprint", ""))
+        if fingerprint and saved_fingerprint != fingerprint:
+            return False
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return True
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
+    return True
+
+
 def _persist_activation_state(
     key: str,
     state: str,
@@ -2428,6 +2718,18 @@ async def _run_durable_activation(
     """Run one claimed activation and persist every terminal outcome."""
     try:
         response = await factory()
+    except HermesCapacityError:
+        try:
+            released = await asyncio.to_thread(
+                _release_unsubmitted_activation, key, fingerprint
+            )
+            if not released:
+                logger.error(
+                    f"The capacity retry could not release activation {key}"
+                )
+        except Exception as exc:
+            logger.warning(f"Activation capacity release failed: {exc}")
+        raise
     except asyncio.CancelledError:
         try:
             await asyncio.to_thread(
@@ -2687,46 +2989,297 @@ async def _execute_task_once(
     )
 
 
-@app.get("/health", response_model=HealthResponse)
-async def health():
-    """
-    Health check with dependency verification.
-    Checks Hermes binary, LiteLLM gateway, and Runs API availability.
-    """
-    hermes_ok = Path(HERMES_BIN).exists()
-    litellm_ok = False
-    runs_api_ok = False
+def _hermes_gateway_headers() -> dict[str, str]:
+    """Return the configured authentication headers for Hermes."""
+    if not HERMES_GATEWAY_KEY:
+        return {}
+    return {"Authorization": f"Bearer {HERMES_GATEWAY_KEY}"}
 
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{LITELLM_URL.rstrip('/v1')}/health/readiness")
-            litellm_ok = resp.status_code == 200
-    except Exception:
-        pass
+
+def _hermes_gateway_endpoint(path: str) -> str:
+    """Build one fixed-host Hermes URL from a known relative path."""
+    if not HERMES_GATEWAY_URL:
+        raise RuntimeError("The Hermes Runs API is not configured")
+    return f"{HERMES_GATEWAY_URL.rstrip('/')}{path}"
+
+
+def _capability_gaps(capabilities: Optional[dict]) -> tuple[list[str], list[str]]:
+    """Return missing Hermes run features and endpoint contracts."""
+    features = capabilities.get("features", {}) if capabilities else {}
+    endpoints = capabilities.get("endpoints", {}) if capabilities else {}
+    if not isinstance(features, dict):
+        features = {}
+    if not isinstance(endpoints, dict):
+        endpoints = {}
+
+    missing_features = [
+        name for name in HERMES_REQUIRED_FEATURES
+        if features.get(name) is not True
+    ]
+    missing_endpoints: list[str] = []
+    for name, (expected_method, expected_path) in HERMES_REQUIRED_ENDPOINTS.items():
+        contract = endpoints.get(name)
+        if not isinstance(contract, dict):
+            missing_endpoints.append(name)
+            continue
+        method = str(contract.get("method", "")).upper()
+        path = str(contract.get("path", ""))
+        if method != expected_method or path != expected_path:
+            missing_endpoints.append(name)
+    return missing_features, missing_endpoints
+
+
+async def _collect_health_snapshot() -> dict:
+    """Probe local dependencies and the Hermes readiness contract."""
+    hermes_ok = Path(HERMES_BIN).exists()
+    capabilities: Optional[dict] = None
+    detailed_health: Optional[dict] = None
+    litellm_ok = False
+    capabilities_ok = False
+    detailed_health_ok = False
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        probes = [
+            client.get(
+                f"{LITELLM_URL.removesuffix('/v1')}/health/readiness"
+            )
+        ]
+        if HERMES_GATEWAY_URL:
+            headers = _hermes_gateway_headers()
+            probes.extend([
+                client.get(
+                    _hermes_gateway_endpoint("/v1/capabilities"),
+                    headers=headers,
+                ),
+                client.get(
+                    _hermes_gateway_endpoint("/health/detailed"),
+                    headers=headers,
+                ),
+            ])
+        results = await asyncio.gather(*probes, return_exceptions=True)
+
+    litellm_response = results[0]
+    if not isinstance(litellm_response, BaseException):
+        litellm_ok = litellm_response.status_code == 200
 
     if HERMES_GATEWAY_URL:
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(
-                    f"{HERMES_GATEWAY_URL}/health",
-                    headers={"Authorization": f"Bearer {HERMES_GATEWAY_KEY}"},
-                )
-                runs_api_ok = resp.status_code == 200
-        except Exception:
-            pass
+        capabilities_response = results[1]
+        if not isinstance(capabilities_response, BaseException):
+            capabilities_ok = capabilities_response.status_code == 200
+            if capabilities_ok:
+                try:
+                    value = capabilities_response.json()
+                    if isinstance(value, dict):
+                        capabilities = value
+                except Exception:
+                    capabilities_ok = False
+
+        detailed_response = results[2]
+        if not isinstance(detailed_response, BaseException):
+            detailed_health_ok = detailed_response.status_code == 200
+            if detailed_health_ok:
+                try:
+                    value = detailed_response.json()
+                    if isinstance(value, dict):
+                        detailed_health = value
+                except Exception:
+                    detailed_health_ok = False
+
+    missing_features, missing_endpoints = _capability_gaps(capabilities)
+    hermes_status_value = (
+        detailed_health.get("status") if detailed_health else None
+    )
+    hermes_status = (
+        str(hermes_status_value).strip().lower()
+        if hermes_status_value is not None
+        else None
+    )
+    upstream_ready = hermes_status in {"ready", "ok", "healthy"}
+    runs_api_available = capabilities_ok or detailed_health_ok
+    runs_api_ready = bool(
+        capabilities_ok
+        and detailed_health_ok
+        and upstream_ready
+        and not missing_features
+        and not missing_endpoints
+    )
 
     backend = _selected_execution_backend()
-    execution_ok = backend == "litellm" or hermes_ok or runs_api_ok
-    status = "healthy" if execution_ok and litellm_ok else "degraded"
-    return HealthResponse(
-        status=status,
-        node_id=NODE_ID,
-        hermes_available=hermes_ok,
-        litellm_reachable=litellm_ok,
-        litellm_url=LITELLM_URL,
-        model=LITELLM_MODEL,
-        runs_api_available=runs_api_ok,
-        execution_backend=backend,
+    if backend == "litellm":
+        execution_ok = litellm_ok
+    elif backend == "hermes-runs-api":
+        execution_ok = runs_api_ready
+    elif backend == "hermes-cli":
+        execution_ok = hermes_ok
+    else:
+        execution_ok = False
+    ready = execution_ok and litellm_ok
+
+    return {
+        "status": "healthy" if ready else "degraded",
+        "ready": ready,
+        "node_id": NODE_ID,
+        "hermes_available": hermes_ok,
+        "litellm_reachable": litellm_ok,
+        "litellm_url": LITELLM_URL,
+        "model": LITELLM_MODEL,
+        "runs_api_available": runs_api_available,
+        "runs_api_ready": runs_api_ready,
+        "hermes_status": hermes_status,
+        "hermes_version": (
+            str(detailed_health.get("version"))
+            if detailed_health and detailed_health.get("version") is not None
+            else None
+        ),
+        "capabilities": capabilities,
+        "upstream_readiness": (
+            detailed_health.get("readiness") if detailed_health else None
+        ),
+        "missing_required_features": missing_features,
+        "missing_required_endpoints": missing_endpoints,
+        "execution_backend": backend,
+    }
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health():
+    """Return capability-aware node readiness."""
+    return HealthResponse.model_validate(await _collect_health_snapshot())
+
+
+@app.get("/health/detailed", response_model=DetailedHealthResponse)
+async def detailed_health(request: Request):
+    """Return the complete bounded Hermes readiness contract."""
+    _authorize_execute(request)
+    return DetailedHealthResponse.model_validate(
+        await _collect_health_snapshot()
+    )
+
+
+def _bounded_hermes_path_id(value: str, label: str) -> str:
+    """Validate and encode one Hermes resource identifier."""
+    if not value or len(value) > 256:
+        raise HTTPException(400, f"The {label} is invalid")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise HTTPException(400, f"The {label} is invalid")
+    return quote(value, safe="")
+
+
+async def _proxy_hermes_request(
+    request: Request,
+    method: str,
+    path: str,
+) -> Response:
+    """Forward one authenticated control request to the fixed Hermes node."""
+    _authorize_execute(request)
+    if not HERMES_GATEWAY_URL:
+        raise HTTPException(503, "The Hermes Runs API is not configured")
+
+    body: Optional[bytes] = None
+    headers = _hermes_gateway_headers()
+    if method != "GET":
+        body = await request.body()
+        if len(body) > HERMES_PROXY_MAX_BODY_BYTES:
+            raise HTTPException(413, "The Hermes proxy request is too large")
+        content_type = request.headers.get("Content-Type")
+        if content_type:
+            headers["Content-Type"] = content_type
+
+    query_params = list(request.query_params.multi_items())
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            upstream = await client.request(
+                method,
+                _hermes_gateway_endpoint(path),
+                params=query_params,
+                content=body,
+                headers=headers,
+            )
+    except httpx.RequestError as exc:
+        logger.warning(f"Hermes proxy request failed for {path}: {exc}")
+        raise HTTPException(502, "The Hermes API request failed") from exc
+
+    response_headers: dict[str, str] = {}
+    for name in ("Retry-After", "Cache-Control", "ETag", "Last-Modified"):
+        value = upstream.headers.get(name)
+        if value:
+            response_headers[name] = value
+    content_type = upstream.headers.get("Content-Type")
+    if content_type:
+        response_headers["Content-Type"] = content_type
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers=response_headers,
+    )
+
+
+@app.get("/v1/capabilities")
+async def proxy_hermes_capabilities(request: Request):
+    """Forward Hermes capability discovery."""
+    return await _proxy_hermes_request(request, "GET", "/v1/capabilities")
+
+
+@app.get("/v1/skills")
+async def proxy_hermes_skills(request: Request):
+    """Forward the active Hermes skill inventory."""
+    return await _proxy_hermes_request(request, "GET", "/v1/skills")
+
+
+@app.get("/v1/toolsets")
+async def proxy_hermes_toolsets(request: Request):
+    """Forward the active Hermes toolset inventory."""
+    return await _proxy_hermes_request(request, "GET", "/v1/toolsets")
+
+
+@app.get("/api/sessions")
+async def proxy_hermes_sessions(request: Request):
+    """Forward the Hermes session list."""
+    return await _proxy_hermes_request(request, "GET", "/api/sessions")
+
+
+@app.get("/api/sessions/{session_id}")
+async def proxy_hermes_session(session_id: str, request: Request):
+    """Forward one Hermes session resource."""
+    safe_id = _bounded_hermes_path_id(session_id, "session ID")
+    return await _proxy_hermes_request(
+        request, "GET", f"/api/sessions/{safe_id}"
+    )
+
+
+@app.get("/api/sessions/{session_id}/messages")
+async def proxy_hermes_session_messages(session_id: str, request: Request):
+    """Forward one Hermes session message list."""
+    safe_id = _bounded_hermes_path_id(session_id, "session ID")
+    return await _proxy_hermes_request(
+        request, "GET", f"/api/sessions/{safe_id}/messages"
+    )
+
+
+@app.post("/api/sessions/{session_id}/fork")
+async def proxy_hermes_session_fork(session_id: str, request: Request):
+    """Forward one Hermes session fork request."""
+    safe_id = _bounded_hermes_path_id(session_id, "session ID")
+    return await _proxy_hermes_request(
+        request, "POST", f"/api/sessions/{safe_id}/fork"
+    )
+
+
+@app.post("/v1/runs/{run_id}/approval")
+async def proxy_hermes_run_approval(run_id: str, request: Request):
+    """Forward one Hermes approval choice."""
+    safe_id = _bounded_hermes_path_id(run_id, "run ID")
+    return await _proxy_hermes_request(
+        request, "POST", f"/v1/runs/{safe_id}/approval"
+    )
+
+
+@app.post("/v1/runs/{run_id}/steer")
+async def proxy_hermes_run_steer(run_id: str, request: Request):
+    """Forward live guidance to one Hermes run."""
+    safe_id = _bounded_hermes_path_id(run_id, "run ID")
+    return await _proxy_hermes_request(
+        request, "POST", f"/v1/runs/{safe_id}/steer"
     )
 
 

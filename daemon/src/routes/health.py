@@ -12,6 +12,7 @@ from fastapi import APIRouter
 import database as db
 from config import (
     AGENT_ENDPOINTS,
+    BMAS_EXECUTE_KEY,
     COORDINATION_VARIANT,
     LITELLM_KEY,
     LITELLM_URL,
@@ -61,30 +62,80 @@ def _has_runtime_pressure(queue: dict, runtime: dict) -> bool:
     )
 
 
+def _agent_readiness_detail(agent_health: dict[str, dict]) -> str:
+    """Return a short capability summary for the readiness response."""
+    if not agent_health:
+        return "No execution endpoint is configured."
+    ready_count = sum(
+        1 for value in agent_health.values() if value.get("ready")
+    )
+    missing: list[str] = []
+    for role, value in agent_health.items():
+        requirements = [
+            *value.get("missing_required_features", []),
+            *value.get("missing_required_endpoints", []),
+        ]
+        if requirements:
+            missing.append(f"{role}: {', '.join(map(str, requirements))}")
+    detail = f"{ready_count}/{len(agent_health)} execution endpoints are ready."
+    if missing:
+        detail += f" Missing contract items: {'; '.join(missing)}."
+    return detail
+
+
 async def _check_agent_health(client: httpx.AsyncClient, role: str, url: str) -> dict:
-    """Probe a single agent's health endpoint. Returns AgentStatus dict."""
+    """Probe one agent's capability-aware readiness endpoint."""
     try:
-        resp = await client.get(f"{url}/health")
+        headers = (
+            {"Authorization": f"Bearer {BMAS_EXECUTE_KEY}"}
+            if BMAS_EXECUTE_KEY
+            else None
+        )
+        resp = await client.get(f"{url}/health/detailed", headers=headers)
+        probe = "detailed"
+        if resp.status_code == 404:
+            resp = await client.get(f"{url}/health", headers=headers)
+            probe = "legacy"
         resp.raise_for_status()
         body = resp.json() if resp.headers.get("content-type", "").startswith(
             "application/json"
         ) else {}
         return {
             "alive": True,
+            "ready": bool(body.get("ready", False)),
             "last_heartbeat": datetime.now(UTC).isoformat(),
             "current_task": None,
             "endpoint": url,
+            "probe": probe,
             "execution_backend": body.get("execution_backend"),
             "litellm_reachable": body.get("litellm_reachable"),
+            "runs_api_ready": body.get("runs_api_ready", False),
+            "hermes_status": body.get("hermes_status"),
+            "hermes_version": body.get("hermes_version"),
+            "capabilities": body.get("capabilities"),
+            "missing_required_features": body.get(
+                "missing_required_features", []
+            ),
+            "missing_required_endpoints": body.get(
+                "missing_required_endpoints", []
+            ),
         }
     except Exception:
         return {
             "alive": False,
+            "ready": False,
             "last_heartbeat": "",
             "current_task": None,
             "endpoint": url,
+            "probe": "unavailable",
             "execution_backend": None,
             "litellm_reachable": False,
+            "runs_api_ready": False,
+            "hermes_status": None,
+            "hermes_version": None,
+            "capabilities": None,
+            "missing_required_features": [],
+            "missing_required_endpoints": [],
         }
 
 
@@ -174,7 +225,7 @@ async def health():
         litellm_ok = response.is_success
 
     agents_ready = bool(agent_health) and all(
-        value.get("alive") for value in agent_health.values()
+        value.get("ready") for value in agent_health.values()
     )
     provider_credentials = [dict(item) for item in MODEL_CREDENTIALS]
     credentials_ready = all(
@@ -216,7 +267,7 @@ async def readiness():
     snapshot = await health()
     agent_health = snapshot["agent_health"]
     agents_ready = bool(agent_health) and all(
-        value.get("alive") for value in agent_health.values()
+        value.get("ready") for value in agent_health.values()
     )
     delivery_ready = not snapshot["event_delivery"].get("overloaded", True)
 
@@ -246,11 +297,7 @@ async def readiness():
             "id": "agents",
             "label": "Execution agents",
             "ready": agents_ready,
-            "detail": (
-                f"{len(agent_health)} configured execution endpoint(s)."
-                if agent_health
-                else "No execution endpoint is configured."
-            ),
+            "detail": _agent_readiness_detail(agent_health),
             "fix": "Run: docker compose logs agent",
         },
         {

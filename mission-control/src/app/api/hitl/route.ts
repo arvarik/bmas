@@ -9,7 +9,11 @@ type HitlAction =
   | "inject-hint"
   | "boost"
   | "retract"
-  | "approval";
+  | "approval"
+  | "run-steer";
+
+type ApprovalChoice = "once" | "session" | "always" | "deny";
+const APPROVAL_CHOICES = new Set<ApprovalChoice>(["once", "session", "always", "deny"]);
 
 interface HitlPayload {
   action: HitlAction;
@@ -17,7 +21,8 @@ interface HitlPayload {
   hint_text?: string;
   reason?: string;
   run_id?: string;
-  decision?: "approve" | "deny";
+  choice?: ApprovalChoice;
+  input?: string;
   entry_id?: string;
 }
 
@@ -84,17 +89,33 @@ export async function POST(request: Request): Promise<NextResponse> {
       endpoint = "steer";
       payload = { action: body.action, entry_id: body.entry_id };
     } else if (body.action === "approval") {
-      if (!body.run_id || !body.decision) {
+      if (!body.run_id || !body.choice || !APPROVAL_CHOICES.has(body.choice)) {
         return NextResponse.json(
-          { error: "approval requires run_id and decision" },
+          { error: "approval requires run_id and a valid choice" },
           { status: 400 },
         );
       }
       payload = {
         run_id: body.run_id,
-        decision: body.decision,
+        choice: body.choice,
         reason: body.reason ?? "",
       };
+    } else if (body.action === "run-steer") {
+      const input = body.input?.trim();
+      if (!body.run_id || !input) {
+        return NextResponse.json(
+          { error: "run-steer requires run_id and input" },
+          { status: 400 },
+        );
+      }
+      if (input.length > 2_000) {
+        return NextResponse.json(
+          { error: "run-steer input must contain at most 2000 characters" },
+          { status: 400 },
+        );
+      }
+      endpoint = "run-steer";
+      payload = { run_id: body.run_id, input };
     }
 
     const upstream = await fetch(

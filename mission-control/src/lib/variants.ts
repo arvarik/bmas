@@ -242,15 +242,18 @@ function mapTrace(raw: Record<string, unknown>): TraceEvent {
   const turnId = String(raw.turn_id ?? "");
   const seq = Number(raw.seq ?? 0);
   const type = String(raw.type ?? raw.trace_type ?? "reasoning");
+  const sourceId = String(raw.trace_id ?? turnId);
+  const dataRunId = typeof data?.run_id === "string" ? data.run_id : undefined;
   return {
-    id: String(raw.trace_id ?? `${turnId}:${seq}:${type}`),
+    id: `${sourceId}:${seq}:${type}`,
     turn_id: turnId,
     actor: String(raw.actor ?? raw.role ?? raw.agent_role ?? "unknown"),
     type,
     content,
     seq,
     timestamp: String(raw.timestamp ?? raw.ts ?? raw.created_at ?? ""),
-    run_id: typeof raw.run_id === "string" ? raw.run_id : undefined,
+    run_id: typeof raw.run_id === "string" ? raw.run_id : dataRunId,
+    data: data ?? undefined,
   };
 }
 
@@ -486,6 +489,15 @@ function projectClassicEvent(
           (item) => `${item.turn_id}:${item.run_id}`,
         ),
       };
+    case "approval_response": {
+      const runId = String(raw.run_id ?? "");
+      return {
+        ...state,
+        approvalRequests: state.approvalRequests.filter(
+          (item) => item.run_id !== runId,
+        ),
+      };
+    }
     case "paused":
       return { ...state, isPaused: true };
     case "resumed":

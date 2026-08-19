@@ -26,6 +26,7 @@ function getBreadcrumb(pathname: string): string {
   }
   if (pathname === "/infra") return "Infrastructure";
   if (pathname === "/skills") return "Skills";
+  if (pathname === "/sessions") return "Hermes Sessions";
   if (pathname === "/settings") return "Settings";
   return "Overview";
 }

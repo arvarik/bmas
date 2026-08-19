@@ -79,6 +79,17 @@ def _summarize(text: str, limit: int = 280) -> str:
     return first if len(first) <= limit else first[: limit - 1] + "…"
 
 
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """Return a bounded Retry-After delay for a numeric header."""
+    raw_value = response.headers.get("Retry-After")
+    if raw_value is None:
+        return None
+    try:
+        return min(8.0, max(0.0, float(raw_value)))
+    except (TypeError, ValueError):
+        return None
+
+
 def build_attachment_context(task_files: list[dict]) -> list[dict]:
     """Build the stable attachment contract that agent nodes receive."""
     return [
@@ -1943,6 +1954,7 @@ class Orchestrator:
 
         max_attempts = len(candidate_urls) + 2
         candidate_index = 0
+        rate_limited_until: dict[str, float] = {}
         for attempt in range(max_attempts):
             url = candidate_urls[candidate_index]
             try:
@@ -1962,6 +1974,63 @@ class Orchestrator:
                     )
                 finally:
                     self._release_endpoint_slot(url, endpoint_slot)
+                if resp.status_code == 429:
+                    retry_after = _retry_after_seconds(resp)
+                    delay = (
+                        retry_after
+                        if retry_after is not None
+                        else min(8.0, 2 ** attempt) + random.uniform(0.0, 0.25)
+                    )
+                    next_index = (
+                        (candidate_index + 1) % len(candidate_urls)
+                        if candidate_urls
+                        else candidate_index
+                    )
+                    next_url = candidate_urls[next_index]
+                    rate_limited_until[url] = (
+                        asyncio.get_running_loop().time() + delay
+                    )
+                    await self._safe_log(
+                        role,
+                        f"Agent endpoint returned HTTP 429. Retry in {delay:.2f}s.",
+                        task_id=task_id,
+                        level="warning",
+                        node=url,
+                        turn_id=turn_id,
+                        fields={
+                            "event": "endpoint_rate_limited",
+                            "role": role,
+                            "node": url,
+                            "next_node": next_url,
+                            "attempt": attempt + 1,
+                            "delay_s": delay,
+                        },
+                    )
+                    if attempt >= max_attempts - 1:
+                        with contextlib.suppress(Exception):
+                            await db.complete_turn(
+                                turn_id, "failed", 0, 0.0, node=url,
+                            )
+                        return {
+                            "task_id": task_id,
+                            "status": "failed",
+                            "error_code": "endpoint_rate_limited",
+                            "result": "All agent endpoints remained at capacity.",
+                            "retry_after": delay,
+                        }
+                    if next_url != url:
+                        context_payload = payload.get("context")
+                        if isinstance(context_payload, dict):
+                            context_payload["previous_response_id"] = None
+                    candidate_index = next_index
+                    next_wait = max(
+                        0.0,
+                        rate_limited_until.get(next_url, 0.0)
+                        - asyncio.get_running_loop().time(),
+                    )
+                    if next_wait:
+                        await asyncio.sleep(next_wait)
+                    continue
                 resp.raise_for_status()
                 data = resp.json()
                 if not isinstance(data, dict) or not data:

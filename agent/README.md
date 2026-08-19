@@ -16,15 +16,25 @@ The direct backend sends the role prompt, task objective, and blackboard context
 
 The Hermes backends add profiles, persistent session state, tool traces, and cancellation of remote runs.
 
+The reviewed API contract targets Hermes Agent v0.20.4. Read [Hermes Integration Contract](../docs/HERMES_API.md) before you update a node.
+
 ## Endpoints
 
 | Method | Path | Purpose |
 |:---|:---|:---|
-| `GET` | `/health` | Reports the selected backend and LiteLLM reachability. |
+| `GET` | `/health` | Reports bounded capability-aware readiness. |
+| `GET` | `/health/detailed` | Reports the upstream Hermes readiness and capability contract. |
 | `POST` | `/execute` | Executes one idempotent role activation. |
 | `POST` | `/tasks/{task_id}/cancel` | Cancels local activations and known Hermes runs. |
+| `GET` | `/v1/capabilities` | Proxies Hermes capability discovery. |
+| `GET` | `/v1/skills` | Proxies the read-only active skill inventory. |
+| `GET` | `/v1/toolsets` | Proxies the read-only toolset inventory. |
+| `GET` | `/api/sessions*` | Proxies session browsing. |
+| `POST` | `/api/sessions/{session_id}/fork` | Forks one Hermes session. |
+| `POST` | `/v1/runs/{run_id}/approval` | Sends an approval choice. |
+| `POST` | `/v1/runs/{run_id}/steer` | Sends live run guidance. |
 
-Set `BMAS_EXECUTE_KEY` to protect both mutation routes. The daemon sends the same value as a bearer credential.
+Set `BMAS_EXECUTE_KEY` to protect detailed health, execution, cancellation, and Hermes proxy routes. The daemon and Mission Control send the same bearer credential.
 
 ## Idempotent execution
 
@@ -82,6 +92,20 @@ The direct starter uses the profile name as a role selector. It does not load He
 | `HERMES_BIN` | `/usr/local/bin/hermes` | Selects the Hermes CLI fallback. |
 | `SSE_READ_TIMEOUT` | `600` | Limits one idle Hermes event read. |
 | `CANCELLATION_TIMEOUT_SECONDS` | `5` | Limits one Hermes cancellation call. |
+| `HERMES_429_MAX_ATTEMPTS` | `3` | Limits pre-admission capacity retries. |
+| `HERMES_429_RETRY_BASE_SECONDS` | `0.5` | Sets the first fallback retry delay. |
+| `HERMES_429_RETRY_MAX_SECONDS` | `5` | Limits one agent retry delay. |
+| `HERMES_PROXY_MAX_BODY_BYTES` | `1048576` | Limits one proxied request body. |
+
+Hermes calls the upstream authentication value `API_SERVER_KEY`. Set `HERMES_GATEWAY_KEY` to the same value for the selected profile.
+
+A multi-profile Hermes gateway uses a profile URL prefix. For example, set `HERMES_GATEWAY_URL=http://127.0.0.1:8642/p/planner`.
+
+Hermes v0.20.4 exposes capabilities, detailed health, approvals, steering, sessions, skills, and toolsets. The adapter proxies these routes through its fixed Hermes URL.
+
+Hermes exposes skills and toolsets as read-only inventory. It does not provide an API server route that changes them.
+
+The adapter sends `X-Hermes-Session-Key` as `bmas:<task-actor-session>`. This value stays stable across rounds and node rescheduling without sharing memory between tasks.
 
 ## Reliability limits
 

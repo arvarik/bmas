@@ -1,25 +1,22 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { Panel } from "@/components/ui/Panel";
-import { ActionButton } from "@/components/ui/ActionButton";
-import { Skeleton } from "@/components/ui/Skeleton";
-import { useToast } from "@/hooks/useToast";
-import { AGENT_COLORS, type AgentRole } from "@/lib/design-tokens";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Bot,
   ChevronDown,
   ChevronRight,
-  User,
+  Cpu,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Sparkles,
   Wifi,
   WifiOff,
-  Search,
-  Sparkles,
-  Cpu,
-  Zap,
+  Wrench,
 } from "lucide-react";
-
-// ── Types ─────────────────────────────────────────────────────────────
+import { ActionButton } from "@/components/ui/ActionButton";
+import { Panel } from "@/components/ui/Panel";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { authorColor } from "@/lib/design-tokens";
 
 interface Skill {
   name: string;
@@ -28,15 +25,21 @@ interface Skill {
   enabled?: boolean;
 }
 
+interface Toolset {
+  name: string;
+  label?: string;
+  description?: string;
+  enabled?: boolean;
+  configured?: boolean;
+  tools?: string[];
+}
+
 interface ProfileInfo {
   name: string;
-  is_default?: boolean;
   model?: string;
-  provider?: string;
-  skill_count?: number;
+  is_default?: boolean;
   gateway_running?: boolean;
   description?: string;
-  distribution_name?: string | null;
 }
 
 interface NodeData {
@@ -47,452 +50,277 @@ interface NodeData {
   reachable: boolean;
 }
 
-const NODE_ROLES: AgentRole[] = ["planner", "executor", "auditor"];
-const NODE_INDEX: Record<string, number> = { planner: 1, executor: 2, auditor: 3 };
+interface CapabilityData {
+  skills: Skill[];
+  toolsets: Toolset[];
+  error: string | null;
+}
 
-// ── Main Component ────────────────────────────────────────────────────
+function recordArray<T>(value: unknown, field: string): T[] {
+  if (typeof value !== "object" || value === null) return [];
+  const items = (value as Record<string, unknown>)[field];
+  return Array.isArray(items) ? items as T[] : [];
+}
+
+async function responseError(response: Response): Promise<string> {
+  const body = await response.json().catch(() => ({})) as { error?: string };
+  return body.error ?? `HTTP ${response.status}`;
+}
 
 export default function SkillsExplorer() {
-  // ── Node profile data ──────────────────────────────────────────────
-  const [nodeData, setNodeData] = useState<NodeData[]>([]);
-  const [nodeDataLoading, setNodeDataLoading] = useState(true);
-
-  // ── Per-node skills ────────────────────────────────────────────────
-  const [skillsByNode, setSkillsByNode] = useState<Record<string, Skill[]>>({});
-  const [skillsLoading, setSkillsLoading] = useState<Record<string, boolean>>({});
-  const [skillsErrors, setSkillsErrors] = useState<Record<string, string | null>>({});
-
-  // ── Expanded sections ──────────────────────────────────────────────
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set(NODE_ROLES));
-  const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set(NODE_ROLES));
-
-  // ── Filter ─────────────────────────────────────────────────────────
+  const [nodes, setNodes] = useState<NodeData[]>([]);
+  const [capabilities, setCapabilities] = useState<Record<string, CapabilityData>>({});
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
-  const [togglingSkill, setTogglingSkill] = useState<string | null>(null);
 
-  const { toast } = useToast();
-
-  // ── Fetch node profiles ────────────────────────────────────────────
-  const fetchNodeData = useCallback(async () => {
-    setNodeDataLoading(true);
+  const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const res = await fetch("/api/profiles", { cache: "no-store" });
-      if (res.ok) {
-        const data = (await res.json()) as { nodes: NodeData[] };
-        setNodeData(data.nodes ?? []);
-      }
-    } catch {
-      // Best-effort
-    } finally {
-      setNodeDataLoading(false);
-    }
-  }, []);
+      const nodeResponse = await fetch("/api/profiles", { cache: "no-store" });
+      if (!nodeResponse.ok) throw new Error(await responseError(nodeResponse));
+      const nodeBody = await nodeResponse.json() as { nodes?: NodeData[] };
+      const nextNodes = nodeBody.nodes ?? [];
+      setNodes(nextNodes);
+      setExpandedNodes((current) => current.size
+        ? current
+        : new Set(nextNodes.map((node) => node.role)));
 
-  // ── Fetch skills for a single node ─────────────────────────────────
-  const fetchSkills = useCallback(async (role: string) => {
-    setSkillsLoading(prev => ({ ...prev, [role]: true }));
-    setSkillsErrors(prev => ({ ...prev, [role]: null }));
-    try {
-      const res = await fetch(`/api/skills?node=${role}`, { cache: "no-store" });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setSkillsErrors(prev => ({ ...prev, [role]: body.error ?? `HTTP ${res.status}` }));
-        setSkillsByNode(prev => ({ ...prev, [role]: [] }));
-        return;
-      }
-      const data = (await res.json()) as { skills?: Skill[] };
-      setSkillsByNode(prev => ({ ...prev, [role]: data.skills ?? [] }));
-    } catch (err) {
-      setSkillsErrors(prev => ({
-        ...prev,
-        [role]: err instanceof Error ? err.message : "Fetch failed",
+      const entries = await Promise.all(nextNodes.map(async (node) => {
+        try {
+          const encodedRole = encodeURIComponent(node.role);
+          const [skillResponse, toolsetResponse] = await Promise.all([
+            fetch(`/api/skills?node=${encodedRole}`, { cache: "no-store" }),
+            fetch(`/api/toolsets?node=${encodedRole}`, { cache: "no-store" }),
+          ]);
+          if (!skillResponse.ok) throw new Error(await responseError(skillResponse));
+          if (!toolsetResponse.ok) throw new Error(await responseError(toolsetResponse));
+          const [skillBody, toolsetBody] = await Promise.all([
+            skillResponse.json(),
+            toolsetResponse.json(),
+          ]);
+          return [node.role, {
+            skills: recordArray<Skill>(skillBody, "skills"),
+            toolsets: recordArray<Toolset>(toolsetBody, "toolsets"),
+            error: null,
+          }] as const;
+        } catch (error) {
+          return [node.role, {
+            skills: [],
+            toolsets: [],
+            error: error instanceof Error ? error.message : "Capability request failed",
+          }] as const;
+        }
       }));
-      setSkillsByNode(prev => ({ ...prev, [role]: [] }));
+      setCapabilities(Object.fromEntries(entries));
+    } catch (error) {
+      setNodes([]);
+      setCapabilities({
+        _global: {
+          skills: [],
+          toolsets: [],
+          error: error instanceof Error ? error.message : "Agent discovery failed",
+        },
+      });
     } finally {
-      setSkillsLoading(prev => ({ ...prev, [role]: false }));
+      setLoading(false);
     }
   }, []);
 
-  // ── Initial load ───────────────────────────────────────────────────
   useEffect(() => {
-    void fetchNodeData();
-    for (const role of NODE_ROLES) {
-      void fetchSkills(role);
-    }
-  }, [fetchNodeData, fetchSkills]);
+    void Promise.resolve().then(load);
+  }, [load]);
 
-  // ── Toggle skill ───────────────────────────────────────────────────
-  const toggleSkill = async (role: string, skill: Skill) => {
-    setTogglingSkill(`${role}:${skill.name}`);
-    try {
-      const res = await fetch("/api/skills", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          node: role,
-          name: skill.name,
-          enabled: !skill.enabled,
-        }),
-      });
-      if (res.ok) {
-        setSkillsByNode(prev => ({
-          ...prev,
-          [role]: (prev[role] ?? []).map(s =>
-            s.name === skill.name ? { ...s, enabled: !s.enabled } : s
-          ),
-        }));
-        toast({
-          type: "success",
-          message: `Skill '${skill.name}' ${!skill.enabled ? "enabled" : "disabled"}.`,
-        });
-      } else {
-        toast({ type: "error", message: "Failed to toggle skill." });
-      }
-    } catch {
-      toast({ type: "error", message: "Network error toggling skill." });
-    } finally {
-      setTogglingSkill(null);
-    }
-  };
+  const normalizedFilter = filter.trim().toLowerCase();
+  const globalError = capabilities._global?.error;
 
-  // ── Toggle helpers ─────────────────────────────────────────────────
-  const toggleNode = (role: string) => {
-    setExpandedNodes(prev => {
-      const next = new Set(prev);
-      if (next.has(role)) next.delete(role);
-      else next.add(role);
-      return next;
-    });
-  };
+  const visibleNodes = useMemo(() => nodes.map((node) => {
+    const data = capabilities[node.role] ?? { skills: [], toolsets: [], error: null };
+    if (!normalizedFilter) return { node, data };
+    const skills = data.skills.filter((skill) =>
+      [skill.name, skill.description, skill.category]
+        .some((value) => typeof value === "string" && value.toLowerCase().includes(normalizedFilter)));
+    const toolsets = data.toolsets.filter((toolset) =>
+      [toolset.name, toolset.label, toolset.description, ...(toolset.tools ?? [])]
+        .some((value) => typeof value === "string" && value.toLowerCase().includes(normalizedFilter)));
+    return { node, data: { ...data, skills, toolsets } };
+  }), [capabilities, nodes, normalizedFilter]);
 
-  const toggleSkillsSection = (role: string) => {
-    setExpandedSkills(prev => {
-      const next = new Set(prev);
-      if (next.has(role)) next.delete(role);
-      else next.add(role);
-      return next;
-    });
-  };
-
-  // ── Merge node data with roles ─────────────────────────────────────
-  const getNodeInfo = (role: string): NodeData | null => {
-    return nodeData.find(n => n.role === role) ?? null;
-  };
-
-  // ── Loading state ──────────────────────────────────────────────────
-  if (nodeDataLoading && nodeData.length === 0) {
+  if (loading && nodes.length === 0) {
     return (
-      <Panel title="Agents" emptyIcon={Bot} emptyMessage="Loading...">
+      <Panel title="Hermes capabilities">
         <Skeleton variant="list" lines={6} />
       </Panel>
     );
   }
 
   return (
-    <Panel title="Agents" emptyIcon={Bot} emptyMessage="No agents configured">
+    <Panel
+      title="Hermes capabilities"
+      subtitle="Read-only discovery from each routed Hermes API-server profile."
+      actions={(
+        <ActionButton variant="secondary" onClick={() => void load()} loading={loading}>
+          <RefreshCw size={14} /> Refresh
+        </ActionButton>
+      )}
+    >
       <div className="nodes-dashboard">
-        {/* Global search */}
-        <div className="nodes-dashboard__search">
-          <Search size={14} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />
-          <input
-            type="text"
-            placeholder="Search skills across all agents..."
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="nodes-dashboard__search-input"
-          />
+        <div className="hermes-discovery-note">
+          <ShieldCheck size={15} />
+          <span>
+            Hermes v0.20.4 exposes skill and toolset discovery through read-only routes.
+            Change the selected profile configuration on the agent node.
+          </span>
         </div>
 
-        {/* Node cards */}
+        <label className="nodes-dashboard__search">
+          <Search size={14} aria-hidden="true" />
+          <span className="sr-only">Search skills and toolsets</span>
+          <input
+            type="search"
+            placeholder="Search skills, toolsets, or tools"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            className="nodes-dashboard__search-input"
+          />
+        </label>
+
+        {globalError ? <div className="node-card__error">{globalError}</div> : null}
+
         <div className="nodes-dashboard__cards">
-          {NODE_ROLES.map((role) => {
-            const nodeInfo = getNodeInfo(role);
-            const color = AGENT_COLORS[role];
-            const isExpanded = expandedNodes.has(role);
-            const isSkillsExpanded = expandedSkills.has(role);
-            const skills = skillsByNode[role] ?? [];
-            const isSkillsLoading = skillsLoading[role] ?? false;
-            const skillsError = skillsErrors[role];
-            const reachable = nodeInfo?.reachable ?? false;
-
-            // Filter skills
-            const filteredSkills = filter
-              ? skills.filter(
-                  (s) =>
-                    s.name.toLowerCase().includes(filter.toLowerCase()) ||
-                    s.description?.toLowerCase().includes(filter.toLowerCase()) ||
-                    s.category?.toLowerCase().includes(filter.toLowerCase())
-                )
-              : skills;
-
-            const categories = [
-              ...new Set(filteredSkills.map((s) => s.category ?? "other")),
-            ].sort();
-
+          {visibleNodes.map(({ node, data }, index) => {
+            const expanded = expandedNodes.has(node.role);
+            const profile = node.profiles[0];
+            const color = authorColor(node.role);
             return (
-              <div
-                key={role}
-                className="node-card"
-              >
-                {/* ── Node Header ──────────────────────────────────── */}
+              <article key={node.role} className="node-card">
                 <button
-                  className="node-card__header"
-                  onClick={() => toggleNode(role)}
                   type="button"
+                  className="node-card__header"
+                  onClick={() => setExpandedNodes((current) => {
+                    const next = new Set(current);
+                    if (next.has(node.role)) next.delete(node.role);
+                    else next.add(node.role);
+                    return next;
+                  })}
+                  aria-expanded={expanded}
                 >
                   <span
                     className="node-card__dot"
-                    style={{
-                      background: reachable
-                        ? "var(--status-success)"
-                        : "var(--status-error)",
-                    }}
+                    style={{ background: node.reachable ? "var(--status-success)" : "var(--status-error)" }}
                   />
-                  <div className="node-card__identity">
-                    <span className="node-card__name">
-                      Node {NODE_INDEX[role]} Hermes Agent
-                    </span>
-                    <span className="node-card__host">
-                      {nodeInfo?.host ?? "unknown"}
-                    </span>
-                  </div>
-                  <div className="node-card__status">
-                    {reachable ? (
-                      <Wifi size={13} style={{ color: "var(--status-success)" }} />
-                    ) : (
-                      <WifiOff size={13} style={{ color: "var(--status-error)" }} />
-                    )}
-                  </div>
-                  <span className="node-card__chevron">
-                    {isExpanded ? (
-                      <ChevronDown size={16} />
-                    ) : (
-                      <ChevronRight size={16} />
-                    )}
+                  <span className="node-card__identity">
+                    <span className="node-card__name">Node {index + 1} · {node.name}</span>
+                    <span className="node-card__host">{node.host}</span>
                   </span>
+                  <span className="node-card__status">
+                    {node.reachable ? <Wifi size={13} /> : <WifiOff size={13} />}
+                  </span>
+                  {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                 </button>
 
-                {/* ── Expanded Body ────────────────────────────────── */}
-                {isExpanded && (
+                {expanded ? (
                   <div className="node-card__body">
-                    {/* ── Profiles Section ─────────────────────────── */}
-                    <div className="node-card__section">
+                    <section className="node-card__section">
                       <div className="node-card__section-header">
-                        <User size={13} />
-                        <span>Profiles</span>
-                        <span className="node-card__badge">
-                          {nodeInfo?.profiles?.length ?? 0}
-                        </span>
+                        <Cpu size={13} />
+                        <span>Active API profile</span>
                       </div>
-                      {nodeInfo?.profiles && nodeInfo.profiles.length > 0 ? (
-                        <div className="node-card__profile-list">
-                          {nodeInfo.profiles.map((p) => (
-                            <div key={p.name} className="node-card__profile-row">
-                              <div className="node-card__profile-header">
-                                <span
-                                  className="node-card__profile-dot"
-                                  style={{
-                                    background: p.gateway_running
-                                      ? color
-                                      : "var(--text-tertiary)",
-                                  }}
-                                />
-                                <span className="node-card__profile-name">
-                                  {p.name}
-                                </span>
-                                {p.is_default && (
-                                  <span className="node-card__profile-default">
-                                    active
-                                  </span>
-                                )}
-                                {p.gateway_running && (
-                                  <span className="node-card__profile-gateway">
-                                    <Zap size={10} />
-                                    gateway
-                                  </span>
-                                )}
+                      <div className="hermes-profile-control">
+                        <span className="node-card__profile-dot" style={{ background: color }} />
+                        <select value={profile?.name ?? node.role} disabled aria-label={`${node.name} active Hermes profile`}>
+                          <option>{profile?.name ?? node.role}</option>
+                        </select>
+                        <span className="capability-badge capability-badge--enabled">routed key</span>
+                      </div>
+                      <span className="node-card__empty-hint">
+                        The node URL and its profile key select this profile.
+                      </span>
+                    </section>
+
+                    {data.error ? (
+                      <div className="node-card__error">{data.error}</div>
+                    ) : (
+                      <>
+                        <CapabilitySection
+                          icon={<Sparkles size={13} />}
+                          title="Skills"
+                          count={data.skills.length}
+                        >
+                          {data.skills.length ? data.skills.map((skill) => (
+                            <div key={skill.name} className="capability-row">
+                              <div className="capability-row__content">
+                                <strong>{skill.name}</strong>
+                                {skill.description ? <span>{skill.description}</span> : null}
                               </div>
-                              <div className="node-card__profile-meta">
-                                {p.model && (
-                                  <span className="node-card__profile-tag">
-                                    <Cpu size={10} />
-                                    {p.model}
-                                  </span>
-                                )}
-                                {p.provider && (
-                                  <span className="node-card__profile-tag">
-                                    {p.provider}
-                                  </span>
-                                )}
-                                {typeof p.skill_count === "number" && (
-                                  <span className="node-card__profile-tag">
-                                    <Sparkles size={10} />
-                                    {p.skill_count} skills
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="node-card__empty-hint">
-                          {reachable
-                            ? "No profiles installed"
-                            : "Node unreachable"}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* ── Skills Section ───────────────────────────── */}
-                    <div className="node-card__section">
-                      <button
-                        className="node-card__section-header node-card__section-header--toggle"
-                        onClick={() => toggleSkillsSection(role)}
-                        type="button"
-                      >
-                        <Sparkles size={13} />
-                        <span>Skills</span>
-                        <span className="node-card__badge">
-                          {skills.length}
-                        </span>
-                        <span className="node-card__chevron-mini">
-                          {isSkillsExpanded ? (
-                            <ChevronDown size={13} />
-                          ) : (
-                            <ChevronRight size={13} />
-                          )}
-                        </span>
-                      </button>
-
-                      {isSkillsExpanded && (
-                        <>
-                          {isSkillsLoading && <Skeleton variant="list" lines={3} />}
-
-                          {skillsError && (
-                            <div className="node-card__error">
-                              <span>{skillsError}</span>
-                              <ActionButton
-                                variant="secondary"
-                                onClick={() => fetchSkills(role)}
-                                style={{
-                                  padding: "2px 8px",
-                                  height: 22,
-                                  fontSize: "var(--text-xs)",
-                                }}
-                              >
-                                Retry
-                              </ActionButton>
-                            </div>
-                          )}
-
-                          {!isSkillsLoading &&
-                            !skillsError &&
-                            filteredSkills.length === 0 && (
-                              <span className="node-card__empty-hint">
-                                {filter
-                                  ? "No matching skills"
-                                  : "No skills installed"}
+                              <span className={`capability-badge ${skill.enabled === false ? "" : "capability-badge--enabled"}`}>
+                                {skill.enabled === false ? "disabled" : skill.category ?? "available"}
                               </span>
-                            )}
-
-                          {!isSkillsLoading &&
-                            !skillsError &&
-                            filteredSkills.length > 0 && (
-                              <div className="node-card__skills-list">
-                                {categories.map((cat) => {
-                                  const catSkills = filteredSkills.filter(
-                                    (s) => (s.category ?? "other") === cat
-                                  );
-                                  if (catSkills.length === 0) return null;
-                                  return (
-                                    <div key={cat} className="node-card__skill-group">
-                                      <div className="node-card__skill-category">
-                                        {cat}{" "}
-                                        <span className="node-card__skill-count">
-                                          ({catSkills.length})
-                                        </span>
-                                      </div>
-                                      {catSkills.map((skill) => (
-                                        <div
-                                          key={skill.name}
-                                          className="node-card__skill-row"
-                                          style={{
-                                            opacity:
-                                              skill.enabled === false ? 0.5 : 1,
-                                          }}
-                                        >
-                                          <div className="node-card__skill-info">
-                                            <span className="node-card__skill-name">
-                                              {skill.name}
-                                            </span>
-                                            {skill.description && (
-                                              <span className="node-card__skill-desc">
-                                                {skill.description}
-                                              </span>
-                                            )}
-                                          </div>
-                                          <ActionButton
-                                            variant={
-                                              skill.enabled !== false
-                                                ? "secondary"
-                                                : "primary"
-                                            }
-                                            loading={
-                                              togglingSkill ===
-                                              `${role}:${skill.name}`
-                                            }
-                                            onClick={() =>
-                                              toggleSkill(role, skill)
-                                            }
-                                            style={{
-                                              padding: "2px 10px",
-                                              height: 24,
-                                              fontSize: "var(--text-xs)",
-                                              flexShrink: 0,
-                                            }}
-                                          >
-                                            {skill.enabled !== false
-                                              ? "On"
-                                              : "Off"}
-                                          </ActionButton>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-
-                          {/* Skills footer */}
-                          {!isSkillsLoading && !skillsError && skills.length > 0 && (
-                            <div className="node-card__skills-footer">
-                              <span>
-                                {skills.filter((s) => s.enabled !== false).length}{" "}
-                                / {skills.length} enabled
-                              </span>
-                              <ActionButton
-                                variant="secondary"
-                                onClick={() => fetchSkills(role)}
-                                style={{
-                                  padding: "2px 8px",
-                                  height: 22,
-                                  fontSize: "var(--text-xs)",
-                                }}
-                              >
-                                Refresh
-                              </ActionButton>
                             </div>
-                          )}
-                        </>
-                      )}
-                    </div>
+                          )) : <span className="node-card__empty-hint">No matching skills</span>}
+                        </CapabilitySection>
+
+                        <CapabilitySection
+                          icon={<Wrench size={13} />}
+                          title="Toolsets"
+                          count={data.toolsets.length}
+                        >
+                          {data.toolsets.length ? data.toolsets.map((toolset) => (
+                            <div key={toolset.name} className="toolset-card">
+                              <div className="toolset-card__header">
+                                <div className="capability-row__content">
+                                  <strong>{toolset.label || toolset.name}</strong>
+                                  {toolset.description ? <span>{toolset.description}</span> : null}
+                                </div>
+                                <div className="toolset-card__badges">
+                                  <span className={`capability-badge ${toolset.configured ? "capability-badge--configured" : ""}`}>
+                                    {toolset.configured ? "configured" : "needs config"}
+                                  </span>
+                                  <span className={`capability-badge ${toolset.enabled ? "capability-badge--enabled" : ""}`}>
+                                    {toolset.enabled ? "enabled" : "off"}
+                                  </span>
+                                </div>
+                              </div>
+                              {toolset.tools?.length ? (
+                                <div className="toolset-card__tools">
+                                  {toolset.tools.map((tool) => <code key={tool}>{tool}</code>)}
+                                </div>
+                              ) : null}
+                            </div>
+                          )) : <span className="node-card__empty-hint">No matching toolsets</span>}
+                        </CapabilitySection>
+                      </>
+                    )}
                   </div>
-                )}
-              </div>
+                ) : null}
+              </article>
             );
           })}
         </div>
       </div>
     </Panel>
+  );
+}
+
+function CapabilitySection({
+  icon,
+  title,
+  count,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="node-card__section">
+      <div className="node-card__section-header">
+        {icon}
+        <span>{title}</span>
+        <span className="node-card__badge">{count}</span>
+      </div>
+      <div className="capability-list">{children}</div>
+    </section>
   );
 }

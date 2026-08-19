@@ -24,6 +24,7 @@ import {
   ChevronDown,
   Search,
   Pin,
+  MessagesSquare,
 } from "lucide-react";
 import type { TaskHistoryFilters, TaskSummary } from "@/hooks/useTaskHistory";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
@@ -435,6 +436,15 @@ export function TaskSidebar({
         >
           <Server size={16} />
           {!collapsed && <span>Infrastructure</span>}
+        </Link>
+
+        <Link
+          href="/sessions"
+          className={`task-sidebar__system-item ${pathname === "/sessions" ? "task-sidebar__system-item--active" : ""}`}
+          title={collapsed ? "Hermes Sessions" : undefined}
+        >
+          <MessagesSquare size={16} />
+          {!collapsed && <span>Sessions</span>}
         </Link>
 
         <Link

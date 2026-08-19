@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import random
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -254,6 +255,82 @@ async def test_dispatch_uses_next_endpoint_when_first_is_overloaded(monkeypatch)
     orch.http.post.assert_awaited_once()
     assert orch.http.post.await_args.args[0] == "http://node-b:8000/execute"
     assert complete_turn.await_args.kwargs["node"] == "http://node-b:8000"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reschedules_after_http_429(monkeypatch):
+    orch = _orchestrator_without_clients()
+    overloaded = MagicMock()
+    overloaded.status_code = 429
+    overloaded.headers = {"Retry-After": "0.5"}
+    completed = MagicMock()
+    completed.status_code = 200
+    completed.raise_for_status.return_value = None
+    completed.json.return_value = {"status": "completed", "result": "ok"}
+    calls = []
+
+    async def post(url, **kwargs):
+        calls.append((url, copy.deepcopy(kwargs["json"])))
+        return overloaded if len(calls) == 1 else completed
+
+    orch.http = SimpleNamespace(post=post)
+    sleep = AsyncMock()
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+    monkeypatch.setattr(db, "create_turn", AsyncMock())
+    monkeypatch.setattr(db, "complete_turn", AsyncMock())
+
+    result = await orch._dispatch_turn(
+        role="expert",
+        task_id="task-1",
+        description="question",
+        persona="persona",
+        context={"previous_response_id": "node-a-response"},
+        endpoints=["http://node-a:8000", "http://node-b:8000"],
+    )
+
+    assert result["status"] == "completed"
+    assert result["endpoint"] == "http://node-b:8000"
+    assert [call[0] for call in calls] == [
+        "http://node-a:8000/execute",
+        "http://node-b:8000/execute",
+    ]
+    assert calls[1][1]["context"]["previous_response_id"] is None
+    sleep.assert_not_awaited()
+    assert orch._safe_log.await_args.kwargs["fields"]["event"] == (
+        "endpoint_rate_limited"
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_stops_after_bounded_http_429_retries(monkeypatch):
+    orch = _orchestrator_without_clients()
+    overloaded = MagicMock()
+    overloaded.status_code = 429
+    overloaded.headers = {}
+    orch.http = SimpleNamespace(post=AsyncMock(return_value=overloaded))
+    monkeypatch.setattr(random, "uniform", lambda *_: 0.0)
+    sleep = AsyncMock()
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+    monkeypatch.setattr(db, "create_turn", AsyncMock())
+    complete_turn = AsyncMock()
+    monkeypatch.setattr(db, "complete_turn", complete_turn)
+
+    result = await orch._dispatch_turn(
+        role="expert",
+        task_id="task-1",
+        description="question",
+        persona="persona",
+        endpoints=["http://node-a:8000", "http://node-b:8000"],
+    )
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "endpoint_rate_limited"
+    assert orch.http.post.await_count == 4
+    assert sleep.await_count == 2
+    delays = [call.args[0] for call in sleep.await_args_list]
+    assert 0 < delays[0] <= 1.0
+    assert 0 < delays[1] <= 2.0
+    complete_turn.assert_awaited_once()
 
 
 @pytest.mark.asyncio

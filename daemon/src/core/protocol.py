@@ -173,6 +173,7 @@ EVENT_PAUSED = "paused"                                # task paused by operator
 EVENT_RESUMED = "resumed"                              # task resumed
 EVENT_BUDGET = "budget"                                # {spent, ceiling, percentage} — budget gauge
 EVENT_APPROVAL_REQUEST = "approval_request"            # Hermes run approval (doc 12 §5.1)
+EVENT_APPROVAL_RESPONSE = "approval_response"          # Hermes approval result
 
 
 # ── Event Registry ───────────────────────────────────────────────────
@@ -194,6 +195,7 @@ V2_EVENT_NAMES: dict[str, str] = {
     EVENT_RESUMED: "Task resumed (doc 05 §6)",
     EVENT_BUDGET: "{spent, ceiling, percentage} — budget gauge (doc 09 §5)",
     EVENT_APPROVAL_REQUEST: "Hermes run approval request (doc 12 §5.1)",
+    EVENT_APPROVAL_RESPONSE: "Hermes run approval response",
 }
 
 # Legacy events that continue to fire during migration (doc 10).

@@ -6,16 +6,19 @@
  * Opens from board node click or worker card click.
  * Shows complete trace timeline for a single turn plus
  * "Resulted in" footer (board entries, rejections, artifacts).
- * Phase 5: includes inline Approve/Deny for approval_request events.
+ * Includes live approvals, run steering, and Hermes delegation details.
  */
 
 import React, { useMemo, useState, useCallback } from "react";
 import { authorColor } from "@/lib/design-tokens";
 import type { TurnRecord, TraceEvent, BoardEntry, RejectedEntry } from "@/hooks/useTaskStream";
 import { ToolCallCard } from "./ToolCallCard";
+import { DelegationTree } from "./DelegationTree";
 import { bodyPreview } from "./board/boardModel";
 import { typeMeta } from "./board/boardModel";
-import { X, CheckCircle, XCircle } from "lucide-react";
+import { X, CheckCircle, XCircle, Send } from "lucide-react";
+
+type ApprovalChoice = "once" | "session" | "always" | "deny";
 
 // ── Trace line glyph map ──────────────────────────────────────────────
 
@@ -26,6 +29,7 @@ const TYPE_GLYPHS: Record<string, { glyph: string; color: string }> = {
   final:            { glyph: "✓", color: "var(--status-success)" },
   error:            { glyph: "✕", color: "var(--status-error)" },
   approval_request: { glyph: "⏸", color: "var(--status-paused)" },
+  approval_response:{ glyph: "✓", color: "var(--status-success)" },
 };
 
 function getGlyph(type: string) {
@@ -57,6 +61,11 @@ export function TurnInspector({
 }: TurnInspectorProps) {
   // Approval decision state: track which run_ids have been decided
   const [decidedRuns, setDecidedRuns] = useState<Record<string, string>>({});
+  const [approvalPending, setApprovalPending] = useState<Record<string, boolean>>({});
+  const [approvalErrors, setApprovalErrors] = useState<Record<string, string>>({});
+  const [steerInput, setSteerInput] = useState("");
+  const [steerPending, setSteerPending] = useState(false);
+  const [steerResult, setSteerResult] = useState<string | null>(null);
 
   // Find turn
   const turn = useMemo(() => {
@@ -74,6 +83,29 @@ export function TurnInspector({
     return traceEvents.filter((t) => t.turn_id === turnId);
   }, [turnId, traceEvents]);
 
+  const runId = useMemo(() => {
+    for (let index = turnTraces.length - 1; index >= 0; index -= 1) {
+      const trace = turnTraces[index];
+      if (trace.run_id) return trace.run_id;
+      const dataRunId = trace.data?.run_id;
+      if (typeof dataRunId === "string" && dataRunId) return dataRunId;
+    }
+    return null;
+  }, [turnTraces]);
+  const traceDecisions = useMemo(() => {
+    const decisions: Record<string, string> = {};
+    for (const trace of turnTraces) {
+      if (trace.type !== "approval_response") continue;
+      const responseRunId = trace.run_id ?? (
+        typeof trace.data?.run_id === "string" ? trace.data.run_id : ""
+      );
+      const choice = typeof trace.data?.choice === "string" ? trace.data.choice : "responded";
+      if (responseRunId) decisions[responseRunId] = choice;
+    }
+    return decisions;
+  }, [turnTraces]);
+  const isActiveTurn = activeTurns.some((item) => item.turn_id === turnId);
+
   // Board entries created during this turn (matched by actor + time window)
   const createdEntries = useMemo(() => {
     if (!turn) return [];
@@ -90,11 +122,13 @@ export function TurnInspector({
     return rejectedEntries.filter((r) => r.actor === turn.actor);
   }, [turn, rejectedEntries]);
 
-  // Handle approval/deny
+  // Send one approval choice to the active Hermes run.
   const handleApproval = useCallback(
-    async (runId: string, decision: "approve" | "deny") => {
+    async (approvalRunId: string, choice: ApprovalChoice) => {
       const taskId = turn?.task_id;
-      if (!taskId) return;
+      if (!taskId || !approvalRunId || approvalPending[approvalRunId]) return;
+      setApprovalPending((current) => ({ ...current, [approvalRunId]: true }));
+      setApprovalErrors((current) => ({ ...current, [approvalRunId]: "" }));
       try {
         const resp = await fetch("/api/hitl", {
           method: "POST",
@@ -102,19 +136,56 @@ export function TurnInspector({
           body: JSON.stringify({
             action: "approval",
             task_id: taskId,
-            run_id: runId,
-            decision,
+            run_id: approvalRunId,
+            choice,
           }),
         });
-        if (resp.ok) {
-          setDecidedRuns((prev) => ({ ...prev, [runId]: decision }));
+        if (!resp.ok) {
+          const body = await resp.json().catch(() => ({})) as { error?: string; detail?: string };
+          throw new Error(body.error ?? body.detail ?? `HTTP ${resp.status}`);
         }
-      } catch (e) {
-        console.error("Approval failed:", e);
+        setDecidedRuns((prev) => ({ ...prev, [approvalRunId]: choice }));
+      } catch (error) {
+        setApprovalErrors((current) => ({
+          ...current,
+          [approvalRunId]: error instanceof Error ? error.message : "Approval failed",
+        }));
+      } finally {
+        setApprovalPending((current) => ({ ...current, [approvalRunId]: false }));
       }
     },
-    [turn],
+    [approvalPending, turn],
   );
+
+  const steerRun = useCallback(async () => {
+    const taskId = turn?.task_id;
+    const input = steerInput.trim();
+    if (!taskId || !runId || !input || steerPending) return;
+    setSteerPending(true);
+    setSteerResult(null);
+    try {
+      const response = await fetch("/api/hitl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "run-steer",
+          task_id: taskId,
+          run_id: runId,
+          input,
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: string; detail?: string };
+        throw new Error(body.error ?? body.detail ?? `HTTP ${response.status}`);
+      }
+      setSteerInput("");
+      setSteerResult("Guidance accepted by Hermes.");
+    } catch (error) {
+      setSteerResult(error instanceof Error ? error.message : "Run steering failed");
+    } finally {
+      setSteerPending(false);
+    }
+  }, [runId, steerInput, steerPending, turn]);
 
   if (!turnId) return null;
 
@@ -127,6 +198,7 @@ export function TurnInspector({
       <div
         className="turn-inspector-backdrop"
         onClick={onClose}
+        aria-hidden="true"
         style={{
           position: "fixed",
           inset: 0,
@@ -139,6 +211,9 @@ export function TurnInspector({
       {/* Slide-over panel */}
       <div
         className="turn-inspector"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${actor.replace(/_/g, " ")} turn details`}
         style={{
           position: "fixed",
           top: 0,
@@ -191,7 +266,9 @@ export function TurnInspector({
           )}
 
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Close turn details"
             style={{
               background: "none",
               border: "none",
@@ -204,6 +281,41 @@ export function TurnInspector({
             <X size={16} />
           </button>
         </div>
+
+        {isActiveTurn && runId ? (
+          <div className="hermes-run-steer">
+            <div className="hermes-run-steer__label">
+              <strong>Steer live Hermes run</strong>
+              <code>{runId}</code>
+            </div>
+            <div className="hermes-run-steer__form">
+              <input
+                value={steerInput}
+                onChange={(event) => setSteerInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void steerRun();
+                  }
+                }}
+                maxLength={2_000}
+                placeholder="Give the active run new guidance"
+                aria-label="Hermes run guidance"
+              />
+              <button
+                type="button"
+                onClick={() => void steerRun()}
+                disabled={!steerInput.trim() || steerPending}
+                aria-label="Send Hermes run guidance"
+              >
+                <Send size={13} /> {steerPending ? "Sending" : "Send"}
+              </button>
+            </div>
+            {steerResult ? <span className="hermes-run-steer__result">{steerResult}</span> : null}
+          </div>
+        ) : null}
+
+        <DelegationTree traces={turnTraces} />
 
         {/* Trace timeline */}
         <div style={{ flex: 1, overflow: "auto", padding: "var(--space-3)" }}>
@@ -294,7 +406,9 @@ export function TurnInspector({
                     {isApproval ? (
                       <ApprovalInline
                         trace={trace}
-                        decided={decidedRuns[trace.run_id ?? ""] ?? null}
+                        decided={decidedRuns[trace.run_id ?? ""] ?? traceDecisions[trace.run_id ?? ""] ?? null}
+                        pending={approvalPending[trace.run_id ?? ""] ?? false}
+                        error={approvalErrors[trace.run_id ?? ""] ?? null}
                         onDecide={(decision) =>
                           handleApproval(trace.run_id ?? "", decision)
                         }
@@ -374,12 +488,30 @@ export function TurnInspector({
 function ApprovalInline({
   trace,
   decided,
+  pending,
+  error,
   onDecide,
 }: {
   trace: TraceEvent;
   decided: string | null;
-  onDecide: (decision: "approve" | "deny") => void;
+  pending: boolean;
+  error: string | null;
+  onDecide: (choice: ApprovalChoice) => void;
 }) {
+  const supportedChoices = new Set<ApprovalChoice>(["once", "session", "always", "deny"]);
+  const advertisedChoices = Array.isArray(trace.data?.choices)
+    ? trace.data.choices.filter((choice): choice is ApprovalChoice =>
+        typeof choice === "string" && supportedChoices.has(choice as ApprovalChoice))
+    : [];
+  const choices: ApprovalChoice[] = advertisedChoices.length
+    ? advertisedChoices
+    : ["once", "session", "always", "deny"];
+  const labels: Record<ApprovalChoice, string> = {
+    once: "Allow once",
+    session: "This session",
+    always: "Always allow",
+    deny: "Deny",
+  };
   return (
     <div
       style={{
@@ -403,51 +535,28 @@ function ApprovalInline({
           style={{
             fontSize: "var(--text-xs)",
             fontWeight: "var(--weight-semibold)",
-            color: decided === "approve" ? "var(--status-success)" : "var(--status-error)",
+            color: decided === "deny" ? "var(--status-error)" : "var(--status-success)",
           }}
         >
-          {decided === "approve" ? "✓ Approved" : "✕ Denied"}
+          {decided === "deny" ? "✕ Denied" : `✓ ${labels[decided as ApprovalChoice] ?? decided}`}
         </div>
       ) : (
-        <div style={{ display: "flex", gap: "var(--space-2)", marginTop: 2 }}>
-          <button
-            onClick={() => onDecide("approve")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              padding: "3px 10px",
-              borderRadius: "var(--radius-sm)",
-              border: "1px solid hsl(142 71% 45%/0.3)",
-              background: "hsl(142 71% 45%/0.08)",
-              color: "var(--status-success)",
-              cursor: "pointer",
-              fontSize: "var(--text-xs)",
-              fontWeight: "var(--weight-semibold)",
-            }}
-          >
-            <CheckCircle size={12} /> Approve
-          </button>
-          <button
-            onClick={() => onDecide("deny")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              padding: "3px 10px",
-              borderRadius: "var(--radius-sm)",
-              border: "1px solid hsl(0 84% 60%/0.3)",
-              background: "hsl(0 84% 60%/0.08)",
-              color: "var(--status-error)",
-              cursor: "pointer",
-              fontSize: "var(--text-xs)",
-              fontWeight: "var(--weight-semibold)",
-            }}
-          >
-            <XCircle size={12} /> Deny
-          </button>
+        <div className="approval-choice-row">
+          {choices.map((choice) => (
+            <button
+              key={choice}
+              type="button"
+              onClick={() => onDecide(choice)}
+              disabled={pending}
+              className={choice === "deny" ? "approval-choice--deny" : "approval-choice--allow"}
+            >
+              {choice === "deny" ? <XCircle size={12} /> : <CheckCircle size={12} />}
+              {pending ? "Sending" : labels[choice]}
+            </button>
+          ))}
         </div>
       )}
+      {error ? <div className="hermes-run-steer__result">{error}</div> : null}
     </div>
   );
 }

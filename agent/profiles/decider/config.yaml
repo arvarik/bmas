@@ -1,6 +1,5 @@
-# bMAS Decider Profile — Hermes config.yaml
-# Read-only analysis per doc 12 §2.5: web for verification, file for
-# board access. No terminal, browser, or code_exec.
+# bMAS Decider Profile, reviewed for Hermes Agent v0.20.4.
+# The decider receives board content in its prompt.
 
 model:
   default: "medium"
@@ -9,10 +8,13 @@ model:
   api_key: "${LITELLM_MASTER_KEY}"
 
 toolsets:
-  web: true           # Web search for verifying solution claims
-  browser: false      # No browser automation
-  terminal: false     # No terminal access
-  code_exec: false    # No code execution
-  file: true          # File read for board interaction
-  memory: true        # Persistent memory across rounds
-  skill_manage: false # No skill authoring
+  - web
+  - memory
+
+platform_toolsets:
+  cli:
+    - web
+    - memory
+  api_server:
+    - web
+    - memory

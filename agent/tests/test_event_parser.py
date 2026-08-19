@@ -10,15 +10,13 @@ Validates:
 - Batch buffer logic in TraceEmitter
 """
 
-import json
-import pytest
-import sys
 import os
+import sys
 
 # Add agent directory to path so we can import api_server
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from api_server import parse_sse_line_buffer, translate
+from api_server import parse_sse_line_buffer, translate  # noqa: E402
 
 
 # ── SSE Parser Tests ───────────────────────────────────────────────────
@@ -261,19 +259,98 @@ class TestTranslate:
     def test_approval_request(self):
         trace = translate(
             "approval.request",
-            {"action": "execute_command", "args": {"cmd": "ls"}},
+            {
+                "action": "execute_command",
+                "args": {"cmd": "ls"},
+                "choices": ["once", "deny"],
+                "description": "List the working directory",
+                "message": "This command needs approval",
+            },
             **self.BASE_KWARGS,
         )
         assert trace["type"] == "approval_request"
+        assert trace["data"]["event"] == "approval.request"
         assert trace["data"]["action"] == "execute_command"
+        assert trace["data"]["choices"] == ["once", "deny"]
+        assert trace["data"]["description"] == "List the working directory"
+        assert trace["data"]["message"] == "This command needs approval"
 
     def test_approval_responded(self):
         trace = translate(
             "approval.responded",
-            {"action": "execute_command"},
+            {
+                "action": "execute_command",
+                "choice": "session",
+                "resolved": 1,
+                "status": "responded",
+            },
             **self.BASE_KWARGS,
         )
-        assert trace["type"] == "approval_request"
+        assert trace["type"] == "approval_response"
+        assert trace["data"]["event"] == "approval.responded"
+        assert trace["data"]["choice"] == "session"
+        assert trace["data"]["resolved"] == 1
+        assert trace["data"]["status"] == "responded"
+
+    def test_subagent_start_preserves_delegation_identity(self):
+        trace = translate(
+            "subagent.start",
+            {
+                "run_id": "run-1",
+                "subagent_id": "subagent-2",
+                "parent_id": "subagent-1",
+                "child_session_id": "session-child",
+                "depth": 2,
+                "status": "running",
+                "model": "fast-model",
+                "tool_count": 3,
+            },
+            **self.BASE_KWARGS,
+        )
+
+        assert trace["type"] == "subagent_start"
+        assert trace["run_id"] == "run-1"
+        assert trace["data"] == {
+            "subagent_id": "subagent-2",
+            "parent_id": "subagent-1",
+            "child_session_id": "session-child",
+            "depth": 2,
+            "status": "running",
+            "model": "fast-model",
+            "tool_count": 3,
+            "event": "subagent.start",
+        }
+
+    def test_subagent_complete_preserves_usage_cost_and_duration(self):
+        trace = translate(
+            "subagent.complete",
+            {
+                "run_id": "run-1",
+                "subagent_id": "subagent-2",
+                "parent_id": "subagent-1",
+                "child_session_id": "session-child",
+                "depth": 2,
+                "status": "completed",
+                "model": "fast-model",
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "reasoning_tokens": 5,
+                "cost_usd": 0.012,
+                "duration_seconds": 4.2,
+                "summary": "Child task complete",
+                "tool_count": 3,
+            },
+            **self.BASE_KWARGS,
+        )
+
+        assert trace["type"] == "subagent_complete"
+        assert trace["tokens"] == {"in": 100, "out": 25}
+        assert trace["cost_usd"] == 0.012
+        assert trace["data"]["input_tokens"] == 100
+        assert trace["data"]["output_tokens"] == 20
+        assert trace["data"]["reasoning_tokens"] == 5
+        assert trace["data"]["duration_seconds"] == 4.2
+        assert trace["data"]["summary"] == "Child task complete"
 
     def test_run_completed(self):
         trace = translate(
@@ -547,4 +624,3 @@ class TestHermesGatewayFormat:
         assert events[0][1]["delta"] == "hello"
         assert events[1][0] == "run.completed"
         assert events[1][1]["output"] == "done"
-
