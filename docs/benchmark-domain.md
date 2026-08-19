@@ -1,6 +1,6 @@
 # Benchmark domain foundation
 
-This document defines the stable records for the benchmark system. The foundation starts at database version 8. Benchmark execution uses version 9.
+This document defines the stable records for the benchmark system. The foundation starts at database version 8. Analysis records use version 10.
 
 ## Design goals
 
@@ -122,10 +122,57 @@ A failed, cancelled, or timed-out attempt receives an excluded score. The score 
 
 Reports must use only the latest retry for each repetition. Reports must keep prior retries available for provenance.
 
+## Comparison report contract
+
+A run report uses the latest retry for each trial and repetition. The report keeps the count of prior retries for provenance.
+
+Each arm reports the failure rate, score, cost, duration, and token use. Continuous metrics include the mean, median, p95, and a 95 percent estimate.
+
+The report returns no interval bounds for one sample. This rule prevents a single result from appearing certain.
+
+An arm comparison pairs results by the dataset item and repetition. The delta uses the right arm minus the left arm.
+
+The report accepts subject, split, tag, and scorer filters. Mission Control stores these filters in the URL and exports the same selection as CSV.
+
+Every report includes the dataset, test revision, execution plan, and report checksums.
+
+## Baseline and regression gate contract
+
+A baseline pins one completed run and one regression rule set. The database prevents updates and deletes for that baseline.
+
+A gate compares a candidate run with the pinned run. Each rule uses one exact metric path and one operator.
+
+The supported operators are minimum value, maximum value, maximum score drop, and maximum relative increase.
+
+The database saves one immutable evaluation for each baseline and candidate pair. A repeated request returns the saved evaluation.
+
+A gate returns `indeterminate` when a run is incomplete or a required metric is unavailable. An incomplete run cannot pass a gate.
+
+Use this command in a continuous integration job:
+
+```sh
+python scripts/benchmark-gate.py BASELINE_ID CANDIDATE_RUN_ID \
+  --daemon-url http://localhost:9000 \
+  --api-key "$BMAS_API_KEY" \
+  --output benchmark-gate.json
+```
+
+The command returns exit code `0` for passed, `1` for failed, `2` for indeterminate, and `3` for a request error.
+
+## Runtime qualification contract
+
+Each registered runtime publishes a versioned benchmark contract. The contract defines its configuration schema, seed behavior, repetitions, and required snapshot fields.
+
+A static qualification checks the contract and a stable preflight checksum. It returns `provisional` because it contains no execution evidence.
+
+A run qualification also checks a completed run and each latest attempt snapshot. It returns `passed` only when every required check passes.
+
+Mission Control lists Patchboard and Stigmergic as planned runtimes. The daemon does not advertise them as available until their runtime adapters register.
+
 ## Current phase boundary
 
-Mission Control now authors tests and revisions. It starts, pauses, resumes, cancels, and retries durable runs.
-
-The current run view shows attempt results and a simple average. Later phases add paired comparisons, statistical intervals, baselines, and regression gates.
+Mission Control authors tests and revisions. It controls durable runs and provides paired reports, immutable baselines, regression gates, and runtime qualifications.
 
 The current scheduler uses one daemon owner. A later scale phase adds distributed ownership and durable leases for multiple daemon replicas.
+
+Patchboard and Stigmergic still need concrete runtime adapters. Their adapters must pass a run qualification before users can compare them.

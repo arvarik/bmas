@@ -49,6 +49,35 @@ class VariantFeatures:
 
 
 @dataclass(frozen=True)
+class VariantBenchmarkContract:
+    """Describe how one runtime participates in repeatable benchmarks."""
+
+    supported: bool = True
+    configuration_schema: dict[str, Any] = field(default_factory=lambda: {
+        "type": "object",
+        "properties": {"submission_overrides": {"type": "object"}},
+        "additionalProperties": False,
+    })
+    seed_strategy: str = "recorded"
+    supports_repetitions: bool = True
+    required_snapshot_fields: tuple[str, ...] = (
+        "runtime_id",
+        "runtime_configuration",
+        "random_seed",
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the public benchmark contract."""
+        return {
+            "supported": self.supported,
+            "configuration_schema": self.configuration_schema,
+            "seed_strategy": self.seed_strategy,
+            "supports_repetitions": self.supports_repetitions,
+            "required_snapshot_fields": list(self.required_snapshot_fields),
+        }
+
+
+@dataclass(frozen=True)
 class VariantDescriptor:
     """Describe one registered coordination runtime."""
 
@@ -60,6 +89,7 @@ class VariantDescriptor:
     configuration_schema_version: str = "1"
     supports_recovery: bool = False
     required_agent_features: tuple[str, ...] = ()
+    benchmark: VariantBenchmarkContract = field(default_factory=VariantBenchmarkContract)
 
     def to_dict(self) -> dict[str, Any]:
         """Return the authoritative public capability record."""
@@ -73,6 +103,7 @@ class VariantDescriptor:
             "configuration_schema_version": self.configuration_schema_version,
             "supports_recovery": self.supports_recovery,
             "required_agent_features": list(self.required_agent_features),
+            "benchmark": self.benchmark.to_dict(),
         }
 
 

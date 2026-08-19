@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import re
 import uuid
 from typing import Any, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from auth import require_api_key
-from benchmarks import repository
+from benchmarks import records, repository
+from benchmarks.analysis import build_run_report, report_csv_rows, safe_csv_cell
 from benchmarks.provenance import content_checksum
+from benchmarks.qualification import qualify_runtime
 from benchmarks.runtime import BenchmarkRuntimeConfigurationError, prepare_benchmark_arm
 from config import BMAS_API_KEY
-from core.variants import UnknownVariantError
+from core.variants import UnknownVariantError, variant_capabilities
 from routes import submit
 
 router = APIRouter(prefix="/benchmarks", tags=["benchmarks"])
@@ -59,6 +64,41 @@ class BenchmarkRunInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     operator_note: str = Field(default="", max_length=2000)
+
+
+class RegressionRuleInput(BaseModel):
+    """Define one exact metric threshold."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,128}$")
+    label: str = Field(min_length=1, max_length=200)
+    metric: str = Field(min_length=1, max_length=300)
+    operator: Literal["gte", "lte", "max_drop", "max_increase_ratio"]
+    value: float
+
+
+class BenchmarkBaselineInput(BaseModel):
+    """Pin one completed run with immutable regression rules."""
+
+    model_config = ConfigDict(extra="forbid")
+    run_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,128}$")
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    rules: list[RegressionRuleInput] = Field(min_length=1, max_length=100)
+
+
+class BenchmarkGateInput(BaseModel):
+    """Select one candidate run for evaluation."""
+
+    model_config = ConfigDict(extra="forbid")
+    candidate_run_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,128}$")
+
+
+class RuntimeQualificationInput(BaseModel):
+    """Supply optional completed-run evidence for runtime qualification."""
+
+    model_config = ConfigDict(extra="forbid")
+    run_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,128}$")
 
 
 def _slug(value: str, fallback: str) -> str:
@@ -231,6 +271,145 @@ async def get_run_endpoint(run_id: str):
     if run is None:
         raise HTTPException(status_code=404, detail="The benchmark run does not exist")
     return run
+
+
+def _report_filters(subject: str | None, split: str | None, tag: str | None, scorer_id: str | None) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in {
+            "subject": subject,
+            "split": split,
+            "tag": tag,
+            "scorer_id": scorer_id,
+        }.items()
+        if value
+    }
+
+
+@router.get("/runs/{run_id}/report")
+async def get_run_report_endpoint(
+    run_id: str,
+    subject: str | None = None,
+    split: str | None = None,
+    tag: str | None = None,
+    scorer_id: str | None = None,
+):
+    run = await repository.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="The benchmark run does not exist")
+    return build_run_report(run, _report_filters(subject, split, tag, scorer_id))
+
+
+@router.get("/runs/{run_id}/report.csv")
+async def export_run_report_endpoint(
+    run_id: str,
+    subject: str | None = None,
+    split: str | None = None,
+    tag: str | None = None,
+    scorer_id: str | None = None,
+):
+    run = await repository.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="The benchmark run does not exist")
+    rows = report_csv_rows(run, _report_filters(subject, split, tag, scorer_id))
+    output = io.StringIO()
+    fieldnames = list(rows[0]) if rows else ["run_id"]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(
+        {key: safe_csv_cell(value) for key, value in row.items()} for row in rows
+    )
+    return Response(
+        output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="benchmark-{run_id}.csv"'},
+    )
+
+
+@router.get("/baselines")
+async def list_baselines_endpoint(test_id: str | None = None):
+    return {"baselines": await records.list_baselines(test_id)}
+
+
+@router.post("/baselines", status_code=201)
+async def create_baseline_endpoint(
+    request: Request,
+    payload: BenchmarkBaselineInput,
+    operator_id: str | None = Header(default=None, alias="X-Operator-Id"),
+):
+    require_api_key(request, BMAS_API_KEY)
+    try:
+        return await records.create_baseline(
+            baseline_id=f"baseline-{uuid.uuid4().hex}",
+            run_id=payload.run_id,
+            name=payload.name.strip(),
+            description=payload.description.strip(),
+            rules=[rule.model_dump() for rule in payload.rules],
+            created_by=(operator_id or "operator")[:200],
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except (repository.BenchmarkNotFound, repository.BenchmarkConflict) as error:
+        raise _repository_error(error) from error
+
+
+@router.get("/baselines/{baseline_id}")
+async def get_baseline_endpoint(baseline_id: str):
+    baseline = await records.get_baseline(baseline_id)
+    if baseline is None:
+        raise HTTPException(status_code=404, detail="The benchmark baseline does not exist")
+    return baseline
+
+
+@router.post("/baselines/{baseline_id}/evaluate")
+async def evaluate_baseline_endpoint(
+    request: Request,
+    baseline_id: str,
+    payload: BenchmarkGateInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    try:
+        evaluation, created = await records.evaluate_baseline(
+            baseline_id, payload.candidate_run_id
+        )
+        return {**evaluation, "created": created}
+    except (repository.BenchmarkNotFound, repository.BenchmarkConflict) as error:
+        raise _repository_error(error) from error
+
+
+@router.get("/runtimes")
+async def list_runtime_qualifications_endpoint():
+    capabilities = variant_capabilities()
+    available = {item["id"] for item in capabilities["variants"]}
+    return {
+        **capabilities,
+        "qualifications": await records.list_qualifications(),
+        "planned_runtime_ids": [
+            runtime_id
+            for runtime_id in ("patchboard", "stigmergic")
+            if runtime_id not in available
+        ],
+    }
+
+
+@router.post("/runtimes/{runtime_id}/qualify")
+async def qualify_runtime_endpoint(
+    request: Request,
+    runtime_id: str,
+    payload: RuntimeQualificationInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    run = None
+    if payload.run_id:
+        run = await repository.get_run(payload.run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="The qualification run does not exist")
+    try:
+        report = await qualify_runtime(runtime_id, run)
+        qualification, created = await records.save_qualification(report)
+        return {**qualification, "created": created}
+    except UnknownVariantError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.post("/runs/{run_id}/{action}")

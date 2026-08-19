@@ -104,6 +104,18 @@ class TestVariantRegistry:
         with pytest.raises(UnknownVariantError):
             canonical_variant_id("patchboard")
 
+    def test_descriptor_publishes_an_extensible_benchmark_contract(self):
+        contract = VariantDescriptor("future", "Future", "1").to_dict()["benchmark"]
+
+        assert contract["supported"] is True
+        assert contract["configuration_schema"]["type"] == "object"
+        assert contract["seed_strategy"] == "recorded"
+        assert contract["required_snapshot_fields"] == [
+            "runtime_id",
+            "runtime_configuration",
+            "random_seed",
+        ]
+
 
 class TestProtocol:
 
