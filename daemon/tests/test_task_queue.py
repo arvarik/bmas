@@ -53,9 +53,9 @@ async def test_workers_enforce_global_concurrency_limit(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_queued_abort_reaches_terminal_database_state(monkeypatch):
-    fail_task = AsyncMock()
+    cancel_task = AsyncMock()
     rollup = AsyncMock()
-    monkeypatch.setattr(submit.db, "fail_task", fail_task)
+    monkeypatch.setattr(submit.db, "cancel_task", cancel_task)
     monkeypatch.setattr(submit.db, "update_task_cost_totals", rollup)
     submit._scheduled_ids.add("task-queued")
 
@@ -64,9 +64,7 @@ async def test_queued_abort_reaches_terminal_database_state(monkeypatch):
     )
 
     assert scheduled is True
-    fail_task.assert_awaited_once_with(
-        "task-queued", "Task aborted: evaluation_timeout",
-    )
+    cancel_task.assert_awaited_once_with("task-queued", "evaluation_timeout")
     rollup.assert_not_awaited()
 
 
@@ -77,7 +75,7 @@ async def test_queued_abort_removes_the_queue_item(monkeypatch):
     submit._task_queue.put_nowait(
         submit.TaskWorkItem("task-queued", "question"),
     )
-    monkeypatch.setattr(submit.db, "fail_task", AsyncMock(return_value=True))
+    monkeypatch.setattr(submit.db, "cancel_task", AsyncMock(return_value=True))
 
     assert await submit.abort_scheduled_task("task-queued", "operator")
 
@@ -89,13 +87,13 @@ async def test_queued_abort_removes_the_queue_item(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_unknown_abort_does_not_leak_a_cancel_reason(monkeypatch):
-    fail_task = AsyncMock()
-    monkeypatch.setattr(submit.db, "fail_task", fail_task)
+    cancel_task = AsyncMock()
+    monkeypatch.setattr(submit.db, "cancel_task", cancel_task)
 
     assert not await submit.abort_scheduled_task("task-unknown", "operator")
 
     assert "task-unknown" not in submit._cancel_reasons
-    fail_task.assert_not_awaited()
+    cancel_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -127,12 +125,12 @@ async def test_worker_survives_an_active_task_abort(monkeypatch):
     monkeypatch.setattr(
         submit.db, "get_resumable_tasks", AsyncMock(return_value=[]),
     )
-    async def fail_task(task_id, message):
-        terminal_steps.append(("fail", task_id, message))
+    async def cancel_task(task_id, reason, lease_token=None):
+        terminal_steps.append(("cancel", task_id, reason, lease_token))
         return True
 
-    fail_task = AsyncMock(side_effect=fail_task)
-    monkeypatch.setattr(submit.db, "fail_task", fail_task)
+    cancel_task = AsyncMock(side_effect=cancel_task)
+    monkeypatch.setattr(submit.db, "cancel_task", cancel_task)
 
     await submit.start_task_workers(orch)
     assert submit._task_queue is not None
@@ -151,12 +149,12 @@ async def test_worker_survives_an_active_task_abort(monkeypatch):
     await asyncio.wait_for(submit._task_queue.join(), timeout=1)
 
     assert submit._workers[0].done() is False
-    fail_task.assert_awaited_once_with(
-        "task-first", "Task aborted: operator",
+    cancel_task.assert_awaited_once_with(
+        "task-first", "operator", lease_token="lease-first",
     )
     assert terminal_steps == [
         ("rollup", "task-first", "lease-first"),
-        ("fail", "task-first", "Task aborted: operator"),
+        ("cancel", "task-first", "operator", "lease-first"),
     ]
 
 

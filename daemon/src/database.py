@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -39,9 +39,7 @@ def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int
 MAX_EVENT_PAYLOAD_BYTES = _bounded_env_int(
     "BMAS_EVENT_PAYLOAD_MAX_BYTES", 1_048_576, 1_024, 16_777_216
 )
-MAX_OUTBOX_BACKLOG = _bounded_env_int(
-    "BMAS_EVENT_OUTBOX_MAX", 10_000, 100, 1_000_000
-)
+MAX_OUTBOX_BACKLOG = _bounded_env_int("BMAS_EVENT_OUTBOX_MAX", 10_000, 100, 1_000_000)
 OUTBOX_OVERLOAD_THRESHOLD = _bounded_env_int(
     "BMAS_EVENT_OUTBOX_OVERLOAD", 5_000, 10, MAX_OUTBOX_BACKLOG
 )
@@ -58,6 +56,10 @@ class EventPayloadTooLarge(ValueError):
 
 class EventIdempotencyConflict(RuntimeError):
     """An event idempotency key identifies different event content."""
+
+
+class DatasetVersionConflict(RuntimeError):
+    """A dataset already contains one version with the same checksum."""
 
 
 async def _assert_task_lease(
@@ -369,7 +371,291 @@ ON event_outbox(queued_at, event_cursor);
 """
 
 
+MIGRATION_V8_BENCHMARK_FOUNDATION_DDL = """
+CREATE TABLE IF NOT EXISTS datasets (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    source_uri      TEXT,
+    license         TEXT,
+    author          TEXT,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    archived_at     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_datasets_name ON datasets(name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_datasets_created ON datasets(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS dataset_versions (
+    id              TEXT PRIMARY KEY,
+    dataset_id      TEXT NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
+    version         INTEGER NOT NULL CHECK (version > 0),
+    status          TEXT NOT NULL DEFAULT 'draft'
+                    CHECK (status IN ('draft','published')),
+    checksum        TEXT NOT NULL,
+    item_count      INTEGER NOT NULL DEFAULT 0 CHECK (item_count >= 0),
+    schema_json     TEXT NOT NULL DEFAULT '{}',
+    source_filename TEXT,
+    source_mime     TEXT,
+    source_checksum TEXT,
+    source_path     TEXT,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    published_at    TEXT,
+    UNIQUE(dataset_id, version),
+    UNIQUE(dataset_id, checksum)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dataset_versions_dataset
+ON dataset_versions(dataset_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_dataset_versions_checksum
+ON dataset_versions(checksum);
+
+CREATE TABLE IF NOT EXISTS dataset_items (
+    id                  TEXT PRIMARY KEY,
+    dataset_version_id  TEXT NOT NULL REFERENCES dataset_versions(id) ON DELETE CASCADE,
+    item_key            TEXT NOT NULL,
+    input               TEXT NOT NULL,
+    expected_output     TEXT NOT NULL,
+    subject             TEXT,
+    split               TEXT,
+    tags                TEXT NOT NULL DEFAULT '[]',
+    metadata            TEXT NOT NULL DEFAULT '{}',
+    sort_order          INTEGER NOT NULL DEFAULT 0,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(dataset_version_id, item_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dataset_items_version
+ON dataset_items(dataset_version_id, sort_order, id);
+CREATE INDEX IF NOT EXISTS idx_dataset_items_subject
+ON dataset_items(dataset_version_id, subject);
+CREATE INDEX IF NOT EXISTS idx_dataset_items_split
+ON dataset_items(dataset_version_id, split);
+
+CREATE TABLE IF NOT EXISTS benchmark_scorers (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    version         TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    configuration_schema TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(name, version)
+);
+
+CREATE TABLE IF NOT EXISTS benchmark_tests (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    archived_at     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS benchmark_test_revisions (
+    id                  TEXT PRIMARY KEY,
+    test_id             TEXT NOT NULL REFERENCES benchmark_tests(id) ON DELETE CASCADE,
+    revision            INTEGER NOT NULL CHECK (revision > 0),
+    dataset_version_id  TEXT NOT NULL REFERENCES dataset_versions(id),
+    status              TEXT NOT NULL DEFAULT 'draft'
+                        CHECK (status IN ('draft','published')),
+    configuration       TEXT NOT NULL DEFAULT '{}',
+    configuration_checksum TEXT NOT NULL,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    published_at        TEXT,
+    UNIQUE(test_id, revision)
+);
+
+CREATE TABLE IF NOT EXISTS benchmark_test_arms (
+    id                  TEXT PRIMARY KEY,
+    test_revision_id    TEXT NOT NULL REFERENCES benchmark_test_revisions(id) ON DELETE CASCADE,
+    name                TEXT NOT NULL,
+    slug                TEXT NOT NULL,
+    runtime_id          TEXT NOT NULL,
+    configuration       TEXT NOT NULL DEFAULT '{}',
+    configuration_checksum TEXT NOT NULL,
+    sort_order          INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(test_revision_id, slug)
+);
+
+CREATE TABLE IF NOT EXISTS benchmark_runs (
+    id                  TEXT PRIMARY KEY,
+    test_revision_id    TEXT NOT NULL REFERENCES benchmark_test_revisions(id),
+    status              TEXT NOT NULL DEFAULT 'queued'
+                        CHECK (status IN ('queued','running','paused','completed','failed','cancelling','cancelled','partial')),
+    execution_plan      TEXT NOT NULL DEFAULT '{}',
+    execution_plan_checksum TEXT NOT NULL,
+    total_trials        INTEGER NOT NULL DEFAULT 0 CHECK (total_trials >= 0),
+    completed_trials    INTEGER NOT NULL DEFAULT 0 CHECK (completed_trials >= 0),
+    operator_note       TEXT NOT NULL DEFAULT '',
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    started_at          TEXT,
+    completed_at        TEXT,
+    archived_at         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_runs_revision
+ON benchmark_runs(test_revision_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_benchmark_runs_status
+ON benchmark_runs(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS benchmark_trials (
+    id                  TEXT PRIMARY KEY,
+    run_id              TEXT NOT NULL REFERENCES benchmark_runs(id) ON DELETE CASCADE,
+    test_arm_id         TEXT NOT NULL REFERENCES benchmark_test_arms(id),
+    dataset_item_id     TEXT NOT NULL REFERENCES dataset_items(id),
+    status              TEXT NOT NULL DEFAULT 'queued'
+                        CHECK (status IN ('queued','running','paused','completed','failed','cancelling','cancelled','excluded')),
+    current_attempt_id  TEXT,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    started_at          TEXT,
+    completed_at        TEXT,
+    UNIQUE(run_id, test_arm_id, dataset_item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_trials_run
+ON benchmark_trials(run_id, status, id);
+
+CREATE TABLE IF NOT EXISTS benchmark_attempts (
+    id                  TEXT PRIMARY KEY,
+    trial_id            TEXT NOT NULL REFERENCES benchmark_trials(id) ON DELETE CASCADE,
+    attempt_number      INTEGER NOT NULL CHECK (attempt_number > 0),
+    task_id             TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+    status              TEXT NOT NULL DEFAULT 'queued'
+                        CHECK (status IN ('queued','running','completed','failed','cancelling','cancelled')),
+    execution_snapshot  TEXT NOT NULL,
+    snapshot_checksum   TEXT NOT NULL,
+    failure_category    TEXT,
+    error_message       TEXT,
+    operator_intervened INTEGER NOT NULL DEFAULT 0 CHECK (operator_intervened IN (0,1)),
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    started_at          TEXT,
+    completed_at        TEXT,
+    UNIQUE(trial_id, attempt_number),
+    UNIQUE(task_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_attempts_trial
+ON benchmark_attempts(trial_id, attempt_number DESC);
+
+CREATE TABLE IF NOT EXISTS benchmark_scores (
+    id                  TEXT PRIMARY KEY,
+    attempt_id          TEXT NOT NULL REFERENCES benchmark_attempts(id) ON DELETE CASCADE,
+    scorer_id           TEXT NOT NULL REFERENCES benchmark_scorers(id),
+    status              TEXT NOT NULL CHECK (status IN ('scored','error','excluded')),
+    score               REAL,
+    passed              INTEGER CHECK (passed IN (0,1)),
+    extracted_output    TEXT,
+    explanation         TEXT,
+    evidence            TEXT NOT NULL DEFAULT '{}',
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(attempt_id, scorer_id)
+);
+
+CREATE TABLE IF NOT EXISTS benchmark_artifacts (
+    id                  TEXT PRIMARY KEY,
+    run_id              TEXT NOT NULL REFERENCES benchmark_runs(id) ON DELETE CASCADE,
+    attempt_id          TEXT REFERENCES benchmark_attempts(id) ON DELETE CASCADE,
+    kind                TEXT NOT NULL,
+    uri                 TEXT NOT NULL,
+    checksum            TEXT NOT NULL,
+    metadata            TEXT NOT NULL DEFAULT '{}',
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS operator_actions (
+    action_id           TEXT PRIMARY KEY,
+    task_id             TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    action              TEXT NOT NULL,
+    actor               TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'requested'
+                        CHECK (status IN ('requested','accepted','rejected','failed')),
+    request_detail      TEXT NOT NULL DEFAULT '{}',
+    result_detail       TEXT,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    completed_at        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_operator_actions_task
+ON operator_actions(task_id, created_at, action_id);
+
+CREATE TRIGGER IF NOT EXISTS prevent_published_dataset_version_update
+BEFORE UPDATE ON dataset_versions
+WHEN OLD.status = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published dataset versions are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_published_dataset_version_delete
+BEFORE DELETE ON dataset_versions
+WHEN OLD.status = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published dataset versions are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_published_dataset_item_insert
+BEFORE INSERT ON dataset_items
+WHEN (SELECT status FROM dataset_versions WHERE id = NEW.dataset_version_id) = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published dataset items are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_published_dataset_item_update
+BEFORE UPDATE ON dataset_items
+WHEN (SELECT status FROM dataset_versions WHERE id = OLD.dataset_version_id) = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published dataset items are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_published_dataset_item_delete
+BEFORE DELETE ON dataset_items
+WHEN (SELECT status FROM dataset_versions WHERE id = OLD.dataset_version_id) = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published dataset items are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_published_test_revision_update
+BEFORE UPDATE ON benchmark_test_revisions
+WHEN OLD.status = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published test revisions are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_published_test_revision_delete
+BEFORE DELETE ON benchmark_test_revisions
+WHEN OLD.status = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published test revisions are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_published_test_arm_insert
+BEFORE INSERT ON benchmark_test_arms
+WHEN (SELECT status FROM benchmark_test_revisions WHERE id = NEW.test_revision_id) = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published test arms are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_published_test_arm_update
+BEFORE UPDATE ON benchmark_test_arms
+WHEN (SELECT status FROM benchmark_test_revisions WHERE id = OLD.test_revision_id) = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published test arms are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_published_test_arm_delete
+BEFORE DELETE ON benchmark_test_arms
+WHEN (SELECT status FROM benchmark_test_revisions WHERE id = OLD.test_revision_id) = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published test arms are immutable');
+END;
+"""
+
+
 # ── Connection Infrastructure ────────────────────────────────────────
+
 
 @asynccontextmanager
 async def _connect():
@@ -398,7 +684,6 @@ async def _connect():
         await db.close()
 
 
-
 async def check_sqlite_health() -> bool:
     """Quick health probe for the /health endpoint.
 
@@ -414,6 +699,7 @@ async def check_sqlite_health() -> bool:
 
 
 # ── Schema Management ────────────────────────────────────────────────
+
 
 async def _migrate_to_v2(db: aiosqlite.Connection) -> None:
     """Migration v1 → v2: additive tables/columns (doc 07).
@@ -456,9 +742,7 @@ async def _migrate_to_v3(db: aiosqlite.Connection) -> None:
     """
     cursor = await db.execute("PRAGMA table_info(board_entries)")
     board_columns = await cursor.fetchall()
-    composite_pk = {
-        row[1] for row in board_columns if int(row[5] or 0) > 0
-    } == {"task_id", "id"}
+    composite_pk = {row[1] for row in board_columns if int(row[5] or 0) > 0} == {"task_id", "id"}
 
     if not composite_pk:
         await db.executescript(
@@ -568,11 +852,74 @@ async def _migrate_to_v7(db: aiosqlite.Connection) -> None:
     task_columns = {row[1] for row in await cursor.fetchall()}
     if "archived_at" not in task_columns:
         await db.execute("ALTER TABLE tasks ADD COLUMN archived_at TEXT")
-    await db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_tasks_archived ON tasks(archived_at)"
-    )
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_archived ON tasks(archived_at)")
     await db.commit()
     logger.info("Migration v7 applied: reversible task archiving")
+
+
+async def _migrate_to_v8(db: aiosqlite.Connection) -> None:
+    """Add benchmark records, immutable revisions, and task terminal identity."""
+    await db.executescript(MIGRATION_V8_BENCHMARK_FOUNDATION_DDL)
+    db.row_factory = aiosqlite.Row
+
+    cursor = await db.execute("PRAGMA table_info(tasks)")
+    task_columns = {row[1] for row in await cursor.fetchall()}
+    for column, ddl in (
+        (
+            "terminal_kind",
+            "ALTER TABLE tasks ADD COLUMN terminal_kind TEXT "
+            "CHECK (terminal_kind IN ('completed','failed','cancelled'))",
+        ),
+        (
+            "failure_category",
+            "ALTER TABLE tasks ADD COLUMN failure_category TEXT",
+        ),
+        (
+            "cancel_requested_at",
+            "ALTER TABLE tasks ADD COLUMN cancel_requested_at TEXT",
+        ),
+    ):
+        if column not in task_columns:
+            await db.execute(ddl)
+
+    await db.execute(
+        "UPDATE tasks SET terminal_kind = CASE "
+        "WHEN status = 'completed' THEN 'completed' "
+        "WHEN status = 'failed' AND (run_state IN ('aborted','cancelled') "
+        "OR error_message LIKE 'Task aborted:%') THEN 'cancelled' "
+        "WHEN status = 'failed' THEN 'failed' ELSE NULL END "
+        "WHERE terminal_kind IS NULL"
+    )
+    await db.execute(
+        "UPDATE tasks SET run_state = 'cancelled', failure_category = 'cancelled' "
+        "WHERE terminal_kind = 'cancelled'"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_terminal_kind "
+        "ON tasks(terminal_kind, completed_at DESC)"
+    )
+    await db.executemany(
+        "INSERT OR IGNORE INTO benchmark_scorers "
+        "(id, name, version, kind, configuration_schema) VALUES (?, ?, ?, ?, ?)",
+        (
+            (
+                "scorer-gsm8k-numeric-v1",
+                "GSM8K numeric match",
+                "1",
+                "numeric_match",
+                "{}",
+            ),
+            (
+                "scorer-mmlu-letter-v1",
+                "MMLU letter match",
+                "1",
+                "letter_match",
+                "{}",
+            ),
+        ),
+    )
+    await db.commit()
+    logger.info("Migration v8 applied: benchmark foundation and task terminal identity")
 
 
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
@@ -584,6 +931,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         5: _migrate_to_v5,
         6: _migrate_to_v6,
         7: _migrate_to_v7,
+        8: _migrate_to_v8,
     }
     fn = migrations.get(version)
     if fn is None:
@@ -613,8 +961,7 @@ async def init_db() -> None:
         )
     if not os.access(db_dir, os.W_OK):
         raise RuntimeError(
-            f"Database directory is not writable: {db_dir}. "
-            f"Check volume mount permissions."
+            f"Database directory is not writable: {db_dir}. Check volume mount permissions."
         )
 
     try:
@@ -627,9 +974,7 @@ async def init_db() -> None:
             db.row_factory = aiosqlite.Row
 
             # Ensure schema_version row exists
-            cursor = await db.execute(
-                "SELECT MAX(version) as v FROM schema_version"
-            )
+            cursor = await db.execute("SELECT MAX(version) as v FROM schema_version")
             row = await cursor.fetchone()
             current_version = row["v"] if row and row["v"] is not None else 0
 
@@ -704,8 +1049,11 @@ async def init_db() -> None:
 
 # ── Task CRUD ────────────────────────────────────────────────────────
 
+
 async def create_task(
-    task_id: str, label: str, full_input: str,
+    task_id: str,
+    label: str,
+    full_input: str,
     variant: str = "classic",
 ) -> None:
     """Create a new task record with status='pending'.
@@ -889,9 +1237,7 @@ async def complete_task(
 
     async with _connect() as db:
         # Fetch started_at to compute duration
-        cursor = await db.execute(
-            "SELECT started_at FROM tasks WHERE id = ?", (task_id,)
-        )
+        cursor = await db.execute("SELECT started_at FROM tasks WHERE id = ?", (task_id,))
         row = await cursor.fetchone()
         duration_ms = None
         if row and row["started_at"]:
@@ -919,6 +1265,8 @@ async def complete_task(
             "UPDATE tasks SET "
             "status = 'completed', "
             "run_state = 'succeeded', "
+            "terminal_kind = 'completed', "
+            "failure_category = NULL, "
             "result_summary = ?, "
             "result_json = ?, "
             "completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
@@ -938,6 +1286,7 @@ async def fail_task(
     task_id: str,
     error_message: str,
     lease_token: str | None = None,
+    failure_category: str = "execution",
 ) -> bool:
     """Mark a task as failed with an error message."""
     async with _connect() as db:
@@ -950,7 +1299,50 @@ async def fail_task(
             "UPDATE tasks SET "
             "status = 'failed', "
             "run_state = 'failed', "
+            "terminal_kind = 'failed', "
+            "failure_category = ?, "
             "error_message = ?, "
+            "completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
+            "lease_token = NULL "
+            f"WHERE {where}",
+            [failure_category, *params],
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def request_task_cancellation(task_id: str) -> bool:
+    """Record a durable cancellation request before execution stops."""
+    async with _connect() as db:
+        cursor = await db.execute(
+            "UPDATE tasks SET run_state = 'cancelling', "
+            "cancel_requested_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
+            "last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+            "WHERE id = ? AND status IN ('pending','running')",
+            (task_id,),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def cancel_task(
+    task_id: str,
+    reason: str,
+    lease_token: str | None = None,
+) -> bool:
+    """Mark one task as cancelled while preserving legacy terminal status."""
+    where = "id = ? AND status IN ('pending','running')"
+    params: list[Any] = [f"Task cancelled: {reason}", task_id]
+    if lease_token is not None:
+        where += " AND lease_token = ?"
+        params.append(lease_token)
+    async with _connect() as db:
+        cursor = await db.execute(
+            "UPDATE tasks SET status = 'failed', run_state = 'cancelled', "
+            "terminal_kind = 'cancelled', failure_category = 'cancelled', "
+            "error_message = ?, "
+            "cancel_requested_at = COALESCE(cancel_requested_at, "
+            "strftime('%Y-%m-%dT%H:%M:%fZ','now')), "
             "completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
             "lease_token = NULL "
             f"WHERE {where}",
@@ -963,9 +1355,7 @@ async def fail_task(
 async def get_task(task_id: str) -> dict | None:
     """Fetch a single task by ID. Returns None if not found."""
     async with _connect() as db:
-        cursor = await db.execute(
-            "SELECT * FROM tasks WHERE id = ?", (task_id,)
-        )
+        cursor = await db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
         row = await cursor.fetchone()
         if not row:
             return None
@@ -974,9 +1364,7 @@ async def get_task(task_id: str) -> dict | None:
         if isinstance(raw_result, str) and raw_result:
             with suppress(json.JSONDecodeError, TypeError):
                 result = json.loads(raw_result)
-                if isinstance(result, dict) and isinstance(
-                    result.get("variant_metrics"), dict
-                ):
+                if isinstance(result, dict) and isinstance(result.get("variant_metrics"), dict):
                     task["variant_metrics"] = result["variant_metrics"]
         return task
 
@@ -1002,9 +1390,7 @@ async def get_blocked_tasks(
     cursor_clause = ""
     params: list[Any] = []
     if after is not None:
-        cursor_clause = (
-            "AND (created_at > ? OR (created_at = ? AND id > ?)) "
-        )
+        cursor_clause = "AND (created_at > ? OR (created_at = ? AND id > ?)) "
         params.extend((after[0], after[0], after[1]))
     params.append(bounded_limit)
     async with _connect() as connection:
@@ -1118,7 +1504,8 @@ def _task_filter_clause(
     params: list[Any] = []
     if status == "attention":
         clauses.append(
-            "(status = 'failed' OR COALESCE(run_state, '') IN "
+            "((status = 'failed' AND COALESCE(terminal_kind, 'failed') != 'cancelled') "
+            "OR COALESCE(run_state, '') IN "
             "('blocked', 'paused', 'pause_requested') OR "
             "(status IN ('pending', 'running') AND "
             "julianday(COALESCE(last_heartbeat_at, created_at)) < "
@@ -1133,6 +1520,8 @@ def _task_filter_clause(
             "json_extract(request.data, '$.run_id') "
             "AND response.cursor > request.cursor)))"
         )
+    elif status == "cancelled":
+        clauses.append("terminal_kind = 'cancelled'")
     elif status:
         clauses.append("status = ?")
         params.append(status)
@@ -1280,8 +1669,10 @@ async def get_task_analytics() -> dict[str, Any]:
     """Return complete task aggregates for the Analytics page."""
     async with _connect() as connection:
         status_rows = await connection.execute_fetchall(
-            "SELECT status, COUNT(*) AS count FROM tasks "
-            "WHERE archived_at IS NULL GROUP BY status"
+            "SELECT CASE WHEN terminal_kind = 'cancelled' THEN 'cancelled' "
+            "ELSE status END AS status, COUNT(*) AS count FROM tasks "
+            "WHERE archived_at IS NULL GROUP BY CASE "
+            "WHEN terminal_kind = 'cancelled' THEN 'cancelled' ELSE status END"
         )
         cursor = await connection.execute(
             "SELECT COUNT(*) AS task_count, "
@@ -1307,6 +1698,7 @@ async def get_task_analytics() -> dict[str, Any]:
 
 # ── Durable Event Journal and Outbox ────────────────────────────────
 
+
 def _decode_event_row(row) -> dict:
     """Convert an event row to its public dictionary shape."""
     event = dict(row)
@@ -1330,8 +1722,7 @@ async def append_delivery_event(
     payload_bytes = len(payload.encode("utf-8"))
     if payload_bytes > MAX_EVENT_PAYLOAD_BYTES:
         raise EventPayloadTooLarge(
-            f"Event payload is {payload_bytes} bytes. "
-            f"The limit is {MAX_EVENT_PAYLOAD_BYTES} bytes."
+            f"Event payload is {payload_bytes} bytes. The limit is {MAX_EVENT_PAYLOAD_BYTES} bytes."
         )
 
     async with _connect() as connection:
@@ -1354,8 +1745,7 @@ async def append_delivery_event(
             )
             if cursor.rowcount == 0:
                 existing_cursor = await connection.execute(
-                    "SELECT * FROM event_journal "
-                    "WHERE stream = ? AND idempotency_key = ?",
+                    "SELECT * FROM event_journal WHERE stream = ? AND idempotency_key = ?",
                     (stream, idempotency_key),
                 )
                 existing = await existing_cursor.fetchone()
@@ -1378,9 +1768,7 @@ async def append_delivery_event(
                         (task_id,),
                     )
 
-            outbox_cursor = await connection.execute(
-                "SELECT COUNT(*) AS count FROM event_outbox"
-            )
+            outbox_cursor = await connection.execute("SELECT COUNT(*) AS count FROM event_outbox")
             outbox_row = await outbox_cursor.fetchone()
             outbox_count = int(outbox_row["count"] if outbox_row else 0)
             if not already_published and outbox_count < MAX_OUTBOX_BACKLOG:
@@ -1409,9 +1797,7 @@ async def fill_event_outbox() -> int:
     async with _connect() as connection:
         await connection.execute("BEGIN IMMEDIATE")
         try:
-            cursor = await connection.execute(
-                "SELECT COUNT(*) AS count FROM event_outbox"
-            )
+            cursor = await connection.execute("SELECT COUNT(*) AS count FROM event_outbox")
             row = await cursor.fetchone()
             current = int(row["count"] if row else 0)
             capacity = max(0, MAX_OUTBOX_BACKLOG - current)
@@ -1494,9 +1880,7 @@ async def get_delivery_events_after(
     bounded_limit = min(max(limit, 1), 500)
     async with _connect() as connection:
         rows = await connection.execute_fetchall(
-            "SELECT * FROM event_journal "
-            "WHERE stream = ? AND cursor > ? "
-            "ORDER BY cursor LIMIT ?",
+            "SELECT * FROM event_journal WHERE stream = ? AND cursor > ? ORDER BY cursor LIMIT ?",
             (stream, after_cursor, bounded_limit),
         )
         return [_decode_event_row(row) for row in rows]
@@ -1509,8 +1893,7 @@ async def get_delivery_event_by_idempotency(
     """Return one durable event by its stream-scoped identity."""
     async with _connect() as connection:
         cursor = await connection.execute(
-            "SELECT * FROM event_journal "
-            "WHERE stream = ? AND idempotency_key = ?",
+            "SELECT * FROM event_journal WHERE stream = ? AND idempotency_key = ?",
             (stream, idempotency_key),
         )
         row = await cursor.fetchone()
@@ -1592,8 +1975,7 @@ async def get_event_delivery_health(task_id: str | None = None) -> dict:
 
         if task_id is None:
             outbox_cursor = await connection.execute(
-                "SELECT COUNT(*) AS count, COALESCE(SUM(attempts), 0) AS failures "
-                "FROM event_outbox"
+                "SELECT COUNT(*) AS count, COALESCE(SUM(attempts), 0) AS failures FROM event_outbox"
             )
         else:
             outbox_cursor = await connection.execute(
@@ -1616,10 +1998,7 @@ async def get_event_delivery_health(task_id: str | None = None) -> dict:
                 0.0,
                 (datetime.now(UTC) - datetime.fromisoformat(oldest)).total_seconds(),
             )
-    overloaded = (
-        unpublished >= OUTBOX_OVERLOAD_THRESHOLD
-        or outbox_count >= MAX_OUTBOX_BACKLOG
-    )
+    overloaded = unpublished >= OUTBOX_OVERLOAD_THRESHOLD or outbox_count >= MAX_OUTBOX_BACKLOG
     state = "overloaded" if overloaded else "recovering" if unpublished else "healthy"
     return {
         "status": state,
@@ -1654,6 +2033,7 @@ async def get_lifecycle_health() -> dict:
 
 
 # ── Sub-task CRUD ────────────────────────────────────────────────────
+
 
 async def upsert_sub_tasks(task_id: str, sub_tasks: list[dict]) -> None:
     """Insert or replace sub-task records for a task.
@@ -1704,6 +2084,7 @@ async def get_sub_tasks(task_id: str) -> list[dict]:
 
 # ── Debate CRUD ──────────────────────────────────────────────────────
 
+
 async def get_debate(task_id: str) -> list[dict]:
     """Fetch all debate entries for a task, ordered chronologically."""
     async with _connect() as db:
@@ -1715,6 +2096,7 @@ async def get_debate(task_id: str) -> list[dict]:
 
 
 # ── Cost CRUD ────────────────────────────────────────────────────────
+
 
 async def update_task_cost_totals(
     task_id: str,
@@ -1746,8 +2128,7 @@ async def update_task_cost_totals(
                 where += " AND lease_token = ?"
                 params.append(lease_token)
             updated = await db.execute(
-                "UPDATE tasks SET total_cost_usd = ?, total_tokens = ? "
-                f"WHERE {where}",
+                f"UPDATE tasks SET total_cost_usd = ?, total_tokens = ? WHERE {where}",
                 params,
             )
             await db.commit()
@@ -1814,6 +2195,7 @@ async def get_task_cost_summary(task_id: str) -> dict:
 
 # ── Log CRUD ─────────────────────────────────────────────────────────
 
+
 async def insert_log_entry(
     task_id: str,
     agent_role: str,
@@ -1852,14 +2234,11 @@ def _decode_log_row(row) -> dict:
     return d
 
 
-async def get_task_logs(
-    task_id: str, limit: int = 200, offset: int = 0
-) -> list[dict]:
+async def get_task_logs(task_id: str, limit: int = 200, offset: int = 0) -> list[dict]:
     """Fetch log entries for a task with pagination (structured fields decoded)."""
     async with _connect() as db:
         rows = await db.execute_fetchall(
-            "SELECT * FROM log_entries WHERE task_id = ? "
-            "ORDER BY id LIMIT ? OFFSET ?",
+            "SELECT * FROM log_entries WHERE task_id = ? ORDER BY id LIMIT ? OFFSET ?",
             (task_id, limit, offset),
         )
         return [_decode_log_row(r) for r in rows]
@@ -1877,6 +2256,7 @@ async def count_task_logs(task_id: str) -> int:
 
 
 # ── Agent Traces CRUD (Phase 1, doc 07 §3) ───────────────────────────
+
 
 async def insert_agent_traces(rows: list[dict]) -> None:
     """Batch-insert agent trace events into agent_traces table.
@@ -1917,8 +2297,7 @@ async def get_turn_traces(task_id: str, turn_id: str) -> list[dict]:
     """Fetch all trace events for a specific turn, ordered by seq."""
     async with _connect() as db:
         rows = await db.execute_fetchall(
-            "SELECT * FROM agent_traces WHERE task_id = ? AND turn_id = ? "
-            "ORDER BY seq",
+            "SELECT * FROM agent_traces WHERE task_id = ? AND turn_id = ? ORDER BY seq",
             (task_id, turn_id),
         )
         result = []
@@ -1931,14 +2310,11 @@ async def get_turn_traces(task_id: str, turn_id: str) -> list[dict]:
         return result
 
 
-async def get_task_traces(
-    task_id: str, limit: int = 200, offset: int = 0
-) -> list[dict]:
+async def get_task_traces(task_id: str, limit: int = 200, offset: int = 0) -> list[dict]:
     """Fetch trace events for a task (paginated), ordered by turn_id + seq."""
     async with _connect() as db:
         rows = await db.execute_fetchall(
-            "SELECT * FROM agent_traces WHERE task_id = ? "
-            "ORDER BY turn_id, seq LIMIT ? OFFSET ?",
+            "SELECT * FROM agent_traces WHERE task_id = ? ORDER BY turn_id, seq LIMIT ? OFFSET ?",
             (task_id, limit, offset),
         )
         result = []
@@ -1952,6 +2328,7 @@ async def get_task_traces(
 
 
 # ── Turns CRUD (Phase 1, doc 07 §3) ──────────────────────────────────
+
 
 async def create_turn(turn: dict) -> None:
     """Create a new turn record (one row per KS activation).
@@ -2041,6 +2418,7 @@ async def get_turns(task_id: str) -> list[dict]:
 
 # ── Extended Cost Entry (Phase 1, doc 07 §1.8) ───────────────────────
 
+
 async def insert_cost_entry_v2(
     task_id: str,
     model: str,
@@ -2066,14 +2444,24 @@ async def insert_cost_entry_v2(
             "node_id, turn_id, provider, price_source, joules_estimate) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                task_id, model, input_tokens, output_tokens, cost_usd, phase,
-                node_id, turn_id, provider, price_source, joules_estimate,
+                task_id,
+                model,
+                input_tokens,
+                output_tokens,
+                cost_usd,
+                phase,
+                node_id,
+                turn_id,
+                provider,
+                price_source,
+                joules_estimate,
             ),
         )
         await db.commit()
 
 
 # ── Board CRUD (Phase 2, doc 07 §3) ─────────────────────────────────
+
 
 async def upsert_board_entry(
     entry: dict,
@@ -2171,8 +2559,15 @@ async def insert_board_event(
                 "entry_id, payload, redis_stream_id) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    task_id, seq, round_no, turn_id, actor,
-                    event_type, entry_id, payload_str, redis_stream_id,
+                    task_id,
+                    seq,
+                    round_no,
+                    turn_id,
+                    actor,
+                    event_type,
+                    entry_id,
+                    payload_str,
+                    redis_stream_id,
                 ),
             )
             if cursor.rowcount == 0:
@@ -2185,18 +2580,14 @@ async def insert_board_event(
                 expected = (actor, event_type, entry_id, payload_str)
                 actual = tuple(existing) if existing else None
                 if actual != expected:
-                    raise RuntimeError(
-                        f"Board event sequence conflict for {task_id} at {seq}"
-                    )
+                    raise RuntimeError(f"Board event sequence conflict for {task_id} at {seq}")
             await db.commit()
         except BaseException:
             await db.rollback()
             raise
 
 
-async def get_board_events(
-    task_id: str, until_seq: int | None = None
-) -> list[dict]:
+async def get_board_events(task_id: str, until_seq: int | None = None) -> list[dict]:
     """Fetch board events for a task, ordered by seq (replay).
 
     If until_seq is provided, returns events up to and including that seq.
@@ -2204,14 +2595,12 @@ async def get_board_events(
     async with _connect() as db:
         if until_seq is not None:
             rows = await db.execute_fetchall(
-                "SELECT * FROM board_events "
-                "WHERE task_id = ? AND seq <= ? ORDER BY seq",
+                "SELECT * FROM board_events WHERE task_id = ? AND seq <= ? ORDER BY seq",
                 (task_id, until_seq),
             )
         else:
             rows = await db.execute_fetchall(
-                "SELECT * FROM board_events "
-                "WHERE task_id = ? ORDER BY seq",
+                "SELECT * FROM board_events WHERE task_id = ? ORDER BY seq",
                 (task_id,),
             )
         result = []
@@ -2250,9 +2639,7 @@ async def import_legacy_board_snapshot(
 
             for event in events:
                 payload = event.get("payload", {})
-                payload_json = (
-                    payload if isinstance(payload, str) else json.dumps(payload)
-                )
+                payload_json = payload if isinstance(payload, str) else json.dumps(payload)
                 await db.execute(
                     "INSERT INTO board_events "
                     "(task_id, seq, round, turn_id, actor, event_type, "
@@ -2376,10 +2763,7 @@ async def update_board_entry_saliences(
                 "UPDATE board_entries SET salience = ?, "
                 "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
                 "WHERE id = ? AND task_id = ?",
-                [
-                    (salience, entry_id, task_id)
-                    for entry_id, salience in scores.items()
-                ],
+                [(salience, entry_id, task_id) for entry_id, salience in scores.items()],
             )
             await db.commit()
         except BaseException:
@@ -2422,9 +2806,7 @@ async def mark_task_checkpoint(
         params.append(lease_token)
     async with _connect() as connection:
         cursor = await connection.execute(
-            "UPDATE tasks SET "
-            "checkpoint_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
-            f"WHERE {where}",
+            f"UPDATE tasks SET checkpoint_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE {where}",
             params,
         )
         await connection.commit()
@@ -2434,9 +2816,7 @@ async def mark_task_checkpoint(
 async def get_board_meta(task_id: str) -> dict:
     """Read the persisted classic-board control metadata."""
     async with _connect() as db:
-        cursor = await db.execute(
-            "SELECT data FROM board_meta WHERE task_id = ?", (task_id,)
-        )
+        cursor = await db.execute("SELECT data FROM board_meta WHERE task_id = ?", (task_id,))
         row = await cursor.fetchone()
         if not row or not row["data"]:
             return {}
@@ -2468,6 +2848,7 @@ async def delete_board_entries_in_space(
 
 
 # ── Task Files CRUD (doc 17 §3) ─────────────────────────────────────
+
 
 async def insert_task_file(
     file_id: str,
@@ -2503,10 +2884,13 @@ async def get_task_files(task_id: str) -> list[dict]:
 
 async def get_task_files_total_bytes(task_id: str) -> int:
     """Return total bytes of all user inputs for one task."""
-    async with _connect() as db, db.execute(
-        "SELECT COALESCE(SUM(bytes), 0) FROM task_files WHERE task_id = ?",
-        (task_id,),
-    ) as cur:
+    async with (
+        _connect() as db,
+        db.execute(
+            "SELECT COALESCE(SUM(bytes), 0) FROM task_files WHERE task_id = ?",
+            (task_id,),
+        ) as cur,
+    ):
         row = await cur.fetchone()
         return int(row[0]) if row else 0
 
@@ -2515,14 +2899,13 @@ async def get_task_file(file_id: str) -> dict | None:
     """Return a single file row by ID."""
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM task_files WHERE id = ?", (file_id,)
-        ) as cur:
+        async with db.execute("SELECT * FROM task_files WHERE id = ?", (file_id,)) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
 
 
 # ── Artifacts CRUD (doc 17 §6) ──────────────────────────────────────
+
 
 async def update_task_output_dir(task_id: str, output_dir: str) -> None:
     """Set the output_dir column on the tasks row (B4 fix)."""
@@ -2551,7 +2934,18 @@ async def insert_artifact(
         await db.execute(
             "INSERT INTO artifacts (id, task_id, turn_id, author, rel_path, stored_path, mime, bytes, sha256, version) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (artifact_id, task_id, turn_id, author, rel_path, stored_path, mime, size_bytes, sha256, version),
+            (
+                artifact_id,
+                task_id,
+                turn_id,
+                author,
+                rel_path,
+                stored_path,
+                mime,
+                size_bytes,
+                sha256,
+                version,
+            ),
         )
         await db.commit()
 
@@ -2572,9 +2966,7 @@ async def get_artifact(artifact_id: str) -> dict | None:
     """Return a single artifact row by ID."""
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM artifacts WHERE id = ?", (artifact_id,)
-        ) as cur:
+        async with db.execute("SELECT * FROM artifacts WHERE id = ?", (artifact_id,)) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
 
@@ -2588,8 +2980,7 @@ async def get_artifact_version(
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT * FROM artifacts "
-            "WHERE task_id = ? AND rel_path = ? AND version = ?",
+            "SELECT * FROM artifacts WHERE task_id = ? AND rel_path = ? AND version = ?",
             (task_id, rel_path, version),
         ) as cur:
             row = await cur.fetchone()
@@ -2612,19 +3003,445 @@ async def update_artifact_stored_path(
 
 async def get_artifact_max_version(task_id: str, rel_path: str) -> int:
     """Return the current highest version number for a given (task_id, rel_path)."""
-    async with _connect() as db, db.execute(
-        "SELECT MAX(version) FROM artifacts WHERE task_id = ? AND rel_path = ?",
-        (task_id, rel_path),
-    ) as cur:
+    async with (
+        _connect() as db,
+        db.execute(
+            "SELECT MAX(version) FROM artifacts WHERE task_id = ? AND rel_path = ?",
+            (task_id, rel_path),
+        ) as cur,
+    ):
         row = await cur.fetchone()
         return row[0] if row and row[0] else 0
 
 
 async def get_task_artifacts_total_bytes(task_id: str) -> int:
     """Return total bytes of all artifacts for a task (quota enforcement)."""
-    async with _connect() as db, db.execute(
-        "SELECT COALESCE(SUM(bytes), 0) FROM artifacts WHERE task_id = ?",
-        (task_id,),
-    ) as cur:
+    async with (
+        _connect() as db,
+        db.execute(
+            "SELECT COALESCE(SUM(bytes), 0) FROM artifacts WHERE task_id = ?",
+            (task_id,),
+        ) as cur,
+    ):
         row = await cur.fetchone()
         return row[0] if row else 0
+
+
+# ── Benchmark and Dataset Registry ──────────────────────────────────
+
+
+def _decode_json_columns(record: dict, columns: tuple[str, ...]) -> dict:
+    """Decode selected JSON columns without failing the complete record."""
+    for column in columns:
+        value = record.get(column)
+        if not isinstance(value, str):
+            continue
+        with suppress(json.JSONDecodeError, TypeError):
+            record[column] = json.loads(value)
+    return record
+
+
+async def create_dataset_version(
+    *,
+    dataset_id: str,
+    version_id: str,
+    name: str,
+    description: str,
+    source_uri: str | None,
+    license_name: str | None,
+    author: str | None,
+    dataset_metadata: dict,
+    checksum: str,
+    schema: dict,
+    source_filename: str,
+    source_mime: str,
+    source_checksum: str,
+    source_path: str,
+    version_metadata: dict,
+    items: list[dict],
+    publish: bool = True,
+) -> dict:
+    """Create one dataset and one immutable version in one transaction."""
+    async with _connect() as connection:
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            existing_cursor = await connection.execute(
+                "SELECT id FROM dataset_versions WHERE dataset_id = ? AND checksum = ?",
+                (dataset_id, checksum),
+            )
+            if await existing_cursor.fetchone():
+                raise DatasetVersionConflict("This dataset already contains the same content")
+
+            await connection.execute(
+                "INSERT INTO datasets "
+                "(id, name, description, source_uri, license, author, metadata) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "name = excluded.name, "
+                "description = CASE WHEN excluded.description <> '' "
+                "THEN excluded.description ELSE datasets.description END, "
+                "source_uri = COALESCE(excluded.source_uri, datasets.source_uri), "
+                "license = COALESCE(excluded.license, datasets.license), "
+                "author = COALESCE(excluded.author, datasets.author), "
+                "metadata = CASE WHEN excluded.metadata <> '{}' "
+                "THEN excluded.metadata ELSE datasets.metadata END, "
+                "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+                (
+                    dataset_id,
+                    name,
+                    description,
+                    source_uri,
+                    license_name,
+                    author,
+                    json.dumps(dataset_metadata, sort_keys=True),
+                ),
+            )
+            version_cursor = await connection.execute(
+                "SELECT COALESCE(MAX(version), 0) + 1 AS next_version "
+                "FROM dataset_versions WHERE dataset_id = ?",
+                (dataset_id,),
+            )
+            version_row = await version_cursor.fetchone()
+            version_number = int(version_row["next_version"] if version_row else 1)
+            await connection.execute(
+                "INSERT INTO dataset_versions "
+                "(id, dataset_id, version, status, checksum, item_count, "
+                "schema_json, source_filename, source_mime, source_checksum, "
+                "source_path, metadata) "
+                "VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    version_id,
+                    dataset_id,
+                    version_number,
+                    checksum,
+                    len(items),
+                    json.dumps(schema, sort_keys=True),
+                    source_filename,
+                    source_mime,
+                    source_checksum,
+                    source_path,
+                    json.dumps(version_metadata, sort_keys=True),
+                ),
+            )
+            await connection.executemany(
+                "INSERT INTO dataset_items "
+                "(id, dataset_version_id, item_key, input, expected_output, "
+                "subject, split, tags, metadata, sort_order) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        item["id"],
+                        version_id,
+                        item["item_key"],
+                        item["input"],
+                        item["expected_output"],
+                        item.get("subject"),
+                        item.get("split"),
+                        json.dumps(item.get("tags", []), sort_keys=True),
+                        json.dumps(item.get("metadata", {}), sort_keys=True),
+                        index,
+                    )
+                    for index, item in enumerate(items)
+                ],
+            )
+            if publish:
+                await connection.execute(
+                    "UPDATE dataset_versions SET status = 'published', "
+                    "published_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                    "WHERE id = ? AND status = 'draft'",
+                    (version_id,),
+                )
+            await connection.commit()
+        except BaseException:
+            await connection.rollback()
+            raise
+    result = await get_dataset(dataset_id)
+    if result is None:
+        raise RuntimeError("The dataset disappeared after creation")
+    return result
+
+
+async def list_datasets(
+    *,
+    search: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    """Return one dataset page with its latest version summary."""
+    clauses = ["dataset.archived_at IS NULL"]
+    params: list[Any] = []
+    if search:
+        pattern = f"%{search.strip().lower()}%"
+        clauses.append(
+            "(LOWER(dataset.name) LIKE ? OR LOWER(dataset.description) LIKE ? "
+            "OR LOWER(COALESCE(dataset.author, '')) LIKE ?)"
+        )
+        params.extend((pattern, pattern, pattern))
+    where = f"WHERE {' AND '.join(clauses)}"
+    bounded_limit = min(max(limit, 1), 200)
+    bounded_offset = max(offset, 0)
+    async with _connect() as connection:
+        count_cursor = await connection.execute(
+            f"SELECT COUNT(*) AS count FROM datasets AS dataset {where}",
+            params,
+        )
+        count_row = await count_cursor.fetchone()
+        rows = await connection.execute_fetchall(
+            "SELECT dataset.*, version.id AS latest_version_id, "
+            "version.version AS latest_version, version.status AS latest_status, "
+            "version.checksum AS latest_checksum, version.item_count, "
+            "version.published_at AS latest_published_at, "
+            "(SELECT COUNT(*) FROM dataset_versions AS all_versions "
+            "WHERE all_versions.dataset_id = dataset.id) AS version_count "
+            "FROM datasets AS dataset "
+            "LEFT JOIN dataset_versions AS version ON version.id = ("
+            "SELECT candidate.id FROM dataset_versions AS candidate "
+            "WHERE candidate.dataset_id = dataset.id "
+            "ORDER BY candidate.version DESC LIMIT 1) "
+            f"{where} ORDER BY dataset.updated_at DESC, dataset.id LIMIT ? OFFSET ?",
+            [*params, bounded_limit, bounded_offset],
+        )
+    return (
+        [_decode_json_columns(dict(row), ("metadata",)) for row in rows],
+        int(count_row["count"] if count_row else 0),
+    )
+
+
+async def get_dataset(dataset_id: str) -> dict | None:
+    """Return one dataset with all versions and latest field summaries."""
+    async with _connect() as connection:
+        dataset_cursor = await connection.execute(
+            "SELECT * FROM datasets WHERE id = ?",
+            (dataset_id,),
+        )
+        dataset_row = await dataset_cursor.fetchone()
+        if not dataset_row:
+            return None
+        version_rows = await connection.execute_fetchall(
+            "SELECT id, dataset_id, version, status, checksum, item_count, "
+            "schema_json, source_filename, source_mime, source_checksum, "
+            "metadata, created_at, published_at "
+            "FROM dataset_versions WHERE dataset_id = ? "
+            "ORDER BY version DESC",
+            (dataset_id,),
+        )
+        subject_rows = await connection.execute_fetchall(
+            "SELECT item.subject, COUNT(*) AS count FROM dataset_items AS item "
+            "JOIN dataset_versions AS version ON version.id = item.dataset_version_id "
+            "WHERE version.dataset_id = ? AND version.version = ("
+            "SELECT MAX(version) FROM dataset_versions WHERE dataset_id = ?) "
+            "GROUP BY item.subject ORDER BY count DESC, item.subject",
+            (dataset_id, dataset_id),
+        )
+        split_rows = await connection.execute_fetchall(
+            "SELECT item.split, COUNT(*) AS count FROM dataset_items AS item "
+            "JOIN dataset_versions AS version ON version.id = item.dataset_version_id "
+            "WHERE version.dataset_id = ? AND version.version = ("
+            "SELECT MAX(version) FROM dataset_versions WHERE dataset_id = ?) "
+            "GROUP BY item.split ORDER BY count DESC, item.split",
+            (dataset_id, dataset_id),
+        )
+    dataset = _decode_json_columns(dict(dataset_row), ("metadata",))
+    dataset["versions"] = [
+        _decode_json_columns(dict(row), ("schema_json", "metadata")) for row in version_rows
+    ]
+    dataset["subjects"] = {
+        str(row["subject"] or "Unspecified"): int(row["count"]) for row in subject_rows
+    }
+    dataset["splits"] = {
+        str(row["split"] or "Unspecified"): int(row["count"]) for row in split_rows
+    }
+    return dataset
+
+
+async def get_dataset_version_source(
+    dataset_id: str,
+    version_id: str,
+) -> dict | None:
+    """Return private source storage data for one dataset version."""
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "SELECT source_path, source_filename, source_mime, source_checksum "
+            "FROM dataset_versions WHERE dataset_id = ? AND id = ?",
+            (dataset_id, version_id),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def list_dataset_items(
+    dataset_version_id: str,
+    *,
+    search: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    """Return one searchable page from an immutable dataset version."""
+    clauses = ["dataset_version_id = ?"]
+    params: list[Any] = [dataset_version_id]
+    if search:
+        pattern = f"%{search.strip().lower()}%"
+        clauses.append(
+            "(LOWER(item_key) LIKE ? OR LOWER(input) LIKE ? "
+            "OR LOWER(expected_output) LIKE ? OR LOWER(COALESCE(subject, '')) LIKE ?)"
+        )
+        params.extend((pattern, pattern, pattern, pattern))
+    where = f"WHERE {' AND '.join(clauses)}"
+    bounded_limit = min(max(limit, 1), 200)
+    bounded_offset = max(offset, 0)
+    async with _connect() as connection:
+        count_cursor = await connection.execute(
+            f"SELECT COUNT(*) AS count FROM dataset_items {where}", params
+        )
+        count_row = await count_cursor.fetchone()
+        rows = await connection.execute_fetchall(
+            f"SELECT * FROM dataset_items {where} ORDER BY sort_order, id LIMIT ? OFFSET ?",
+            [*params, bounded_limit, bounded_offset],
+        )
+    return (
+        [_decode_json_columns(dict(row), ("tags", "metadata")) for row in rows],
+        int(count_row["count"] if count_row else 0),
+    )
+
+
+async def get_task_operator_actions(task_id: str, limit: int = 200) -> list[dict]:
+    """Return durable operator action requests and their final outcomes."""
+    bounded_limit = min(max(limit, 1), 500)
+    async with _connect() as connection:
+        rows = await connection.execute_fetchall(
+            "SELECT cursor, event_type, data, created_at FROM event_journal "
+            "WHERE task_id = ? AND event_type IN "
+            "('operator_action_requested','operator_action_result') "
+            "ORDER BY cursor DESC LIMIT ?",
+            (task_id, bounded_limit),
+        )
+    return [_decode_event_row(row) for row in reversed(rows)]
+
+
+async def claim_operator_action(
+    *,
+    action_id: str,
+    task_id: str,
+    action: str,
+    actor: str,
+    detail: dict,
+) -> tuple[dict, bool]:
+    """Claim one operator action once and return any prior action record."""
+    detail_json = json.dumps(detail, separators=(",", ":"), sort_keys=True)
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "INSERT OR IGNORE INTO operator_actions "
+            "(action_id, task_id, action, actor, request_detail) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (action_id, task_id, action, actor, detail_json),
+        )
+        created = cursor.rowcount == 1
+        record_cursor = await connection.execute(
+            "SELECT * FROM operator_actions WHERE action_id = ?",
+            (action_id,),
+        )
+        record_row = await record_cursor.fetchone()
+        await connection.commit()
+    if not record_row:
+        raise RuntimeError("The claimed operator action disappeared")
+    record = _decode_json_columns(dict(record_row), ("request_detail", "result_detail"))
+    if (
+        record["task_id"] != task_id
+        or record["action"] != action
+        or record["actor"] != actor
+        or record["request_detail"] != detail
+    ):
+        raise EventIdempotencyConflict(
+            f"Operator action key {action_id!r} identifies different content"
+        )
+    return record, created
+
+
+async def finish_operator_action(
+    *,
+    action_id: str,
+    status: str,
+    detail: dict,
+) -> dict:
+    """Save one final operator outcome without replacing an earlier outcome."""
+    if status not in {"accepted", "rejected", "failed"}:
+        raise ValueError(f"Invalid operator action status: {status}")
+    detail_json = json.dumps(detail, separators=(",", ":"), sort_keys=True)
+    async with _connect() as connection:
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = await connection.execute(
+                "SELECT * FROM operator_actions WHERE action_id = ?",
+                (action_id,),
+            )
+            row = await cursor.fetchone()
+            if not row:
+                raise KeyError(f"Unknown operator action: {action_id}")
+            if row["status"] == "requested":
+                await connection.execute(
+                    "UPDATE operator_actions SET status = ?, result_detail = ?, "
+                    "completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                    "WHERE action_id = ? AND status = 'requested'",
+                    (status, detail_json, action_id),
+                )
+            elif row["status"] != status or row["result_detail"] != detail_json:
+                raise EventIdempotencyConflict(
+                    f"Operator action {action_id!r} already has a different outcome"
+                )
+            result_cursor = await connection.execute(
+                "SELECT * FROM operator_actions WHERE action_id = ?",
+                (action_id,),
+            )
+            result_row = await result_cursor.fetchone()
+            await connection.commit()
+        except BaseException:
+            await connection.rollback()
+            raise
+    if not result_row:
+        raise RuntimeError("The operator action outcome disappeared")
+    return _decode_json_columns(dict(result_row), ("request_detail", "result_detail"))
+
+
+async def create_benchmark_attempt(
+    *,
+    attempt_id: str,
+    trial_id: str,
+    attempt_number: int,
+    task_id: str | None,
+    execution_snapshot: dict,
+    snapshot_checksum: str,
+) -> dict:
+    """Create one append-only benchmark attempt for a Trial."""
+    async with _connect() as connection:
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            await connection.execute(
+                "INSERT INTO benchmark_attempts "
+                "(id, trial_id, attempt_number, task_id, execution_snapshot, "
+                "snapshot_checksum) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    attempt_id,
+                    trial_id,
+                    attempt_number,
+                    task_id,
+                    json.dumps(execution_snapshot, sort_keys=True),
+                    snapshot_checksum,
+                ),
+            )
+            await connection.execute(
+                "UPDATE benchmark_trials SET current_attempt_id = ? WHERE id = ?",
+                (attempt_id, trial_id),
+            )
+            await connection.commit()
+        except BaseException:
+            await connection.rollback()
+            raise
+    return {
+        "id": attempt_id,
+        "trial_id": trial_id,
+        "attempt_number": attempt_number,
+        "task_id": task_id,
+        "status": "queued",
+        "execution_snapshot": execution_snapshot,
+        "snapshot_checksum": snapshot_checksum,
+    }

@@ -122,7 +122,15 @@ export async function POST(request: Request): Promise<NextResponse> {
       `${DAEMON_BASE_URL}/api/tasks/${encodeURIComponent(body.task_id)}/${endpoint}`,
       {
         method: "POST",
-        headers: daemonHeaders(),
+        headers: {
+          ...daemonHeaders(),
+          ...(request.headers.get("X-Idempotency-Key")
+            ? { "X-Idempotency-Key": request.headers.get("X-Idempotency-Key") as string }
+            : {}),
+          ...(request.headers.get("X-BMAS-Operator-Id")
+            ? { "X-Operator-Id": request.headers.get("X-BMAS-Operator-Id") as string }
+            : {}),
+        },
         ...(payload ? { body: JSON.stringify(payload) } : {}),
         signal: AbortSignal.timeout(15_000),
       },

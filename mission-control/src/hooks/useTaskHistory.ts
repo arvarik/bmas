@@ -27,6 +27,8 @@ export interface TaskSummary {
   model_used: string | null;
   error_message: string | null;
   run_state: string | null;
+  terminal_kind?: "completed" | "failed" | "cancelled" | null;
+  failure_category?: string | null;
   result_summary?: string | null;
   last_heartbeat_at?: string | null;
   archived_at?: string | null;

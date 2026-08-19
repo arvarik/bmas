@@ -9,6 +9,7 @@ import {
   Bot,
   CircleAlert,
   ClipboardList,
+  Database,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -36,6 +37,12 @@ const GROUPS = [
       { href: "/", label: "New task", icon: Plus },
       { href: "/tasks", label: "Tasks", icon: ClipboardList },
       { href: "/tasks?status=attention", label: "Needs attention", icon: CircleAlert, attention: true },
+    ],
+  },
+  {
+    label: "Evaluate",
+    links: [
+      { href: "/datasets", label: "Datasets", icon: Database },
     ],
   },
   {

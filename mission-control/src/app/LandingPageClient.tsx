@@ -143,7 +143,9 @@ export function LandingPageClient({
 
   // Count agents online
   const agentsOnline = Object.values(agentHealth).filter((a) => a.alive).length;
-  const failedTasks = attentionHistory.tasks.filter((item) => item.status === "failed").slice(0, 4);
+  const failedTasks = attentionHistory.tasks.filter(
+    (item) => item.status === "failed" && item.terminal_kind !== "cancelled",
+  ).slice(0, 4);
   const approvalTasks = attentionHistory.tasks.filter((item) => item.pending_approval).slice(0, 4);
 
   // ── Auto-resize textarea ──────────────────────────────────────────

@@ -50,6 +50,22 @@ class _AgentResponse:
         return self._payload
 
 
+@pytest.fixture(autouse=True)
+def durable_operator_audit(monkeypatch):
+    """Keep route tests focused on action delivery."""
+    monkeypatch.setattr(
+        hitl,
+        "_begin_operator_action",
+        AsyncMock(return_value=("action-test", "operator", None)),
+    )
+    monkeypatch.setattr(hitl, "_finish_operator_action", AsyncMock())
+    monkeypatch.setattr(
+        hitl.db,
+        "request_task_cancellation",
+        AsyncMock(return_value=True),
+    )
+
+
 @pytest.mark.asyncio
 async def test_abort_route_cancels_scheduler_and_remote_agents(monkeypatch):
     redis = SimpleNamespace(set=AsyncMock())

@@ -63,6 +63,16 @@ describe("task history presentation", () => {
     expect(sortTaskHistory(attention, "cost-high").map((item) => item.id)).toEqual(["failed", "paused", "approval", "stale"]);
   });
 
+  it("keeps cancelled tasks outside the attention view", () => {
+    const tasks = [
+      task({ id: "failed", status: "failed", terminal_kind: "failed" }),
+      task({ id: "cancelled", status: "failed", terminal_kind: "cancelled" }),
+    ];
+
+    expect(filterTaskHistory(tasks, { ...emptyFilters, status: "attention" }).map((item) => item.id)).toEqual(["failed"]);
+    expect(filterTaskHistory(tasks, { ...emptyFilters, status: "cancelled" }).map((item) => item.id)).toEqual(["cancelled"]);
+  });
+
   it("exports filtered tasks as escaped CSV", () => {
     const csv = taskHistoryCsv([task({
       label: "Research, review",

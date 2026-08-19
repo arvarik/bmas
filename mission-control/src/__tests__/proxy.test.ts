@@ -30,6 +30,7 @@ describe("Mission Control request authentication", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-middleware-next")).toBe("1");
+    expect(response.headers.get("x-middleware-request-x-bmas-operator-id")).toBe("local-operator");
   });
 
   it("rejects a request without credentials in protected mode", async () => {
@@ -76,6 +77,7 @@ describe("Mission Control request authentication", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("x-middleware-request-x-bmas-operator-id")).toBe("operator");
   });
 
   it("rejects incorrect and malformed credentials", () => {

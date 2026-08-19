@@ -21,6 +21,21 @@ describe("task operator actions", () => {
     }));
   });
 
+  it("sends the stable idempotency key for safe retries", async () => {
+    const requestFetch = vi.fn<typeof fetch>(async () => Response.json({ status: "pause_requested" }));
+    vi.stubGlobal("fetch", requestFetch);
+
+    await requestTaskOperatorAction({
+      action: "pause",
+      task_id: "task-1",
+      idempotency_key: "action-one",
+    });
+
+    expect(requestFetch).toHaveBeenCalledWith("/api/hitl", expect.objectContaining({
+      headers: expect.objectContaining({ "X-Idempotency-Key": "action-one" }),
+    }));
+  });
+
   it("uses the daemon detail for a failed action", async () => {
     vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => Response.json(
       { error: "Task control request failed", detail: "The task queue is full." },

@@ -18,6 +18,7 @@ export interface TaskOperatorRequest {
   run_id?: string;
   choice?: "once" | "session" | "always" | "deny";
   input?: string;
+  idempotency_key?: string;
 }
 
 export interface TaskOperatorResult {
@@ -65,7 +66,12 @@ export async function requestTaskOperatorAction(
   try {
     const response = await fetch("/api/hitl", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(request.idempotency_key
+          ? { "X-Idempotency-Key": request.idempotency_key }
+          : {}),
+      },
       body: JSON.stringify(request),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -94,14 +100,18 @@ export function useTaskOperatorAction(timeoutMs = DEFAULT_TIMEOUT_MS) {
       return { ok: false, error: "Another task action is still pending." };
     }
     pendingRequest.current = true;
-    lastRequest.current = request;
+    const identifiedRequest = {
+      ...request,
+      idempotency_key: request.idempotency_key ?? crypto.randomUUID(),
+    };
+    lastRequest.current = identifiedRequest;
     setState({
       action: request.action,
       status: "pending",
       message: pendingMessage(request.action),
     });
     try {
-      const data = await requestTaskOperatorAction(request, timeoutMs);
+      const data = await requestTaskOperatorAction(identifiedRequest, timeoutMs);
       setState({ action: request.action, status: "success", message: successMessage });
       return { ok: true, data };
     } catch (error) {

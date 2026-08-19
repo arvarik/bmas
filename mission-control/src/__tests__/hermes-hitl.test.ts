@@ -54,4 +54,24 @@ describe("Hermes Mission Control actions", () => {
       input: "Focus on the failing test.",
     });
   });
+
+  it("forwards the operator idempotency key", async () => {
+    const upstreamFetch = vi.fn<typeof fetch>(async () => Response.json({ status: "pause_requested" }));
+    vi.stubGlobal("fetch", upstreamFetch);
+
+    await POST(new Request("http://ui/api/hitl", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Idempotency-Key": "action-one",
+        "X-BMAS-Operator-Id": "operator-a",
+      },
+      body: JSON.stringify({ action: "pause", task_id: "task-1" }),
+    }));
+
+    expect(upstreamFetch.mock.calls[0]?.[1]?.headers).toEqual(expect.objectContaining({
+      "X-Idempotency-Key": "action-one",
+      "X-Operator-Id": "operator-a",
+    }));
+  });
 });

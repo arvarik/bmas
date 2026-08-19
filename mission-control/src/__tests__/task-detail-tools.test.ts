@@ -13,12 +13,6 @@ import {
   sortBoardEntries,
   type MergedBoardEntry,
 } from "@/components/features/board/boardModel";
-import {
-  OPERATOR_HISTORY_LIMIT,
-  parseOperatorHistory,
-  serializeOperatorHistory,
-  type StoredOperatorAction,
-} from "@/lib/operator-action-history";
 
 const entry = (id: string, overrides: Partial<MergedBoardEntry> = {}): MergedBoardEntry => ({
   id,
@@ -120,31 +114,5 @@ describe("Blackboard sorting and backlinks", () => {
     expect(sortBoardEntries(entries, "backlinks")[0].id).toBe("entry-1");
     expect(sortBoardEntries(entries, "salience")[0].id).toBe("entry-2");
     expect(entries.map((item) => item.id)).toEqual(["entry-1", "entry-2", "entry-3"]);
-  });
-});
-
-describe("operator action history", () => {
-  it("round trips valid events and rejects incompatible data", () => {
-    const event: StoredOperatorAction = {
-      id: "pause:1",
-      action: "pause",
-      label: "Operator requested a pause",
-      timestamp: "2026-08-19T00:00:00.000Z",
-    };
-    expect(parseOperatorHistory(serializeOperatorHistory([event]))).toEqual([event]);
-    expect(parseOperatorHistory('{"version":999,"events":[]}')).toEqual([]);
-    expect(parseOperatorHistory("not json")).toEqual([]);
-  });
-
-  it("keeps only the latest bounded history", () => {
-    const events = Array.from({ length: OPERATOR_HISTORY_LIMIT + 4 }, (_, index) => ({
-      id: `pause:${index}`,
-      action: "pause" as const,
-      label: "Operator requested a pause",
-      timestamp: new Date(index).toISOString(),
-    }));
-    const parsed = parseOperatorHistory(serializeOperatorHistory(events));
-    expect(parsed).toHaveLength(OPERATOR_HISTORY_LIMIT);
-    expect(parsed[0].id).toBe("pause:4");
   });
 });
