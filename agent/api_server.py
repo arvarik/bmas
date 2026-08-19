@@ -1091,6 +1091,15 @@ def _normalize_usage(usage: Optional[dict], model: str) -> Optional[dict]:
     return normalized
 
 
+def _context_for_prompt(context: Optional[dict]) -> dict:
+    """Remove binary attachment metadata from one text-only model prompt."""
+    return {
+        key: value
+        for key, value in (context or {}).items()
+        if key != "attachments"
+    }
+
+
 async def _run_via_litellm(
     description: str,
     role_prompt: Optional[str],
@@ -1108,10 +1117,11 @@ async def _run_via_litellm(
         messages.append({"role": "system", "content": role_prompt})
 
     input_text = description
-    if context:
+    prompt_context = _context_for_prompt(context)
+    if prompt_context:
         input_text += (
             "\n\n## Blackboard Context\n```json\n"
-            f"{json.dumps(context, indent=2)}\n```"
+            f"{json.dumps(prompt_context, indent=2)}\n```"
         )
     messages.append({"role": "user", "content": input_text})
 
@@ -1198,8 +1208,12 @@ async def _run_via_api(
     """
     # Build the run input
     input_text = description
-    if context:
-        input_text += f"\n\n## Blackboard Context\n```json\n{json.dumps(context, indent=2)}\n```"
+    prompt_context = _context_for_prompt(context)
+    if prompt_context:
+        input_text += (
+            "\n\n## Blackboard Context\n```json\n"
+            f"{json.dumps(prompt_context, indent=2)}\n```"
+        )
 
     actor_session_id = session_id or f"{task_id}:{role}"
     run_payload = {
@@ -1820,6 +1834,7 @@ async def _run_hermes_inner(
             await _sync_artifacts(
                 task_id=task_id or request_id,
                 turn_id=turn_id or request_id,
+                author=role,
                 outputs_dir=outputs_dir,
                 request_id=request_id,
             )
@@ -1935,6 +1950,7 @@ async def _stage_attachments(
 async def _sync_artifacts(
     task_id: str,
     turn_id: str,
+    author: str,
     outputs_dir: Path,
     request_id: str,
 ) -> None:
@@ -1961,7 +1977,11 @@ async def _sync_artifacts(
                 resp = await client.post(
                     f"{DAEMON_INGEST_URL}/ingest/artifacts/{task_id}/{turn_id}",
                     headers=headers,
-                    data={"rel_path": rel_path, "sha256": sha256},
+                    data={
+                        "rel_path": rel_path,
+                        "sha256": sha256,
+                        "author": author,
+                    },
                     files={"file": (file_path.name, content)},
                 )
                 if resp.status_code == 200:

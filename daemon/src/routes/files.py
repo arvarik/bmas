@@ -8,6 +8,7 @@ GET  /tasks/{task_id}/files/{file_id}      — download file content
 GET  /tasks/{task_id}/files/{file_id}/text  — extracted text only
 """
 
+import contextlib
 import logging
 import os
 import uuid
@@ -34,6 +35,7 @@ from file_utils import (
     extract_text_file,
     get_extension,
     get_mime_type,
+    read_extracted_text,
     sanitize_filename,
 )
 
@@ -43,6 +45,15 @@ router = APIRouter()
 
 # Max bytes for upload (from config, in MB → bytes)
 _MAX_UPLOAD_BYTES = STORAGE_MAX_UPLOAD_MB * 1024 * 1024
+
+
+class FileUploadError(ValueError):
+    """Describe one expected upload validation failure."""
+
+    def __init__(self, message: str, status_code: int = 422):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
 
 
 def _check_bearer_or_pass(request: Request) -> None:
@@ -58,41 +69,71 @@ async def upload_file(task_id: str, request: Request, file: UploadFile = File(..
     stores on disk, and creates a task_files row.
     """
     require_api_key(request, BMAS_API_KEY)
-    if not STORAGE_ENABLED:
+    try:
+        stored = await store_task_file(task_id, file, announce=True)
+    except FileUploadError as exc:
         return JSONResponse(
-            {"error": "Storage is not enabled. Set storage.enabled: true in bmas.yaml"},
-            status_code=422,
+            {"error": exc.message},
+            status_code=exc.status_code,
+        )
+    return public_upload_result(stored)
+
+
+def public_upload_result(stored: dict) -> dict:
+    """Remove internal storage paths from one upload response."""
+    return {
+        key: stored[key]
+        for key in (
+            "file_id",
+            "filename",
+            "bytes",
+            "sha256",
+            "extracted_chars",
+        )
+    }
+
+
+async def store_task_file(
+    task_id: str,
+    file: UploadFile,
+    *,
+    announce: bool,
+) -> dict:
+    """Validate and store one task file without route-specific authentication."""
+    if not STORAGE_ENABLED:
+        raise FileUploadError(
+            "Storage is not enabled. Set storage.enabled: true in bmas.yaml",
         )
 
     # Verify task exists
     task = await db.get_task(task_id)
     if not task:
-        return JSONResponse({"error": "Task not found"}, status_code=404)
+        raise FileUploadError("Task not found", status_code=404)
 
     # Validate filename and extension
     original_name = file.filename or "upload"
     try:
         safe_name = sanitize_filename(original_name)
     except ValueError as e:
-        return JSONResponse({"error": f"Invalid filename: {e}"}, status_code=422)
+        raise FileUploadError(f"Invalid filename: {e}") from e
 
     ext = get_extension(safe_name)
     if ext not in STORAGE_ALLOWED_TYPES:
-        return JSONResponse(
-            {"error": f"File type '{ext}' not allowed. Allowed: {sorted(STORAGE_ALLOWED_TYPES)}"},
-            status_code=422,
+        raise FileUploadError(
+            f"File type '{ext}' not allowed. Allowed: {sorted(STORAGE_ALLOWED_TYPES)}",
         )
 
-    # Read file content with size limit
-    content = await file.read()
+    # Read at most one byte beyond the limit. This bounds memory use for
+    # rejected files.
+    content = await file.read(_MAX_UPLOAD_BYTES + 1)
     if len(content) > _MAX_UPLOAD_BYTES:
-        return JSONResponse(
-            {"error": f"File too large ({len(content)} bytes). Max: {STORAGE_MAX_UPLOAD_MB}MB"},
+        raise FileUploadError(
+            f"File too large. Max: {STORAGE_MAX_UPLOAD_MB}MB",
             status_code=413,
         )
 
     if len(content) == 0:
-        return JSONResponse({"error": "Empty file"}, status_code=422)
+        raise FileUploadError("Empty file")
 
     # Compute hash
     sha256 = compute_sha256(content)
@@ -103,14 +144,16 @@ async def upload_file(task_id: str, request: Request, file: UploadFile = File(..
     os.makedirs(task_dir, exist_ok=True)
     stored_path = os.path.join(task_dir, safe_name)
 
-    # If file already exists with same name, append hash prefix
+    # Keep every database row on its own immutable path.
     if os.path.exists(stored_path):
         base, file_ext = os.path.splitext(safe_name)
         safe_name = f"{base}-{sha256[:8]}{file_ext}"
         stored_path = os.path.join(task_dir, safe_name)
-
-    with open(stored_path, "wb") as f:
-        f.write(content)
+        suffix = 2
+        while os.path.exists(stored_path):
+            safe_name = f"{base}-{sha256[:8]}-{suffix}{file_ext}"
+            stored_path = os.path.join(task_dir, safe_name)
+            suffix += 1
 
     # Extract text
     extracted_text = ""
@@ -120,45 +163,88 @@ async def upload_file(task_id: str, request: Request, file: UploadFile = File(..
         elif ext in ("txt", "md", "csv", "json"):
             extracted_text = extract_text_file(content, STORAGE_EXTRACTION_MAX_CHARS)
 
-    # Create DB row (B2 fix: positional args, not dict)
+    # Save the file and sidecar before the database row becomes visible.
     file_id = f"f-{str(uuid.uuid4())[:8]}"
-    await db.insert_task_file(
-        file_id, task_id, safe_name, mime,
-        len(content), sha256, stored_path, len(extracted_text),
-    )
+    text_path = stored_path + ".extracted.txt" if extracted_text else None
+    try:
+        with open(stored_path, "xb") as stored_file:
+            stored_file.write(content)
+        if text_path:
+            with open(text_path, "x", encoding="utf-8") as text_file:
+                text_file.write(extracted_text)
+        await db.insert_task_file(
+            file_id, task_id, safe_name, mime,
+            len(content), sha256, stored_path, len(extracted_text),
+        )
+    except BaseException:
+        for path in (text_path, stored_path):
+            if path:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(path)
+        raise
 
-    # Persist extracted text alongside the file (B5 fix)
-    if extracted_text:
-        text_path = stored_path + ".extracted.txt"
-        with open(text_path, "w", encoding="utf-8") as tf:
-            tf.write(extracted_text)
+    if announce:
+        await announce_task_file(
+            task_id=task_id,
+            file_id=file_id,
+            safe_name=safe_name,
+            mime=mime,
+            size_bytes=len(content),
+            sha256=sha256,
+            extracted_text=extracted_text,
+        )
 
-    # Emit SSE event and post attachment board entry
+    logger.info(f"File uploaded: {file_id} ({safe_name}, {len(content)} bytes, sha256={sha256[:16]}…)")
+
+    return {
+        "file_id": file_id,
+        "filename": safe_name,
+        "bytes": len(content),
+        "sha256": sha256,
+        "extracted_chars": len(extracted_text),
+        "stored_path": stored_path,
+        "text_path": text_path,
+    }
+
+
+async def announce_task_file(
+    *,
+    task_id: str,
+    file_id: str,
+    safe_name: str,
+    mime: str,
+    size_bytes: int,
+    sha256: str,
+    extracted_text: str,
+) -> None:
+    """Publish one stored upload to live views and the task board."""
     try:
         from app import app
-        orch = app.state.orchestrator
-        await orch.bb.publish_event(task_id, "file_added", {
+
+        orchestrator = app.state.orchestrator
+        await orchestrator.bb.publish_event(task_id, "file_added", {
             "file_id": file_id,
             "name": safe_name,
             "mime": mime,
-            "bytes": len(content),
+            "bytes": size_bytes,
             "sha256": sha256,
             "extracted_chars": len(extracted_text),
         })
     except Exception:
-        pass  # SSE is best-effort
+        pass
 
-    # Post attachment board entry (doc 17 §4)
     try:
-        from app import app  # noqa: PLC0415 — app not importable at module level
-        orch = app.state.orchestrator
-        preview = extracted_text[:1500] if extracted_text else ""
-        body_parts = [f"**{safe_name}** ({mime}, {len(content)} bytes, sha256: {sha256[:16]}…)"]
+        from app import app
+
+        orchestrator = app.state.orchestrator
+        preview = extracted_text[:1500]
+        body_parts = [
+            f"**{safe_name}** ({mime}, {size_bytes} bytes, sha256: {sha256[:16]}…)",
+        ]
         if preview:
             body_parts.append(f"\n\nExtracted text preview:\n{preview}")
-        body_parts.append("\n\nFetch the full content via your attachments list.")
-
-        await orch.gateway.append(
+        body_parts.append("\n\nFetch the full content from the task attachments.")
+        await orchestrator.append_task_entry(
             task_id=task_id,
             actor="daemon",
             capabilities=["post:attachment"],
@@ -171,18 +257,12 @@ async def upload_file(task_id: str, request: Request, file: UploadFile = File(..
             turn_id=f"upload-{file_id}",
             round_no=0,
         )
-    except Exception as e:
-        logger.warning("Failed to create attachment board entry for %s: %s", file_id, e)
-
-    logger.info(f"File uploaded: {file_id} ({safe_name}, {len(content)} bytes, sha256={sha256[:16]}…)")
-
-    return {
-        "file_id": file_id,
-        "filename": safe_name,
-        "bytes": len(content),
-        "sha256": sha256,
-        "extracted_chars": len(extracted_text),
-    }
+    except Exception as exc:
+        logger.warning(
+            "Failed to create attachment board entry for %s: %s",
+            file_id,
+            exc,
+        )
 
 
 @router.get("/tasks/{task_id}/files")
@@ -251,16 +331,7 @@ async def get_file_text(task_id: str, file_id: str, request: Request):
     if not file_row or file_row["task_id"] != task_id:
         return JSONResponse({"error": "File not found"}, status_code=404)
 
-    # Read extracted text from sidecar file (B5 fix)
-    extracted_text = ""
-    stored_path = file_row.get("stored_path", "")
-    text_path = stored_path + ".extracted.txt" if stored_path else ""
-    if text_path and os.path.exists(text_path):
-        try:
-            with open(text_path, encoding="utf-8") as tf:
-                extracted_text = tf.read()
-        except Exception:
-            pass
+    extracted_text = read_extracted_text(file_row.get("stored_path", ""))
 
     return {
         "file_id": file_id,

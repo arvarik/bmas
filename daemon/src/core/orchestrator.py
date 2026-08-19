@@ -46,6 +46,7 @@ from core.variants import (
     canonical_variant_id,
     require_variant_class,
 )
+from file_utils import read_extracted_text
 
 logger = logging.getLogger("bmas.orchestrator")
 
@@ -76,6 +77,23 @@ def _summarize(text: str, limit: int = 280) -> str:
         return ""
     first = " ".join(str(text).split())
     return first if len(first) <= limit else first[: limit - 1] + "…"
+
+
+def build_attachment_context(task_files: list[dict]) -> list[dict]:
+    """Build the stable attachment contract that agent nodes receive."""
+    return [
+        {
+            "file_id": file_row.get("id"),
+            "name": file_row.get("name", "file"),
+            "mime": file_row.get("mime", "application/octet-stream"),
+            "bytes": file_row.get("bytes", 0),
+            "sha256": file_row.get("sha256", ""),
+            "text_preview": read_extracted_text(
+                str(file_row.get("stored_path") or "")
+            ),
+        }
+        for file_row in task_files
+    ]
 
 
 class Orchestrator:
@@ -958,17 +976,7 @@ class Orchestrator:
                 if STORAGE_ENABLED:
                     task_files = await db.get_task_files(task_id)
                     if task_files:
-                        attachments = [
-                            {
-                                "id": f.get("id"),
-                                "name": (
-                                    f.get("original_filename")
-                                    or f.get("name", "file")
-                                ),
-                                "text_preview": f.get("text_preview", ""),
-                            }
-                            for f in task_files
-                        ]
+                        attachments = build_attachment_context(task_files)
             except Exception as e:
                 logger.warning(f"Failed to get attachments for {task_id}: {e}")
 
@@ -1345,22 +1353,7 @@ class Orchestrator:
         self, task_id: str, entry_id: str, action: str,
     ) -> dict[str, Any]:
         """Apply an operator change through the durable board gateway."""
-        gateway = self._active_gateways.get(task_id)
-        if gateway is None:
-            from core.board_store import SqliteRedisBoardStore, make_board_persist_hook
-            from core.event_emitter import RedisEventEmitter
-            from core.gateway import BoardGateway, salience_recompute_hook
-
-            store = SqliteRedisBoardStore()
-            await store.load_task(task_id)
-            gateway = BoardGateway(
-                store,
-                RedisEventEmitter(self.bb.redis),
-                recompute_hooks=[
-                    salience_recompute_hook,
-                    make_board_persist_hook(self.bb),
-                ],
-            )
+        gateway = await self._task_gateway(task_id)
         store = gateway.store
         entry = await store.get_entry(task_id, entry_id)
         if entry is None:
@@ -1390,6 +1383,48 @@ class Orchestrator:
                 "old_status": old_status,
             }
         raise ValueError(f"Unknown steering action: {action}")
+
+    async def _task_gateway(self, task_id: str) -> Any:
+        """Return the active gateway or open one for a saved task."""
+        gateway = self._active_gateways.get(task_id)
+        if gateway is not None:
+            return gateway
+
+        from core.board_store import SqliteRedisBoardStore, make_board_persist_hook
+        from core.event_emitter import RedisEventEmitter
+        from core.gateway import BoardGateway, salience_recompute_hook
+
+        store = SqliteRedisBoardStore()
+        await store.load_task(task_id)
+        return BoardGateway(
+            store,
+            RedisEventEmitter(self.bb.redis),
+            recompute_hooks=[
+                salience_recompute_hook,
+                make_board_persist_hook(self.bb),
+            ],
+        )
+
+    async def append_task_entry(
+        self,
+        *,
+        task_id: str,
+        actor: str,
+        capabilities: list[str],
+        proposed: list[dict[str, Any]],
+        turn_id: str,
+        round_no: int,
+    ) -> list[Any]:
+        """Append external task data through the durable board gateway."""
+        gateway = await self._task_gateway(task_id)
+        return await gateway.append(
+            task_id=task_id,
+            actor=actor,
+            capabilities=capabilities,
+            proposed=proposed,
+            turn_id=turn_id,
+            round_no=round_no,
+        )
 
     async def cancel_remote_task(self, task_id: str) -> int:
         """Request cancellation from every agent node for one task."""
@@ -1533,6 +1568,7 @@ class Orchestrator:
             context={
                 "board": payload.get("board"),
                 "objective": payload.get("objective"),
+                "attachments": task.get("attachments", []),
                 "round": round_no,
                 "budget_remaining_usd": payload.get("budget_remaining_usd"),
                 # Phase 5: stateful turns (doc 12 §5.2)

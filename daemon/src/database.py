@@ -714,15 +714,18 @@ async def create_task_with_meta(
     full_input: str,
     variant: str,
     metadata: dict,
+    *,
+    run_state: str = "queued",
 ) -> None:
     """Create a task and its recovery metadata in one transaction."""
     async with _connect() as connection:
         await connection.execute("BEGIN IMMEDIATE")
         try:
             await connection.execute(
-                "INSERT INTO tasks (id, label, full_input, status, variant) "
-                "VALUES (?, ?, ?, 'pending', ?)",
-                (task_id, label, full_input, variant),
+                "INSERT INTO tasks "
+                "(id, label, full_input, status, variant, run_state) "
+                "VALUES (?, ?, ?, 'pending', ?, ?)",
+                (task_id, label, full_input, variant, run_state),
             )
             await connection.execute(
                 "INSERT INTO board_meta (task_id, data, updated_at) "
@@ -733,6 +736,14 @@ async def create_task_with_meta(
         except BaseException:
             await connection.rollback()
             raise
+
+
+async def delete_task(task_id: str) -> bool:
+    """Delete one task and its cascading database records."""
+    async with _connect() as db:
+        cursor = await db.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        await db.commit()
+        return cursor.rowcount == 1
 
 
 async def update_task_status(
@@ -961,7 +972,7 @@ async def get_resumable_tasks() -> list[dict]:
         rows = await db.execute_fetchall(
             "SELECT * FROM tasks "
             "WHERE status IN ('pending', 'running') "
-            "AND COALESCE(run_state, 'queued') <> 'blocked' "
+            "AND COALESCE(run_state, 'queued') NOT IN ('blocked', 'staging') "
             "ORDER BY created_at"
         )
         return [dict(row) for row in rows]
@@ -2372,6 +2383,37 @@ async def get_artifact(artifact_id: str) -> dict | None:
         ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
+
+
+async def get_artifact_version(
+    task_id: str,
+    rel_path: str,
+    version: int,
+) -> dict | None:
+    """Return one artifact path version."""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM artifacts "
+            "WHERE task_id = ? AND rel_path = ? AND version = ?",
+            (task_id, rel_path, version),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def update_artifact_stored_path(
+    artifact_id: str,
+    stored_path: str,
+) -> bool:
+    """Point one artifact version at its immutable stored file."""
+    async with _connect() as db:
+        cursor = await db.execute(
+            "UPDATE artifacts SET stored_path = ? WHERE id = ?",
+            (stored_path, artifact_id),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
 
 
 async def get_artifact_max_version(task_id: str, rel_path: str) -> int:

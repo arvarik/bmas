@@ -7,7 +7,13 @@
  * Click opens a slide-over with extracted text preview (for text/PDF).
  */
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { File, FileText, Image, X } from "lucide-react";
 import type { TaskFile } from "@/hooks/useTaskStream";
 
@@ -64,8 +70,11 @@ function TaskAttachmentRail({
   liveFiles: readonly TaskFile[];
 }) {
   const [files, setFiles] = useState<TaskFile[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadVersion, setLoadVersion] = useState(0);
   const [previewFile, setPreviewFile] = useState<TaskFile | null>(null);
   const [previewText, setPreviewText] = useState<string>("");
+  const previewRequest = useRef(0);
   const visibleFiles = useMemo(
     () => mergeTaskFiles(files, liveFiles),
     [files, liveFiles],
@@ -76,40 +85,94 @@ function TaskAttachmentRail({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/tasks/${taskId}/files`, {
-          cache: "no-store",
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (!cancelled) setFiles(data.files || []);
+        const res = await fetch(
+          `/api/tasks/${encodeURIComponent(taskId)}/files`,
+          {
+            cache: "no-store",
+          },
+        );
+        if (!res.ok) {
+          throw new Error(`Attachments returned HTTP ${res.status}`);
         }
-      } catch {
-        // ignore
+        const data = await res.json();
+        if (!cancelled) {
+          setFiles(data.files || []);
+          setLoadError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setLoadError(
+            error instanceof Error ? error.message : "Attachments failed to load",
+          );
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [taskId]);
+  }, [taskId, loadVersion]);
+
+  useEffect(() => () => {
+    previewRequest.current += 1;
+  }, []);
 
   // Fetch extracted text for preview
   const openPreview = useCallback(
     async (file: TaskFile) => {
+      const requestId = previewRequest.current + 1;
+      previewRequest.current = requestId;
       setPreviewFile(file);
       setPreviewText("Loading…");
       try {
-        // We don't have a text endpoint via the proxy, so just show metadata
+        const response = await fetch(
+          `/api/tasks/${encodeURIComponent(taskId)}/files/${encodeURIComponent(file.id)}/text`,
+          { cache: "no-store" },
+        );
+        const body = await response.json().catch(() => ({})) as {
+          error?: string;
+          extracted_text?: string;
+        };
+        if (previewRequest.current !== requestId) return;
+        if (!response.ok) {
+          setPreviewText(body.error || `Preview failed (${response.status})`);
+          return;
+        }
         setPreviewText(
-          `File: ${file.name}\nType: ${file.mime}\nSize: ${formatBytes(file.bytes)}\nSHA-256: ${file.sha256}\nExtracted chars: ${file.extracted_chars}`
+          body.extracted_text
+            || "This file has no extracted text. Download it to view the original content.",
         );
       } catch {
-        setPreviewText("Failed to load preview");
+        if (previewRequest.current === requestId) {
+          setPreviewText("Failed to load preview");
+        }
       }
     },
-    [],
+    [taskId],
   );
 
-  if (visibleFiles.length === 0) return null;
+  const closePreview = useCallback(() => {
+    previewRequest.current += 1;
+    setPreviewFile(null);
+  }, []);
+
+  if (visibleFiles.length === 0) {
+    if (!loadError) return null;
+    return (
+      <div className="attachment-rail" role="alert">
+        <span className="attachment-rail__label">Attachments failed to load</span>
+        <button
+          className="attachment-rail__chip"
+          type="button"
+          onClick={() => {
+            setLoadError(null);
+            setLoadVersion((version) => version + 1);
+          }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -133,15 +196,18 @@ function TaskAttachmentRail({
 
       {/* Preview slide-over */}
       {previewFile && (
-        <div className="attachment-preview-overlay" onClick={() => setPreviewFile(null)}>
+        <div className="attachment-preview-overlay" onClick={closePreview}>
           <div
             className="attachment-preview"
             onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Preview ${previewFile.name}`}
           >
             <div className="attachment-preview__header">
               <h3>{previewFile.name}</h3>
               <button
-                onClick={() => setPreviewFile(null)}
+                onClick={closePreview}
                 className="attachment-preview__close"
                 aria-label="Close preview"
               >
@@ -150,7 +216,10 @@ function TaskAttachmentRail({
             </div>
             <pre className="attachment-preview__text">{previewText}</pre>
             <a
-              href={`/api/tasks/${taskId}/files/${previewFile.id}`}
+              href={
+                `/api/tasks/${encodeURIComponent(taskId)}`
+                + `/files/${encodeURIComponent(previewFile.id)}`
+              }
               download={previewFile.name}
               className="attachment-preview__download"
             >

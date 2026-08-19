@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { DAEMON_SUBMIT_URL } from "@/lib/config";
+import { DAEMON_BASE_URL, DAEMON_SUBMIT_URL } from "@/lib/config";
 
 interface TaskRoutingOverride {
   simple?: string;
@@ -27,6 +27,33 @@ interface SubmitPayload {
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
+    const contentType = request.headers.get("content-type") ?? "";
+    if (contentType.startsWith("multipart/form-data")) {
+      if (!request.body) {
+        return NextResponse.json(
+          { error: "Missing multipart request body" },
+          { status: 400 },
+        );
+      }
+      const init: RequestInit & { duplex: "half" } = {
+        method: "POST",
+        headers: {
+          "Content-Type": contentType,
+          ...(process.env.BMAS_API_KEY
+            ? { Authorization: `Bearer ${process.env.BMAS_API_KEY}` }
+            : {}),
+        },
+        body: request.body,
+        duplex: "half",
+        signal: AbortSignal.timeout(120_000),
+      };
+      const upstream = await fetch(
+        `${DAEMON_BASE_URL}/submit-with-files`,
+        init,
+      );
+      return daemonResponse(upstream);
+    }
+
     const body = (await request.json()) as SubmitPayload;
 
     if (!body.task || typeof body.task !== "string" || !body.task.trim()) {
@@ -52,16 +79,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       signal: AbortSignal.timeout(5_000), // daemon responds immediately (HTTP 202)
     });
 
-    if (!upstream.ok) {
-      const detail = await upstream.text().catch(() => "");
-      return NextResponse.json(
-        { error: `Daemon returned ${upstream.status}`, detail },
-        { status: upstream.status },
-      );
-    }
-
-    const data: unknown = await upstream.json();
-    return NextResponse.json(data, { status: upstream.status });
+    return daemonResponse(upstream);
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Unknown upstream error";
@@ -70,4 +88,17 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 503 },
     );
   }
+}
+
+async function daemonResponse(upstream: Response): Promise<NextResponse> {
+  const text = await upstream.text().catch(() => "");
+  let data: unknown;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = upstream.ok
+      ? { status: "ok" }
+      : { error: `Daemon returned ${upstream.status}`, detail: text };
+  }
+  return NextResponse.json(data, { status: upstream.status });
 }

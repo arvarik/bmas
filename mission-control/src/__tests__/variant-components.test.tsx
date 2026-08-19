@@ -132,6 +132,28 @@ describe("capability-driven components", () => {
     });
   });
 
+  it("sorts artifact versions newest first within each path", () => {
+    const base = {
+      mime: "text/plain",
+      bytes: 10,
+      sha256: "hash",
+      author: "planner",
+      turn_id: "turn-1",
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    const artifacts = mergeTaskArtifacts([
+      { ...base, id: "v1", rel_path: "report.txt", version: 1 },
+      { ...base, id: "other", rel_path: "notes.txt", version: 1 },
+      { ...base, id: "v2", rel_path: "report.txt", version: 2 },
+    ], []);
+
+    expect(artifacts.map((artifact) => artifact.id)).toEqual([
+      "other",
+      "v2",
+      "v1",
+    ]);
+  });
+
   it("keys file views by task so navigation resets local state", () => {
     const firstRail = AttachmentRail({ taskId: "task-one" });
     const secondRail = AttachmentRail({ taskId: "task-two" });

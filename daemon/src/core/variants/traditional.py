@@ -543,11 +543,18 @@ class TraditionalVariant:
             return
 
         for index, att in enumerate(attachments):
-            attachment_id = str(att.get("id") or index)
+            attachment_id = str(att.get("file_id") or index)
+            name = str(att.get("name") or "file")
+            preview = str(att.get("text_preview") or "")
+            body = preview or f"File: {name}"
+            max_body_len = max(
+                1,
+                int(getattr(self.gateway, "_max_body_len", 8000)),
+            )
             entry = {
                 "type": "attachment",
-                "title": f"Uploaded: {att.get('name', 'file')}",
-                "body": att.get("text_preview", f"File: {att.get('name', 'unknown')}"),
+                "title": f"Uploaded: {name}",
+                "body": body[:max_body_len],
                 "confidence": 1.0,
                 "_mutation_id": f"genesis:attachment:{attachment_id}:v1",
             }

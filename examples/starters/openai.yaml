@@ -59,7 +59,7 @@ coordination:
     salience_weights: {confidence: 0.4, recency: 0.2, refs_in: 0.3, penalty: 0.3}
 
 storage:
-  enabled: false
+  enabled: true
   user_media_dir: "/data/uploads"
   artifacts_dir: "/data/output"
   max_upload_mb: 50

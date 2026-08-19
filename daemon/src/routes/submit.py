@@ -4,12 +4,13 @@
 import asyncio
 import contextlib
 import logging
+import os
 import random
 import uuid
 from dataclasses import dataclass
 from typing import Any, cast
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, ConfigDict
 
 import database as db
@@ -30,6 +31,7 @@ from core.variants import (
     canonical_variant_id,
     require_variant_class,
 )
+from routes.files import FileUploadError, store_task_file
 
 logger = logging.getLogger("bmas.daemon")
 
@@ -438,19 +440,13 @@ def task_queue_snapshot() -> dict[str, int | bool]:
     }
 
 
-@router.post(
-    "/submit",
-    status_code=202,
-    response_model=TaskSubmissionResponse,
-)
-async def submit_task(req: TaskSubmission, request: Request):
-    """Submit a task. Returns immediately with task_id (HTTP 202).
-
-    Optional ``overrides`` apply only to this task and do not persist to the
-    session settings store. Useful for one-off routing/registry adjustments.
-    """
-    require_api_key(request, BMAS_API_KEY)
+async def _admit_task(
+    req: TaskSubmission,
+    uploads: list[UploadFile] | None = None,
+) -> dict[str, str]:
+    """Save one task, store initial uploads, and admit the task to the queue."""
     task_id = f"task-{str(uuid.uuid4())[:8]}"
+    initial_uploads = uploads or []
 
     if not req.task.strip():
         raise HTTPException(
@@ -536,9 +532,38 @@ async def submit_task(req: TaskSubmission, request: Request):
         req.task,
         variant_id,
         submission_meta,
+        **({"run_state": "staging"} if initial_uploads else {}),
     )
 
+    stored_uploads: list[dict] = []
     try:
+        for upload in initial_uploads:
+            stored_uploads.append(
+                await store_task_file(task_id, upload, announce=False)
+            )
+    except FileUploadError as exc:
+        await _discard_staged_task(task_id, stored_uploads)
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "code": "attachment_invalid",
+                "message": exc.message,
+            },
+        ) from exc
+    except Exception as exc:
+        await _discard_staged_task(task_id, stored_uploads)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "attachment_storage_failed",
+                "message": "The daemon could not store the task attachments",
+            },
+        ) from exc
+
+    _scheduled_ids.add(task_id)
+    try:
+        if initial_uploads and not await db.update_run_state(task_id, "queued"):
+            raise RuntimeError("The staged task could not enter the queue")
         _task_queue.put_nowait(TaskWorkItem(
             task_id=task_id,
             user_task=req.task,
@@ -546,9 +571,8 @@ async def submit_task(req: TaskSubmission, request: Request):
             variant_id=variant_id,
             effective_configuration=effective_configuration,
         ))
-        _scheduled_ids.add(task_id)
-        await db.update_run_state(task_id, "queued")
     except asyncio.QueueFull as exc:
+        _scheduled_ids.discard(task_id)
         await db.fail_task(task_id, "Task queue became full during submission")
         raise HTTPException(
             status_code=429,
@@ -559,5 +583,64 @@ async def submit_task(req: TaskSubmission, request: Request):
             },
             headers={"Retry-After": "5"},
         ) from exc
+    except Exception as exc:
+        _scheduled_ids.discard(task_id)
+        await db.fail_task(task_id, "Task queue admission failed")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "queue_admission_failed",
+                "message": "The task could not enter the execution queue",
+            },
+        ) from exc
 
     return {"task_id": task_id, "variant": variant_id, "status": "queued"}
+
+
+async def _discard_staged_task(task_id: str, stored_uploads: list[dict]) -> None:
+    """Remove files and database data for one rejected staged task."""
+    parent_dirs: set[str] = set()
+    for upload in stored_uploads:
+        stored_path = str(upload.get("stored_path") or "")
+        text_path = str(upload.get("text_path") or "")
+        if stored_path:
+            parent_dirs.add(os.path.dirname(stored_path))
+        for path in (text_path, stored_path):
+            if not path:
+                continue
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(path)
+    await db.delete_task(task_id)
+    for directory in parent_dirs:
+        with contextlib.suppress(OSError):
+            os.rmdir(directory)
+
+
+@router.post(
+    "/submit",
+    status_code=202,
+    response_model=TaskSubmissionResponse,
+)
+async def submit_task(req: TaskSubmission, request: Request):
+    """Submit one task without initial file attachments."""
+    require_api_key(request, BMAS_API_KEY)
+    return await _admit_task(req)
+
+
+@router.post(
+    "/submit-with-files",
+    status_code=202,
+    response_model=TaskSubmissionResponse,
+)
+async def submit_task_with_files(
+    request: Request,
+    task: str = Form(...),
+    variant: str | None = Form(None),
+    files: list[UploadFile] | None = File(None),
+):
+    """Store initial files before one task can enter the execution queue."""
+    require_api_key(request, BMAS_API_KEY)
+    return await _admit_task(
+        TaskSubmission(task=task, variant=variant or None),
+        list(files or []),
+    )

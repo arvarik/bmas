@@ -11,10 +11,11 @@ export async function GET(
   { params }: { params: Promise<{ taskId: string }> },
 ): Promise<NextResponse> {
   const { taskId } = await params;
+  const encodedTaskId = encodeURIComponent(taskId);
 
   try {
     const upstream = await fetch(
-      `${DAEMON_BASE_URL}/tasks/${taskId}/artifacts`,
+      `${DAEMON_BASE_URL}/tasks/${encodedTaskId}/artifacts`,
       {
         cache: "no-store",
         signal: AbortSignal.timeout(5_000),

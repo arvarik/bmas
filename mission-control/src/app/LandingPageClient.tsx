@@ -24,6 +24,11 @@ import { useToast } from "@/hooks/useToast";
 import { ArrowUp, Zap, DollarSign, BarChart3, Paperclip, Cpu, Cloud } from "lucide-react";
 import { VariantSelect } from "@/components/features/VariantSelect";
 import { ReadinessPanel } from "@/components/features/ReadinessPanel";
+import {
+  createTaskSubmissionRequest,
+  submissionErrorMessage,
+  validateAttachment,
+} from "@/lib/task-submission";
 
 // ── Example tasks ─────────────────────────────────────────────────────
 
@@ -94,7 +99,17 @@ function formatRelativeTime(iso: string): string {
 
 // ── Landing Page ──────────────────────────────────────────────────────
 
-export function LandingPageClient({ projectName }: { projectName: string }) {
+export function LandingPageClient({
+  projectName,
+  storageEnabled,
+  maxUploadMb,
+  allowedUploadTypes,
+}: {
+  projectName: string;
+  storageEnabled: boolean;
+  maxUploadMb: number;
+  allowedUploadTypes: string[];
+}) {
   const [task, setTask] = useState("");
   const [variant, setVariant] = useState("classic");
   const [variantAvailable, setVariantAvailable] = useState(false);
@@ -138,37 +153,18 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
     setSubmitting(true);
 
     try {
-      const res = await fetch("/api/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task: input, variant }),
-      });
+      const res = await fetch(
+        "/api/submit",
+        createTaskSubmissionRequest(input, variant, attachedFiles),
+      );
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(
-          (body as { error?: string }).error ?? `HTTP ${res.status}`
-        );
+        throw new Error(submissionErrorMessage(body, res.status));
       }
 
       const data = (await res.json()) as { task_id?: string };
       if (data.task_id) {
-        // Upload attached files (best-effort, don't block navigation)
-        if (attachedFiles.length > 0) {
-          for (const file of attachedFiles) {
-            const formData = new FormData();
-            formData.append("file", file);
-            try {
-              await fetch(`/api/tasks/${data.task_id}/files`, {
-                method: "POST",
-                body: formData,
-              });
-            } catch {
-              // file upload failure shouldn't block task
-            }
-          }
-        }
-
         // Push optimistic state BEFORE navigating
         setPending({
           taskId: data.task_id,
@@ -253,11 +249,24 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
             ref={fileInputRef}
             type="file"
             multiple
-            accept=".pdf,.txt,.md,.csv,.json,.png,.jpg,.docx"
+            accept={allowedUploadTypes.map((type) => `.${type}`).join(",")}
             style={{ display: "none" }}
             onChange={(e) => {
               const files = Array.from(e.target.files || []);
-              setAttachedFiles(prev => [...prev, ...files]);
+              const accepted: File[] = [];
+              for (const file of files) {
+                const error = validateAttachment(
+                  file,
+                  allowedUploadTypes,
+                  maxUploadMb,
+                );
+                if (error) {
+                  toast({ type: "error", message: error });
+                } else {
+                  accepted.push(file);
+                }
+              }
+              setAttachedFiles((previous) => [...previous, ...accepted]);
               e.target.value = "";
             }}
           />
@@ -267,9 +276,14 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
               <button
                 className="landing__attach-btn"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={submitting}
-                title="Attach files"
+                disabled={submitting || !storageEnabled}
+                title={
+                  storageEnabled
+                    ? `Attach files, up to ${maxUploadMb} MB each`
+                    : "Enable storage in bmas.yaml to attach files"
+                }
                 type="button"
+                aria-label="Attach files"
               >
                 <Paperclip size={13} />
               </button>
@@ -316,6 +330,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
                     onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))}
                     className="landing__attached-remove"
                     type="button"
+                    aria-label={`Remove ${f.name}`}
                   >
                     ×
                   </button>

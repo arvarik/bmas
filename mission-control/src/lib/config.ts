@@ -67,6 +67,11 @@ interface BmasConfig {
   monitoring?: {
     beszel_hub?: string;
   };
+  storage?: {
+    enabled?: boolean;
+    max_upload_mb?: number;
+    allowed_upload_types?: string[];
+  };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -256,6 +261,13 @@ export const NODES: BmasNode[] = cfg.nodes ?? [];
 
 /** The raw config object (for advanced use) */
 export const RAW_CONFIG: BmasConfig = cfg;
+
+/** Upload controls that Mission Control can safely expose to the browser. */
+export const STORAGE_ENABLED: boolean = cfg.storage?.enabled === true;
+export const STORAGE_MAX_UPLOAD_MB: number = cfg.storage?.max_upload_mb ?? 50;
+export const STORAGE_ALLOWED_UPLOAD_TYPES: string[] =
+  cfg.storage?.allowed_upload_types
+  ?? ["pdf", "txt", "md", "csv", "json", "png", "jpg", "docx"];
 
 // ── Runtime Startup Summary ───────────────────────────────────────────
 

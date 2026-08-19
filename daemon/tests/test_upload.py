@@ -210,6 +210,93 @@ class TestFileTextEndpoint:
         assert data["extracted_text"] == "This is extracted content."
         assert data["extracted_chars"] > 0
 
+        stored = asyncio.run(_task_files(task_id))
+        from core.orchestrator import build_attachment_context
+
+        context = build_attachment_context(stored)
+        assert context[0]["file_id"] == file_id
+        assert context[0]["text_preview"] == "This is extracted content."
+
+
+class TestAtomicTaskSubmission:
+    """Test the Mission Control multipart admission contract."""
+
+    @pytest.fixture
+    def submission_client(self, db_path, mock_config, monkeypatch):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        import routes.submit as submit
+
+        class Runtime:
+            @classmethod
+            async def capture_configuration(cls, _overrides=None):
+                return {
+                    "variant": "classic",
+                    "configuration_schema_version": "1",
+                }
+
+        previous_queue = submit._task_queue
+        previous_ids = set(submit._scheduled_ids)
+        submit._task_queue = asyncio.Queue(maxsize=5)
+        submit._scheduled_ids.clear()
+        monkeypatch.setattr(submit, "require_variant_class", lambda _name: Runtime)
+
+        test_app = FastAPI()
+        test_app.include_router(submit.router)
+        yield TestClient(test_app), submit
+
+        submit._task_queue = previous_queue
+        submit._scheduled_ids.clear()
+        submit._scheduled_ids.update(previous_ids)
+
+    def test_files_exist_before_queue_admission(self, submission_client):
+        client, submit = submission_client
+        response = client.post(
+            "/submit-with-files",
+            data={"task": "Read the attached brief", "variant": "classic"},
+            files=[
+                ("files", ("brief.txt", b"Atomic attachment", "text/plain")),
+            ],
+        )
+
+        assert response.status_code == 202
+        task_id = response.json()["task_id"]
+        stored = asyncio.run(_task_files(task_id))
+        assert [item["name"] for item in stored] == ["brief.txt"]
+        assert submit._task_queue is not None
+        queued = submit._task_queue.get_nowait()
+        submit._task_queue.task_done()
+        assert queued.task_id == task_id
+
+    def test_invalid_file_removes_staged_task(self, submission_client):
+        client, submit = submission_client
+        response = client.post(
+            "/submit-with-files",
+            data={"task": "Read this executable", "variant": "classic"},
+            files=[
+                ("files", ("bad.exe", b"MZ", "application/octet-stream")),
+            ],
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "attachment_invalid"
+        assert asyncio.run(_task_count()) == 0
+        assert submit._task_queue is not None
+        assert submit._task_queue.empty()
+
+
+async def _task_files(task_id):
+    import database as db
+
+    return await db.get_task_files(task_id)
+
+
+async def _task_count():
+    import database as db
+
+    return len(await db.list_tasks(limit=100, offset=0))
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
