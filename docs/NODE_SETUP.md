@@ -35,12 +35,20 @@ Use private addresses, a private tunnel, or a service network. Do not expose the
 Prepare one Linux host with these items:
 
 - Python 3.13
-- the reviewed Hermes installation for your environment
+- Hermes Agent v0.20.4 from tag `v2026.8.18`
 - a working Hermes Runs API or `hermes` executable
 - network access to the control plane
 - a dedicated non-root service account
 
-The repository does not install Hermes. Install the Hermes version that matches your gateway contract.
+The repository does not install Hermes. Install and pin the reviewed tag from the [Hermes v0.20.4 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.18).
+
+Confirm the installed version before you continue.
+
+```bash
+hermes --version
+```
+
+The first output line must identify Hermes Agent v0.20.4. Do not use an unpinned `latest` image for a reviewed deployment.
 
 Read [Hermes API](HERMES_API.md) before you select the Runs API path.
 
@@ -58,6 +66,15 @@ python3.13 -m venv .venv
 ```
 
 Install Hermes into the same environment, or set `HERMES_BIN` to its reviewed executable path.
+
+Run the Hermes configuration check for each installed profile.
+
+```bash
+hermes config check
+hermes -p planner config check
+```
+
+Repeat the second command for every named profile on the node.
 
 ## 2. Create a service account
 
@@ -101,7 +118,32 @@ For the Runs API:
 ```env
 HERMES_GATEWAY_URL=http://127.0.0.1:8642
 HERMES_GATEWAY_KEY=replace-with-gateway-key
+HERMES_429_MAX_ATTEMPTS=3
+HERMES_429_RETRY_BASE_SECONDS=0.5
+HERMES_429_RETRY_MAX_SECONDS=5
 ```
+
+Configure the upstream Hermes gateway process with the matching key.
+
+```env
+API_SERVER_ENABLED=true
+API_SERVER_HOST=127.0.0.1
+API_SERVER_PORT=8642
+API_SERVER_KEY=replace-with-gateway-key
+```
+
+The Hermes process must receive the `API_SERVER_*` values. The Stigmergic agent process must receive the `HERMES_GATEWAY_*` values.
+
+Do not bind the Hermes API server to `0.0.0.0` when the adapter runs on the same host.
+
+For a shared multi-profile Hermes gateway, enable `gateway.multiplex_profiles` in Hermes. Then include the selected profile in the adapter URL.
+
+```env
+HERMES_GATEWAY_URL=http://127.0.0.1:8642/p/planner
+HERMES_GATEWAY_KEY=replace-with-planner-profile-key
+```
+
+Each named profile must define its own `API_SERVER_KEY`. The unprefixed URL selects the default profile.
 
 For the CLI fallback:
 
@@ -110,6 +152,8 @@ HERMES_BIN=/path/to/hermes
 ```
 
 The Runs API supports structured run state and event streaming. The CLI fallback executes one process for each activation.
+
+Hermes limits API server runs to 10 by default. Set `gateway.api_server.max_concurrent_runs` to a reviewed value for the node capacity.
 
 Protect the environment file.
 
@@ -159,10 +203,20 @@ Run these checks on the node:
 
 ```bash
 curl -fsS http://127.0.0.1:8000/health
+curl -fsS http://127.0.0.1:8000/health/detailed \
+  -H "Authorization: Bearer $BMAS_EXECUTE_KEY"
+curl -fsS http://127.0.0.1:8642/v1/capabilities \
+  -H "Authorization: Bearer $HERMES_GATEWAY_KEY"
+curl -fsS http://127.0.0.1:8642/health/detailed \
+  -H "Authorization: Bearer $HERMES_GATEWAY_KEY"
 sudo journalctl -u bmas-agent -n 100 --no-pager
 ```
 
-The health response must show `status: healthy`. It must show `hermes-runs-api` or `hermes-cli` as the execution backend.
+The health response must show `status: healthy` and `ready: true`. It must show `hermes-runs-api` or `hermes-cli` as the execution backend.
+
+The agent detailed response must show no missing required feature or endpoint. It also includes the bounded upstream readiness data.
+
+The capabilities response must list run submission, status, events, and stop support. The detailed health response must report ready dependencies.
 
 Check the agent from the control-plane host:
 
@@ -238,6 +292,19 @@ Set a routing tier to `local` only after LiteLLM can reach that inference addres
 1. Hermes did not provide a reachable Runs API or executable.
 2. `HERMES_GATEWAY_URL` is wrong, or `HERMES_BIN` does not exist.
 3. Correct one execution method and restart `bmas-agent`.
+
+### The Hermes API server returns HTTP 401
+
+1. The adapter reached Hermes, but Hermes rejected the bearer token.
+2. `HERMES_GATEWAY_KEY` does not match the selected profile's `API_SERVER_KEY`.
+3. Correct both values and restart both services.
+
+### Run submission returns HTTP 429
+
+1. Hermes reached its configured concurrent-run limit.
+2. The agent retries the pre-admission response with bounded backoff.
+3. The daemon selects another eligible node after the agent exhausts its attempts.
+4. Reduce dispatch or increase the reviewed `gateway.api_server.max_concurrent_runs` value when all nodes stay full.
 
 ### The daemon cannot dispatch
 

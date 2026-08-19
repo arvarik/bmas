@@ -412,6 +412,29 @@ async def test_trace_ingest_publishes_only_after_durable_archive(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_trace_ingest_preserves_top_level_run_id_in_archive(monkeypatch):
+    """The durable trace keeps the run identifier for refreshed controls."""
+    import database as db
+
+    board = _install_ingest_app(monkeypatch)
+    insert = AsyncMock()
+    monkeypatch.setattr(db, "insert_agent_traces", insert)
+    request = _JsonRequest([{
+        "seq": 1,
+        "type": "approval_request",
+        "run_id": "run-42",
+        "data": {"action": "execute_command"},
+    }])
+
+    response = await ingest_traces("task-1", "turn-1", request)
+
+    assert response.status_code == 200
+    rows = insert.await_args.args[0]
+    assert rows[0]["data"]["run_id"] == "run-42"
+    board.publish_event.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_duplicate_trace_batch_uses_stable_event_keys(monkeypatch):
     """An at-least-once trace batch reuses each durable event identity."""
     import database as db

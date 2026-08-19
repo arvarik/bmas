@@ -3,21 +3,22 @@
 
 Endpoints:
   POST /api/tasks/{taskId}/steer     — boost/retract board entries
+  POST /api/tasks/{taskId}/run-steer — steer a live Hermes run
   POST /api/tasks/{taskId}/pause     — pause task at round boundary
   POST /api/tasks/{taskId}/resume    — resume a paused task
   POST /api/tasks/{taskId}/directive — inject an operator directive
-  POST /api/tasks/{taskId}/approval  — approve/deny a pending run approval
+  POST /api/tasks/{taskId}/approval  — answer a pending run approval
 """
 
 import asyncio
 import contextlib
 import logging
-import os
 import re
+from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 import database as db
 from core.variants import UnknownVariantError, VariantConfigurationError
@@ -277,16 +278,21 @@ async def inject_directive(task_id: str, req: DirectiveRequest, request: Request
 # ── Approval Request Model ───────────────────────────────────────────
 
 class ApprovalRequest(BaseModel):
-    run_id: str     # The Hermes run ID to approve/deny
-    decision: str   # "approve" | "deny"
-    reason: str = ""  # Optional reason for the decision
+    run_id: str
+    choice: Literal["once", "session", "always", "deny"] = Field(
+        validation_alias=AliasChoices("choice", "decision"),
+    )
+    reason: str = ""
 
-    @field_validator("decision")
+    @field_validator("choice", mode="before")
     @classmethod
-    def validate_decision(cls, v: str) -> str:
-        if v not in ("approve", "deny"):
-            raise ValueError("decision must be 'approve' or 'deny'")
-        return v
+    def validate_choice(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        value = value.strip().lower()
+        if value == "approve":
+            return "once"
+        return value
 
     @field_validator("run_id")
     @classmethod
@@ -296,91 +302,164 @@ class ApprovalRequest(BaseModel):
         return v
 
 
+class RunSteerRequest(BaseModel):
+    run_id: str
+    input: str
+
+    @field_validator("run_id")
+    @classmethod
+    def validate_run_id(cls, value: str) -> str:
+        if not _ID_PATTERN.match(value):
+            raise ValueError("run_id must be 1-64 alphanumeric/hyphen/underscore chars")
+        return value
+
+    @field_validator("input")
+    @classmethod
+    def validate_input(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("input cannot be empty")
+        if len(value) > 10000:
+            raise ValueError("input must be at most 10000 characters")
+        return value
+
+
+def _configured_agent_urls() -> list[str]:
+    """Return each configured agent URL once, in configuration order."""
+    from config import AGENT_ENDPOINTS, ROLE_REGISTRY
+
+    urls: list[str] = []
+    for registration in ROLE_REGISTRY.values():
+        urls.extend(registration.get("endpoints", []))
+    urls.extend(AGENT_ENDPOINTS.values())
+    return list(dict.fromkeys(url for url in urls if url))
+
+
+def _agent_proxy_headers() -> dict[str, str] | None:
+    """Return the bearer credential for daemon-to-agent proxy requests."""
+    from config import BMAS_EXECUTE_KEY
+
+    if not BMAS_EXECUTE_KEY:
+        return None
+    return {"Authorization": f"Bearer {BMAS_EXECUTE_KEY}"}
+
+
+async def _forward_run_action(
+    run_id: str,
+    path_suffix: str,
+    payload: dict[str, str],
+) -> tuple[str, dict[str, Any]]:
+    """Forward one run action to the agent node that owns the Hermes run."""
+    agent_urls = _configured_agent_urls()
+    if not agent_urls:
+        raise HTTPException(
+            status_code=503,
+            detail="No agent nodes configured",
+        )
+
+    not_found_count = 0
+    last_error = "No agent node accepted the request"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for url in agent_urls:
+            try:
+                response = await client.post(
+                    f"{url}/v1/runs/{run_id}/{path_suffix}",
+                    json=payload,
+                    headers=_agent_proxy_headers(),
+                )
+            except httpx.HTTPError as exc:
+                last_error = f"{url}: {exc}"
+                continue
+
+            if response.status_code == 404:
+                not_found_count += 1
+                continue
+            if 200 <= response.status_code < 300:
+                try:
+                    data = response.json()
+                except ValueError:
+                    data = {}
+                return url, data if isinstance(data, dict) else {}
+            last_error = f"{url}: HTTP {response.status_code}"
+
+    if not_found_count == len(agent_urls):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Hermes run {run_id} was not found",
+        )
+    raise HTTPException(
+        status_code=502,
+        detail=f"No agent node accepted the Hermes run action: {last_error}",
+    )
+
+
 # ── Approval Endpoint (doc 12 §5.1) ──────────────────────────────────
 
 @router.post("/{task_id}/approval")
 async def handle_approval(task_id: str, req: ApprovalRequest, request: Request):
-    """Forward an approval decision to the Hermes agent node.
-
-    The daemon looks up which agent node owns the run_id and forwards
-    the decision via POST /v1/runs/{run_id}/approval on that node.
-    """
+    """Forward one approval choice to the Hermes agent node."""
     task_id = _validate_id(task_id, "task_id")
     _authorize_operator(request)
     from app import app
 
     orch = app.state.orchestrator
+    agent_url, upstream = await _forward_run_action(
+        req.run_id,
+        "approval",
+        {"choice": req.choice},
+    )
+    logger.info(
+        "Approval %s forwarded | task=%s run=%s node=%s",
+        req.choice, task_id, req.run_id, agent_url,
+    )
 
-    # Resolve agent endpoint — try role registry first, fall back to
-    # iterating all known agent endpoints
-    from config import AGENT_ENDPOINTS, ROLE_REGISTRY
-
-    agent_urls: list[str] = []
-    for _role, reg in ROLE_REGISTRY.items():
-        agent_urls.extend(reg.get("endpoints", []))
-    if not agent_urls:
-        agent_urls = list(AGENT_ENDPOINTS.values())
-
-    if not agent_urls:
-        raise HTTPException(
-            status_code=503,
-            detail="No agent nodes configured — cannot forward approval",
-        )
-
-    # Forward to all known agent endpoints (the one owning the run_id
-    # will handle it; others will 404 harmlessly)
-    forwarded = False
-    last_error = ""
-    gateway_key = os.getenv("HERMES_GATEWAY_KEY", os.getenv("API_SERVER_KEY", ""))
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        for url in agent_urls:
-            try:
-                # Forward to the Hermes Gateway via the agent's proxy
-                resp = await client.post(
-                    f"{url}/v1/runs/{req.run_id}/approval",
-                    json={
-                        "decision": req.decision,
-                        "reason": req.reason,
-                    },
-                    headers={"Authorization": f"Bearer {gateway_key}"},
-                )
-                if resp.status_code == 200:
-                    forwarded = True
-                    logger.info(
-                        "Approval %s forwarded | task=%s run=%s → %s",
-                        req.decision, task_id, req.run_id, url,
-                    )
-                    break
-                elif resp.status_code == 404:
-                    continue  # This node doesn't own this run
-                else:
-                    last_error = f"{url}: HTTP {resp.status_code}"
-            except Exception as e:
-                last_error = f"{url}: {e}"
-                continue
-
-    if not forwarded:
-        logger.warning(
-            "Approval forward failed for task=%s run=%s: %s",
-            task_id, req.run_id, last_error,
-        )
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not forward approval to any agent node: {last_error}",
-        )
-
-    # Emit approval_request event to SSE so the UI updates
+    # Emit a response event so the UI clears the pending approval.
     with contextlib.suppress(Exception):
-        await orch.bb.publish_event(task_id, "approval_request", {
+        await orch.bb.publish_event(task_id, "approval_response", {
             "run_id": req.run_id,
-            "decision": req.decision,
+            "choice": req.choice,
             "reason": req.reason,
+            "by": "operator",
+            "status": "responded",
+        })
+
+    return {
+        "status": "forwarded",
+        "task_id": task_id,
+        "run_id": req.run_id,
+        "choice": req.choice,
+        "resolved": upstream.get("resolved"),
+    }
+
+
+@router.post("/{task_id}/run-steer")
+async def steer_run(task_id: str, req: RunSteerRequest, request: Request):
+    """Forward live operator input to an active Hermes run."""
+    task_id = _validate_id(task_id, "task_id")
+    _authorize_operator(request)
+    from app import app
+
+    orch = app.state.orchestrator
+    agent_url, upstream = await _forward_run_action(
+        req.run_id,
+        "steer",
+        {"input": req.input},
+    )
+    logger.info(
+        "Run steer forwarded | task=%s run=%s node=%s chars=%d",
+        task_id, req.run_id, agent_url, len(req.input),
+    )
+
+    with contextlib.suppress(Exception):
+        await orch.bb.publish_event(task_id, "run_steered", {
+            "run_id": req.run_id,
+            "input": req.input,
             "by": "operator",
         })
 
     return {
-        "status": f"{req.decision}d",
+        "status": "accepted",
         "task_id": task_id,
         "run_id": req.run_id,
+        "accepted": bool(upstream.get("accepted", True)),
     }

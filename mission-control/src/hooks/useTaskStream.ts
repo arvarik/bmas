@@ -99,6 +99,7 @@ export interface TraceEvent {
   seq: number;
   timestamp: string;
   run_id?: string;
+  data?: Record<string, unknown>;
 }
 
 export interface TaskFile {

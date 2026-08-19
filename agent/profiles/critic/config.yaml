@@ -1,6 +1,5 @@
-# bMAS Critic Profile — Hermes config.yaml
-# Read-only/analysis tools per doc 12 §2.5 note: web + browser for
-# fact-checking, file for reading board entries. No code_exec.
+# bMAS Critic Profile, reviewed for Hermes Agent v0.20.4.
+# The file toolset also includes write and patch tools.
 
 model:
   default: "medium"
@@ -9,10 +8,19 @@ model:
   api_key: "${LITELLM_MASTER_KEY}"
 
 toolsets:
-  web: true           # Web search for fact-checking claims
-  browser: true       # Browser for verifying sources
-  terminal: false     # Critics don't need terminal access
-  code_exec: false    # Critics don't execute code
-  file: true          # File read for board interaction
-  memory: true        # Persistent memory across rounds
-  skill_manage: false # No skill authoring
+  - web
+  - browser
+  - file
+  - memory
+
+platform_toolsets:
+  cli:
+    - web
+    - browser
+    - file
+    - memory
+  api_server:
+    - web
+    - browser
+    - file
+    - memory

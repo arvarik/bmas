@@ -9,27 +9,55 @@ from datetime import UTC, datetime
 import httpx
 from fastapi import FastAPI
 
-from config import AGENT_ENDPOINTS
+from config import AGENT_ENDPOINTS, BMAS_EXECUTE_KEY
 from database import check_sqlite_health
 
 logger = logging.getLogger("bmas.daemon")
 
 
 async def _check_agent_health(client: httpx.AsyncClient, role: str, url: str) -> dict:
-    """Probe a single agent's health endpoint. Returns AgentStatus dict."""
+    """Probe one agent's capability-aware readiness endpoint."""
     try:
-        resp = await client.get(f"{url}/health")
+        headers = (
+            {"Authorization": f"Bearer {BMAS_EXECUTE_KEY}"}
+            if BMAS_EXECUTE_KEY
+            else None
+        )
+        resp = await client.get(f"{url}/health/detailed", headers=headers)
+        probe = "detailed"
+        if resp.status_code == 404:
+            resp = await client.get(f"{url}/health", headers=headers)
+            probe = "legacy"
         resp.raise_for_status()
+        body = resp.json() if resp.headers.get("content-type", "").startswith(
+            "application/json"
+        ) else {}
         return {
             "alive": True,
+            "ready": bool(body.get("ready", False)),
             "last_heartbeat": datetime.now(UTC).isoformat(),
             "current_task": None,
+            "probe": probe,
+            "runs_api_ready": body.get("runs_api_ready", False),
+            "hermes_status": body.get("hermes_status"),
+            "missing_required_features": body.get(
+                "missing_required_features", []
+            ),
+            "missing_required_endpoints": body.get(
+                "missing_required_endpoints", []
+            ),
         }
     except Exception:
         return {
             "alive": False,
+            "ready": False,
             "last_heartbeat": "",
             "current_task": None,
+            "probe": "unavailable",
+            "runs_api_ready": False,
+            "hermes_status": None,
+            "missing_required_features": [],
+            "missing_required_endpoints": [],
         }
 
 
@@ -75,4 +103,3 @@ async def system_health_loop(app: FastAPI):
         except Exception as e:
             logger.warning(f"System health loop error: {e}")
             await asyncio.sleep(5)
-

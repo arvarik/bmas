@@ -14,6 +14,8 @@ The default Compose stack publishes it at [http://localhost:9321](http://localho
 | Logs | Daemon logs and agent traces |
 | Blackboard | Durable board entries, references, and debate threads |
 | Mission | Live board, role activity, events, and convergence |
+| Hermes sessions | Profile-aware session browsing, messages, and forks |
+| Skills | Read-only active skills and toolsets for each Hermes node profile |
 | Task header | Uploaded files, extracted-text previews, and original downloads |
 | Artifacts | Agent-created task outputs and immutable version downloads |
 | Infrastructure | Agent health and optional Beszel telemetry |
@@ -53,6 +55,8 @@ Use HTTPS whenever a browser connects outside the local computer. HTTP Basic sen
 
 Mission Control sends `BMAS_API_KEY` only from server routes to daemon mutation routes.
 
+Mission Control sends `BMAS_EXECUTE_KEY` only from server routes to agent inventory and session proxies.
+
 Mission Control stores initial attachments before it admits a task to the execution queue. A rejected attachment prevents the task from starting.
 
 ## Server environment
@@ -63,6 +67,7 @@ Mission Control stores initial attachments before it admits a task to the execut
 | `BMAS_REDIS_URL` | Selects the internal Redis URL. |
 | `REDIS_PASSWORD` | Supports a generated Redis URL outside Compose. |
 | `BMAS_API_KEY` | Authenticates daemon mutations. |
+| `BMAS_EXECUTE_KEY` | Authenticates agent capability, inventory, and session requests. |
 | `BMAS_DASHBOARD_KEY` | Protects browser and proxy access. |
 | `BESZEL_EMAIL` | Authenticates optional Beszel requests. |
 | `BESZEL_PASSWORD` | Authenticates optional Beszel requests. |
@@ -83,6 +88,10 @@ Docker Compose mounts `bmas.yaml` at `/etc/bmas/bmas.yaml`. Mission Control read
 | `/api/tasks/*` | Reads task state, board data, files, artifacts, costs, logs, and traces. |
 | `/api/stream/*` | Proxies task and system event streams. |
 | `/api/hitl` | Sends pause, resume, abort, and operator directives. |
+| `/api/profiles` | Lists the active Hermes profile for each configured agent. |
+| `/api/skills` | Reads the active profile's Hermes skills. |
+| `/api/toolsets` | Reads enabled and configured Hermes toolsets. |
+| `/api/sessions/*` | Lists, reads, and forks Hermes sessions. |
 | `/api/settings/*` | Reads and changes supported runtime settings. |
 | `/api/telemetry` | Proxies optional Beszel telemetry. |
 

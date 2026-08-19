@@ -35,6 +35,7 @@ from core.protocol import (
     # Entry types
     ENTRY_TYPES,
     EVENT_APPROVAL_REQUEST,
+    EVENT_APPROVAL_RESPONSE,
     EVENT_ARTIFACT_CREATED,
     # SSE events
     EVENT_BOARD_ENTRY,
@@ -205,6 +206,7 @@ class TestSSEEventNames:
         "resumed",
         "budget",
         "approval_request",
+        "approval_response",
     }
 
     SPEC_LEGACY_EVENTS = {
@@ -212,13 +214,13 @@ class TestSSEEventNames:
     }
 
     def test_all_spec_v2_events_registered(self):
-        """All 15 v2 event names from doc 04 §9 + doc 05 §1.2 + Phase 5 are registered."""
+        """All 16 v2 event names from the current contract are registered."""
         registered = set(V2_EVENT_NAMES.keys())
         assert registered == self.SPEC_V2_EVENTS
 
     def test_v2_event_count(self):
-        """Exactly 15 v2 events (doc 04 §9 + coordinator_narration + Phase 5 additions)."""
-        assert len(V2_EVENT_NAMES) == 15
+        """Exactly 16 v2 events are registered."""
+        assert len(V2_EVENT_NAMES) == 16
 
     def test_legacy_events_complete(self):
         """All 6 legacy event names are listed."""
@@ -242,6 +244,7 @@ class TestSSEEventNames:
         assert EVENT_RESUMED == "resumed"
         assert EVENT_BUDGET == "budget"
         assert EVENT_APPROVAL_REQUEST == "approval_request"
+        assert EVENT_APPROVAL_RESPONSE == "approval_response"
 
     def test_no_v2_legacy_overlap(self):
         """V2 and legacy event names must not overlap."""
@@ -252,7 +255,7 @@ class TestSSEEventNames:
         """all_v2_event_names() returns sorted list."""
         names = all_v2_event_names()
         assert names == sorted(names)
-        assert len(names) == 15
+        assert len(names) == 16
 
     def test_is_v2_event(self):
         """is_v2_event() correctly identifies v2 events."""

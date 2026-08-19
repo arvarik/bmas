@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import ValidationError
 
 import routes.hitl as hitl
 import routes.submit as submit
@@ -17,6 +18,36 @@ def _install_app(monkeypatch, orch):
         state=SimpleNamespace(orchestrator=orch),
     )
     monkeypatch.setitem(sys.modules, "app", fake_app)
+
+
+def _install_agent_proxy(monkeypatch, responses):
+    posts = []
+
+    class FakeAsyncClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, **kwargs):
+            posts.append((url, kwargs))
+            return responses.pop(0)
+
+    monkeypatch.setattr(hitl.httpx, "AsyncClient", FakeAsyncClient)
+    return posts
+
+
+class _AgentResponse:
+    def __init__(self, status_code, payload=None):
+        self.status_code = status_code
+        self._payload = payload or {}
+
+    def json(self):
+        return self._payload
 
 
 @pytest.mark.asyncio
@@ -131,3 +162,137 @@ async def test_resume_route_returns_the_incompatible_configuration_cause(monkeyp
 
     assert raised.value.status_code == 409
     assert "saved model is unavailable" in raised.value.detail
+
+
+@pytest.mark.parametrize("choice", ["once", "session", "always", "deny"])
+def test_approval_request_accepts_each_hermes_choice(choice):
+    request = hitl.ApprovalRequest(run_id="run-1", choice=choice)
+
+    assert request.choice == choice
+
+
+def test_approval_request_maps_legacy_approve_decision_to_once():
+    request = hitl.ApprovalRequest(run_id="run-1", decision="approve")
+
+    assert request.choice == "once"
+
+
+def test_approval_request_rejects_an_unknown_choice():
+    with pytest.raises(ValidationError):
+        hitl.ApprovalRequest(run_id="run-1", choice="later")
+
+
+@pytest.mark.asyncio
+async def test_approval_forwards_exact_choice_contract(monkeypatch):
+    publish_event = AsyncMock()
+    orch = SimpleNamespace(bb=SimpleNamespace(publish_event=publish_event))
+    _install_app(monkeypatch, orch)
+    config = sys.modules["config"]
+    monkeypatch.setattr(config, "ROLE_REGISTRY", {
+        "researcher": {"endpoints": ["http://agent-a", "http://agent-a"]},
+        "critic": {"endpoints": ["http://agent-b"]},
+    })
+    monkeypatch.setattr(config, "AGENT_ENDPOINTS", {
+        "researcher": "http://agent-a",
+    })
+    monkeypatch.setattr(config, "BMAS_EXECUTE_KEY", "execute-secret")
+    posts = _install_agent_proxy(monkeypatch, [
+        _AgentResponse(404),
+        _AgentResponse(200, {"resolved": 1}),
+    ])
+
+    result = await hitl.handle_approval(
+        "task-1",
+        hitl.ApprovalRequest(
+            run_id="run-1",
+            choice="session",
+            reason="Operator approved this session",
+        ),
+        SimpleNamespace(headers={}),
+    )
+
+    assert [post[0] for post in posts] == [
+        "http://agent-a/v1/runs/run-1/approval",
+        "http://agent-b/v1/runs/run-1/approval",
+    ]
+    assert posts[1][1]["json"] == {"choice": "session"}
+    assert posts[1][1]["headers"] == {
+        "Authorization": "Bearer execute-secret",
+    }
+    assert result == {
+        "status": "forwarded",
+        "task_id": "task-1",
+        "run_id": "run-1",
+        "choice": "session",
+        "resolved": 1,
+    }
+    publish_event.assert_awaited_once_with("task-1", "approval_response", {
+        "run_id": "run-1",
+        "choice": "session",
+        "reason": "Operator approved this session",
+        "by": "operator",
+        "status": "responded",
+    })
+
+
+@pytest.mark.asyncio
+async def test_run_steer_preserves_board_steer_and_forwards_live_input(monkeypatch):
+    publish_event = AsyncMock()
+    orch = SimpleNamespace(bb=SimpleNamespace(publish_event=publish_event))
+    _install_app(monkeypatch, orch)
+    config = sys.modules["config"]
+    monkeypatch.setattr(config, "ROLE_REGISTRY", {})
+    monkeypatch.setattr(config, "AGENT_ENDPOINTS", {
+        "researcher": "http://agent-a",
+    })
+    monkeypatch.setattr(config, "BMAS_EXECUTE_KEY", "")
+    posts = _install_agent_proxy(monkeypatch, [
+        _AgentResponse(202, {"accepted": True}),
+    ])
+
+    result = await hitl.steer_run(
+        "task-1",
+        hitl.RunSteerRequest(
+            run_id="run-1",
+            input="Focus on the audit evidence.",
+        ),
+        SimpleNamespace(headers={}),
+    )
+
+    assert posts == [(
+        "http://agent-a/v1/runs/run-1/steer",
+        {
+            "json": {"input": "Focus on the audit evidence."},
+            "headers": None,
+        },
+    )]
+    assert result == {
+        "status": "accepted",
+        "task_id": "task-1",
+        "run_id": "run-1",
+        "accepted": True,
+    }
+    publish_event.assert_awaited_once_with("task-1", "run_steered", {
+        "run_id": "run-1",
+        "input": "Focus on the audit evidence.",
+        "by": "operator",
+    })
+
+
+@pytest.mark.asyncio
+async def test_run_action_returns_not_found_when_each_node_returns_404(monkeypatch):
+    config = sys.modules["config"]
+    monkeypatch.setattr(config, "ROLE_REGISTRY", {})
+    monkeypatch.setattr(config, "AGENT_ENDPOINTS", {
+        "researcher": "http://agent-a",
+        "critic": "http://agent-b",
+    })
+    _install_agent_proxy(monkeypatch, [
+        _AgentResponse(404),
+        _AgentResponse(404),
+    ])
+
+    with pytest.raises(hitl.HTTPException) as raised:
+        await hitl._forward_run_action("run-1", "steer", {"input": "Continue"})
+
+    assert raised.value.status_code == 404

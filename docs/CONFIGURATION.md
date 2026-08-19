@@ -265,7 +265,7 @@ The starter command generates the first six values.
 | `REDIS_PASSWORD` | Authenticates Redis clients. |
 | `LITELLM_MASTER_KEY` | Authenticates model gateway clients. |
 | `BMAS_NODE_KEY` | Authenticates agent logs and traces. |
-| `BMAS_EXECUTE_KEY` | Authenticates daemon execution requests to agents. |
+| `BMAS_EXECUTE_KEY` | Authenticates daemon and Mission Control requests to agents. |
 | `BMAS_API_KEY` | Authenticates task and control mutations. |
 | `BMAS_DASHBOARD_KEY` | Protects Mission Control pages and proxy routes. |
 

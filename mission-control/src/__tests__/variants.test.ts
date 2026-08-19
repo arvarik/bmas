@@ -79,6 +79,28 @@ describe("variant adapter registry", () => {
     expect(second.boardEntries[0].body).toBe("B");
   });
 
+  it("clears a pending Hermes approval after a response event", () => {
+    const pending = CLASSIC_ADAPTER.projectEvent(
+      INITIAL_STREAM_DATA,
+      CLASSIC_ADAPTER.decodeEvent("approval_request", {
+        turn_id: "turn-1",
+        actor: "expert.one",
+        run_id: "run-1",
+        description: "Run a command",
+      }, "task-1")!,
+    );
+    const resolved = CLASSIC_ADAPTER.projectEvent(
+      pending,
+      CLASSIC_ADAPTER.decodeEvent("approval_response", {
+        run_id: "run-1",
+        choice: "session",
+      }, "task-1")!,
+    );
+
+    expect(pending.approvalRequests).toHaveLength(1);
+    expect(resolved.approvalRequests).toHaveLength(0);
+  });
+
   it("projects a live salience change from the shared status event", () => {
     const state = {
       ...INITIAL_STREAM_DATA,

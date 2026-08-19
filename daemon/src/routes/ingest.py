@@ -195,6 +195,13 @@ async def ingest_traces(task_id: str, turn_id: str, request: Request):
         tokens = trace.get("tokens", {})
         if not isinstance(tokens, dict):
             tokens = {}
+        trace_data = trace.get("data")
+        if not isinstance(trace_data, dict):
+            trace_data = {}
+        else:
+            trace_data = dict(trace_data)
+        if trace.get("run_id") is not None:
+            trace_data.setdefault("run_id", str(trace["run_id"]))
         db_rows.append({
             "task_id": task_id,
             "turn_id": turn_id,
@@ -202,7 +209,7 @@ async def ingest_traces(task_id: str, turn_id: str, request: Request):
             "role": trace.get("role", "agent"),
             "node": trace.get("node"),
             "type": trace_type,
-            "data": trace.get("data"),
+            "data": trace_data,
             "model": None,  # Set from usage on final
             "tokens_in": tokens.get("in", 0),
             "tokens_out": tokens.get("out", 0),

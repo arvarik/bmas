@@ -1,6 +1,5 @@
-# bMAS Planner Profile — Hermes config.yaml
-# Toolset scoping per doc 12 §2.5 note: web + browser for research,
-# terminal for read-only analysis, no code_exec.
+# bMAS Planner Profile, reviewed for Hermes Agent v0.20.4.
+# Terminal and file tools can change host data. Use a sandbox or OS controls.
 
 model:
   default: "medium"
@@ -9,10 +8,22 @@ model:
   api_key: "${LITELLM_MASTER_KEY}"
 
 toolsets:
-  web: true           # Web search for research during planning
-  browser: true       # Browser automation for deep research
-  terminal: true      # Terminal for read-only analysis
-  code_exec: false    # Planners don't execute code
-  file: true          # File read/write for board interaction
-  memory: true        # Persistent memory across rounds
-  skill_manage: false # No skill authoring
+  - web
+  - browser
+  - terminal
+  - file
+  - memory
+
+platform_toolsets:
+  cli:
+    - web
+    - browser
+    - terminal
+    - file
+    - memory
+  api_server:
+    - web
+    - browser
+    - terminal
+    - file
+    - memory
