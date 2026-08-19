@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Ban, Pause, Play, RefreshCw, RotateCcw } from "lucide-react";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { BenchmarkRunReportPanel } from "@/components/features/BenchmarkRunReportPanel";
 import { ResourceState } from "@/components/ui/ResourceState";
 import { runProgress, scoreSummary, statusLabel, type BenchmarkRun, type BenchmarkScore } from "@/lib/benchmarks";
 
@@ -75,6 +76,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
         <div><span>Average score</span><strong>{average === null ? "Pending" : `${(average * 100).toFixed(1)}%`}</strong></div>
         <div><span>Cost</span><strong>${Number(run.total_cost_usd ?? 0).toFixed(4)}</strong></div>
       </section>
+      <BenchmarkRunReportPanel run={run} />
       <section className="benchmark-catalog">
         <header className="dataset-catalog__toolbar"><div><h3>Attempts</h3><span>Retries remain visible for complete provenance.</span></div></header>
         <div className="benchmark-table-wrap"><table className="benchmark-table">

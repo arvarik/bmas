@@ -5,7 +5,7 @@ import pytest
 import pytest_asyncio
 
 import database as db
-from benchmarks import repository
+from benchmarks import records, repository
 from benchmarks.provenance import content_checksum
 from benchmarks.scoring import score_output
 
@@ -180,3 +180,87 @@ def test_versioned_scorers_extract_numeric_letter_and_text_answers():
     assert numeric["passed"] is True
     assert letter["passed"] is True
     assert exact["passed"] is True
+
+
+async def _complete_run(database_path: str, run_id: str, score: float = 1.0):
+    async with aiosqlite.connect(database_path) as connection:
+        await connection.execute(
+            "UPDATE benchmark_runs SET status = 'completed', completed_at = "
+            "strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+            (run_id,),
+        )
+        await connection.execute(
+            "UPDATE benchmark_trials SET status = 'completed' WHERE run_id = ?",
+            (run_id,),
+        )
+        attempt_rows = await connection.execute_fetchall(
+            "SELECT attempt.id FROM benchmark_attempts AS attempt "
+            "JOIN benchmark_trials AS trial ON trial.id = attempt.trial_id "
+            "WHERE trial.run_id = ?",
+            (run_id,),
+        )
+        for index, (attempt_id,) in enumerate(attempt_rows):
+            task_id = f"task-{run_id}-{index}"
+            await connection.execute(
+                "INSERT INTO tasks (id, label, full_input, status, terminal_kind, "
+                "result_summary, total_cost_usd, total_tokens, duration_ms) "
+                "VALUES (?, 'Benchmark', 'Question', 'completed', 'completed', "
+                "'42', 0.01, 100, 1000)",
+                (task_id,),
+            )
+            await connection.execute(
+                "UPDATE benchmark_attempts SET status = 'completed', task_id = ? "
+                "WHERE id = ?",
+                (task_id, attempt_id),
+            )
+            await connection.execute(
+                "INSERT INTO benchmark_scores "
+                "(id, attempt_id, scorer_id, status, score, passed, evidence) "
+                "VALUES (?, ?, 'scorer-gsm8k-numeric-v1', 'scored', ?, ?, '{}')",
+                (f"score-{run_id}-{index}", attempt_id, score, int(score >= 1.0)),
+            )
+        await connection.commit()
+
+
+@pytest.mark.asyncio
+async def test_immutable_baseline_and_idempotent_gate_evaluation(execution_db):
+    await _test_revision()
+    await repository.create_run(
+        run_id="run-baseline", revision_id="revision-one", idempotency_key=None
+    )
+    await repository.create_run(
+        run_id="run-candidate", revision_id="revision-one", idempotency_key=None
+    )
+    await _complete_run(execution_db, "run-baseline", 1.0)
+    await _complete_run(execution_db, "run-candidate", 1.0)
+    baseline = await records.create_baseline(
+        baseline_id="baseline-one",
+        run_id="run-baseline",
+        name="Release baseline",
+        description="",
+        rules=[{
+            "id": "score-drop",
+            "label": "No score regression",
+            "metric": "arm.classic.score.scorer-gsm8k-numeric-v1",
+            "operator": "max_drop",
+            "value": 0.0,
+        }],
+        created_by="tester",
+    )
+    evaluation, created = await records.evaluate_baseline(
+        "baseline-one", "run-candidate"
+    )
+    replay, replay_created = await records.evaluate_baseline(
+        "baseline-one", "run-candidate"
+    )
+
+    assert baseline["rules_checksum"]
+    assert created is True
+    assert evaluation["status"] == "passed"
+    assert replay_created is False
+    assert replay["report_checksum"] == evaluation["report_checksum"]
+    async with aiosqlite.connect(execution_db) as connection:
+        with pytest.raises(aiosqlite.IntegrityError, match="immutable"):
+            await connection.execute(
+                "UPDATE benchmark_baselines SET name = 'Changed' WHERE id = 'baseline-one'"
+            )

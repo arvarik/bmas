@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -694,6 +694,85 @@ ON benchmark_attempts(status, created_at);
 """
 
 
+MIGRATION_V10_BENCHMARK_ANALYSIS_DDL = """
+CREATE TABLE IF NOT EXISTS benchmark_baselines (
+    id                  TEXT PRIMARY KEY,
+    test_id             TEXT NOT NULL REFERENCES benchmark_tests(id),
+    run_id              TEXT NOT NULL UNIQUE REFERENCES benchmark_runs(id),
+    name                TEXT NOT NULL,
+    description         TEXT NOT NULL DEFAULT '',
+    rules               TEXT NOT NULL,
+    rules_checksum      TEXT NOT NULL,
+    created_by          TEXT NOT NULL DEFAULT 'operator',
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(test_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_baselines_test
+ON benchmark_baselines(test_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS benchmark_gate_evaluations (
+    id                  TEXT PRIMARY KEY,
+    baseline_id         TEXT NOT NULL REFERENCES benchmark_baselines(id),
+    candidate_run_id    TEXT NOT NULL REFERENCES benchmark_runs(id),
+    status              TEXT NOT NULL CHECK (status IN ('passed','failed','indeterminate')),
+    report              TEXT NOT NULL,
+    report_checksum     TEXT NOT NULL,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(baseline_id, candidate_run_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_gate_evaluations_baseline
+ON benchmark_gate_evaluations(baseline_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS benchmark_runtime_qualifications (
+    id                  TEXT PRIMARY KEY,
+    runtime_id          TEXT NOT NULL,
+    contract_version    TEXT NOT NULL,
+    evidence_key        TEXT NOT NULL,
+    run_id              TEXT REFERENCES benchmark_runs(id),
+    status              TEXT NOT NULL CHECK (status IN ('provisional','passed','failed')),
+    report              TEXT NOT NULL,
+    report_checksum     TEXT NOT NULL,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(runtime_id, contract_version, evidence_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_runtime_qualifications_runtime
+ON benchmark_runtime_qualifications(runtime_id, created_at DESC);
+
+CREATE TRIGGER IF NOT EXISTS prevent_benchmark_baseline_update
+BEFORE UPDATE ON benchmark_baselines BEGIN
+    SELECT RAISE(ABORT, 'benchmark baselines are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_benchmark_baseline_delete
+BEFORE DELETE ON benchmark_baselines BEGIN
+    SELECT RAISE(ABORT, 'benchmark baselines are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_benchmark_gate_evaluation_update
+BEFORE UPDATE ON benchmark_gate_evaluations BEGIN
+    SELECT RAISE(ABORT, 'benchmark gate evaluations are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_benchmark_gate_evaluation_delete
+BEFORE DELETE ON benchmark_gate_evaluations BEGIN
+    SELECT RAISE(ABORT, 'benchmark gate evaluations are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_benchmark_runtime_qualification_update
+BEFORE UPDATE ON benchmark_runtime_qualifications BEGIN
+    SELECT RAISE(ABORT, 'benchmark runtime qualifications are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_benchmark_runtime_qualification_delete
+BEFORE DELETE ON benchmark_runtime_qualifications BEGIN
+    SELECT RAISE(ABORT, 'benchmark runtime qualifications are immutable');
+END;
+"""
+
+
 # ── Connection Infrastructure ────────────────────────────────────────
 
 
@@ -1035,6 +1114,14 @@ async def _migrate_to_v9(db: aiosqlite.Connection) -> None:
     logger.info("Migration v9 applied: benchmark authoring, execution, and scoring")
 
 
+async def _migrate_to_v10(db: aiosqlite.Connection) -> None:
+    """Add immutable baselines, gate results, and runtime qualifications."""
+    await db.executescript(MIGRATION_V10_BENCHMARK_ANALYSIS_DDL)
+    db.row_factory = aiosqlite.Row
+    await db.commit()
+    logger.info("Migration v10 applied: benchmark analysis and regression gates")
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -1046,6 +1133,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         7: _migrate_to_v7,
         8: _migrate_to_v8,
         9: _migrate_to_v9,
+        10: _migrate_to_v10,
     }
     fn = migrations.get(version)
     if fn is None:
