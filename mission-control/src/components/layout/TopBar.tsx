@@ -63,8 +63,8 @@ export function TopBar({
 
         <Link href="/" className="topbar__title-link">
           <h1 className="topbar__title">
-            <span className="topbar__title-full">bMAS</span>
-            <span className="topbar__title-short">bMAS</span>
+            <span className="topbar__title-full">Stigmergic</span>
+            <span className="topbar__title-short">Stigmergic</span>
           </h1>
         </Link>
 
@@ -93,6 +93,7 @@ export function TopBar({
 
       {/* ── Right: Cost Ticker ─────────────────────────────────── */}
       <div className="topbar__right">
+        <span className="topbar__cost-label">Visible task cost</span>
         <span className="topbar__cost-sign">$</span>
         <span className="topbar__cost-value">{costFormatted}</span>
       </div>

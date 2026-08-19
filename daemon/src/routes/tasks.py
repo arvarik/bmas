@@ -3,18 +3,29 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict
 
 import database as db
+from auth import require_api_key
 from config import (
     BLACKBOARD_V2,
+    BMAS_API_KEY,
     COORDINATION_VARIANT,
     STORAGE_MAX_TASK_OUTPUT_MB,
     STORAGE_MAX_UPLOAD_MB,
 )
 
 router = APIRouter()
+
+
+class TaskArchiveRequest(BaseModel):
+    """Archive or restore a bounded task selection."""
+
+    model_config = ConfigDict(extra="forbid")
+    task_ids: list[str]
+    archived: bool = True
 
 
 @router.get("/config/active")
@@ -41,16 +52,26 @@ async def list_tasks_endpoint(
     date_to: str | None = None,
     min_cost: float | None = None,
     max_cost: float | None = None,
+    archived: str = "exclude",
+    sort: str = "created-desc",
 ):
     """List task history with pagination and operator filters."""
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
 
-    if status and status not in ("pending", "running", "completed", "failed"):
+    if status and status not in ("pending", "running", "completed", "failed", "attention"):
         return JSONResponse(
-            {"error": f"Invalid status: {status}. Must be pending/running/completed/failed"},
+            {"error": f"Invalid status: {status}"},
             status_code=400,
         )
+    if archived not in ("exclude", "include", "only"):
+        return JSONResponse({"error": f"Invalid archived filter: {archived}"}, status_code=400)
+    allowed_sorts = {
+        "created-desc", "created-asc", "duration-desc", "duration-asc",
+        "cost-desc", "cost-asc", "status", "activity-desc",
+    }
+    if sort not in allowed_sorts:
+        return JSONResponse({"error": f"Invalid sort: {sort}"}, status_code=400)
 
     for label, value in (("date_from", date_from), ("date_to", date_to)):
         if value:
@@ -78,11 +99,38 @@ async def list_tasks_endpoint(
         "date_to": date_to,
         "min_cost": min_cost,
         "max_cost": max_cost,
+        "archived": archived,
     }
-    tasks = await db.list_tasks(limit=limit, offset=offset, **filters)
+    tasks = await db.list_tasks(limit=limit, offset=offset, sort=sort, **filters)
     total = await db.count_tasks(**filters)
+    grand_total = await db.count_tasks(archived="exclude")
 
-    return {"tasks": tasks, "total": total, "limit": limit, "offset": offset}
+    return {
+        "tasks": tasks,
+        "total": total,
+        "grand_total": grand_total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/tasks/analytics")
+async def get_task_analytics_endpoint():
+    """Return complete task aggregates."""
+    return await db.get_task_analytics()
+
+
+@router.post("/tasks/archive")
+async def archive_tasks_endpoint(body: TaskArchiveRequest, request: Request):
+    """Archive terminal tasks or restore archived tasks."""
+    require_api_key(request, BMAS_API_KEY)
+    if not body.task_ids or len(body.task_ids) > 200:
+        return JSONResponse(
+            {"error": "Select between 1 and 200 tasks"},
+            status_code=422,
+        )
+    archived, rejected = await db.archive_tasks(body.task_ids, body.archived)
+    return {"updated": archived, "rejected": rejected}
 
 
 @router.get("/tasks/{task_id}")
@@ -93,6 +141,9 @@ async def get_task_detail(task_id: str):
         return JSONResponse({"error": "Task not found"}, status_code=404)
 
     sub_tasks = await db.get_sub_tasks(task_id)
+    board_meta = await db.get_board_meta(task_id)
+    task["effective_configuration"] = board_meta.get("effective_configuration")
+    task["submission_overrides"] = board_meta.get("submission_overrides")
     task["event_delivery"] = await db.get_event_delivery_health(task_id)
     task["storage"] = {
         "input_bytes": await db.get_task_files_total_bytes(task_id),

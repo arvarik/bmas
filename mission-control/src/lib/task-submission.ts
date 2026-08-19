@@ -6,6 +6,20 @@ export interface UploadCandidate {
 
 export const MAX_TASK_ATTACHMENTS = 10;
 
+export function buildTaskObjective(
+  objective: string,
+  constraints: string,
+  expectedOutput: string,
+  quickMode: boolean,
+): string {
+  const cleanObjective = objective.trim();
+  if (quickMode) return cleanObjective;
+  const sections = [`Objective\n${cleanObjective}`];
+  if (constraints.trim()) sections.push(`Constraints\n${constraints.trim()}`);
+  if (expectedOutput.trim()) sections.push(`Expected output\n${expectedOutput.trim()}`);
+  return sections.join("\n\n");
+}
+
 export interface AttachmentSelection<T extends UploadCandidate> {
   files: T[];
   errors: string[];

@@ -1,15 +1,17 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ClientShell } from "./ClientShell";
-import { PROJECT_DESCRIPTION, PROJECT_NAME } from "@/lib/config";
+import { PROJECT_DESCRIPTION } from "@/lib/config";
+
+const PRODUCT_NAME = "Stigmergic";
 
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata(): Promise<Metadata> {
   return {
     title: {
-      default: `${PROJECT_NAME} — Mission Control`,
-      template: `%s | ${PROJECT_NAME}`,
+      default: `${PRODUCT_NAME} — Mission Control`,
+      template: `%s | ${PRODUCT_NAME}`,
     },
     description: PROJECT_DESCRIPTION,
     keywords: [
@@ -21,23 +23,23 @@ export async function generateMetadata(): Promise<Metadata> {
       "Autonomous Agents",
       "Blackboard Architecture",
     ],
-    authors: [{ name: "bMAS Swarm Development Team" }],
-    creator: "bMAS Swarm",
+    authors: [{ name: "Stigmergic Development Team" }],
+    creator: PRODUCT_NAME,
     metadataBase: new URL("https://stigmergic.bmas.ai"),
     alternates: {
       canonical: "/",
     },
     openGraph: {
-      title: `${PROJECT_NAME} — Mission Control`,
+      title: `${PRODUCT_NAME} — Mission Control`,
       description: PROJECT_DESCRIPTION,
       url: "https://stigmergic.bmas.ai",
-      siteName: PROJECT_NAME,
+      siteName: PRODUCT_NAME,
       locale: "en_US",
       type: "website",
     },
     twitter: {
       card: "summary_large_image",
-      title: `${PROJECT_NAME} — Mission Control`,
+      title: `${PRODUCT_NAME} — Mission Control`,
       description: PROJECT_DESCRIPTION,
     },
     icons: {

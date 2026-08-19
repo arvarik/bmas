@@ -15,6 +15,8 @@ export async function GET(request: Request): Promise<NextResponse> {
     "date_to",
     "min_cost",
     "max_cost",
+    "archived",
+    "sort",
   ]) {
     const val = searchParams.get(key);
     if (val) params.set(key, val);

@@ -1,6 +1,14 @@
 import type { TaskHistoryFilters, TaskSummary } from "@/hooks/useTaskHistory";
 
 export type TaskHistorySort =
+  | "created-desc"
+  | "created-asc"
+  | "cost-desc"
+  | "cost-asc"
+  | "duration-desc"
+  | "duration-asc"
+  | "status"
+  | "activity-desc"
   | "newest"
   | "oldest"
   | "cost-high"
@@ -17,6 +25,8 @@ export interface SavedTaskView {
 
 export function taskNeedsAttention(task: TaskSummary): boolean {
   return task.status === "failed"
+    || task.pending_approval
+    || task.stale
     || ["blocked", "paused", "pause_requested"].includes(task.run_state ?? "");
 }
 
@@ -32,6 +42,7 @@ function matchesSearch(task: TaskSummary, search: string): boolean {
     task.complexity,
     task.model_used,
     task.error_message,
+    task.result_summary,
   ].some((value) => value?.toLocaleLowerCase().includes(query));
 }
 
@@ -64,17 +75,25 @@ export function sortTaskHistory(
 ): TaskSummary[] {
   const sorted = [...tasks];
   sorted.sort((left, right) => {
-    if (sort === "oldest") {
+    if (sort === "created-asc" || sort === "oldest") {
       return Date.parse(left.created_at) - Date.parse(right.created_at);
     }
-    if (sort === "cost-high") {
+    if (sort === "cost-desc" || sort === "cost-high") {
       return right.total_cost_usd - left.total_cost_usd;
     }
-    if (sort === "cost-low") {
+    if (sort === "cost-asc" || sort === "cost-low") {
       return left.total_cost_usd - right.total_cost_usd;
     }
-    if (sort === "duration-high") {
+    if (sort === "duration-desc" || sort === "duration-high") {
       return (right.duration_ms ?? -1) - (left.duration_ms ?? -1);
+    }
+    if (sort === "duration-asc") {
+      return (left.duration_ms ?? Number.MAX_SAFE_INTEGER) - (right.duration_ms ?? Number.MAX_SAFE_INTEGER);
+    }
+    if (sort === "status") return left.status.localeCompare(right.status);
+    if (sort === "activity-desc") {
+      return Date.parse(right.last_heartbeat_at ?? right.completed_at ?? right.created_at)
+        - Date.parse(left.last_heartbeat_at ?? left.completed_at ?? left.created_at);
     }
     return Date.parse(right.created_at) - Date.parse(left.created_at);
   });
@@ -147,7 +166,7 @@ export function parseSavedTaskViews(value: string): SavedTaskView[] {
         && typeof filters.minCost === "string"
         && typeof filters.maxCost === "string"
         && ["", "0", "7", "30"].includes(view.datePreset ?? "invalid")
-        && ["newest", "oldest", "cost-high", "cost-low", "duration-high"].includes(view.sort ?? "");
+        && ["created-desc", "created-asc", "cost-desc", "cost-asc", "duration-desc", "duration-asc", "status", "activity-desc", "newest", "oldest", "cost-high", "cost-low", "duration-high"].includes(view.sort ?? "");
     });
   } catch {
     return [];

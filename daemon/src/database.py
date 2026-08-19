@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -97,7 +97,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     completed_at    TEXT,
     duration_ms     INTEGER,
     total_cost_usd  REAL DEFAULT 0.0,
-    total_tokens    INTEGER DEFAULT 0
+    total_tokens    INTEGER DEFAULT 0,
+    archived_at     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at DESC);
@@ -561,6 +562,19 @@ async def _migrate_to_v6(db: aiosqlite.Connection) -> None:
     logger.info("Migration v6 applied: durable events and lifecycle telemetry")
 
 
+async def _migrate_to_v7(db: aiosqlite.Connection) -> None:
+    """Add reversible task archiving."""
+    cursor = await db.execute("PRAGMA table_info(tasks)")
+    task_columns = {row[1] for row in await cursor.fetchall()}
+    if "archived_at" not in task_columns:
+        await db.execute("ALTER TABLE tasks ADD COLUMN archived_at TEXT")
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_archived ON tasks(archived_at)"
+    )
+    await db.commit()
+    logger.info("Migration v7 applied: reversible task archiving")
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -569,6 +583,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         4: _migrate_to_v4,
         5: _migrate_to_v5,
         6: _migrate_to_v6,
+        7: _migrate_to_v7,
     }
     fn = migrations.get(version)
     if fn is None:
@@ -1096,20 +1111,40 @@ def _task_filter_clause(
     date_to: str | None = None,
     min_cost: float | None = None,
     max_cost: float | None = None,
+    archived: str = "exclude",
 ) -> tuple[str, list[Any]]:
     """Build one parameterized task-history filter."""
     clauses: list[str] = []
     params: list[Any] = []
-    if status:
+    if status == "attention":
+        clauses.append(
+            "(status = 'failed' OR COALESCE(run_state, '') IN "
+            "('blocked', 'paused', 'pause_requested') OR "
+            "(status IN ('pending', 'running') AND "
+            "julianday(COALESCE(last_heartbeat_at, created_at)) < "
+            "julianday('now', '-5 minutes')) OR "
+            "EXISTS (SELECT 1 FROM event_journal AS request "
+            "WHERE request.task_id = tasks.id "
+            "AND request.event_type = 'approval_request' "
+            "AND NOT EXISTS (SELECT 1 FROM event_journal AS response "
+            "WHERE response.task_id = request.task_id "
+            "AND response.event_type = 'approval_response' "
+            "AND json_extract(response.data, '$.run_id') = "
+            "json_extract(request.data, '$.run_id') "
+            "AND response.cursor > request.cursor)))"
+        )
+    elif status:
         clauses.append("status = ?")
         params.append(status)
     if search:
         clauses.append(
             "(LOWER(id) LIKE ? OR LOWER(label) LIKE ? "
-            "OR LOWER(full_input) LIKE ?)"
+            "OR LOWER(full_input) LIKE ? OR LOWER(COALESCE(result_summary, '')) LIKE ? "
+            "OR LOWER(COALESCE(result_json, '')) LIKE ? "
+            "OR LOWER(COALESCE(error_message, '')) LIKE ?)"
         )
         pattern = f"%{search.strip().lower()}%"
-        params.extend((pattern, pattern, pattern))
+        params.extend((pattern, pattern, pattern, pattern, pattern, pattern))
     if date_from:
         clauses.append("created_at >= ?")
         params.append(date_from)
@@ -1122,6 +1157,10 @@ def _task_filter_clause(
     if max_cost is not None:
         clauses.append("COALESCE(total_cost_usd, 0) <= ?")
         params.append(max_cost)
+    if archived == "only":
+        clauses.append("archived_at IS NOT NULL")
+    elif archived == "exclude":
+        clauses.append("archived_at IS NULL")
     return (f"WHERE {' AND '.join(clauses)}" if clauses else "", params)
 
 
@@ -1135,6 +1174,8 @@ async def list_tasks(
     date_to: str | None = None,
     min_cost: float | None = None,
     max_cost: float | None = None,
+    archived: str = "exclude",
+    sort: str = "priority",
 ) -> list[dict]:
     """List filtered tasks with urgent operator work first."""
     where, params = _task_filter_clause(
@@ -1144,19 +1185,39 @@ async def list_tasks(
         date_to=date_to,
         min_cost=min_cost,
         max_cost=max_cost,
+        archived=archived,
     )
+    order_by = {
+        "priority": "CASE WHEN COALESCE(run_state, '') IN ('blocked', 'paused', 'pause_requested') THEN 0 WHEN status = 'failed' THEN 1 WHEN status = 'running' THEN 2 WHEN status = 'pending' THEN 3 ELSE 4 END, created_at DESC",
+        "created-desc": "created_at DESC",
+        "created-asc": "created_at ASC",
+        "duration-desc": "COALESCE(duration_ms, -1) DESC, created_at DESC",
+        "duration-asc": "COALESCE(duration_ms, 9223372036854775807) ASC, created_at DESC",
+        "cost-desc": "COALESCE(total_cost_usd, 0) DESC, created_at DESC",
+        "cost-asc": "COALESCE(total_cost_usd, 0) ASC, created_at DESC",
+        "status": "status ASC, created_at DESC",
+        "activity-desc": "COALESCE(last_heartbeat_at, completed_at, started_at, created_at) DESC",
+    }.get(sort, "created_at DESC")
     params.extend((limit, offset))
     async with _connect() as conn:
         rows = await conn.execute_fetchall(
-            "SELECT * FROM tasks "
+            "SELECT tasks.*, "
+            "CASE WHEN status IN ('pending', 'running') AND "
+            "julianday(COALESCE(last_heartbeat_at, created_at)) < "
+            "julianday('now', '-5 minutes') "
+            "THEN 1 ELSE 0 END AS stale, "
+            "CASE WHEN EXISTS (SELECT 1 FROM event_journal AS request "
+            "WHERE request.task_id = tasks.id "
+            "AND request.event_type = 'approval_request' "
+            "AND NOT EXISTS (SELECT 1 FROM event_journal AS response "
+            "WHERE response.task_id = request.task_id "
+            "AND response.event_type = 'approval_response' "
+            "AND json_extract(response.data, '$.run_id') = "
+            "json_extract(request.data, '$.run_id') "
+            "AND response.cursor > request.cursor)) "
+            "THEN 1 ELSE 0 END AS pending_approval FROM tasks "
             f"{where} "
-            "ORDER BY CASE "
-            "WHEN COALESCE(run_state, '') IN "
-            "('blocked', 'paused', 'pause_requested') THEN 0 "
-            "WHEN status = 'failed' THEN 1 "
-            "WHEN status = 'running' THEN 2 "
-            "WHEN status = 'pending' THEN 3 ELSE 4 END, "
-            "created_at DESC LIMIT ? OFFSET ?",
+            f"ORDER BY {order_by} LIMIT ? OFFSET ?",
             params,
         )
         return [dict(r) for r in rows]
@@ -1170,6 +1231,7 @@ async def count_tasks(
     date_to: str | None = None,
     min_cost: float | None = None,
     max_cost: float | None = None,
+    archived: str = "exclude",
 ) -> int:
     """Count tasks that match one task-history filter."""
     where, params = _task_filter_clause(
@@ -1179,6 +1241,7 @@ async def count_tasks(
         date_to=date_to,
         min_cost=min_cost,
         max_cost=max_cost,
+        archived=archived,
     )
     async with _connect() as conn:
         cursor = await conn.execute(
@@ -1187,6 +1250,59 @@ async def count_tasks(
         )
         row = await cursor.fetchone()
         return row["cnt"] if row else 0
+
+
+async def archive_tasks(task_ids: list[str], archived: bool = True) -> tuple[list[str], list[str]]:
+    """Archive terminal tasks and return accepted and rejected identifiers."""
+    accepted: list[str] = []
+    rejected: list[str] = []
+    async with _connect() as connection:
+        for task_id in dict.fromkeys(task_ids):
+            cursor = await connection.execute(
+                "SELECT status FROM tasks WHERE id = ?",
+                (task_id,),
+            )
+            row = await cursor.fetchone()
+            if row is None or (archived and row["status"] not in ("completed", "failed")):
+                rejected.append(task_id)
+                continue
+            value = datetime.now(UTC).isoformat() if archived else None
+            await connection.execute(
+                "UPDATE tasks SET archived_at = ? WHERE id = ?",
+                (value, task_id),
+            )
+            accepted.append(task_id)
+        await connection.commit()
+    return accepted, rejected
+
+
+async def get_task_analytics() -> dict[str, Any]:
+    """Return complete task aggregates for the Analytics page."""
+    async with _connect() as connection:
+        status_rows = await connection.execute_fetchall(
+            "SELECT status, COUNT(*) AS count FROM tasks "
+            "WHERE archived_at IS NULL GROUP BY status"
+        )
+        cursor = await connection.execute(
+            "SELECT COUNT(*) AS task_count, "
+            "COALESCE(SUM(total_cost_usd), 0) AS total_cost_usd, "
+            "COALESCE(SUM(total_tokens), 0) AS total_tokens, "
+            "COALESCE(AVG(duration_ms), 0) AS average_duration_ms "
+            "FROM tasks WHERE archived_at IS NULL"
+        )
+        totals = await cursor.fetchone()
+        archived_cursor = await connection.execute(
+            "SELECT COUNT(*) AS count FROM tasks WHERE archived_at IS NOT NULL"
+        )
+        archived_row = await archived_cursor.fetchone()
+        return {
+            "task_count": int(totals["task_count"] if totals else 0),
+            "total_cost_usd": float(totals["total_cost_usd"] if totals else 0),
+            "total_tokens": int(totals["total_tokens"] if totals else 0),
+            "average_duration_ms": float(totals["average_duration_ms"] if totals else 0),
+            "archived_count": int(archived_row["count"] if archived_row else 0),
+            "by_status": {row["status"]: int(row["count"]) for row in status_rows},
+        }
 
 
 # ── Durable Event Journal and Outbox ────────────────────────────────

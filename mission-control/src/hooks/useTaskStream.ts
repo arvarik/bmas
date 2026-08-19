@@ -182,6 +182,15 @@ export interface TaskMeta {
   last_heartbeat_at?: string;
   error_message?: string;
   resume_count?: number;
+  effective_configuration?: Record<string, unknown>;
+  submission_overrides?: Record<string, unknown>;
+  event_delivery?: {
+    status?: string;
+    unpublished_events?: number;
+    outbox_events?: number;
+    publish_failures?: number;
+    latest_cursor?: number;
+  };
   storage?: {
     input_bytes: number;
     output_bytes: number;

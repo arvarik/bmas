@@ -27,6 +27,11 @@ export interface TaskSummary {
   model_used: string | null;
   error_message: string | null;
   run_state: string | null;
+  result_summary?: string | null;
+  last_heartbeat_at?: string | null;
+  archived_at?: string | null;
+  pending_approval?: boolean;
+  stale?: boolean;
 }
 
 export interface TaskHistoryFilters {
@@ -35,11 +40,14 @@ export interface TaskHistoryFilters {
   dateFrom: string;
   minCost: string;
   maxCost: string;
+  archived?: "exclude" | "include" | "only";
+  sort?: string;
 }
 
 export interface TaskHistoryData {
   tasks: TaskSummary[];
   total: number;
+  grandTotal: number;
   isLoading: boolean;
   error: string | null;
   hasMore: boolean;
@@ -58,6 +66,7 @@ export function useTaskHistory(
 ): TaskHistoryData {
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [total, setTotal] = useState(0);
+  const [grandTotal, setGrandTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const offsetRef = useRef(0);
@@ -67,6 +76,8 @@ export function useTaskHistory(
   const dateFrom = filters.dateFrom ?? "";
   const minCost = filters.minCost ?? "";
   const maxCost = filters.maxCost ?? "";
+  const archived = filters.archived ?? "exclude";
+  const sort = filters.sort ?? "created-desc";
 
   const fetchPage = useCallback(async (offset: number, append: boolean) => {
     setIsLoading(true);
@@ -80,6 +91,8 @@ export function useTaskHistory(
       if (dateFrom) params.set("date_from", dateFrom);
       if (minCost) params.set("min_cost", minCost);
       if (maxCost) params.set("max_cost", maxCost);
+      params.set("archived", archived);
+      params.set("sort", sort);
       const res = await fetch(`/api/tasks?${params.toString()}`, {
         cache: "no-store",
       });
@@ -94,12 +107,14 @@ export function useTaskHistory(
       const data = (await res.json()) as {
         tasks: TaskSummary[];
         total: number;
+        grand_total?: number;
         limit: number;
         offset: number;
       };
 
       setTasks((prev) => (append ? [...prev, ...data.tasks] : data.tasks));
       setTotal(data.total);
+      setGrandTotal(data.grand_total ?? data.total);
       setError(null);
       offsetRef.current = offset + data.tasks.length;
     } catch (err) {
@@ -107,7 +122,7 @@ export function useTaskHistory(
     } finally {
       setIsLoading(false);
     }
-  }, [dateFrom, maxCost, minCost, search, status]);
+  }, [archived, dateFrom, maxCost, minCost, search, sort, status]);
 
   // Initial fetch on mount
   useEffect(() => {
@@ -129,5 +144,5 @@ export function useTaskHistory(
 
   const hasMore = tasks.length < total;
 
-  return { tasks, total, isLoading, error, hasMore, loadMore, refetch };
+  return { tasks, total, grandTotal, isLoading, error, hasMore, loadMore, refetch };
 }

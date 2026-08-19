@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Blackboard Multi-Agent Swarm (bMAS)",
-    short_name: "bMAS",
-    description: "A classic multi-agent runtime that coordinates agents through a durable shared blackboard.",
+    name: "Stigmergic Mission Control",
+    short_name: "Stigmergic",
+    description: "Mission Control for the bMAS multi-agent architecture.",
     start_url: "/",
     scope: "/",
     display: "standalone",

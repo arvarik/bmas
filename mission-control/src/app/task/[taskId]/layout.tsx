@@ -44,12 +44,24 @@ function TaskHeader({
   isLive,
   pending,
   cost,
+  phase,
+  activeAgent,
+  latestEvent,
 }: {
   taskMeta: TaskStreamData["taskMeta"];
   isLive: boolean;
   pending: PendingTask | null;
   cost: CostData | null;
+  phase: string | null;
+  activeAgent: string | null;
+  latestEvent: string | null;
 }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isLive) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [isLive]);
   // Use optimistic data when SSE hasn't delivered real meta yet
   const hasMeta = !!taskMeta;
   const status = taskMeta?.status ?? (isLive ? "running" : "pending");
@@ -65,7 +77,9 @@ function TaskHeader({
   // Duration display
   const durationText = taskMeta?.duration_ms
     ? fmtDuration(taskMeta.duration_ms)
-    : undefined;
+    : taskMeta?.started_at
+      ? fmtDuration(Math.max(0, now - Date.parse(taskMeta.started_at)))
+      : undefined;
 
   return (
     <div className="task-header">
@@ -118,8 +132,11 @@ function TaskHeader({
           </span>
         )}
         {durationText && (
-          <span className="task-header__duration">{durationText}</span>
+          <span className="task-header__duration">Elapsed {durationText}</span>
         )}
+        <span className="task-header__phase">Phase {phase || taskMeta?.run_state || "Queued"}</span>
+        <span className="task-header__agent">Active agent {activeAgent || "None"}</span>
+        <span className="task-header__event" title={latestEvent || "No event received"}>Latest event {latestEvent || "None"}</span>
       </div>
     </div>
   );
@@ -193,18 +210,23 @@ export default function TaskLayout({
   return (
     <TaskStreamContext.Provider value={streamData}>
       <div className="task-detail">
-        <TaskHeader
-          taskMeta={streamData.taskMeta}
-          isLive={streamData.isLive}
-          pending={pending}
-          cost={streamData.cost}
-        />
         <TaskLifecycle
+          header={<TaskHeader
+            taskMeta={streamData.taskMeta}
+            isLive={streamData.isLive}
+            pending={pending}
+            cost={streamData.cost}
+            phase={streamData.phase}
+            activeAgent={streamData.activeTurns.at(-1)?.actor ?? null}
+            latestEvent={streamData.logs.at(-1)?.message ?? streamData.traceEvents.at(-1)?.content ?? null}
+          />}
           task={streamData.taskMeta}
           cost={streamData.cost}
           isLive={streamData.isLive}
           isPaused={streamData.isPaused}
           controls={capability?.features.controls ?? []}
+          logs={streamData.logs}
+          traceEvents={streamData.traceEvents}
         />
         {tabs.length > 0 ? <nav className="task-tabs" role="tablist" aria-label="Task detail views">
           {tabs.map((tab, index) => (

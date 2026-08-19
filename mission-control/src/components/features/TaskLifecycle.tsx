@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Ban,
@@ -11,9 +12,10 @@ import {
   PauseCircle,
   Play,
   Send,
+  Settings2,
   X,
 } from "lucide-react";
-import type { CostData, TaskMeta } from "@/hooks/useTaskStream";
+import type { CostData, LogEntry, TaskMeta, TraceEvent } from "@/hooks/useTaskStream";
 import {
   type TaskOperatorAction,
   type TaskOperatorResult,
@@ -26,6 +28,7 @@ import {
   serializeOperatorHistory,
   type StoredOperatorAction,
 } from "@/lib/operator-action-history";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 interface OperationsStatus {
   providerReady: boolean;
@@ -35,30 +38,32 @@ interface OperationsStatus {
   queueCapacity: number;
 }
 
-type StageId = "queued" | "running" | "blocked" | "failed" | "completed";
+type StageId = "queued" | "running" | "completed";
+type BranchState = "blocked" | "failed" | "cancelled" | null;
 
 const STAGES: { id: StageId; label: string }[] = [
   { id: "queued", label: "Queued" },
   { id: "running", label: "Running" },
-  { id: "blocked", label: "Blocked" },
-  { id: "failed", label: "Failed" },
   { id: "completed", label: "Completed" },
 ];
 
 function currentStage(task: TaskMeta): StageId {
-  if (task.status === "failed") return "failed";
   if (task.status === "completed") return "completed";
-  if (["blocked", "paused", "pause_requested"].includes(task.run_state ?? "")) {
-    return "blocked";
-  }
   if (task.status === "running" || task.run_state === "recovering") return "running";
   return "queued";
+}
+
+function branchState(task: TaskMeta): BranchState {
+  if (["aborted", "cancelled"].includes(task.run_state ?? "") || task.error_message?.startsWith("Task aborted")) return "cancelled";
+  if (task.status === "failed") return "failed";
+  if (["blocked", "paused", "pause_requested"].includes(task.run_state ?? "")) return "blocked";
+  return null;
 }
 
 function stageState(stage: StageId, current: StageId): "done" | "current" | "future" {
   if (stage === current) return "current";
   if (stage === "queued") return "done";
-  if (stage === "running" && ["blocked", "failed", "completed"].includes(current)) return "done";
+  if (stage === "running" && current === "completed") return "done";
   return "future";
 }
 
@@ -83,17 +88,23 @@ function actionEventLabel(action: TaskOperatorAction): string {
 }
 
 export function TaskLifecycle({
+  header,
   task,
   cost,
   isLive,
   isPaused,
   controls,
+  logs,
+  traceEvents,
 }: {
+  header: ReactNode;
   task: TaskMeta | null;
   cost: CostData | null;
   isLive: boolean;
   isPaused: boolean;
   controls: readonly string[];
+  logs: LogEntry[];
+  traceEvents: TraceEvent[];
 }) {
   const router = useRouter();
   const taskId = task?.task_id ?? "";
@@ -106,11 +117,21 @@ export function TaskLifecycle({
   const [operations, setOperations] = useState<OperationsStatus | null>(null);
   const [operationsError, setOperationsError] = useState("");
   const [operationsVersion, setOperationsVersion] = useState(0);
+  const [metadataOpen, setMetadataOpen] = useState(false);
+  const metadataRef = useRef<HTMLDivElement>(null);
+  const metadataButtonRef = useRef<HTMLButtonElement>(null);
   const {
     state: operatorAction,
     execute: executeOperatorAction,
     retry: retryOperatorAction,
   } = useTaskOperatorAction();
+
+  useFocusTrap({
+    active: metadataOpen,
+    containerRef: metadataRef,
+    returnFocusRef: metadataButtonRef,
+    onEscape: () => setMetadataOpen(false),
+  });
 
   useEffect(() => {
     if (!taskId) return;
@@ -233,33 +254,8 @@ export function TaskLifecycle({
     setActionName(purpose);
     setCopyError("");
     try {
-      const form = new FormData();
-      form.append("task", task.full_input);
-      form.append("variant", task.variant ?? "classic");
-      const filesResponse = await fetch(
-        `/api/tasks/${encodeURIComponent(task.task_id)}/files`,
-        { cache: "no-store" },
-      );
-      if (filesResponse.ok) {
-        const filesBody = await filesResponse.json() as {
-          files?: { id: string; name: string }[];
-        };
-        await Promise.all((filesBody.files ?? []).map(async (file) => {
-          const response = await fetch(
-            `/api/tasks/${encodeURIComponent(task.task_id)}/files/${encodeURIComponent(file.id)}`,
-            { cache: "no-store" },
-          );
-          if (!response.ok) {
-            throw new Error(`Input copy returned HTTP ${response.status} for ${file.name}`);
-          }
-          form.append("files", await response.blob(), file.name);
-        }));
-      } else if (filesResponse.status !== 404) {
-        throw new Error(`Input list returned HTTP ${filesResponse.status}`);
-      }
-      const response = await fetch("/api/submit", {
+      const response = await fetch(`/api/tasks/${encodeURIComponent(task.task_id)}/duplicate`, {
         method: "POST",
-        body: form,
       });
       const body = await response.json().catch(() => ({})) as {
         task_id?: string;
@@ -278,9 +274,21 @@ export function TaskLifecycle({
   }, [router, task]);
 
   const stage = useMemo(() => task ? currentStage(task) : "queued", [task]);
-  if (!task) return null;
+  const timeline = useMemo(() => {
+    if (!task) return [];
+    const terminalBranch = branchState(task);
+    return [
+      { id: "created", timestamp: task.created_at, label: "System created the task", kind: "System" },
+      ...logs.map((entry) => ({ id: `log:${entry.id}`, timestamp: entry.timestamp, label: entry.message, kind: entry.agent_role || "System" })),
+      ...traceEvents.map((entry) => ({ id: `trace:${entry.id}`, timestamp: entry.timestamp, label: entry.content || entry.type, kind: entry.actor || "System" })),
+      ...operatorEvents.map((entry) => ({ id: `operator:${entry.id}`, timestamp: entry.timestamp, label: entry.label, kind: "Operator" })),
+      ...(task.completed_at ? [{ id: "terminal", timestamp: task.completed_at, label: terminalBranch === "cancelled" ? "Task cancelled" : task.status === "failed" ? "Task failed" : "Task completed", kind: "System" }] : []),
+    ].filter((entry) => entry.timestamp).sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
+  }, [logs, operatorEvents, task, traceEvents]);
+  if (!task) return <div className="task-command-header">{header}</div>;
+  const branch = branchState(task);
   const storageBytes = (task.storage?.input_bytes ?? 0) + (task.storage?.output_bytes ?? 0);
-  const blocked = stage === "blocked";
+  const blocked = branch === "blocked";
   const cancellable = isLive || task.status === "pending" || task.status === "running";
   const sourcePaused = streamedPaused;
   const displayPaused = optimisticPaused ?? sourcePaused;
@@ -292,28 +300,21 @@ export function TaskLifecycle({
 
   return (
     <section className="task-lifecycle" aria-label="Task lifecycle and operations">
-      <div className="task-lifecycle__timeline">
+      <div className="task-command-header">
+        {header}
+        <div className="task-lifecycle__timeline">
         {STAGES.map((item) => {
           const state = stageState(item.id, stage);
           return (
             <div key={item.id} className={`task-lifecycle__stage task-lifecycle__stage--${state}`}>
               <span>
-                {state === "done" ? <Check size={12} /> : item.id === "failed" && state === "current" ? <X size={12} /> : <Clock3 size={12} />}
+                {state === "done" ? <Check size={12} /> : <Clock3 size={12} />}
               </span>
               <strong>{item.label}</strong>
             </div>
           );
         })}
-      </div>
-
-      <div className="task-lifecycle__operations">
-        <span><small>Queue</small>{operations ? `${operations.queued}/${operations.queueCapacity}` : "…"}</span>
-        <span><small>Provider</small>{operations?.providerReady ? "Healthy" : "Unavailable"}</span>
-        <span><small>Agents</small>{operations ? `${operations.agentsOnline}/${operations.agentsTotal}` : "…"}</span>
-        <span><small>Model</small>{task.model || "Selecting"}</span>
-        <span><small>Tokens</small>{(cost?.total_tokens ?? 0).toLocaleString()}</span>
-        <span><small>Cost</small>${(cost?.total_cost ?? 0).toFixed(4)}</span>
-        <span><small>Storage</small>{formatBytes(storageBytes)}</span>
+        {branch ? <div className={`task-lifecycle__branch task-lifecycle__branch--${branch}`}><X size={12} /><strong>{branch.charAt(0).toUpperCase() + branch.slice(1)}</strong></div> : null}
       </div>
 
       <div className="task-lifecycle__actions" aria-busy={operatorPending}>
@@ -346,6 +347,9 @@ export function TaskLifecycle({
         <button type="button" onClick={() => void copyTask("duplicate")} disabled={operatorPending || !!actionName || !task.full_input}>
           <Copy size={14} /> {actionName === "duplicate" ? "Duplicating…" : "Duplicate"}
         </button>
+        {task.status === "failed" ? <button type="button" onClick={() => void copyTask("retry")} disabled={operatorPending || !!actionName || !task.full_input}><Play size={14} /> {actionName === "retry" ? "Retrying…" : "Retry"}</button> : null}
+        <button ref={metadataButtonRef} type="button" onClick={() => setMetadataOpen(true)} aria-haspopup="dialog" aria-expanded={metadataOpen}><Settings2 size={14} /> Task data</button>
+      </div>
       </div>
 
       {canSendGuidance && showGuidance ? (
@@ -378,13 +382,16 @@ export function TaskLifecycle({
       ) : null}
 
       {task.status === "failed" && task.error_message ? (
-        <ActionableError
-          component="Task execution"
-          cause={task.error_message}
-          timestamp={task.completed_at || task.last_heartbeat_at || task.created_at}
-          onRetry={() => void copyTask("retry")}
-          compact
-        />
+        <div className="task-lifecycle__failure">
+          <ActionableError
+            component="Task execution"
+            cause={task.error_message}
+            timestamp={task.completed_at || task.last_heartbeat_at || task.created_at}
+            onRetry={() => void copyTask("retry")}
+            compact
+          />
+          <div><Link href={`/task/${task.task_id}/logs?log_q=${encodeURIComponent(task.error_message)}`}>Open related logs</Link><Link href={`/task/${task.task_id}/logs?mode=trace&trace_q=${encodeURIComponent(task.error_message)}`}>Open related traces</Link></div>
+        </div>
       ) : null}
       {operatorAction.status === "error" ? (
         <ActionableError
@@ -423,6 +430,14 @@ export function TaskLifecycle({
           </div>
         </details>
       ) : null}
+      <details className="task-lifecycle__history">
+        <summary>Operator and system event timeline ({timeline.length})</summary>
+        <div role="log" aria-label="Chronological operator and system events">
+          <ol>
+            {timeline.map((entry) => <li key={entry.id}><strong>{entry.kind}</strong> {entry.label} <time dateTime={entry.timestamp}>{new Date(entry.timestamp).toLocaleString()}</time></li>)}
+          </ol>
+        </div>
+      </details>
       {operationsError ? (
         <ActionableError
           component="Operations status"
@@ -431,6 +446,19 @@ export function TaskLifecycle({
           compact
         />
       ) : null}
+      {metadataOpen ? <>
+        <button type="button" className="task-metadata-backdrop" aria-label="Close task data" onClick={() => setMetadataOpen(false)} />
+        <div ref={metadataRef} className="task-metadata-drawer" role="dialog" aria-modal="true" aria-labelledby="task-metadata-title">
+          <header><div><p>Task metadata</p><h3 id="task-metadata-title">Configuration and recovery</h3></div><button type="button" onClick={() => setMetadataOpen(false)} aria-label="Close task data"><X size={18} /></button></header>
+          <p className="task-metadata-note">Mission Control captured these settings at submission. Session setting changes do not affect this active task.</p>
+          <section><h4>Effective configuration</h4><pre>{JSON.stringify(task.effective_configuration ?? {}, null, 2)}</pre></section>
+          <section><h4>Submission overrides</h4><pre>{JSON.stringify(task.submission_overrides ?? {}, null, 2)}</pre></section>
+          <section><h4>Queue</h4><dl><div><dt>Queued tasks</dt><dd>{operations ? `${operations.queued}/${operations.queueCapacity}` : "Unavailable"}</dd></div><div><dt>Active agents</dt><dd>{operations ? `${operations.agentsOnline}/${operations.agentsTotal}` : "Unavailable"}</dd></div><div><dt>Provider</dt><dd>{operations?.providerReady ? "Healthy" : "Unavailable"}</dd></div></dl></section>
+          <section><h4>Recovery</h4><dl><div><dt>Run state</dt><dd>{task.run_state || task.status}</dd></div><div><dt>Resume count</dt><dd>{task.resume_count ?? 0}</dd></div><div><dt>Event delivery</dt><dd>{task.event_delivery?.status || "Unknown"}</dd></div><div><dt>Latest cursor</dt><dd>{task.event_delivery?.latest_cursor ?? "None"}</dd></div></dl></section>
+          <section><h4>Storage</h4><dl><div><dt>Inputs</dt><dd>{formatBytes(task.storage?.input_bytes ?? 0)}</dd></div><div><dt>Outputs</dt><dd>{formatBytes(task.storage?.output_bytes ?? 0)}</dd></div><div><dt>Total</dt><dd>{formatBytes(storageBytes)}</dd></div></dl></section>
+          <section><h4>Usage</h4><dl><div><dt>Model</dt><dd>{task.model || "Selecting"}</dd></div><div><dt>Tokens</dt><dd>{(cost?.total_tokens ?? 0).toLocaleString()}</dd></div><div><dt>Cost</dt><dd>${(cost?.total_cost ?? 0).toFixed(4)}</dd></div></dl></section>
+        </div>
+      </> : null}
     </section>
   );
 }

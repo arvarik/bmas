@@ -238,6 +238,28 @@ def test_submission_contract_rejects_unknown_fields():
 
 
 @pytest.mark.asyncio
+async def test_server_side_duplicate_reuses_saved_objective_and_overrides(monkeypatch):
+    monkeypatch.setattr(submit.db, "get_task", AsyncMock(return_value={
+        "id": "task-source",
+        "full_input": "Objective\nInvestigate",
+        "variant": "classic",
+    }))
+    monkeypatch.setattr(submit.db, "get_board_meta", AsyncMock(return_value={
+        "submission_overrides": {"routing": {"medium": "saved-model"}},
+    }))
+    monkeypatch.setattr(submit.db, "get_task_files", AsyncMock(return_value=[]))
+    admit = AsyncMock(return_value={"task_id": "task-copy", "variant": "classic", "status": "queued"})
+    monkeypatch.setattr(submit, "_admit_task", admit)
+
+    response = await submit.duplicate_task("task-source", cast("Request", None))
+
+    assert response["task_id"] == "task-copy"
+    request = admit.await_args.args[0]
+    assert request.task == "Objective\nInvestigate"
+    assert request.overrides.routing.medium == "saved-model"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("objective", "code"),
     [("   ", "objective_empty"), ("abcd", "objective_too_large")],

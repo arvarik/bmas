@@ -8,13 +8,15 @@ import { TopBar } from "@/components/layout/TopBar";
 import { TaskSidebar } from "@/components/ui/TaskSidebar";
 import { useSystemStream } from "@/hooks/useSystemStream";
 import { useTaskHistory } from "@/hooks/useTaskHistory";
-import type { TaskHistoryFilters } from "@/hooks/useTaskHistory";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 // ── Route → breadcrumb label mapping ─────────────────────────────────
 
 function getBreadcrumb(pathname: string): string {
   if (pathname === "/") return "Home";
+  if (pathname === "/tasks") return "Tasks";
+  if (pathname === "/activity") return "Live activity";
+  if (pathname === "/analytics") return "Analytics";
   if (pathname.startsWith("/task/")) {
     const segments = pathname.split("/");
     const taskId = segments[2] ?? "";
@@ -53,26 +55,17 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
   const [drawerMode, setDrawerMode] = useState(false);
   const drawerRef = useRef<HTMLElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
-  const [taskFilters, setTaskFilters] = useState<TaskHistoryFilters>({
-    search: "",
-    status: "",
-    dateFrom: "",
-    minCost: "",
-    maxCost: "",
-  });
   // ── System health (replaces useBlackboard.startPolling) ───────────
   const system = useSystemStream();
 
   // ── Task history (feeds sidebar and landing page stats) ───────────
-  const taskHistory = useTaskHistory({
-    ...taskFilters,
-    status: taskFilters.status === "attention" ? "" : taskFilters.status,
-  });
+  const taskHistory = useTaskHistory({ sort: "activity-desc" });
+  const attentionHistory = useTaskHistory({ status: "attention" });
 
   // ── Re-fetch task list when system stream emits lifecycle events ──
   useEffect(() => {
     if (system.eventSequence > 0) {
-      void taskHistory.refetch();
+      void Promise.all([taskHistory.refetch(), attentionHistory.refetch()]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [system.eventSequence]);
@@ -132,7 +125,7 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
   // ── Dynamic Tab Title (running tasks) ─────────────────────────────
   const runningTasks = taskHistory.tasks.filter((t) => t.status === "running").length;
   useEffect(() => {
-    const defaultTitle = "bMAS — Mission Control";
+    const defaultTitle = "Stigmergic — Mission Control";
     if (runningTasks > 0) {
       document.title = `(${runningTasks}) ${defaultTitle}`;
     } else {
@@ -161,7 +154,7 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
     }
 
     void navigator.serviceWorker.register("/sw.js").catch((error: unknown) => {
-      console.error("bMAS service worker registration failed:", error);
+      console.error("Stigmergic service worker registration failed:", error);
     });
   }, []);
 
@@ -224,21 +217,14 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
             )}
 
             <TaskSidebar
-              tasks={taskHistory.tasks}
               agentHealth={system.agentHealth}
+              attentionCount={attentionHistory.total}
               collapsed={sidebarCollapsed}
               onToggleCollapse={handleToggleCollapse}
               mobileOpen={mobileDrawerOpen}
               drawerMode={drawerMode}
               sidebarRef={drawerRef}
               onRequestClose={closeMobileDrawer}
-              isLoading={taskHistory.isLoading}
-              hasMore={taskHistory.hasMore}
-              onLoadMore={taskHistory.loadMore}
-              filters={taskFilters}
-              onFiltersChange={setTaskFilters}
-              error={taskHistory.error}
-              onRetry={() => void taskHistory.refetch()}
             />
 
             <main

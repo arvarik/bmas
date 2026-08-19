@@ -50,7 +50,7 @@ export function proxy(request: NextRequest): NextResponse {
       headers: {
         "Cache-Control": "no-store",
         "WWW-Authenticate":
-          'Basic realm="bMAS Mission Control", charset="UTF-8"',
+          'Basic realm="Stigmergic Mission Control", charset="UTF-8"',
       },
     },
   );
