@@ -88,7 +88,7 @@ export function VariantSelect({
   ) ?? selectableVariants[0];
 
   if (loadState === "loading") {
-    return <span className="variant-status">Checking classic runtime…</span>;
+    return <span className="variant-status">Checking available runtimes…</span>;
   }
 
   if (loadState === "error") {

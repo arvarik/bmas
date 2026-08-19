@@ -2,7 +2,7 @@
 
 [Return to the documentation index](../README.md).
 
-This document describes the current classic runtime. Stigmergic has no second coordination runtime in this repository.
+This document describes the shared platform and its three registered coordination runtimes.
 
 ## System boundaries
 
@@ -35,35 +35,32 @@ The starter keeps each required service on one Docker network. It publishes port
 | Component | Owns | Does not own |
 |:---|:---|:---|
 | Mission Control | Operator views and browser interaction | Durable task state |
-| Daemon | Task lifecycle, classic rounds, task state, and events | Provider transport and agent tools |
+| Daemon | Task lifecycles, runtime dispatch, benchmark scheduling, task state, and events | Provider transport and agent tools |
 | Execution agent | One role activation and activation retry state | Task scheduling and board authority |
 | LiteLLM | Provider routing and provider API normalization | Classic role selection |
 | SQLite | Durable task, board, event, cost, log, and artifact metadata | Low-latency notifications |
 | Redis | Locks, notifications, controls, and live projections | The only durable task copy |
 
-## Classic task lifecycle
+## Shared task lifecycle
 
 ```mermaid
 sequenceDiagram
     participant O as Operator
     participant D as Daemon
     participant T as Triage
-    participant C as Control unit
+    participant V as Runtime
     participant A as Agent
     participant Q as SQLite
     participant R as Redis
 
-    O->>D: Submit classic task
+    O->>D: Submit task and runtime identifier
     D->>Q: Save task and effective configuration
     D->>T: Classify complexity
-    loop Until a terminal result
-        D->>C: Supply a bounded board view
-        C-->>D: Select roles and instructions
-        par Selected role activations
-            D->>A: Execute stable activation ID
-            A-->>D: Return result and usage
-        end
-        D->>Q: Save validated turns and board entries
+    D->>V: Start or resume registered runtime
+    loop Until the runtime returns a terminal result
+        V->>A: Execute stable activation ID
+        A-->>V: Return result and usage
+        V->>Q: Save checkpoint and progress
         D->>Q: Save durable events
         D->>R: Publish live notifications
     end
@@ -71,16 +68,16 @@ sequenceDiagram
     D-->>O: Stream final task event
 ```
 
-The control unit can select the planner, generated experts, critic, conflict resolver, cleaner, and decider.
+Classic selects roles through a control unit. Patchboard integrates parallel contributions. Stigmergic workspace applies ordered revisions.
 
-The runtime stops on a final answer, a failure, an operator abort, a duration limit, a round limit, a stall limit, or a budget ceiling.
+Each runtime defines its own completion rule. The daemon owns the shared terminal write and event delivery.
 
 ## Effective configuration
 
 The daemon captures the effective runtime configuration when it accepts a task. This snapshot includes these values:
 
 - the canonical runtime and contract version
-- classic settings and board view limits
+- runtime-specific settings and coordination limits
 - model routing and model pools
 - role registry and agent endpoints
 - model pricing
@@ -184,7 +181,7 @@ The backup command archives the daemon data path and its nested upload plus arti
 
 `GET /readiness` converts required checks into an actionable operator document.
 
-The required checks are Redis, SQLite, LiteLLM, configured agent endpoints, the classic runtime, and event delivery.
+The required checks are Redis, SQLite, LiteLLM, configured agent endpoints, configured runtime availability, and event delivery.
 
 Mission Control disables submission when readiness fails.
 
@@ -231,6 +228,9 @@ The optional triage container uses `vllm/vllm-openai:v0.27.1`. The normal cloud 
 | Typed configuration | `daemon/src/config_schema.py` |
 | Classic adapter | `daemon/src/core/variants/classic.py` |
 | Classic engine | `daemon/src/core/variants/traditional.py` |
+| Patchboard and Stigmergic workspace | `daemon/src/core/variants/collaborative.py` |
+| Benchmark repository and scheduler | `daemon/src/benchmarks/` |
+| Benchmark HTTP API | `daemon/src/routes/benchmarks.py` |
 | Task orchestration | `daemon/src/core/orchestrator.py` |
 | SQLite state | `daemon/src/database.py` |
 | Redis projections | `daemon/src/core/blackboard.py` |

@@ -102,7 +102,7 @@ class TestVariantRegistry:
 
     def test_builtin_rejects_unregistered_variant(self):
         with pytest.raises(UnknownVariantError):
-            canonical_variant_id("patchboard")
+            canonical_variant_id("unregistered")
 
     def test_descriptor_publishes_an_extensible_benchmark_contract(self):
         contract = VariantDescriptor("future", "Future", "1").to_dict()["benchmark"]

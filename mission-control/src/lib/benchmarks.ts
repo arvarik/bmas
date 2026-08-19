@@ -101,9 +101,21 @@ export interface BenchmarkRun {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  priority?: number;
   dataset_name?: string;
   attempts?: BenchmarkAttempt[];
   scores?: BenchmarkScore[];
+  human_reviews?: BenchmarkHumanReview[];
+}
+
+export interface BenchmarkHumanReview {
+  id: string;
+  attempt_id: string;
+  reviewer_id: string;
+  score: number;
+  passed: number;
+  note: string;
+  created_at: string;
 }
 
 export interface BenchmarkMetricSummary {
@@ -114,6 +126,8 @@ export interface BenchmarkMetricSummary {
   p95?: number | null;
   ci_low: number | null;
   ci_high: number | null;
+  standard_error?: number | null;
+  interval_status?: string;
 }
 
 export interface BenchmarkScorerMetric extends BenchmarkMetricSummary {
@@ -146,6 +160,18 @@ export interface BenchmarkComparisonMetric extends BenchmarkMetricSummary {
   ties: number;
   losses: number;
   direction: "right_minus_left";
+  probability_of_superiority: number | null;
+  standardized_paired_effect: number | null;
+  p_value_raw: number | null;
+  p_value_adjusted: number | null;
+  practical_difference: number;
+  classification: string;
+  sample_guidance: {
+    method: string;
+    practical_difference: number;
+    recommended_pairs: number | null;
+    reason: string | null;
+  };
 }
 
 export interface BenchmarkComparison {
@@ -153,13 +179,25 @@ export interface BenchmarkComparison {
   left_arm_name: string;
   right_arm_id: string;
   right_arm_name: string;
+  left_arm_slug: string;
+  right_arm_slug: string;
   matched_attempts: number;
   scorers: BenchmarkComparisonMetric[];
 }
 
 export interface BenchmarkRunReport {
   schema_version: string;
-  interval_method: "normal_95";
+  interval_method: string;
+  analysis: {
+    version: string;
+    confidence_level: number;
+    interval_method: string;
+    bootstrap_resamples: number;
+    paired_test: string;
+    multiple_comparison_method: string;
+    family_alpha: number;
+    practical_difference: number;
+  };
   run: {
     id: string;
     status: BenchmarkStatus;
@@ -175,11 +213,70 @@ export interface BenchmarkRunReport {
   prior_attempt_count: number;
   arms: BenchmarkArmReport[];
   comparisons: BenchmarkComparison[];
+  diagnostics: {
+    error_categories: Array<{
+      arm_id: string;
+      arm_name: string;
+      category: string;
+      count: number;
+      rate: number;
+    }>;
+    slices: Array<{
+      dimension: string;
+      value: string;
+      attempt_count: number;
+      arms: Array<{
+        arm_id: string;
+        arm_name: string;
+        attempt_count: number;
+        failure_rate: number;
+        scorers: Array<BenchmarkMetricSummary & { scorer_id: string }>;
+      }>;
+    }>;
+    item_differences: Array<{
+      left_arm_id: string;
+      right_arm_id: string;
+      scorer_id: string;
+      dataset_item_id: string;
+      item_key: string;
+      repeat_index: number;
+      delta: number;
+    }>;
+    item_difference_count: number;
+    item_differences_truncated: boolean;
+    human_review: {
+      available: boolean;
+      reviewed_attempt_count: number;
+      review_count: number;
+      reason: string | null;
+    };
+    human_calibration: Array<{
+      scorer_id: string;
+      count: number;
+      agreement_rate: number;
+      cohen_kappa: number | null;
+      mean_absolute_error: number;
+      brier_score: number;
+    }>;
+    scorer_agreement: Array<{
+      left_scorer_id: string;
+      right_scorer_id: string;
+      count: number;
+      agreement_rate: number;
+      cohen_kappa: number | null;
+    }>;
+  };
+  warnings: string[];
   complete: boolean;
   report_checksum: string;
 }
 
 export type RegressionOperator = "gte" | "lte" | "max_drop" | "max_increase_ratio";
+export type RegressionAnalysisMethod =
+  | "point_estimate"
+  | "lower_confidence_bound"
+  | "upper_confidence_bound"
+  | "holm_sign_test";
 
 export interface RegressionRule {
   id: string;
@@ -187,6 +284,7 @@ export interface RegressionRule {
   metric: string;
   operator: RegressionOperator;
   value: number;
+  analysis_method?: RegressionAnalysisMethod;
 }
 
 export interface BenchmarkGateRuleResult extends RegressionRule {
@@ -286,6 +384,35 @@ export interface BenchmarkRuntimeCatalog {
   planned_runtime_ids: string[];
 }
 
+export interface BenchmarkCapacityResource {
+  key: string;
+  active: number;
+  limit: number;
+  available: number;
+}
+
+export interface BenchmarkSchedulerWorker {
+  worker_id: string;
+  hostname: string;
+  process_id: number;
+  status: "active" | "stopped";
+  last_seen_at: string;
+  stale: number;
+  owned_attempts: number;
+}
+
+export interface BenchmarkCapacity {
+  schema_version: string;
+  global: { active: number; limit: number; available: number };
+  resources: BenchmarkCapacityResource[];
+  unlimited_active_resources: Array<{ key: string; active: number }>;
+  queue: {
+    total: number;
+    by_priority: Array<{ priority: number; count: number }>;
+  };
+  workers: BenchmarkSchedulerWorker[];
+}
+
 export function runProgress(run: Pick<BenchmarkRun, "completed_attempts" | "total_attempts">) {
   if (run.total_attempts <= 0) return 0;
   return Math.min(100, Math.round((run.completed_attempts / run.total_attempts) * 100));
@@ -304,7 +431,7 @@ export function formatMetric(value: number | null | undefined, unit: "percent" |
 }
 
 export function reportMetricOptions(report: BenchmarkRunReport): Array<{ value: string; label: string }> {
-  return report.arms.flatMap((arm) => [
+  const armOptions = report.arms.flatMap((arm) => [
     { value: `arm.${arm.arm_slug}.failure_rate`, label: `${arm.arm_name} failure rate` },
     { value: `arm.${arm.arm_slug}.cost_usd.mean`, label: `${arm.arm_name} mean cost` },
     { value: `arm.${arm.arm_slug}.duration_ms.p95`, label: `${arm.arm_name} p95 duration` },
@@ -313,6 +440,22 @@ export function reportMetricOptions(report: BenchmarkRunReport): Array<{ value: 
       label: `${arm.arm_name} ${scorer.scorer_name} score`,
     })),
   ]);
+  const comparisonOptions = (report.comparisons ?? []).flatMap((comparison) =>
+    comparison.scorers.map((scorer) => ({
+      value: `comparison.${comparison.left_arm_slug}.${comparison.right_arm_slug}.score.${scorer.scorer_id}`,
+      label: `${comparison.left_arm_name} to ${comparison.right_arm_name} ${scorer.scorer_id} paired difference`,
+    })),
+  );
+  return [...armOptions, ...comparisonOptions];
+}
+
+export function supportedAnalysisMethods(metric: string): RegressionAnalysisMethod[] {
+  const methods: RegressionAnalysisMethod[] = ["point_estimate"];
+  if (metric.includes(".score.") || metric.endsWith(".mean")) {
+    methods.push("lower_confidence_bound", "upper_confidence_bound");
+  }
+  if (metric.startsWith("comparison.")) methods.push("holm_sign_test");
+  return methods;
 }
 
 export function scoreSummary(run: BenchmarkRun) {

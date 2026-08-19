@@ -1,10 +1,8 @@
 # Platform Foundations
 
 This document defines the shared platform around each coordination runtime.
-The current build registers only the `classic` blackboard runtime.
+The current build registers `classic`, `patchboard`, and `stigmergic`.
 The `traditional` name remains an input alias for saved tasks and old clients.
-
-PatchBoard and stigmergic runtimes are not available in this build.
 
 ## Runtime contract
 
@@ -84,9 +82,15 @@ The daemon applies explicit limits at each load boundary.
 `GET /health` reports task queue, runtime, lifecycle, and event delivery state.
 The service reports a degraded state when a required dependency fails.
 
+## Registered runtime guarantees
+
+Classic captures its complete control-unit and blackboard configuration. Patchboard saves independent contributions before integration.
+
+Stigmergic workspace saves each ordered artifact revision. All three runtimes support saved configuration validation and restart recovery.
+
 ## Extension checklist
 
-A future runtime must complete each item before registration.
+A new runtime must complete each item before registration.
 
 1. Define a canonical runtime identifier.
 2. Define a versioned configuration schema.

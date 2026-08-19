@@ -44,8 +44,12 @@ describe("variant adapter registry", () => {
     expect(getActiveAdapter("future-board")).toBeNull();
   });
 
-  it("registers only the implemented classic adapter", () => {
-    expect(listAdapters().map((adapter) => adapter.id)).toEqual(["classic"]);
+  it("registers every implemented runtime adapter", () => {
+    expect(listAdapters().map((adapter) => adapter.id)).toEqual([
+      "classic",
+      "patchboard",
+      "stigmergic",
+    ]);
   });
 
   it("rejects an unsupported adapter contract", () => {

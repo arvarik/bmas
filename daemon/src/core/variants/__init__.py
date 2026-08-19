@@ -14,6 +14,8 @@ logger = logging.getLogger("bmas.variants")
 
 CLASSIC_VARIANT = "classic"
 LEGACY_CLASSIC_VARIANT = "traditional"
+PATCHBOARD_VARIANT = "patchboard"
+STIGMERGIC_VARIANT = "stigmergic"
 VARIANT_API_VERSION = "1"
 
 
@@ -180,6 +182,23 @@ class VariantHost(Protocol):
         """Return the current fenced lease token for a task."""
         ...
 
+    async def load_variant_checkpoint(
+        self,
+        task_id: str,
+        variant_id: str,
+    ) -> dict[str, Any] | None:
+        """Load one runtime checkpoint from durable task metadata."""
+        ...
+
+    async def save_variant_checkpoint(
+        self,
+        task_id: str,
+        variant_id: str,
+        checkpoint: dict[str, Any],
+    ) -> None:
+        """Save one runtime checkpoint behind the current task lease."""
+        ...
+
 
 @runtime_checkable
 class CoordinationVariant(Protocol):
@@ -316,6 +335,13 @@ def load_builtin_variants() -> None:
             runtime,
             aliases=(LEGACY_CLASSIC_VARIANT,),
         )
+    collaborative = importlib.import_module("core.variants.collaborative")
+    for runtime_id, runtime in (
+        (PATCHBOARD_VARIANT, collaborative.PatchboardVariantRuntime),
+        (STIGMERGIC_VARIANT, collaborative.StigmergicVariantRuntime),
+    ):
+        if runtime_id not in _VARIANTS:
+            register_variant(runtime_id, runtime)
     _BUILTINS_LOADED = True
 
 

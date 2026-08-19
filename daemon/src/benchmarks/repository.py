@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import uuid
 from contextlib import suppress
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import database as db
 from benchmarks.provenance import content_checksum
 from benchmarks.scoring import score_output
+
+if TYPE_CHECKING:
+    from benchmarks.capacity import CapacityPolicy
 
 
 class BenchmarkConflict(RuntimeError):
@@ -277,6 +280,7 @@ async def create_run(
     test_id: str | None = None,
     idempotency_key: str | None,
     operator_note: str = "",
+    priority: int = 0,
 ) -> tuple[dict[str, Any], bool]:
     """Materialize one deterministic run and all initial attempts."""
     async with db._connect() as connection:  # noqa: SLF001
@@ -371,8 +375,8 @@ async def create_run(
                 "INSERT INTO benchmark_runs "
                 "(id, test_revision_id, status, execution_plan, "
                 "execution_plan_checksum, total_trials, total_attempts, "
-                "operator_note, idempotency_key) "
-                "VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?)",
+                "operator_note, idempotency_key, priority) "
+                "VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)",
                 (
                     run_id,
                     revision_id,
@@ -382,6 +386,7 @@ async def create_run(
                     total_attempts,
                     operator_note,
                     idempotency_key,
+                    priority,
                 ),
             )
             for arm_index, arm_row in enumerate(arms):
@@ -526,12 +531,95 @@ async def get_run(run_id: str) -> dict[str, Any] | None:
             "WHERE trial.run_id = ? ORDER BY score.created_at, score.id",
             (run_id,),
         )
+        reviews = await connection.execute_fetchall(
+            "SELECT review.* FROM benchmark_human_reviews AS review "
+            "JOIN benchmark_attempts AS attempt ON attempt.id = review.attempt_id "
+            "JOIN benchmark_trials AS trial ON trial.id = attempt.trial_id "
+            "WHERE trial.run_id = ? ORDER BY review.created_at, review.id",
+            (run_id,),
+        )
     result = _record(run_row, "execution_plan", "test_configuration")
     result["attempts"] = [
         _record(row, "execution_snapshot", "tags") for row in rows
     ]
     result["scores"] = [_record(row, "evidence") for row in scores]
+    result["human_reviews"] = [dict(row) for row in reviews]
     return result
+
+
+async def create_human_review(
+    *,
+    review_id: str,
+    attempt_id: str,
+    reviewer_id: str,
+    score: float,
+    passed: bool,
+    note: str,
+    idempotency_key: str,
+) -> tuple[dict[str, Any], bool]:
+    """Save one immutable human review with retry-safe identity."""
+    try:
+        async with db._connect() as connection:  # noqa: SLF001
+            attempt_cursor = await connection.execute(
+                "SELECT status FROM benchmark_attempts WHERE id = ?",
+                (attempt_id,),
+            )
+            attempt = await attempt_cursor.fetchone()
+            if attempt is None:
+                raise BenchmarkNotFound("The benchmark attempt does not exist")
+            if attempt["status"] != "completed":
+                raise BenchmarkConflict("Only a completed attempt accepts a human review")
+            await connection.execute(
+                "INSERT INTO benchmark_human_reviews "
+                "(id, attempt_id, reviewer_id, score, passed, note, idempotency_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    review_id,
+                    attempt_id,
+                    reviewer_id,
+                    score,
+                    int(passed),
+                    note,
+                    idempotency_key,
+                ),
+            )
+            await connection.commit()
+    except Exception as error:
+        if isinstance(error, (BenchmarkNotFound, BenchmarkConflict)):
+            raise
+        if "UNIQUE constraint failed" not in str(error):
+            raise
+        async with db._connect() as connection:  # noqa: SLF001
+            cursor = await connection.execute(
+                "SELECT * FROM benchmark_human_reviews WHERE idempotency_key = ?",
+                (idempotency_key,),
+            )
+            existing = await cursor.fetchone()
+        if existing:
+            same = (
+                existing["attempt_id"] == attempt_id
+                and existing["reviewer_id"] == reviewer_id
+                and float(existing["score"]) == score
+                and bool(existing["passed"]) is passed
+                and existing["note"] == note
+            )
+            if not same:
+                raise BenchmarkConflict(
+                    "The idempotency key belongs to another human review"
+                ) from error
+            return dict(existing), False
+        raise BenchmarkConflict(
+            "This reviewer already submitted an immutable review"
+        ) from error
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "SELECT * FROM benchmark_human_reviews WHERE id = ?",
+            (review_id,),
+        )
+        saved = await cursor.fetchone()
+    if saved is None:
+        raise RuntimeError("The human review disappeared after creation")
+    return dict(saved), True
 
 
 async def count_active_attempts() -> int:
@@ -544,46 +632,89 @@ async def count_active_attempts() -> int:
     return int(row["count"] if row else 0)
 
 
-async def claim_next_attempt() -> dict[str, Any] | None:
-    """Claim the next queued attempt within its per-run concurrency limit."""
+_ATTEMPT_CONTEXT_SELECT = (
+    "SELECT attempt.*, trial.run_id, trial.dataset_item_id, "
+    "arm.runtime_id, arm.configuration AS arm_configuration, "
+    "item.input, revision.configuration AS test_configuration, "
+    "run.status AS run_status, run.priority, task.model_used AS task_model_used, "
+    "(SELECT COUNT(*) FROM benchmark_attempts AS active_attempt "
+    "JOIN benchmark_trials AS active_trial ON active_trial.id = active_attempt.trial_id "
+    "WHERE active_trial.run_id = run.id AND active_attempt.status = 'running') "
+    "AS active_count "
+    "FROM benchmark_attempts AS attempt "
+    "JOIN benchmark_trials AS trial ON trial.id = attempt.trial_id "
+    "JOIN benchmark_runs AS run ON run.id = trial.run_id "
+    "JOIN benchmark_test_arms AS arm ON arm.id = trial.test_arm_id "
+    "JOIN dataset_items AS item ON item.id = trial.dataset_item_id "
+    "JOIN benchmark_test_revisions AS revision ON revision.id = run.test_revision_id "
+    "LEFT JOIN tasks AS task ON task.id = attempt.task_id "
+)
+
+
+def _attempt_record(row: Any) -> dict[str, Any]:
+    """Decode one scheduler attempt row."""
+    return _record(
+        row,
+        "arm_configuration",
+        "test_configuration",
+        "execution_snapshot",
+    )
+
+
+async def claim_next_attempt(
+    worker_id: str = "local",
+    *,
+    lease_seconds: int = 30,
+    capacity_policy: CapacityPolicy | None = None,
+) -> dict[str, Any] | None:
+    """Claim one queued attempt with an atomic fenced lease."""
+    from benchmarks.capacity import CapacityPolicy
+
+    policy = capacity_policy or CapacityPolicy()
+    lease_modifier = f"+{max(5, min(lease_seconds, 300))} seconds"
     async with db._connect() as connection:  # noqa: SLF001
         await connection.execute("BEGIN IMMEDIATE")
         try:
-            rows = await connection.execute_fetchall(
-                "SELECT attempt.*, trial.run_id, trial.dataset_item_id, "
-                "arm.runtime_id, arm.configuration AS arm_configuration, "
-                "item.input, revision.configuration AS test_configuration, "
-                "run.status AS run_status, "
-                "(SELECT COUNT(*) FROM benchmark_attempts AS active_attempt "
-                "JOIN benchmark_trials AS active_trial ON active_trial.id = active_attempt.trial_id "
-                "WHERE active_trial.run_id = run.id AND active_attempt.status = 'running') "
-                "AS active_count "
-                "FROM benchmark_attempts AS attempt "
-                "JOIN benchmark_trials AS trial ON trial.id = attempt.trial_id "
-                "JOIN benchmark_runs AS run ON run.id = trial.run_id "
-                "JOIN benchmark_test_arms AS arm ON arm.id = trial.test_arm_id "
-                "JOIN dataset_items AS item ON item.id = trial.dataset_item_id "
-                "JOIN benchmark_test_revisions AS revision ON revision.id = run.test_revision_id "
-                "WHERE attempt.status = 'queued' AND run.status IN ('queued','running') "
-                "ORDER BY run.created_at, arm.sort_order, item.sort_order, "
-                "attempt.repeat_index LIMIT 100"
+            active_rows = await connection.execute_fetchall(
+                _ATTEMPT_CONTEXT_SELECT + "WHERE attempt.status = 'running'"
             )
-            selected = None
+            active = [_attempt_record(row) for row in active_rows]
+            if len(active) >= policy.global_limit:
+                await connection.rollback()
+                return None
+            rows = await connection.execute_fetchall(
+                _ATTEMPT_CONTEXT_SELECT
+                + "WHERE attempt.status = 'queued' "
+                "AND run.status IN ('queued','running') "
+                "ORDER BY run.priority DESC, run.created_at, arm.sort_order, "
+                "item.sort_order, attempt.repeat_index LIMIT 200"
+            )
+            selected: Any | None = None
             for row in rows:
-                configuration = _json(row["test_configuration"], {})
-                limit = max(1, min(int(configuration.get("max_concurrency", 1)), 32))
-                if int(row["active_count"] or 0) < limit:
+                candidate = _attempt_record(row)
+                configuration = candidate["test_configuration"]
+                limit = max(
+                    1,
+                    min(int(configuration.get("max_concurrency", 1)), 32),
+                )
+                if int(candidate["active_count"] or 0) >= limit:
+                    continue
+                if policy.allows(candidate, active):
                     selected = row
                     break
             if selected is None:
                 await connection.rollback()
                 return None
+            lease_token = uuid.uuid4().hex
             cursor = await connection.execute(
                 "UPDATE benchmark_attempts SET status = 'running', "
                 "claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
-                "started_at = COALESCE(started_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')) "
+                "started_at = COALESCE(started_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')), "
+                "lease_owner = ?, lease_token = ?, "
+                "lease_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ','now', ?), "
+                "lease_fence = lease_fence + 1 "
                 "WHERE id = ? AND status = 'queued'",
-                (selected["id"],),
+                (worker_id, lease_token, lease_modifier, selected["id"]),
             )
             if cursor.rowcount != 1:
                 await connection.rollback()
@@ -597,15 +728,89 @@ async def claim_next_attempt() -> dict[str, Any] | None:
             await connection.execute(
                 "UPDATE benchmark_runs SET status = 'running', "
                 "started_at = COALESCE(started_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')), "
-                "state_revision = state_revision + 1 WHERE id = ? AND status = 'queued'",
+                "state_revision = state_revision + 1 "
+                "WHERE id = ? AND status = 'queued'",
                 (selected["run_id"],),
             )
             await connection.commit()
         except BaseException:
             await connection.rollback()
             raise
-    result = _record(selected, "arm_configuration", "test_configuration", "execution_snapshot")
+    result = _attempt_record(selected)
+    result.update({
+        "lease_owner": worker_id,
+        "lease_token": lease_token,
+        "lease_fence": int(selected["lease_fence"] or 0) + 1,
+    })
     return result
+
+
+async def claim_expired_attempt(
+    worker_id: str,
+    *,
+    lease_seconds: int = 30,
+) -> dict[str, Any] | None:
+    """Transfer one expired active attempt to a new fenced owner."""
+    lease_modifier = f"+{max(5, min(lease_seconds, 300))} seconds"
+    async with db._connect() as connection:  # noqa: SLF001
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = await connection.execute(
+                _ATTEMPT_CONTEXT_SELECT
+                + "WHERE attempt.status = 'running' AND ("
+                "attempt.lease_token IS NULL OR attempt.lease_expires_at IS NULL OR "
+                "attempt.lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')) "
+                "ORDER BY CASE WHEN attempt.task_id IS NULL THEN 0 ELSE 1 END, "
+                "attempt.claimed_at, attempt.id LIMIT 1"
+            )
+            selected = await cursor.fetchone()
+            if selected is None:
+                await connection.rollback()
+                return None
+            lease_token = uuid.uuid4().hex
+            update = await connection.execute(
+                "UPDATE benchmark_attempts SET lease_owner = ?, lease_token = ?, "
+                "lease_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ','now', ?), "
+                "claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
+                "lease_fence = lease_fence + 1 "
+                "WHERE id = ? AND status = 'running' AND ("
+                "lease_token IS NULL OR lease_expires_at IS NULL OR "
+                "lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+                (worker_id, lease_token, lease_modifier, selected["id"]),
+            )
+            if update.rowcount != 1:
+                await connection.rollback()
+                return None
+            await connection.commit()
+        except BaseException:
+            await connection.rollback()
+            raise
+    result = _attempt_record(selected)
+    result.update({
+        "lease_owner": worker_id,
+        "lease_token": lease_token,
+        "lease_fence": int(selected["lease_fence"] or 0) + 1,
+    })
+    return result
+
+
+async def renew_attempt_lease(
+    attempt_id: str,
+    lease_token: str,
+    *,
+    lease_seconds: int = 30,
+) -> bool:
+    """Extend one lease only when its fence token still matches."""
+    modifier = f"+{max(5, min(lease_seconds, 300))} seconds"
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "UPDATE benchmark_attempts SET "
+            "lease_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ','now', ?) "
+            "WHERE id = ? AND status = 'running' AND lease_token = ?",
+            (modifier, attempt_id, lease_token),
+        )
+        await connection.commit()
+        return cursor.rowcount == 1
 
 
 async def attach_attempt_task(
@@ -613,67 +818,101 @@ async def attach_attempt_task(
     task_id: str,
     execution_snapshot: dict[str, Any],
     snapshot_checksum: str,
+    lease_token: str | None = None,
 ) -> None:
     """Attach the admitted task and its actual configuration snapshot."""
     async with db._connect() as connection:  # noqa: SLF001
+        lease_clause = " AND lease_token = ?" if lease_token else ""
+        parameters: list[Any] = [
+            task_id,
+            json.dumps(execution_snapshot, separators=(",", ":"), sort_keys=True),
+            snapshot_checksum,
+            attempt_id,
+        ]
+        if lease_token:
+            parameters.append(lease_token)
         cursor = await connection.execute(
             "UPDATE benchmark_attempts SET task_id = ?, execution_snapshot = ?, "
-            "snapshot_checksum = ? WHERE id = ? AND status = 'running' AND task_id IS NULL",
-            (
-                task_id,
-                json.dumps(execution_snapshot, separators=(",", ":"), sort_keys=True),
-                snapshot_checksum,
-                attempt_id,
-            ),
+            "snapshot_checksum = ? WHERE id = ? AND status = 'running' "
+            f"AND task_id IS NULL{lease_clause}",
+            parameters,
         )
         await connection.commit()
         if cursor.rowcount != 1:
             raise BenchmarkConflict("The attempt no longer accepts a task")
 
 
-async def release_attempt(attempt_id: str, error: str | None = None) -> None:
+async def release_attempt(
+    attempt_id: str,
+    error: str | None = None,
+    lease_token: str | None = None,
+) -> bool:
     """Return a temporary admission failure to the durable queue."""
     async with db._connect() as connection:  # noqa: SLF001
-        await connection.execute(
+        lease_clause = " AND lease_token = ?" if lease_token else ""
+        parameters: list[Any] = [error[:1000] if error else None, attempt_id]
+        if lease_token:
+            parameters.append(lease_token)
+        cursor = await connection.execute(
             "UPDATE benchmark_attempts SET status = 'queued', claimed_at = NULL, "
-            "started_at = NULL, error_message = ? "
-            "WHERE id = ? AND status = 'running' AND task_id IS NULL",
-            (error[:1000] if error else None, attempt_id),
+            "started_at = NULL, error_message = ?, lease_owner = NULL, "
+            "lease_token = NULL, lease_expires_at = NULL "
+            "WHERE id = ? AND status = 'running' AND task_id IS NULL"
+            f"{lease_clause}",
+            parameters,
         )
         await connection.commit()
+        return cursor.rowcount == 1
 
 
 async def fail_unadmitted_attempt(
     attempt_id: str,
     category: str,
     error: str,
-) -> None:
+    lease_token: str | None = None,
+) -> bool:
     """Fail an attempt that cannot satisfy its runtime contract."""
     async with db._connect() as connection:  # noqa: SLF001
-        await connection.execute(
+        lease_clause = " AND lease_token = ?" if lease_token else ""
+        parameters: list[Any] = [category, error[:2000], attempt_id]
+        if lease_token:
+            parameters.append(lease_token)
+        cursor = await connection.execute(
             "UPDATE benchmark_attempts SET status = 'failed', failure_category = ?, "
-            "error_message = ?, completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
-            "WHERE id = ? AND task_id IS NULL",
-            (category, error[:2000], attempt_id),
+            "error_message = ?, completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
+            "lease_token = NULL, lease_expires_at = NULL "
+            "WHERE id = ? AND task_id IS NULL"
+            f"{lease_clause}",
+            parameters,
         )
         await connection.commit()
-    await refresh_run_for_attempt(attempt_id)
+    if cursor.rowcount == 1:
+        await refresh_run_for_attempt(attempt_id)
+        return True
+    return False
 
 
 async def fail_active_attempt(
     attempt_id: str,
     category: str,
     error: str,
-) -> None:
+    lease_token: str | None = None,
+) -> bool:
     """Fail an admitted attempt and exclude it from deterministic scoring."""
     async with db._connect() as connection:  # noqa: SLF001
         await connection.execute("BEGIN IMMEDIATE")
         try:
+            lease_clause = " AND lease_token = ?" if lease_token else ""
+            parameters: list[Any] = [category, error[:2000], attempt_id]
+            if lease_token:
+                parameters.append(lease_token)
             cursor = await connection.execute(
                 "UPDATE benchmark_attempts SET status = 'failed', failure_category = ?, "
-                "error_message = ?, completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
-                "WHERE id = ? AND status = 'running'",
-                (category, error[:2000], attempt_id),
+                "error_message = ?, completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
+                "lease_token = NULL, lease_expires_at = NULL "
+                "WHERE id = ? AND status = 'running'"
+                f"{lease_clause}",
+                parameters,
             )
             if cursor.rowcount == 1:
                 scorers = await _attempt_scorers(connection, attempt_id)
@@ -697,12 +936,17 @@ async def fail_active_attempt(
         except BaseException:
             await connection.rollback()
             raise
-    await refresh_run_for_attempt(attempt_id)
+    if cursor.rowcount == 1:
+        await refresh_run_for_attempt(attempt_id)
+        return True
+    return False
 
 
-async def active_attempts() -> list[dict[str, Any]]:
+async def active_attempts(worker_id: str | None = None) -> list[dict[str, Any]]:
     """Return active benchmark attempts with task and limit state."""
     async with db._connect() as connection:  # noqa: SLF001
+        owner_clause = " AND attempt.lease_owner = ?" if worker_id else ""
+        parameters = (worker_id,) if worker_id else ()
         rows = await connection.execute_fetchall(
             "SELECT attempt.*, trial.run_id, run.status AS run_status, "
             "revision.configuration AS test_configuration, task.status AS task_status, "
@@ -719,6 +963,8 @@ async def active_attempts() -> list[dict[str, Any]]:
             "JOIN benchmark_test_revisions AS revision ON revision.id = run.test_revision_id "
             "LEFT JOIN tasks AS task ON task.id = attempt.task_id "
             "WHERE attempt.status = 'running'"
+            f"{owner_clause}",
+            parameters,
         )
     return [_record(row, "test_configuration", "execution_snapshot") for row in rows]
 
@@ -739,11 +985,18 @@ async def _attempt_scorers(
     return [_record(row, "configuration", "configuration_schema") for row in rows]
 
 
-async def finish_attempt_from_task(attempt_id: str) -> bool:
+async def finish_attempt_from_task(
+    attempt_id: str,
+    lease_token: str | None = None,
+) -> bool:
     """Persist terminal task state and all versioned scorer results."""
     async with db._connect() as connection:  # noqa: SLF001
         await connection.execute("BEGIN IMMEDIATE")
         try:
+            lease_clause = " AND attempt.lease_token = ?" if lease_token else ""
+            parameters: list[Any] = [attempt_id]
+            if lease_token:
+                parameters.append(lease_token)
             cursor = await connection.execute(
                 "SELECT attempt.*, task.status AS task_status, task.terminal_kind, "
                 "task.result_summary, task.error_message AS task_error, "
@@ -751,8 +1004,9 @@ async def finish_attempt_from_task(attempt_id: str) -> bool:
                 "JOIN benchmark_trials AS trial ON trial.id = attempt.trial_id "
                 "JOIN dataset_items AS item ON item.id = trial.dataset_item_id "
                 "LEFT JOIN tasks AS task ON task.id = attempt.task_id "
-                "WHERE attempt.id = ? AND attempt.status = 'running'",
-                (attempt_id,),
+                "WHERE attempt.id = ? AND attempt.status = 'running'"
+                f"{lease_clause}",
+                parameters,
             )
             row = await cursor.fetchone()
             if not row or row["task_status"] not in {"completed", "failed"}:
@@ -765,7 +1019,8 @@ async def finish_attempt_from_task(attempt_id: str) -> bool:
             )
             await connection.execute(
                 "UPDATE benchmark_attempts SET status = ?, failure_category = ?, "
-                "error_message = ?, completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                "error_message = ?, completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
+                "lease_token = NULL, lease_expires_at = NULL "
                 "WHERE id = ?",
                 (attempt_status, failure_category, row["task_error"], attempt_id),
             )
@@ -917,14 +1172,144 @@ async def _refresh_run(connection: Any, run_id: str) -> None:
 
 
 async def recover_orphan_attempts() -> int:
-    """Return claimed attempts without tasks to the queue after restart."""
+    """Return only expired unadmitted legacy attempts to the queue."""
     async with db._connect() as connection:  # noqa: SLF001
         cursor = await connection.execute(
             "UPDATE benchmark_attempts SET status = 'queued', claimed_at = NULL, "
-            "started_at = NULL WHERE status = 'running' AND task_id IS NULL"
+            "started_at = NULL, lease_owner = NULL, lease_token = NULL, "
+            "lease_expires_at = NULL WHERE status = 'running' AND task_id IS NULL "
+            "AND lease_token IS NULL"
         )
         await connection.commit()
         return cursor.rowcount
+
+
+async def register_scheduler_worker(
+    worker_id: str,
+    hostname: str,
+    process_id: int,
+) -> None:
+    """Register one scheduler replica and refresh an existing identity."""
+    async with db._connect() as connection:  # noqa: SLF001
+        await connection.execute(
+            "INSERT INTO benchmark_scheduler_workers "
+            "(worker_id, hostname, process_id) VALUES (?, ?, ?) "
+            "ON CONFLICT(worker_id) DO UPDATE SET hostname = excluded.hostname, "
+            "process_id = excluded.process_id, status = 'active', "
+            "last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), stopped_at = NULL",
+            (worker_id, hostname, process_id),
+        )
+        await connection.execute(
+            "DELETE FROM benchmark_scheduler_workers "
+            "WHERE worker_id != ? "
+            "AND last_seen_at < strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days') "
+            "AND NOT EXISTS (SELECT 1 FROM benchmark_attempts AS attempt "
+            "WHERE attempt.status = 'running' "
+            "AND attempt.lease_owner = benchmark_scheduler_workers.worker_id)",
+            (worker_id,),
+        )
+        await connection.commit()
+
+
+async def heartbeat_scheduler_worker(worker_id: str) -> bool:
+    """Refresh one registered scheduler heartbeat."""
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "UPDATE benchmark_scheduler_workers SET "
+            "last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+            "WHERE worker_id = ? AND status = 'active'",
+            (worker_id,),
+        )
+        await connection.commit()
+        return cursor.rowcount == 1
+
+
+async def stop_scheduler_worker(worker_id: str) -> None:
+    """Mark one scheduler as stopped without releasing active leases."""
+    async with db._connect() as connection:  # noqa: SLF001
+        await connection.execute(
+            "UPDATE benchmark_scheduler_workers SET status = 'stopped', "
+            "last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
+            "stopped_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+            "WHERE worker_id = ?",
+            (worker_id,),
+        )
+        await connection.commit()
+
+
+async def benchmark_capacity_snapshot(
+    capacity_policy: CapacityPolicy,
+    *,
+    stale_after_seconds: int = 90,
+) -> dict[str, Any]:
+    """Return queue pressure, resource use, and shared scheduler ownership."""
+    async with db._connect() as connection:  # noqa: SLF001
+        active_rows = await connection.execute_fetchall(
+            _ATTEMPT_CONTEXT_SELECT + "WHERE attempt.status = 'running'"
+        )
+        queued_rows = await connection.execute_fetchall(
+            "SELECT run.priority, COUNT(*) AS count "
+            "FROM benchmark_attempts AS attempt "
+            "JOIN benchmark_trials AS trial ON trial.id = attempt.trial_id "
+            "JOIN benchmark_runs AS run ON run.id = trial.run_id "
+            "WHERE attempt.status = 'queued' AND run.status IN ('queued','running') "
+            "GROUP BY run.priority ORDER BY run.priority DESC"
+        )
+        worker_rows = await connection.execute_fetchall(
+            "SELECT worker.*, CASE WHEN worker.status = 'active' AND "
+            "worker.last_seen_at >= strftime('%Y-%m-%dT%H:%M:%fZ','now', ?) "
+            "THEN 0 ELSE 1 END AS stale, "
+            "(SELECT COUNT(*) FROM benchmark_attempts AS attempt "
+            "WHERE attempt.status = 'running' AND attempt.lease_owner = worker.worker_id) "
+            "AS owned_attempts FROM benchmark_scheduler_workers AS worker "
+            "ORDER BY worker.last_seen_at DESC LIMIT 100",
+            (f"-{max(10, stale_after_seconds)} seconds",),
+        )
+    active = [_attempt_record(row) for row in active_rows]
+    use: dict[str, int] = {}
+    for attempt in active:
+        for claim in capacity_policy.claims(attempt):
+            use[claim] = use.get(claim, 0) + 1
+    limits = capacity_policy.limits()
+    return {
+        "schema_version": "1",
+        "global": {
+            "active": len(active),
+            "limit": capacity_policy.global_limit,
+            "available": max(0, capacity_policy.global_limit - len(active)),
+        },
+        "resources": [
+            {
+                "key": key,
+                "active": use.get(key, 0),
+                "limit": limit,
+                "available": max(0, limit - use.get(key, 0)),
+            }
+            for key, limit in sorted(limits.items())
+        ],
+        "unlimited_active_resources": [
+            {"key": key, "active": count}
+            for key, count in sorted(use.items())
+            if key not in limits
+        ],
+        "queue": {
+            "total": sum(int(row["count"]) for row in queued_rows),
+            "by_priority": [dict(row) for row in queued_rows],
+        },
+        "workers": [dict(row) for row in worker_rows],
+        "attempts": [
+            {
+                "id": attempt["id"],
+                "run_id": attempt["run_id"],
+                "runtime_id": attempt["runtime_id"],
+                "lease_owner": attempt.get("lease_owner"),
+                "lease_fence": attempt.get("lease_fence"),
+                "lease_expires_at": attempt.get("lease_expires_at"),
+                "task_id": attempt.get("task_id"),
+            }
+            for attempt in active
+        ],
+    }
 
 
 async def set_run_state(

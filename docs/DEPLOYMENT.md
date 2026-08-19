@@ -95,6 +95,12 @@ The Compose stack creates these named volumes:
 
 SQLite is the authoritative task store. Redis can rebuild live projections from durable task events.
 
+Benchmark scheduler workers use SQLite transactions and fenced leases. Multiple daemon processes can coordinate only when they use the same local SQLite file and host filesystem locks.
+
+Do not place the SQLite file on a network filesystem. SQLite documents this restriction in its [network filesystem guidance](https://www.sqlite.org/useovernet.html).
+
+Use one daemon host for the current production design. A later shared database control plane must replace SQLite before a multi-host daemon deployment.
+
 Do not use `docker compose down -v` unless you intend to delete all named-volume data.
 
 ## Backups
@@ -151,3 +157,4 @@ Perform a rollback on a maintenance window when other users can submit tasks.
 - Monitoring checks `/health` and `/readiness`.
 - The operator can read container logs.
 - The deployment records the source commit and image versions.
+- All benchmark scheduler workers share one supported local SQLite file.

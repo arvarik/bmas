@@ -2,7 +2,7 @@
 
 [Return to the project README](../README.md).
 
-This documentation describes the current classic implementation.
+This documentation describes the current Classic, Patchboard, Stigmergic workspace, and benchmark implementation.
 
 ## Getting started
 
@@ -18,6 +18,9 @@ This documentation describes the current classic implementation.
 | [Operations](OPERATIONS.md) | Check readiness, read logs, back up data, and recover services. |
 | [Node Setup](NODE_SETUP.md) | Add advanced Hermes execution nodes. |
 | [Classic Harness](CLASSIC_HARNESS.md) | Verify lifecycle and fault behavior. |
+| [Benchmarking](BENCHMARKING.md) | Import data, author tests, run attempts, and evaluate baselines. |
+| [Runtime Variants](RUNTIME_VARIANTS.md) | Compare runtime behavior and configuration contracts. |
+| [Benchmark Statistics](BENCHMARK_STATISTICS.md) | Interpret estimates, paired tests, diagnostics, and gates. |
 
 ## Developer guides
 

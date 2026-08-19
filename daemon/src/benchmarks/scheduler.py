@@ -6,6 +6,8 @@ import asyncio
 import contextlib
 import logging
 import os
+import socket
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -13,11 +15,14 @@ from fastapi import HTTPException
 
 import database as db
 from benchmarks import repository
+from benchmarks.capacity import CapacityPolicy
 from benchmarks.provenance import content_checksum
 
 logger = logging.getLogger("bmas.benchmarks")
 POLL_SECONDS = 1.0
-GLOBAL_ACTIVE_LIMIT = min(max(int(os.getenv("BMAS_BENCHMARK_MAX_ACTIVE", "4")), 1), 32)
+LEASE_SECONDS = min(max(int(os.getenv("BMAS_BENCHMARK_LEASE_SECONDS", "30")), 10), 300)
+CAPACITY_POLICY = CapacityPolicy.from_environment()
+WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
 _scheduler_task: asyncio.Task[None] | None = None
 
 
@@ -49,6 +54,13 @@ async def _admit(attempt: dict[str, Any]) -> None:
     response = await _admit_task(
         request,
         captured_configuration=arm.get("effective_configuration"),
+        task_id=(
+            "task-benchmark-"
+            + uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"bmas:benchmark:{attempt['id']}",
+            ).hex
+        ),
     )
     metadata = await db.get_board_meta(response["task_id"])
     snapshot = {
@@ -58,16 +70,58 @@ async def _admit(attempt: dict[str, Any]) -> None:
     }
     checksum = content_checksum(snapshot)
     await repository.attach_attempt_task(
-        str(attempt["id"]), response["task_id"], snapshot, checksum
+        str(attempt["id"]),
+        response["task_id"],
+        snapshot,
+        checksum,
+        lease_token=str(attempt["lease_token"]),
     )
 
 
 async def _reconcile() -> None:
     from routes.submit import abort_scheduled_task
 
-    attempts = await repository.active_attempts()
+    attempts = await repository.active_attempts(WORKER_ID)
     cancelled_runs: set[str] = set()
     for attempt in attempts:
+        lease_token = str(attempt.get("lease_token") or "")
+        if not lease_token or not await repository.renew_attempt_lease(
+            str(attempt["id"]),
+            lease_token,
+            lease_seconds=LEASE_SECONDS,
+        ):
+            continue
+        if not attempt.get("task_id"):
+            try:
+                await _admit(attempt)
+            except HTTPException as error:
+                message = str(error.detail)
+                if error.status_code in {429, 503}:
+                    await repository.release_attempt(
+                        str(attempt["id"]),
+                        message,
+                        lease_token,
+                    )
+                    continue
+                await repository.fail_unadmitted_attempt(
+                    str(attempt["id"]),
+                    "configuration",
+                    message,
+                    lease_token,
+                )
+            except repository.BenchmarkConflict:
+                logger.info(
+                    "A newer scheduler fence owns benchmark attempt %s",
+                    attempt["id"],
+                )
+            except Exception as error:
+                logger.exception("Benchmark attempt admission failed")
+                await repository.release_attempt(
+                    str(attempt["id"]),
+                    str(error),
+                    lease_token,
+                )
+            continue
         run_id = str(attempt["run_id"])
         configuration = attempt.get("test_configuration") or {}
         cost_limit = configuration.get("cost_limit_usd")
@@ -85,21 +139,38 @@ async def _reconcile() -> None:
             cancelled_runs.add(run_id)
             continue
         if attempt.get("task_status") in {"completed", "failed"}:
-            await repository.finish_attempt_from_task(str(attempt["id"]))
+            await repository.finish_attempt_from_task(
+                str(attempt["id"]),
+                lease_token,
+            )
             continue
         timeout = int(configuration.get("timeout_seconds", 3600))
         if attempt.get("task_id") and _age_seconds(attempt.get("started_at")) >= timeout:
             await abort_scheduled_task(str(attempt["task_id"]), "benchmark_timeout")
             await repository.fail_active_attempt(
-                str(attempt["id"]), "timeout", f"The attempt exceeded {timeout} seconds"
+                str(attempt["id"]),
+                "timeout",
+                f"The attempt exceeded {timeout} seconds",
+                lease_token,
             )
 
 
 async def _tick() -> None:
+    await repository.heartbeat_scheduler_worker(WORKER_ID)
+    for _ in range(CAPACITY_POLICY.global_limit):
+        recovered = await repository.claim_expired_attempt(
+            WORKER_ID,
+            lease_seconds=LEASE_SECONDS,
+        )
+        if recovered is None:
+            break
     await _reconcile()
-    available = GLOBAL_ACTIVE_LIMIT - await repository.count_active_attempts()
-    for _ in range(max(0, available)):
-        attempt = await repository.claim_next_attempt()
+    for _ in range(CAPACITY_POLICY.global_limit):
+        attempt = await repository.claim_next_attempt(
+            WORKER_ID,
+            lease_seconds=LEASE_SECONDS,
+            capacity_policy=CAPACITY_POLICY,
+        )
         if attempt is None:
             break
         try:
@@ -107,14 +178,30 @@ async def _tick() -> None:
         except HTTPException as error:
             message = str(error.detail)
             if error.status_code in {429, 503}:
-                await repository.release_attempt(str(attempt["id"]), message)
+                await repository.release_attempt(
+                    str(attempt["id"]),
+                    message,
+                    str(attempt["lease_token"]),
+                )
                 break
             await repository.fail_unadmitted_attempt(
-                str(attempt["id"]), "configuration", message
+                str(attempt["id"]),
+                "configuration",
+                message,
+                str(attempt["lease_token"]),
+            )
+        except repository.BenchmarkConflict:
+            logger.info(
+                "A newer scheduler fence owns benchmark attempt %s",
+                attempt["id"],
             )
         except Exception as error:
             logger.exception("Benchmark attempt admission failed")
-            await repository.release_attempt(str(attempt["id"]), str(error))
+            await repository.release_attempt(
+                str(attempt["id"]),
+                str(error),
+                str(attempt["lease_token"]),
+            )
             break
 
 
@@ -130,13 +217,15 @@ async def _run() -> None:
 
 
 async def start_scheduler() -> None:
-    """Recover orphan claims and start one local scheduler loop."""
+    """Register one replica and start its fenced scheduler loop."""
     global _scheduler_task
     if _scheduler_task is not None:
         return
-    recovered = await repository.recover_orphan_attempts()
-    if recovered:
-        logger.info("Recovered %s benchmark attempt claims", recovered)
+    await repository.register_scheduler_worker(
+        WORKER_ID,
+        socket.gethostname(),
+        os.getpid(),
+    )
     _scheduler_task = asyncio.create_task(_run(), name="benchmark-scheduler")
 
 
@@ -149,3 +238,12 @@ async def stop_scheduler() -> None:
     with contextlib.suppress(asyncio.CancelledError):
         await _scheduler_task
     _scheduler_task = None
+    await repository.stop_scheduler_worker(WORKER_ID)
+
+
+async def capacity_status() -> dict[str, Any]:
+    """Return the current shared scheduler capacity document."""
+    return await repository.benchmark_capacity_snapshot(
+        CAPACITY_POLICY,
+        stale_after_seconds=LEASE_SECONDS * 3,
+    )

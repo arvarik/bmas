@@ -80,7 +80,7 @@ Do not set `host: localhost` for an external Hermes node. That value would refer
 
 ## `nodes`
 
-The classic runtime requires at least one execution node.
+Each runtime requires at least one execution node.
 
 The starter defines one Docker service:
 
@@ -184,11 +184,11 @@ The runtime uses `routing.<tier>` when a tier has no model pool.
 
 ## `coordination`
 
-Set `variant: classic`. This repository has no second runtime.
+Set `variant: classic` for the deployment default. Mission Control can select another registered runtime for one task or test arm.
 
 | Field | Type | Default | Purpose |
 |:---|:---|:---|:---|
-| `variant` | string | `classic` | Selects the classic runtime. |
+| `variant` | string | `classic` | Selects the deployment default runtime. The file schema keeps Classic as the supported default. |
 | `view_budget_tokens` | integer | `12000` | Limits the blackboard text supplied to a model. |
 | `round_execution` | value | `concurrent` | Selects `concurrent` or `sequential` role execution. |
 
@@ -293,6 +293,28 @@ Keep `BMAS_STARTER_MODEL` equal to a configured model alias.
 The `.env.example` file lists every supported runtime limit. The main groups control task admission, agent endpoint capacity, circuit recovery, event delivery, and projection caching.
 
 Change these limits only after you capture a baseline with the [Classic Harness](CLASSIC_HARNESS.md).
+
+### Benchmark scheduler limits
+
+| Variable | Default | Purpose |
+|:---|:---|:---|
+| `BMAS_BENCHMARK_MAX_ACTIVE` | `4` | Limits active benchmark attempts across scheduler workers. |
+| `BMAS_BENCHMARK_LEASE_SECONDS` | `30` | Sets a renewable attempt lease from 10 through 300 seconds. |
+| `BMAS_BENCHMARK_RUNTIME_LIMITS` | empty object | Maps runtime identifiers to active-attempt limits. |
+| `BMAS_BENCHMARK_MODEL_LIMITS` | empty object | Maps model aliases to active-attempt limits. |
+| `BMAS_BENCHMARK_PROVIDER_LIMITS` | empty object | Maps provider names to active-attempt limits. |
+| `BMAS_BENCHMARK_MODEL_PROVIDERS` | empty object | Maps model aliases to provider names for provider limits. |
+
+The four mapping values use JSON objects. This example limits Patchboard, one model, and its provider.
+
+```env
+BMAS_BENCHMARK_RUNTIME_LIMITS={"patchboard":2}
+BMAS_BENCHMARK_MODEL_LIMITS={"starter-model":3}
+BMAS_BENCHMARK_PROVIDER_LIMITS={"gemini":3}
+BMAS_BENCHMARK_MODEL_PROVIDERS={"starter-model":"gemini"}
+```
+
+The scheduler claims every model alias in an arm snapshot until the task reports its actual model. This rule prevents early over-admission.
 
 ## Internal service URL overrides
 

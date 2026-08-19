@@ -24,6 +24,7 @@ export function BenchmarkTestForm({ testId }: { testId?: string }) {
   const [maxConcurrency, setMaxConcurrency] = useState(1);
   const [timeoutSeconds, setTimeoutSeconds] = useState(3600);
   const [costLimit, setCostLimit] = useState("");
+  const [practicalDifference, setPracticalDifference] = useState(0.01);
   const [arms, setArms] = useState<ArmDraft[]>([
     { key: "arm-1", name: "Classic", runtime_id: "classic", configuration: "{}" },
   ]);
@@ -63,6 +64,7 @@ export function BenchmarkTestForm({ testId }: { testId?: string }) {
         max_concurrency: maxConcurrency,
         timeout_seconds: timeoutSeconds,
         cost_limit_usd: costLimit ? Number(costLimit) : null,
+        practical_difference: practicalDifference,
         arms: arms.map((arm) => ({
           name: arm.name.trim(),
           runtime_id: arm.runtime_id,
@@ -73,7 +75,7 @@ export function BenchmarkTestForm({ testId }: { testId?: string }) {
     } catch {
       return null;
     }
-  }, [arms, costLimit, datasetVersionId, description, maxConcurrency, name, repetitions, seed, selectedScorers, timeoutSeconds]);
+  }, [arms, costLimit, datasetVersionId, description, maxConcurrency, name, practicalDifference, repetitions, seed, selectedScorers, timeoutSeconds]);
 
   const validate = () => {
     if (!payload) return "Each arm configuration must contain valid JSON.";
@@ -126,6 +128,7 @@ export function BenchmarkTestForm({ testId }: { testId?: string }) {
         <label><span>Maximum concurrency</span><input type="number" min={1} max={16} value={maxConcurrency} onChange={(event) => { setMaxConcurrency(Number(event.target.value)); setPreflight(null); }} /></label>
         <label><span>Attempt timeout in seconds</span><input type="number" min={30} value={timeoutSeconds} onChange={(event) => { setTimeoutSeconds(Number(event.target.value)); setPreflight(null); }} /></label>
         <label><span>Run cost limit in USD</span><input type="number" min="0.01" step="0.01" value={costLimit} placeholder="No limit" onChange={(event) => { setCostLimit(event.target.value); setPreflight(null); }} /></label>
+        <label><span>Minimum practical score difference</span><input type="number" min="0" max="1" step="0.01" value={practicalDifference} onChange={(event) => { setPracticalDifference(Number(event.target.value)); setPreflight(null); }} /><small>Effects below this score difference do not count as practically meaningful.</small></label>
       </div>
 
       <fieldset className="benchmark-form__section"><legend>Runtime arms</legend>{arms.map((arm, index) => <div className="benchmark-arm" key={arm.key}><label><span>Arm name</span><input value={arm.name} onChange={(event) => { setArms((current) => current.map((item) => item.key === arm.key ? { ...item, name: event.target.value } : item)); setPreflight(null); }} /></label><label><span>Runtime</span><select value={arm.runtime_id} onChange={(event) => { setArms((current) => current.map((item) => item.key === arm.key ? { ...item, runtime_id: event.target.value } : item)); setPreflight(null); }}>{runtimes.map((runtime) => <option key={runtime.id} value={runtime.id}>{runtime.label} · contract {runtime.contract_version}</option>)}</select></label><label className="benchmark-arm__config"><span>Configuration JSON</span><textarea rows={3} spellCheck={false} value={arm.configuration} onChange={(event) => { setArms((current) => current.map((item) => item.key === arm.key ? { ...item, configuration: event.target.value } : item)); setPreflight(null); }} /></label><button type="button" className="benchmark-icon-button" disabled={arms.length === 1} aria-label={`Remove arm ${index + 1}`} onClick={() => { setArms((current) => current.filter((item) => item.key !== arm.key)); setPreflight(null); }}><Trash2 size={16} /></button></div>)}<ActionButton variant="secondary" onClick={() => { setArms((current) => [...current, { key: crypto.randomUUID(), name: `Arm ${current.length + 1}`, runtime_id: runtimes[0]?.id ?? "classic", configuration: "{}" }]); setPreflight(null); }}><Plus size={15} /> Add arm</ActionButton></fieldset>

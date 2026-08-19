@@ -496,9 +496,11 @@ async def _admit_task(
     uploads: list[UploadFile] | None = None,
     *,
     captured_configuration: dict[str, Any] | None = None,
+    task_id: str | None = None,
 ) -> dict[str, str]:
     """Save one task, store initial uploads, and admit the task to the queue."""
-    task_id = f"task-{str(uuid.uuid4())[:8]}"
+    requested_task_id = task_id
+    task_id = task_id or f"task-{str(uuid.uuid4())[:8]}"
     initial_uploads = uploads or []
 
     if not req.task.strip():
@@ -520,6 +522,37 @@ async def _admit_task(
             },
         )
 
+    try:
+        variant_id = canonical_variant_id(req.variant or COORDINATION_VARIANT)
+        variant_class = require_variant_class(variant_id)
+    except UnknownVariantError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "variant_unavailable",
+                "message": str(exc),
+            },
+        ) from exc
+
+    existing = await db.get_task(task_id) if requested_task_id else None
+    if existing is not None:
+        metadata = await db.get_board_meta(task_id)
+        existing_benchmark = metadata.get("benchmark")
+        requested_benchmark = req.benchmark.model_dump() if req.benchmark else None
+        if existing_benchmark != requested_benchmark:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "task_identity_conflict",
+                    "message": "The task identifier belongs to another submission",
+                },
+            )
+        return {
+            "task_id": task_id,
+            "variant": canonical_variant_id(str(existing.get("variant") or variant_id)),
+            "status": str(existing.get("status") or "queued"),
+        }
+
     if _task_queue is None:
         raise HTTPException(
             status_code=503,
@@ -540,18 +573,6 @@ async def _admit_task(
             },
             headers={"Retry-After": "5"},
         )
-
-    try:
-        variant_id = canonical_variant_id(req.variant or COORDINATION_VARIANT)
-        variant_class = require_variant_class(variant_id)
-    except UnknownVariantError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "variant_unavailable",
-                "message": str(exc),
-            },
-        ) from exc
 
     # Create the SQLite row BEFORE spawning background task
     # Always stamp the active variant — never rely on schema default.

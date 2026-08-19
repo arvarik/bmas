@@ -8,6 +8,7 @@ import { ActionButton } from "@/components/ui/ActionButton";
 import { ResourceState } from "@/components/ui/ResourceState";
 import {
   formatMetric,
+  statusLabel,
   type BenchmarkRun,
   type BenchmarkRunReport,
 } from "@/lib/benchmarks";
@@ -17,6 +18,10 @@ const FILTER_NAMES = ["subject", "split", "tag", "scorer_id"] as const;
 function interval(metric: { ci_low: number | null; ci_high: number | null }, unit: "percent" | "cost") {
   if (metric.ci_low === null || metric.ci_high === null) return "More samples needed";
   return `${formatMetric(metric.ci_low, unit)} to ${formatMetric(metric.ci_high, unit)}`;
+}
+
+function probability(value: number | null) {
+  return value === null ? "Unavailable" : value.toFixed(value < 0.001 ? 4 : 3);
 }
 
 export function BenchmarkRunReportPanel({ run }: { run: BenchmarkRun }) {
@@ -91,8 +96,9 @@ export function BenchmarkRunReportPanel({ run }: { run: BenchmarkRun }) {
         <>
           {!report.complete ? <p className="benchmark-report__notice">This run is incomplete. The metrics can change until every attempt reaches a terminal state.</p> : null}
           <p className="benchmark-report__provenance">
-            {report.latest_attempt_count} current attempts. {report.prior_attempt_count} prior retries remain in the run record. Report <code>{report.report_checksum.slice(0, 12)}</code>.
+            {report.latest_attempt_count} current attempts. {report.prior_attempt_count} prior retries remain in the run record. Analysis v{report.analysis.version} uses {report.analysis.bootstrap_resamples} deterministic BCa resamples and Holm correction. Report <code>{report.report_checksum.slice(0, 12)}</code>.
           </p>
+          {report.warnings.length ? <ul className="benchmark-report__warnings" aria-label="Statistical warnings">{report.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : null}
           <div className="benchmark-report__arms">
             {report.arms.map((arm) => (
               <article key={arm.arm_id}>
@@ -114,10 +120,21 @@ export function BenchmarkRunReportPanel({ run }: { run: BenchmarkRun }) {
           <div className="benchmark-table-wrap">
             <table className="benchmark-table">
               <caption>Paired arm differences. Positive values favor the right arm.</caption>
-              <thead><tr><th>Comparison</th><th>Scorer</th><th>Matched</th><th>Right minus left</th><th>95% estimate</th><th>Wins / ties / losses</th></tr></thead>
-              <tbody>{report.comparisons.flatMap((comparison) => comparison.scorers.map((scorer) => <tr key={`${comparison.left_arm_id}-${comparison.right_arm_id}-${scorer.scorer_id}`}><td>{comparison.left_arm_name} → {comparison.right_arm_name}</td><td>{scorer.scorer_id}</td><td>{scorer.count}</td><td>{formatMetric(scorer.mean, "percent")}</td><td>{interval(scorer, "percent")}</td><td>{scorer.wins} / {scorer.ties} / {scorer.losses}</td></tr>))}</tbody>
+              <thead><tr><th>Comparison</th><th>Scorer</th><th>Matched</th><th>Effect</th><th>95% estimate</th><th>Holm p</th><th>Diagnosis</th><th>Recommended pairs</th></tr></thead>
+              <tbody>{report.comparisons.flatMap((comparison) => comparison.scorers.map((scorer) => <tr key={`${comparison.left_arm_id}-${comparison.right_arm_id}-${scorer.scorer_id}`}><td>{comparison.left_arm_name} → {comparison.right_arm_name}</td><td>{scorer.scorer_id}<small>{scorer.wins} wins · {scorer.ties} ties · {scorer.losses} losses</small></td><td>{scorer.count}</td><td>{formatMetric(scorer.mean, "percent")}<small>Superiority {formatMetric(scorer.probability_of_superiority, "percent")}</small></td><td>{interval(scorer, "percent")}</td><td>{probability(scorer.p_value_adjusted)}</td><td>{statusLabel(scorer.classification)}</td><td>{scorer.sample_guidance.recommended_pairs ?? "More variance data needed"}</td></tr>))}</tbody>
             </table>
           </div>
+          <section className="benchmark-diagnostics" aria-labelledby="benchmark-diagnostics-title">
+            <header><div><h4 id="benchmark-diagnostics-title">Diagnosis</h4><p>Use slices, failure categories, and review agreement to explain a change.</p></div></header>
+            <div className="benchmark-diagnostics__grid">
+              <article><h5>Human review</h5><strong>{report.diagnostics.human_review.reviewed_attempt_count}</strong><p>{report.diagnostics.human_review.available ? `${report.diagnostics.human_review.review_count} immutable judgments` : report.diagnostics.human_review.reason}</p></article>
+              <article><h5>Per-item differences</h5><strong>{report.diagnostics.item_difference_count}</strong><p>{report.diagnostics.item_differences_truncated ? "The report shows the 500 largest absolute changes." : "The report includes every scored pair."}</p></article>
+              <article><h5>Analyzed slices</h5><strong>{report.diagnostics.slices.length}</strong><p>Subject, split, and tag groups use the same interval method.</p></article>
+            </div>
+            {report.diagnostics.error_categories.length ? <div className="benchmark-table-wrap"><table className="benchmark-table"><caption>Execution errors by arm</caption><thead><tr><th>Arm</th><th>Category</th><th>Count</th><th>Rate</th></tr></thead><tbody>{report.diagnostics.error_categories.map((item) => <tr key={`${item.arm_id}-${item.category}`}><td>{item.arm_name}</td><td>{statusLabel(item.category)}</td><td>{item.count}</td><td>{formatMetric(item.rate, "percent")}</td></tr>)}</tbody></table></div> : null}
+            {report.diagnostics.human_calibration.length ? <div className="benchmark-table-wrap"><table className="benchmark-table"><caption>Automatic scorer calibration against human review</caption><thead><tr><th>Scorer</th><th>Pairs</th><th>Agreement</th><th>Cohen kappa</th><th>Mean absolute error</th><th>Brier score</th></tr></thead><tbody>{report.diagnostics.human_calibration.map((item) => <tr key={item.scorer_id}><td>{item.scorer_id}</td><td>{item.count}</td><td>{formatMetric(item.agreement_rate, "percent")}</td><td>{item.cohen_kappa?.toFixed(3) ?? "Unavailable"}</td><td>{item.mean_absolute_error.toFixed(3)}</td><td>{item.brier_score.toFixed(3)}</td></tr>)}</tbody></table></div> : null}
+            {report.diagnostics.slices.length ? <details className="benchmark-diagnostics__slices"><summary>Inspect {report.diagnostics.slices.length} slices</summary><div className="benchmark-table-wrap"><table className="benchmark-table"><thead><tr><th>Slice</th><th>Attempts</th><th>Arm</th><th>Failure rate</th><th>Scores</th></tr></thead><tbody>{report.diagnostics.slices.flatMap((slice) => slice.arms.map((arm) => <tr key={`${slice.dimension}-${slice.value}-${arm.arm_id}`}><td>{statusLabel(slice.dimension)}: {slice.value}</td><td>{arm.attempt_count}</td><td>{arm.arm_name}</td><td>{formatMetric(arm.failure_rate, "percent")}</td><td>{arm.scorers.map((scorer) => `${scorer.scorer_id}: ${formatMetric(scorer.mean, "percent")}`).join(", ") || "Unavailable"}</td></tr>))}</tbody></table></div></details> : null}
+          </section>
         </>
       ) : null}
     </section>

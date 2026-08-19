@@ -3,7 +3,11 @@
 import type { ComponentType } from "react";
 import { ClassicResultRenderer } from "@/components/features/ClassicResultRenderer";
 import type { VariantCapability } from "@/lib/capabilities";
-import { CLASSIC_CONTRACT_VERSIONS } from "@/lib/variant-support";
+import {
+  CLASSIC_CONTRACT_VERSIONS,
+  PATCHBOARD_CONTRACT_VERSIONS,
+  STIGMERGIC_CONTRACT_VERSIONS,
+} from "@/lib/variant-support";
 import {
   mapBoardEntry,
   mapDebate,
@@ -639,6 +643,57 @@ export const CLASSIC_ADAPTER: VariantUIAdapter = {
   ResultRenderer: ClassicResultRenderer,
 };
 
+const WORKFLOW_PANELS: readonly NavigationPanelSpec[] = [
+  { id: "overview", label: "Summary", segment: null, feature: "mission", featureType: "panel" },
+  { id: "graph", label: "Execution", segment: "dag", feature: "turns", featureType: "graph" },
+  { id: "logs", label: "Logs", segment: "logs", feature: "logs", featureType: "panel" },
+  { id: "files", label: "Files", segment: "files", feature: "artifacts", featureType: "panel" },
+];
+
+function workflowAdapter(
+  id: string,
+  label: string,
+  supportedContractVersions: readonly string[],
+): VariantUIAdapter {
+  return {
+    id,
+    label,
+    aliases: [],
+    supportedContractVersions,
+    nodeTypes: [],
+    edgeSpecs: [],
+    navigationPanels: WORKFLOW_PANELS,
+    graphViews: { turns: "turns" },
+    decodeEvent(name, value, taskId) {
+      const payload = asRecord(value);
+      return payload ? { name, payload, taskId } : null;
+    },
+    projectEvent: projectClassicEvent,
+    projectHydration: projectClassicHydration,
+    progressLabel(state, advertisedFeatures) {
+      const parts: string[] = [];
+      if (advertisedFeatures.includes("phase") && state.phase) parts.push(state.phase);
+      if (advertisedFeatures.includes("effective_actions")) {
+        parts.push(`${state.completedTurns.length} completed turns`);
+      }
+      return parts.join(" · ") || "Initializing…";
+    },
+    ResultRenderer: ClassicResultRenderer,
+  };
+}
+
+export const PATCHBOARD_ADAPTER = workflowAdapter(
+  "patchboard",
+  "Patchboard",
+  PATCHBOARD_CONTRACT_VERSIONS,
+);
+
+export const STIGMERGIC_ADAPTER = workflowAdapter(
+  "stigmergic",
+  "Stigmergic workspace",
+  STIGMERGIC_CONTRACT_VERSIONS,
+);
+
 const ADAPTERS = new Map<string, VariantUIAdapter>();
 
 export function registerAdapter(adapter: VariantUIAdapter): void {
@@ -646,6 +701,8 @@ export function registerAdapter(adapter: VariantUIAdapter): void {
 }
 
 registerAdapter(CLASSIC_ADAPTER);
+registerAdapter(PATCHBOARD_ADAPTER);
+registerAdapter(STIGMERGIC_ADAPTER);
 
 export function getActiveAdapter(variantId: string | null | undefined): VariantUIAdapter | null {
   if (!variantId) return null;
