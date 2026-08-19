@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback, useEffect, useSyncExternalStore } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { ToastProvider } from "@/components/ui/Toast";
 import { PendingTaskProvider } from "@/contexts/PendingTaskContext";
@@ -9,7 +9,6 @@ import { TaskSidebar } from "@/components/ui/TaskSidebar";
 import { useSystemStream } from "@/hooks/useSystemStream";
 import { useTaskHistory } from "@/hooks/useTaskHistory";
 import type { TaskHistoryFilters } from "@/hooks/useTaskHistory";
-import type { StatusType } from "@/lib/design-tokens";
 
 // ── Route → breadcrumb label mapping ─────────────────────────────────
 
@@ -25,23 +24,10 @@ function getBreadcrumb(pathname: string): string {
     return `Task ${taskId.slice(0, 8)} / ${tabLabel}`;
   }
   if (pathname === "/infra") return "Infrastructure";
-  if (pathname === "/skills") return "Skills";
+  if (pathname === "/agents" || pathname === "/skills") return "Agents";
   if (pathname === "/sessions") return "Hermes Sessions";
   if (pathname === "/settings") return "Settings";
   return "Overview";
-}
-
-function subscribeToNetworkStatus(callback: () => void): () => void {
-  window.addEventListener("online", callback);
-  window.addEventListener("offline", callback);
-  return () => {
-    window.removeEventListener("online", callback);
-    window.removeEventListener("offline", callback);
-  };
-}
-
-function getOfflineSnapshot(): boolean {
-  return !navigator.onLine;
 }
 
 /**
@@ -71,12 +57,6 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
     minCost: "",
     maxCost: "",
   });
-  const isOffline = useSyncExternalStore(
-    subscribeToNetworkStatus,
-    getOfflineSnapshot,
-    () => false,
-  );
-
   // ── System health (replaces useBlackboard.startPolling) ───────────
   const system = useSystemStream();
 
@@ -93,14 +73,6 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [system.eventSequence]);
-
-  // Map daemon status to TopBar's StatusType
-  const daemonStatus: StatusType =
-    system.daemonStatus === "healthy"
-      ? "running"
-      : system.daemonStatus === "degraded"
-        ? "paused"
-        : "pending";
 
   // Compute total cost from task history
   const totalCost = taskHistory.tasks.reduce(
@@ -147,16 +119,27 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
 
   // ── Register PWA Service Worker ───────────────────────────────────
   useEffect(() => {
-    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
-      navigator.serviceWorker
-        .register("/sw.js")
-        .then((reg) => {
-          console.log("bMAS Swarm Service Worker registered:", reg.scope);
-        })
-        .catch((err) => {
-          console.error("bMAS Swarm Service Worker registration failed:", err);
-        });
+    if (!("serviceWorker" in navigator)) return;
+
+    if (process.env.NODE_ENV !== "production") {
+      void navigator.serviceWorker.getRegistrations().then((registrations) =>
+        Promise.all(registrations.map((registration) => registration.unregister()))
+      );
+      if ("caches" in window) {
+        void window.caches.keys().then((keys) =>
+          Promise.all(
+            keys
+              .filter((key) => key.startsWith("bmas-swarm-cache-"))
+              .map((key) => window.caches.delete(key))
+          )
+        );
+      }
+      return;
     }
+
+    void navigator.serviceWorker.register("/sw.js").catch((error: unknown) => {
+      console.error("bMAS service worker registration failed:", error);
+    });
   }, []);
 
   // ── Global keyboard shortcuts ─────────────────────────────────────
@@ -190,17 +173,22 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
       <PendingTaskProvider>
         <div className="app-shell">
           <TopBar
-            daemonStatus={daemonStatus}
+            systemState={system.connectionState}
+            lastSuccessfulEventAt={system.lastSuccessfulEventAt}
+            systemStateStale={system.isStale}
+            failedDependencies={system.failedDependencies}
+            affectedFeatures={system.affectedFeatures}
+            onSystemRetry={system.reconnect}
             swarmPhase={undefined}
             totalCost={totalCost}
             currentView={currentView}
             onMenuToggle={handleToggleMobileDrawer}
           />
 
-          {isOffline && (
+          {system.connectionState === "offline" && (
             <div className="offline-banner">
               <span className="offline-banner__dot" />
-              Offline Mode — Viewing cached swarm data
+              Offline. Live data and server actions are unavailable.
             </div>
           )}
 

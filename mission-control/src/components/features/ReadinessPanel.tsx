@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ChevronDown, ChevronUp, Play, RefreshCw, X } from "lucide-react";
 import { ActionableError } from "@/components/ui/ActionableError";
+import { ResourceState } from "@/components/ui/ResourceState";
 
 export interface ReadinessCheck {
   id: string;
@@ -49,6 +50,9 @@ interface ReadinessPanelProps {
   onReadyChange: (ready: boolean) => void;
   showReadyGuide?: boolean;
 }
+
+const READINESS_REQUEST_TIMEOUT_MS = 10_000;
+const TEST_TASK_REQUEST_TIMEOUT_MS = 15_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -109,7 +113,10 @@ export function parseReadiness(value: unknown): ReadinessDocument {
 }
 
 async function requestReadiness(): Promise<ReadinessDocument> {
-  const response = await fetch("/api/readiness", { cache: "no-store" });
+  const response = await fetch("/api/readiness", {
+    cache: "no-store",
+    signal: AbortSignal.timeout(READINESS_REQUEST_TIMEOUT_MS),
+  });
   const raw: unknown = await response.json();
   if (!response.ok) {
     const message = isRecord(raw) && typeof raw.error === "string"
@@ -159,6 +166,7 @@ export function ReadinessPanel({
           task: "System test: return a short confirmation that the classic swarm can execute a task.",
           variant: "classic",
         }),
+        signal: AbortSignal.timeout(TEST_TASK_REQUEST_TIMEOUT_MS),
       });
       const body = await response.json().catch(() => ({})) as {
         task_id?: string;
@@ -207,10 +215,20 @@ export function ReadinessPanel({
 
   if (error) {
     return (
-      <ActionableError
-        component="Setup center"
-        cause={`${error} Run ./scripts/bmas doctor for exact checks.`}
+      <ResourceState
+        kind="unavailable"
+        title="Task submission is unavailable"
+        description="Mission Control cannot verify the services required for a new task."
+        detail={`${error}\nRun ./scripts/bmas doctor for exact checks.`}
+        diagnostics={JSON.stringify({
+          component: "Task readiness",
+          state: "unavailable",
+          detail: error,
+          captured_at: new Date().toISOString(),
+        }, null, 2)}
         onRetry={() => void load()}
+        operationsHref="/infra"
+        compact
       />
     );
   }

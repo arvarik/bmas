@@ -7,11 +7,18 @@ import {
   Check,
   Clock3,
   Copy,
+  MessageSquarePlus,
   PauseCircle,
   Play,
+  Send,
   X,
 } from "lucide-react";
 import type { CostData, TaskMeta } from "@/hooks/useTaskStream";
+import {
+  type TaskOperatorAction,
+  type TaskOperatorResult,
+  useTaskOperatorAction,
+} from "@/hooks/useTaskOperatorAction";
 import { ActionableError } from "@/components/ui/ActionableError";
 
 interface OperationsStatus {
@@ -20,6 +27,12 @@ interface OperationsStatus {
   agentsTotal: number;
   queued: number;
   queueCapacity: number;
+}
+
+interface OperatorActionEvent {
+  id: string;
+  label: string;
+  timestamp: string;
 }
 
 type StageId = "queued" | "running" | "blocked" | "failed" | "completed";
@@ -55,22 +68,48 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function actionSuccessMessage(action: TaskOperatorAction): string {
+  if (action === "pause") return "Pause requested. The task will pause at the next safe boundary.";
+  if (action === "resume") return "Resume requested. A blocked task will enter the queue when capacity is available.";
+  if (action === "abort") return "Stop requested. The task will stop at the next safe boundary. Saved progress remains available.";
+  return "Guidance queued. The runtime will apply it at the next supported boundary.";
+}
+
+function actionEventLabel(action: TaskOperatorAction): string {
+  if (action === "pause") return "Operator requested a pause";
+  if (action === "resume") return "Operator requested a resume";
+  if (action === "abort") return "Operator requested a stop";
+  return "Operator queued guidance";
+}
+
 export function TaskLifecycle({
   task,
   cost,
   isLive,
+  isPaused,
+  controls,
 }: {
   task: TaskMeta | null;
   cost: CostData | null;
   isLive: boolean;
+  isPaused: boolean;
+  controls: readonly string[];
 }) {
   const router = useRouter();
-  const [actionError, setActionError] = useState("");
   const [actionName, setActionName] = useState("");
-  const [actionResult, setActionResult] = useState("");
+  const [copyError, setCopyError] = useState("");
+  const [guidance, setGuidance] = useState("");
+  const [showGuidance, setShowGuidance] = useState(false);
+  const [optimisticPaused, setOptimisticPaused] = useState<boolean | null>(null);
+  const [operatorEvents, setOperatorEvents] = useState<OperatorActionEvent[]>([]);
   const [operations, setOperations] = useState<OperationsStatus | null>(null);
   const [operationsError, setOperationsError] = useState("");
   const [operationsVersion, setOperationsVersion] = useState(0);
+  const {
+    state: operatorAction,
+    execute: executeOperatorAction,
+    retry: retryOperatorAction,
+  } = useTaskOperatorAction();
 
   useEffect(() => {
     let cancelled = false;
@@ -102,39 +141,72 @@ export function TaskLifecycle({
     };
   }, [operationsVersion]);
 
-  const runControl = useCallback(async (action: "abort" | "resume") => {
-    if (!task) return;
-    setActionName(action);
-    setActionError("");
-    setActionResult("");
-    try {
-      const response = await fetch("/api/hitl", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, task_id: task.task_id }),
-      });
-      const body = await response.json().catch(() => ({})) as { error?: string; detail?: string };
-      if (!response.ok) {
-        const detail = typeof body.detail === "string" ? body.detail : body.error;
-        throw new Error(detail || `Task control returned HTTP ${response.status}`);
-      }
-      setActionResult(
-        action === "resume"
-          ? "Resume requested. The task will enter the queue when capacity is available."
-          : "Cancellation requested. The task will stop at the next safe boundary.",
-      );
-      router.refresh();
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "The task action failed.");
-    } finally {
-      setActionName("");
+  const recordOperatorAction = useCallback((action: TaskOperatorAction) => {
+    const timestamp = new Date().toISOString();
+    setOperatorEvents((events) => [
+      ...events,
+      { id: `${action}:${timestamp}`, label: actionEventLabel(action), timestamp },
+    ].slice(-4));
+  }, []);
+
+  const applyOperatorResult = useCallback((
+    action: TaskOperatorAction,
+    result: TaskOperatorResult,
+  ) => {
+    if (!result.ok) return;
+    if (action === "pause") setOptimisticPaused(true);
+    if (action === "resume") setOptimisticPaused(false);
+    if (action === "inject-hint") {
+      setGuidance("");
+      setShowGuidance(false);
     }
-  }, [router, task]);
+    recordOperatorAction(action);
+    router.refresh();
+  }, [recordOperatorAction, router]);
+
+  const runControl = useCallback(async (action: "pause" | "resume" | "abort") => {
+    if (!task || operatorAction.status === "pending") return;
+    if (action === "abort" && !window.confirm(
+      "Stop this task at the next safe boundary? Saved task history, Blackboard entries, files, and artifacts remain available.",
+    )) return;
+    const result = await executeOperatorAction(
+      { action, task_id: task.task_id },
+      actionSuccessMessage(action),
+    );
+    applyOperatorResult(action, result);
+  }, [applyOperatorResult, executeOperatorAction, operatorAction.status, task]);
+
+  const sendGuidance = useCallback(async () => {
+    const text = guidance.trim();
+    if (!task || !text || operatorAction.status === "pending") return;
+    const action = "inject-hint" as const;
+    const result = await executeOperatorAction(
+      { action, task_id: task.task_id, hint_text: text },
+      actionSuccessMessage(action),
+    );
+    applyOperatorResult(action, result);
+  }, [applyOperatorResult, executeOperatorAction, guidance, operatorAction.status, task]);
+
+  const retryLastOperatorAction = useCallback(async () => {
+    const action = operatorAction.action;
+    if (!action) return;
+    const result = await retryOperatorAction(actionSuccessMessage(action));
+    applyOperatorResult(action, result);
+  }, [applyOperatorResult, operatorAction.action, retryOperatorAction]);
+
+  const streamedPaused = isPaused || ["blocked", "paused", "pause_requested"].includes(task?.run_state ?? "");
+  useEffect(() => {
+    if (optimisticPaused !== null && streamedPaused === optimisticPaused) {
+      // The task stream now confirms the requested state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setOptimisticPaused(null);
+    }
+  }, [optimisticPaused, streamedPaused]);
 
   const copyTask = useCallback(async (purpose: "retry" | "duplicate") => {
     if (!task?.full_input) return;
     setActionName(purpose);
-    setActionError("");
+    setCopyError("");
     try {
       const form = new FormData();
       form.append("task", task.full_input);
@@ -174,7 +246,7 @@ export function TaskLifecycle({
       }
       router.push(`/task/${body.task_id}`);
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "The task copy failed.");
+      setCopyError(error instanceof Error ? error.message : "The task copy failed.");
     } finally {
       setActionName("");
     }
@@ -185,6 +257,13 @@ export function TaskLifecycle({
   const storageBytes = (task.storage?.input_bytes ?? 0) + (task.storage?.output_bytes ?? 0);
   const blocked = stage === "blocked";
   const cancellable = isLive || task.status === "pending" || task.status === "running";
+  const sourcePaused = streamedPaused;
+  const displayPaused = optimisticPaused ?? sourcePaused;
+  const canPause = !displayPaused && isLive && controls.includes("pause");
+  const canResume = displayPaused && controls.includes("resume");
+  const canAbort = cancellable && controls.includes("abort");
+  const canSendGuidance = controls.includes("directive") && (isLive || blocked);
+  const operatorPending = operatorAction.status === "pending";
 
   return (
     <section className="task-lifecycle" aria-label="Task lifecycle and operations">
@@ -212,22 +291,66 @@ export function TaskLifecycle({
         <span><small>Storage</small>{formatBytes(storageBytes)}</span>
       </div>
 
-      <div className="task-lifecycle__actions">
-        {cancellable && !blocked && !actionResult ? (
-          <button type="button" onClick={() => void runControl("abort")} disabled={!!actionName}>
-            <Ban size={14} /> {actionName === "abort" ? "Cancelling…" : "Cancel"}
+      <div className="task-lifecycle__actions" aria-busy={operatorPending}>
+        {canPause ? (
+          <button type="button" onClick={() => void runControl("pause")} disabled={operatorPending || !!actionName}>
+            <PauseCircle size={14} /> {operatorAction.action === "pause" && operatorPending ? "Pausing…" : "Pause"}
           </button>
         ) : null}
-        {blocked && !actionResult ? (
-          <button type="button" onClick={() => void runControl("resume")} disabled={!!actionName}>
-            {task.run_state === "paused" ? <Play size={14} /> : <PauseCircle size={14} />}
-            {actionName === "resume" ? "Resuming…" : "Resume"}
+        {canResume ? (
+          <button type="button" onClick={() => void runControl("resume")} disabled={operatorPending || !!actionName}>
+            <Play size={14} /> {operatorAction.action === "resume" && operatorPending ? "Resuming…" : "Resume"}
           </button>
         ) : null}
-        <button type="button" onClick={() => void copyTask("duplicate")} disabled={!!actionName || !task.full_input}>
+        {canAbort ? (
+          <button type="button" onClick={() => void runControl("abort")} disabled={operatorPending || !!actionName}>
+            <Ban size={14} /> {operatorAction.action === "abort" && operatorPending ? "Stopping…" : "Stop"}
+          </button>
+        ) : null}
+        {canSendGuidance ? (
+          <button
+            type="button"
+            onClick={() => setShowGuidance((visible) => !visible)}
+            disabled={operatorPending || !!actionName}
+            aria-expanded={showGuidance}
+            aria-controls="task-operator-guidance"
+          >
+            <MessageSquarePlus size={14} /> Guide
+          </button>
+        ) : null}
+        <button type="button" onClick={() => void copyTask("duplicate")} disabled={operatorPending || !!actionName || !task.full_input}>
           <Copy size={14} /> {actionName === "duplicate" ? "Duplicating…" : "Duplicate"}
         </button>
       </div>
+
+      {canSendGuidance && showGuidance ? (
+        <div id="task-operator-guidance" className="overview__hint">
+          <label className="overview__hint-label" htmlFor="task-operator-guidance-input">
+            Operator guidance
+          </label>
+          <div className="overview__hint-row">
+            <textarea
+              id="task-operator-guidance-input"
+              className="overview__hint-input"
+              placeholder="Give the runtime guidance for the next supported boundary…"
+              value={guidance}
+              onChange={(event) => setGuidance(event.target.value)}
+              rows={2}
+              maxLength={2_000}
+              disabled={operatorPending}
+            />
+            <button
+              type="button"
+              className="overview__hint-send"
+              onClick={() => void sendGuidance()}
+              disabled={!guidance.trim() || operatorPending}
+              aria-label={operatorPending ? "Sending operator guidance" : "Send operator guidance"}
+            >
+              <Send size={14} />
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {task.status === "failed" && task.error_message ? (
         <ActionableError
@@ -238,11 +361,36 @@ export function TaskLifecycle({
           compact
         />
       ) : null}
-      {actionError ? (
-        <ActionableError component="Task action" cause={actionError} compact />
+      {operatorAction.status === "error" ? (
+        <ActionableError
+          component="Task action"
+          cause={operatorAction.message}
+          onRetry={() => void retryLastOperatorAction()}
+          compact
+        />
       ) : null}
-      {actionResult ? (
-        <div className="task-lifecycle__success" role="status">{actionResult}</div>
+      {copyError ? (
+        <ActionableError component="Task copy" cause={copyError} compact />
+      ) : null}
+      {operatorAction.status === "pending" || operatorAction.status === "success" ? (
+        <div className="task-lifecycle__success" role="status" aria-live="polite">
+          {operatorAction.message}
+        </div>
+      ) : null}
+      {operatorEvents.length > 0 ? (
+        <div
+          role="log"
+          aria-label="Operator actions from this browser view"
+          aria-live="polite"
+          style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)", color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}
+        >
+          <strong>Current view</strong>
+          {operatorEvents.map((event) => (
+            <span key={event.id}>
+              {event.label} at <time dateTime={event.timestamp}>{new Date(event.timestamp).toLocaleTimeString()}</time>
+            </span>
+          ))}
+        </div>
       ) : null}
       {operationsError ? (
         <ActionableError

@@ -15,8 +15,15 @@ import {
 } from "lucide-react";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { Panel } from "@/components/ui/Panel";
+import { ResourceState } from "@/components/ui/ResourceState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { authorColor } from "@/lib/design-tokens";
+import {
+  diagnosticsText,
+  failureFromReason,
+  failureFromResponse,
+  type RequestFailure,
+} from "@/lib/request-state";
 
 interface Skill {
   name: string;
@@ -50,10 +57,14 @@ interface NodeData {
   reachable: boolean;
 }
 
+interface CapabilityCollection<T> {
+  items: T[];
+  failure: RequestFailure | null;
+}
+
 interface CapabilityData {
-  skills: Skill[];
-  toolsets: Toolset[];
-  error: string | null;
+  skills: CapabilityCollection<Skill>;
+  toolsets: CapabilityCollection<Toolset>;
 }
 
 function recordArray<T>(value: unknown, field: string): T[] {
@@ -62,9 +73,18 @@ function recordArray<T>(value: unknown, field: string): T[] {
   return Array.isArray(items) ? items as T[] : [];
 }
 
-async function responseError(response: Response): Promise<string> {
-  const body = await response.json().catch(() => ({})) as { error?: string };
-  return body.error ?? `HTTP ${response.status}`;
+async function loadCapability<T>(
+  url: string,
+  field: string,
+): Promise<CapabilityCollection<T>> {
+  try {
+    const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(8_000) });
+    if (!response.ok) throw await failureFromResponse(response, `${field} request failed`);
+    const body = await response.json();
+    return { items: recordArray<T>(body, field), failure: null };
+  } catch (reason) {
+    return { items: [], failure: failureFromReason(reason, `${field} request failed`) };
+  }
 }
 
 export default function SkillsExplorer() {
@@ -73,12 +93,17 @@ export default function SkillsExplorer() {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
+  const [globalFailure, setGlobalFailure] = useState<RequestFailure | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setGlobalFailure(null);
     try {
-      const nodeResponse = await fetch("/api/profiles", { cache: "no-store" });
-      if (!nodeResponse.ok) throw new Error(await responseError(nodeResponse));
+      const nodeResponse = await fetch("/api/profiles", {
+        cache: "no-store",
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!nodeResponse.ok) throw await failureFromResponse(nodeResponse, "Agent discovery failed");
       const nodeBody = await nodeResponse.json() as { nodes?: NodeData[] };
       const nextNodes = nodeBody.nodes ?? [];
       setNodes(nextNodes);
@@ -87,41 +112,30 @@ export default function SkillsExplorer() {
         : new Set(nextNodes.map((node) => node.role)));
 
       const entries = await Promise.all(nextNodes.map(async (node) => {
-        try {
-          const encodedRole = encodeURIComponent(node.role);
-          const [skillResponse, toolsetResponse] = await Promise.all([
-            fetch(`/api/skills?node=${encodedRole}`, { cache: "no-store" }),
-            fetch(`/api/toolsets?node=${encodedRole}`, { cache: "no-store" }),
-          ]);
-          if (!skillResponse.ok) throw new Error(await responseError(skillResponse));
-          if (!toolsetResponse.ok) throw new Error(await responseError(toolsetResponse));
-          const [skillBody, toolsetBody] = await Promise.all([
-            skillResponse.json(),
-            toolsetResponse.json(),
-          ]);
+        if (!node.reachable) {
+          const unavailable: RequestFailure = {
+            kind: "unavailable",
+            message: `${node.name} is unreachable`,
+            detail: `No response came from ${node.host}.`,
+          };
           return [node.role, {
-            skills: recordArray<Skill>(skillBody, "skills"),
-            toolsets: recordArray<Toolset>(toolsetBody, "toolsets"),
-            error: null,
-          }] as const;
-        } catch (error) {
-          return [node.role, {
-            skills: [],
-            toolsets: [],
-            error: error instanceof Error ? error.message : "Capability request failed",
+            skills: { items: [], failure: unavailable },
+            toolsets: { items: [], failure: unavailable },
           }] as const;
         }
+
+        const encodedRole = encodeURIComponent(node.role);
+        const [skills, toolsets] = await Promise.all([
+          loadCapability<Skill>(`/api/skills?node=${encodedRole}`, "skills"),
+          loadCapability<Toolset>(`/api/toolsets?node=${encodedRole}`, "toolsets"),
+        ]);
+        return [node.role, { skills, toolsets }] as const;
       }));
       setCapabilities(Object.fromEntries(entries));
-    } catch (error) {
+    } catch (reason) {
       setNodes([]);
-      setCapabilities({
-        _global: {
-          skills: [],
-          toolsets: [],
-          error: error instanceof Error ? error.message : "Agent discovery failed",
-        },
-      });
+      setCapabilities({});
+      setGlobalFailure(failureFromReason(reason, "Agent discovery failed"));
     } finally {
       setLoading(false);
     }
@@ -132,23 +146,38 @@ export default function SkillsExplorer() {
   }, [load]);
 
   const normalizedFilter = filter.trim().toLowerCase();
-  const globalError = capabilities._global?.error;
 
   const visibleNodes = useMemo(() => nodes.map((node) => {
-    const data = capabilities[node.role] ?? { skills: [], toolsets: [], error: null };
-    if (!normalizedFilter) return { node, data };
-    const skills = data.skills.filter((skill) =>
+    const data = capabilities[node.role] ?? {
+      skills: { items: [], failure: null },
+      toolsets: { items: [], failure: null },
+    };
+    const capabilityLoading = loading && !capabilities[node.role];
+    if (!normalizedFilter) return { node, data, matches: true, capabilityLoading };
+    const skillItems = data.skills.items.filter((skill) =>
       [skill.name, skill.description, skill.category]
         .some((value) => typeof value === "string" && value.toLowerCase().includes(normalizedFilter)));
-    const toolsets = data.toolsets.filter((toolset) =>
+    const toolsetItems = data.toolsets.items.filter((toolset) =>
       [toolset.name, toolset.label, toolset.description, ...(toolset.tools ?? [])]
         .some((value) => typeof value === "string" && value.toLowerCase().includes(normalizedFilter)));
-    return { node, data: { ...data, skills, toolsets } };
-  }), [capabilities, nodes, normalizedFilter]);
+    const nodeMatches = [node.role, node.name, node.host, node.profiles[0]?.name]
+      .some((value) => typeof value === "string" && value.toLowerCase().includes(normalizedFilter));
+    return {
+      node,
+      data: {
+        skills: { ...data.skills, items: skillItems },
+        toolsets: { ...data.toolsets, items: toolsetItems },
+      },
+      matches: nodeMatches || skillItems.length > 0 || toolsetItems.length > 0,
+      capabilityLoading,
+    };
+  }).filter((entry) => !normalizedFilter || entry.matches), [capabilities, loading, nodes, normalizedFilter]);
+
+  const unreachableNodes = nodes.filter((node) => !node.reachable);
 
   if (loading && nodes.length === 0) {
     return (
-      <Panel title="Hermes capabilities">
+      <Panel title="Agents" subtitle="Discovering agent profiles and capabilities.">
         <Skeleton variant="list" lines={6} />
       </Panel>
     );
@@ -156,8 +185,8 @@ export default function SkillsExplorer() {
 
   return (
     <Panel
-      title="Hermes capabilities"
-      subtitle="Read-only discovery from each routed Hermes API-server profile."
+      title="Agents"
+      subtitle="Inspect each routed Hermes profile, its connection state, and its read-only capabilities."
       actions={(
         <ActionButton variant="secondary" onClick={() => void load()} loading={loading}>
           <RefreshCw size={14} /> Refresh
@@ -165,33 +194,89 @@ export default function SkillsExplorer() {
       )}
     >
       <div className="nodes-dashboard">
-        <div className="hermes-discovery-note">
-          <ShieldCheck size={15} />
-          <span>
-            Hermes v0.20.4 exposes skill and toolset discovery through read-only routes.
-            Change the selected profile configuration on the agent node.
-          </span>
-        </div>
-
-        <label className="nodes-dashboard__search">
-          <Search size={14} aria-hidden="true" />
-          <span className="sr-only">Search skills and toolsets</span>
-          <input
-            type="search"
-            placeholder="Search skills, toolsets, or tools"
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-            className="nodes-dashboard__search-input"
+        {globalFailure ? (
+          <ResourceState
+            kind={globalFailure.kind}
+            title={globalFailure.kind === "permission" ? "Agent discovery access denied" : "Agent discovery failed"}
+            description="Mission Control cannot load agent profiles or capabilities."
+            detail={globalFailure.detail}
+            diagnostics={diagnosticsText("Agent discovery", globalFailure)}
+            onRetry={load}
+            operationsHref="/infra"
           />
-        </label>
+        ) : null}
 
-        {globalError ? <div className="node-card__error">{globalError}</div> : null}
+        {!globalFailure && nodes.length === 0 ? (
+          <ResourceState
+            kind="unavailable"
+            title="No agent nodes are configured"
+            description="Add at least one agent node before you inspect profiles, skills, or toolsets."
+            detail="The profiles endpoint returned an empty node list."
+            diagnostics={JSON.stringify({
+              component: "Agent discovery",
+              state: "no_nodes",
+              captured_at: new Date().toISOString(),
+            }, null, 2)}
+            onRetry={load}
+            operationsHref="/infra"
+          />
+        ) : null}
 
-        <div className="nodes-dashboard__cards">
-          {visibleNodes.map(({ node, data }, index) => {
+        {!globalFailure && nodes.length > 0 ? (
+          <>
+            <div className="hermes-discovery-note">
+              <ShieldCheck size={15} />
+              <span>
+                Mission Control reads skills and toolsets from each routed Hermes profile.
+                Change profile configuration on the agent node.
+              </span>
+            </div>
+
+            {unreachableNodes.length === nodes.length ? (
+              <ResourceState
+                kind="unavailable"
+                title="All agent nodes are unavailable"
+                description="Capabilities remain unavailable until at least one configured agent responds."
+                detail={unreachableNodes.map((node) => `${node.name}: ${node.host}`).join("\n")}
+                diagnostics={JSON.stringify({
+                  component: "Agent discovery",
+                  state: "all_nodes_unavailable",
+                  nodes: unreachableNodes.map(({ role, name, host }) => ({ role, name, host })),
+                  captured_at: new Date().toISOString(),
+                }, null, 2)}
+                onRetry={load}
+                operationsHref="/infra"
+                compact
+              />
+            ) : null}
+
+            <label className="nodes-dashboard__search">
+              <Search size={14} aria-hidden="true" />
+              <span className="sr-only">Search agents, skills, and toolsets</span>
+              <input
+                type="search"
+                placeholder="Search agents, skills, toolsets, or tools"
+                value={filter}
+                onChange={(event) => setFilter(event.target.value)}
+                className="nodes-dashboard__search-input"
+              />
+            </label>
+
+            {!loading && normalizedFilter && visibleNodes.length === 0 ? (
+              <ResourceState
+                kind="empty"
+                title="No capabilities match this search"
+                description="Change the search term to find another agent, skill, toolset, or tool."
+                compact
+              />
+            ) : null}
+
+            <div className="nodes-dashboard__cards">
+          {visibleNodes.map(({ node, data, capabilityLoading }) => {
             const expanded = expandedNodes.has(node.role);
             const profile = node.profiles[0];
             const color = authorColor(node.role);
+            const nodeNumber = nodes.findIndex((candidate) => candidate.role === node.role) + 1;
             return (
               <article key={node.role} className="node-card">
                 <button
@@ -210,11 +295,12 @@ export default function SkillsExplorer() {
                     style={{ background: node.reachable ? "var(--status-success)" : "var(--status-error)" }}
                   />
                   <span className="node-card__identity">
-                    <span className="node-card__name">Node {index + 1} · {node.name}</span>
+                    <span className="node-card__name">Node {nodeNumber} · {node.name}</span>
                     <span className="node-card__host">{node.host}</span>
                   </span>
                   <span className="node-card__status">
                     {node.reachable ? <Wifi size={13} /> : <WifiOff size={13} />}
+                    <span>{node.reachable ? "Reachable" : "Unavailable"}</span>
                   </span>
                   {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                 </button>
@@ -227,27 +313,47 @@ export default function SkillsExplorer() {
                         <span>Active API profile</span>
                       </div>
                       <div className="hermes-profile-control">
-                        <span className="node-card__profile-dot" style={{ background: color }} />
+                        <span className="node-card__profile-dot" style={{ background: node.reachable ? color : "var(--status-error)" }} />
                         <select value={profile?.name ?? node.role} disabled aria-label={`${node.name} active Hermes profile`}>
                           <option>{profile?.name ?? node.role}</option>
                         </select>
-                        <span className="capability-badge capability-badge--enabled">routed key</span>
+                        <span className={`capability-badge ${node.reachable ? "capability-badge--enabled" : ""}`}>
+                          {node.reachable ? "routed key" : "unavailable"}
+                        </span>
                       </div>
                       <span className="node-card__empty-hint">
                         The node URL and its profile key select this profile.
                       </span>
                     </section>
 
-                    {data.error ? (
-                      <div className="node-card__error">{data.error}</div>
+                    {capabilityLoading ? (
+                      <Skeleton variant="list" lines={4} />
+                    ) : !node.reachable ? (
+                      <ResourceState
+                        kind="unavailable"
+                        title={`${node.name} is unavailable`}
+                        description="Skills and toolsets remain unavailable until this node responds."
+                        detail={`No response came from ${node.host}.`}
+                        compact
+                      />
                     ) : (
                       <>
                         <CapabilitySection
                           icon={<Sparkles size={13} />}
                           title="Skills"
-                          count={data.skills.length}
+                          count={data.skills.items.length}
                         >
-                          {data.skills.length ? data.skills.map((skill) => (
+                          {data.skills.failure ? (
+                            <ResourceState
+                              kind={data.skills.failure.kind}
+                              title={data.skills.failure.kind === "permission" ? "Skill access denied" : "Skills unavailable"}
+                              description="This node did not return its skill catalog."
+                              detail={data.skills.failure.detail}
+                              diagnostics={diagnosticsText(`${node.name} skills`, data.skills.failure, { role: node.role, host: node.host })}
+                              operationsHref="/infra"
+                              compact
+                            />
+                          ) : data.skills.items.length ? data.skills.items.map((skill) => (
                             <div key={skill.name} className="capability-row">
                               <div className="capability-row__content">
                                 <strong>{skill.name}</strong>
@@ -257,15 +363,27 @@ export default function SkillsExplorer() {
                                 {skill.enabled === false ? "disabled" : skill.category ?? "available"}
                               </span>
                             </div>
-                          )) : <span className="node-card__empty-hint">No matching skills</span>}
+                          )) : <span className="node-card__empty-hint">
+                            {normalizedFilter ? "No matching skills" : "This profile reports no skills"}
+                          </span>}
                         </CapabilitySection>
 
                         <CapabilitySection
                           icon={<Wrench size={13} />}
                           title="Toolsets"
-                          count={data.toolsets.length}
+                          count={data.toolsets.items.length}
                         >
-                          {data.toolsets.length ? data.toolsets.map((toolset) => (
+                          {data.toolsets.failure ? (
+                            <ResourceState
+                              kind={data.toolsets.failure.kind}
+                              title={data.toolsets.failure.kind === "permission" ? "Toolset access denied" : "Toolsets unavailable"}
+                              description="This node did not return its toolset catalog."
+                              detail={data.toolsets.failure.detail}
+                              diagnostics={diagnosticsText(`${node.name} toolsets`, data.toolsets.failure, { role: node.role, host: node.host })}
+                              operationsHref="/infra"
+                              compact
+                            />
+                          ) : data.toolsets.items.length ? data.toolsets.items.map((toolset) => (
                             <div key={toolset.name} className="toolset-card">
                               <div className="toolset-card__header">
                                 <div className="capability-row__content">
@@ -287,7 +405,9 @@ export default function SkillsExplorer() {
                                 </div>
                               ) : null}
                             </div>
-                          )) : <span className="node-card__empty-hint">No matching toolsets</span>}
+                          )) : <span className="node-card__empty-hint">
+                            {normalizedFilter ? "No matching toolsets" : "This profile reports no toolsets"}
+                          </span>}
                         </CapabilitySection>
                       </>
                     )}
@@ -296,7 +416,9 @@ export default function SkillsExplorer() {
               </article>
             );
           })}
-        </div>
+            </div>
+          </>
+        ) : null}
       </div>
     </Panel>
   );

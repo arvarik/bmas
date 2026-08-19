@@ -17,6 +17,10 @@ import { DelegationTree } from "./DelegationTree";
 import { bodyPreview } from "./board/boardModel";
 import { typeMeta } from "./board/boardModel";
 import { X, CheckCircle, XCircle, Send } from "lucide-react";
+import {
+  requestTaskOperatorAction,
+  useTaskOperatorAction,
+} from "@/hooks/useTaskOperatorAction";
 
 type ApprovalChoice = "once" | "session" | "always" | "deny";
 
@@ -64,8 +68,12 @@ export function TurnInspector({
   const [approvalPending, setApprovalPending] = useState<Record<string, boolean>>({});
   const [approvalErrors, setApprovalErrors] = useState<Record<string, string>>({});
   const [steerInput, setSteerInput] = useState("");
-  const [steerPending, setSteerPending] = useState(false);
-  const [steerResult, setSteerResult] = useState<string | null>(null);
+  const {
+    state: steerAction,
+    execute: executeSteer,
+    retry: retrySteer,
+  } = useTaskOperatorAction();
+  const steerPending = steerAction.status === "pending";
 
   // Find turn
   const turn = useMemo(() => {
@@ -130,20 +138,12 @@ export function TurnInspector({
       setApprovalPending((current) => ({ ...current, [approvalRunId]: true }));
       setApprovalErrors((current) => ({ ...current, [approvalRunId]: "" }));
       try {
-        const resp = await fetch("/api/hitl", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "approval",
-            task_id: taskId,
-            run_id: approvalRunId,
-            choice,
-          }),
+        await requestTaskOperatorAction({
+          action: "approval",
+          task_id: taskId,
+          run_id: approvalRunId,
+          choice,
         });
-        if (!resp.ok) {
-          const body = await resp.json().catch(() => ({})) as { error?: string; detail?: string };
-          throw new Error(body.error ?? body.detail ?? `HTTP ${resp.status}`);
-        }
         setDecidedRuns((prev) => ({ ...prev, [approvalRunId]: choice }));
       } catch (error) {
         setApprovalErrors((current) => ({
@@ -161,31 +161,19 @@ export function TurnInspector({
     const taskId = turn?.task_id;
     const input = steerInput.trim();
     if (!taskId || !runId || !input || steerPending) return;
-    setSteerPending(true);
-    setSteerResult(null);
-    try {
-      const response = await fetch("/api/hitl", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "run-steer",
-          task_id: taskId,
-          run_id: runId,
-          input,
-        }),
-      });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({})) as { error?: string; detail?: string };
-        throw new Error(body.error ?? body.detail ?? `HTTP ${response.status}`);
-      }
+    const result = await executeSteer(
+      { action: "run-steer", task_id: taskId, run_id: runId, input },
+      "Guidance accepted by Hermes.",
+    );
+    if (result.ok) {
       setSteerInput("");
-      setSteerResult("Guidance accepted by Hermes.");
-    } catch (error) {
-      setSteerResult(error instanceof Error ? error.message : "Run steering failed");
-    } finally {
-      setSteerPending(false);
     }
-  }, [runId, steerInput, steerPending, turn]);
+  }, [executeSteer, runId, steerInput, steerPending, turn]);
+
+  const retryRunSteer = useCallback(async () => {
+    const result = await retrySteer("Guidance accepted by Hermes.");
+    if (result.ok) setSteerInput("");
+  }, [retrySteer]);
 
   if (!turnId) return null;
 
@@ -311,7 +299,23 @@ export function TurnInspector({
                 <Send size={13} /> {steerPending ? "Sending" : "Send"}
               </button>
             </div>
-            {steerResult ? <span className="hermes-run-steer__result">{steerResult}</span> : null}
+            {steerAction.status !== "idle" ? (
+              <span
+                className="hermes-run-steer__result"
+                role={steerAction.status === "error" ? "alert" : "status"}
+              >
+                {steerAction.message}
+                {steerAction.status === "error" ? (
+                  <button
+                    type="button"
+                    onClick={() => void retryRunSteer()}
+                    style={{ marginLeft: "var(--space-2)" }}
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </span>
+            ) : null}
           </div>
         ) : null}
 

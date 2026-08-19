@@ -25,10 +25,11 @@ import {
   Search,
   Pin,
   MessagesSquare,
+  AlertTriangle,
+  RotateCcw,
 } from "lucide-react";
 import type { TaskHistoryFilters, TaskSummary } from "@/hooks/useTaskHistory";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { ActionableError } from "@/components/ui/ActionableError";
 
 // ── Props ─────────────────────────────────────────────────────────────
 
@@ -235,6 +236,29 @@ export function TaskSidebar({
     onFiltersChange({ ...filters, ...patch });
   };
 
+  const hasActiveFilters = Boolean(
+    filters.search
+    || filters.status
+    || filters.dateFrom
+    || filters.minCost
+    || filters.maxCost,
+  );
+  const taskHistoryPermissionDenied = error
+    ? /\b40[13]\b|unauthori[sz]ed|forbidden|permission/i.test(error)
+    : false;
+
+  const clearFilters = () => {
+    setSearchDraft("");
+    setDateChoice("");
+    onFiltersChange({
+      search: "",
+      status: "",
+      dateFrom: "",
+      minCost: "",
+      maxCost: "",
+    });
+  };
+
   const togglePin = (taskId: string) => {
     const next = pinnedIds.includes(taskId)
       ? pinnedIds.filter((id) => id !== taskId)
@@ -343,13 +367,29 @@ export function TaskSidebar({
               </select>
             </div>
           </div>
-          {error ? (
-            <ActionableError
-              component="Task history"
-              cause={error}
-              onRetry={onRetry}
-              compact
-            />
+          {!isLoading && error && tasks.length === 0 ? (
+            <div className="task-sidebar__state" role="status">
+              <AlertTriangle size={17} aria-hidden="true" />
+              <strong>{taskHistoryPermissionDenied ? "Task history access denied" : "Task history unavailable"}</strong>
+              <span>
+                {taskHistoryPermissionDenied
+                  ? "Your current access cannot read tasks."
+                  : "Open system status for the connection details."}
+              </span>
+              <div className="task-sidebar__state-actions">
+                <button type="button" onClick={onRetry}>
+                  <RotateCcw size={12} aria-hidden="true" /> Retry
+                </button>
+                <Link href="/infra">Open operations</Link>
+              </div>
+            </div>
+          ) : null}
+          {!isLoading && error && tasks.length > 0 ? (
+            <div className="task-sidebar__stale" role="status">
+              <AlertTriangle size={13} aria-hidden="true" />
+              <span>The latest tasks are unavailable.</span>
+              <button type="button" onClick={onRetry}>Retry</button>
+            </div>
           ) : null}
           {isLoading && tasks.length === 0 && (
             <div className="task-sidebar__loading">
@@ -359,9 +399,12 @@ export function TaskSidebar({
             </div>
           )}
 
-          {!isLoading && tasks.length === 0 && (
+          {!isLoading && !error && visibleTasks.length === 0 && (
             <div className="task-sidebar__empty">
-              No tasks yet
+              <span>{hasActiveFilters ? "No tasks match these filters." : "No tasks yet."}</span>
+              {hasActiveFilters ? (
+                <button type="button" onClick={clearFilters}>Clear filters</button>
+              ) : null}
             </div>
           )}
 

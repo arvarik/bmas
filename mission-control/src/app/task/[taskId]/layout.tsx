@@ -194,6 +194,8 @@ export default function TaskLayout({
           task={streamData.taskMeta}
           cost={streamData.cost}
           isLive={streamData.isLive}
+          isPaused={streamData.isPaused}
+          controls={capability?.features.controls ?? []}
         />
         {tabs.length > 0 ? <nav className="task-tabs" role="tablist">
           {tabs.map((tab) => (

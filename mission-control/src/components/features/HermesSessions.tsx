@@ -5,13 +5,19 @@ import {
   Bot,
   ChevronRight,
   GitFork,
-  MessagesSquare,
   RefreshCw,
 } from "lucide-react";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { Panel } from "@/components/ui/Panel";
+import { ResourceState } from "@/components/ui/ResourceState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useToast } from "@/hooks/useToast";
+import {
+  diagnosticsText,
+  failureFromReason,
+  failureFromResponse,
+  type RequestFailure,
+} from "@/lib/request-state";
 
 interface NodeData {
   role: string;
@@ -53,11 +59,6 @@ function asSessionList(value: unknown): HermesSession[] {
   return Array.isArray(data) ? data as HermesSession[] : [];
 }
 
-async function errorMessage(response: Response): Promise<string> {
-  const body = await response.json().catch(() => ({})) as { error?: string };
-  return body.error ?? `HTTP ${response.status}`;
-}
-
 function dateText(value: number | string | null | undefined): string {
   if (value == null || value === "") return "Unknown time";
   const date = typeof value === "number"
@@ -77,6 +78,7 @@ function contentText(value: unknown): string {
 }
 
 export function HermesSessions() {
+  const [configuredNodes, setConfiguredNodes] = useState<NodeData[]>([]);
   const [nodes, setNodes] = useState<NodeData[]>([]);
   const [selectedNode, setSelectedNode] = useState("");
   const [sessions, setSessions] = useState<HermesSession[]>([]);
@@ -84,10 +86,15 @@ export function HermesSessions() {
   const [messages, setMessages] = useState<HermesMessage[]>([]);
   const [selectedSession, setSelectedSession] = useState<HermesSession | null>(null);
   const [forkTitle, setForkTitle] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [discovering, setDiscovering] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [forking, setForking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [discoveryFailure, setDiscoveryFailure] = useState<RequestFailure | null>(null);
+  const [sessionFailure, setSessionFailure] = useState<RequestFailure | null>(null);
+  const [detailFailure, setDetailFailure] = useState<RequestFailure | null>(null);
+  const [detailAttempt, setDetailAttempt] = useState(0);
+  const profileRequest = useRef(0);
   const listRequest = useRef(0);
   const { toast } = useToast();
 
@@ -95,13 +102,13 @@ export function HermesSessions() {
     if (!node) return;
     const requestId = ++listRequest.current;
     setLoading(true);
-    setError(null);
+    setSessionFailure(null);
     try {
       const response = await fetch(
         `/api/sessions?node=${encodeURIComponent(node)}&limit=100&include_children=true`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: AbortSignal.timeout(8_000) },
       );
-      if (!response.ok) throw new Error(await errorMessage(response));
+      if (!response.ok) throw await failureFromResponse(response, "Session request failed");
       const body = await response.json();
       if (requestId !== listRequest.current) return;
       const next = asSessionList(body);
@@ -113,32 +120,55 @@ export function HermesSessions() {
       if (requestId !== listRequest.current) return;
       setSessions([]);
       setSelectedId(null);
-      setError(reason instanceof Error ? reason.message : "Session request failed");
+      setSessionFailure(failureFromReason(reason, "Session request failed"));
     } finally {
       if (requestId === listRequest.current) setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch("/api/profiles", { cache: "no-store", signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(await errorMessage(response));
-        return response.json() as Promise<{ nodes?: NodeData[] }>;
-      })
-      .then((body) => {
-        const nextNodes = (body.nodes ?? []).filter((node) => node.reachable);
-        setNodes(nextNodes);
-        setSelectedNode((current) => current || nextNodes[0]?.role || "");
-        if (!nextNodes.length) setLoading(false);
-      })
-      .catch((reason) => {
-        if (controller.signal.aborted) return;
-        setError(reason instanceof Error ? reason.message : "Node discovery failed");
-        setLoading(false);
+  const loadNodes = useCallback(async () => {
+    const requestId = ++profileRequest.current;
+    setDiscovering(true);
+    setDiscoveryFailure(null);
+    try {
+      const response = await fetch("/api/profiles", {
+        cache: "no-store",
+        signal: AbortSignal.timeout(8_000),
       });
-    return () => controller.abort();
+      if (!response.ok) throw await failureFromResponse(response, "Agent profile discovery failed");
+      const body = await response.json() as { nodes?: NodeData[] };
+      if (requestId !== profileRequest.current) return;
+      const configured = body.nodes ?? [];
+      const reachable = configured.filter((node) => node.reachable);
+      setConfiguredNodes(configured);
+      setNodes(reachable);
+      setSelectedNode((current) => reachable.some((node) => node.role === current)
+        ? current
+        : reachable[0]?.role ?? "");
+      if (reachable.length) setLoading(true);
+      if (!reachable.length) {
+        listRequest.current += 1;
+        setSessions([]);
+        setSelectedId(null);
+        setSelectedSession(null);
+        setMessages([]);
+        setLoading(false);
+      }
+    } catch (reason) {
+      if (requestId !== profileRequest.current) return;
+      setConfiguredNodes([]);
+      setNodes([]);
+      setSelectedNode("");
+      setDiscoveryFailure(failureFromReason(reason, "Agent profile discovery failed"));
+    } finally {
+      if (requestId === profileRequest.current) setDiscovering(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(loadNodes);
+    return () => { profileRequest.current += 1; };
+  }, [loadNodes]);
 
   useEffect(() => {
     if (selectedNode) void Promise.resolve().then(() => loadSessions(selectedNode));
@@ -149,6 +179,7 @@ export function HermesSessions() {
     const controller = new AbortController();
     void Promise.resolve().then(async () => {
       setDetailLoading(true);
+      setDetailFailure(null);
       setSelectedSession(null);
       setMessages([]);
       try {
@@ -156,21 +187,22 @@ export function HermesSessions() {
           `/api/sessions/${encodeURIComponent(selectedId)}?node=${encodeURIComponent(selectedNode)}`,
           { cache: "no-store", signal: controller.signal },
         );
-        if (!response.ok) throw new Error(await errorMessage(response));
+        if (!response.ok) throw await failureFromResponse(response, "Session detail request failed");
         const body = await response.json() as { session?: HermesSession; messages?: HermesMessage[] };
         setSelectedSession(body.session ?? null);
         setMessages(body.messages ?? []);
         setForkTitle(`${body.session?.title || "Session"} fork`);
       } catch (reason) {
         if (!controller.signal.aborted) {
-          toast({ type: "error", message: reason instanceof Error ? reason.message : "Session detail failed" });
+          const failure = failureFromReason(reason, "Session detail request failed");
+          setDetailFailure(failure);
         }
       } finally {
         if (!controller.signal.aborted) setDetailLoading(false);
       }
     });
     return () => controller.abort();
-  }, [selectedId, selectedNode, toast]);
+  }, [detailAttempt, selectedId, selectedNode]);
 
   const activeProfile = useMemo(
     () => nodes.find((node) => node.role === selectedNode)?.profiles[0]?.name ?? selectedNode,
@@ -186,7 +218,7 @@ export function HermesSessions() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ node: selectedNode, title: forkTitle.trim() }),
       });
-      if (!response.ok) throw new Error(await errorMessage(response));
+      if (!response.ok) throw await failureFromResponse(response, "Session fork failed");
       const body = await response.json() as { session?: HermesSession; object?: string };
       const forked = body.session
         ?? (typeof body === "object" && body !== null
@@ -196,7 +228,7 @@ export function HermesSessions() {
       await loadSessions(selectedNode);
       if (forked?.id) setSelectedId(forked.id);
     } catch (reason) {
-      toast({ type: "error", message: reason instanceof Error ? reason.message : "Fork failed" });
+      toast({ type: "error", message: failureFromReason(reason, "Session fork failed").message });
     } finally {
       setForking(false);
     }
@@ -209,69 +241,147 @@ export function HermesSessions() {
       actions={(
         <ActionButton
           variant="secondary"
-          onClick={() => void loadSessions(selectedNode)}
-          loading={loading}
-          disabled={!selectedNode}
+          onClick={() => void (selectedNode ? loadSessions(selectedNode) : loadNodes())}
+          loading={discovering || loading}
         >
           <RefreshCw size={14} /> Refresh
         </ActionButton>
       )}
     >
       <div className="hermes-sessions">
-        <div className="hermes-sessions__toolbar">
-          <label>
-            <span>Agent profile</span>
-            <select
-              value={selectedNode}
-              onChange={(event) => {
-                listRequest.current += 1;
-                setSelectedId(null);
-                setSelectedSession(null);
-                setMessages([]);
-                setSelectedNode(event.target.value);
-              }}
-            >
-              {nodes.map((node) => (
-                <option key={node.role} value={node.role}>
-                  {node.name} · {node.profiles[0]?.name ?? node.role}
-                </option>
-              ))}
-            </select>
-          </label>
-          {selectedNode ? <span className="capability-badge capability-badge--enabled">{activeProfile}</span> : null}
-        </div>
+        {discovering && nodes.length === 0 ? <Skeleton variant="list" lines={6} /> : null}
 
-        {error ? <div className="node-card__error">{error}</div> : null}
-        {!error && !loading && sessions.length === 0 ? (
-          <div className="hermes-sessions__empty">
-            <MessagesSquare size={28} />
-            <span>No sessions exist for this profile.</span>
-          </div>
+        {!discovering && discoveryFailure ? (
+          <ResourceState
+            kind={discoveryFailure.kind}
+            title={discoveryFailure.kind === "permission" ? "Agent profile access denied" : "Agent profiles unavailable"}
+            description="Mission Control cannot discover the profiles that provide Hermes sessions."
+            detail={discoveryFailure.detail}
+            diagnostics={diagnosticsText("Hermes session profile discovery", discoveryFailure)}
+            onRetry={loadNodes}
+            operationsHref="/infra"
+          />
         ) : null}
 
-        <div className="hermes-sessions__layout">
-          <div className="hermes-sessions__list" aria-label="Hermes session list">
-            {loading ? <Skeleton variant="list" lines={6} /> : sessions.map((session) => (
-              <button
-                key={session.id}
-                type="button"
-                className={`hermes-session-row ${selectedId === session.id ? "hermes-session-row--active" : ""}`}
-                onClick={() => setSelectedId(session.id)}
-              >
-                <Bot size={14} />
-                <span className="hermes-session-row__content">
-                  <strong>{session.title || session.id}</strong>
-                  <span>{session.preview || `${session.message_count ?? 0} messages`}</span>
-                  <small>{dateText(session.last_active ?? session.started_at)}</small>
-                </span>
-                {session.parent_session_id ? <GitFork size={12} aria-label="Forked session" /> : <ChevronRight size={13} />}
-              </button>
-            ))}
-          </div>
+        {!discovering && !discoveryFailure && nodes.length === 0 ? (
+          <ResourceState
+            kind="unavailable"
+            title={configuredNodes.length ? "No agent profiles are reachable" : "No agent profiles are configured"}
+            description={configuredNodes.length
+              ? "Hermes sessions remain unavailable until at least one configured agent responds."
+              : "Add an agent node before you browse or fork Hermes sessions."}
+            detail={configuredNodes.length
+              ? configuredNodes.map((node) => `${node.name}: ${node.host}`).join("\n")
+              : "The profiles endpoint returned an empty node list."}
+            diagnostics={JSON.stringify({
+              component: "Hermes sessions",
+              state: configuredNodes.length ? "all_profiles_unreachable" : "no_profiles_configured",
+              nodes: configuredNodes.map(({ role, name, host, reachable }) => ({ role, name, host, reachable })),
+              captured_at: new Date().toISOString(),
+            }, null, 2)}
+            onRetry={loadNodes}
+            operationsHref="/infra"
+          />
+        ) : null}
 
-          <div className="hermes-session-detail">
-            {detailLoading ? <Skeleton variant="list" lines={6} /> : selectedSession ? (
-              <>
+        {nodes.length > 0 ? (
+          <>
+            <div className="hermes-sessions__toolbar">
+              <label>
+                <span>Agent profile</span>
+                <select
+                  value={selectedNode}
+                  onChange={(event) => {
+                    listRequest.current += 1;
+                    setSelectedId(null);
+                    setSelectedSession(null);
+                    setSessions([]);
+                    setMessages([]);
+                    setDetailFailure(null);
+                    setSessionFailure(null);
+                    setSelectedNode(event.target.value);
+                  }}
+                >
+                  {nodes.map((node) => (
+                    <option key={node.role} value={node.role}>
+                      {node.name} · {node.profiles[0]?.name ?? node.role}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span className="capability-badge capability-badge--enabled">{activeProfile}</span>
+            </div>
+
+            {loading && sessions.length === 0 ? <Skeleton variant="list" lines={6} /> : null}
+
+            {!loading && sessionFailure ? (
+              <ResourceState
+                kind={sessionFailure.kind}
+                title={sessionFailure.kind === "permission" ? "Session access denied" : "Sessions unavailable"}
+                description={`Mission Control cannot load sessions from ${activeProfile}.`}
+                detail={sessionFailure.detail}
+                diagnostics={diagnosticsText("Hermes session list", sessionFailure, {
+                  node: selectedNode,
+                  profile: activeProfile,
+                })}
+                onRetry={() => loadSessions(selectedNode)}
+                operationsHref="/infra"
+              />
+            ) : null}
+
+            {!loading && !sessionFailure && sessions.length === 0 ? (
+              <ResourceState
+                kind="empty"
+                title="No sessions for this profile"
+                description={`${activeProfile} is reachable, but it has no persisted sessions.`}
+                onRetry={() => loadSessions(selectedNode)}
+              />
+            ) : null}
+
+            {sessions.length > 0 ? (
+              <div className="hermes-sessions__layout">
+                <div className="hermes-sessions__list" aria-label="Hermes session list">
+                  {sessions.map((session) => (
+                    <button
+                      key={session.id}
+                      type="button"
+                      className={`hermes-session-row ${selectedId === session.id ? "hermes-session-row--active" : ""}`}
+                      onClick={() => {
+                        setSelectedSession(null);
+                        setMessages([]);
+                        setDetailFailure(null);
+                        setDetailLoading(true);
+                        setSelectedId(session.id);
+                      }}
+                    >
+                      <Bot size={14} />
+                      <span className="hermes-session-row__content">
+                        <strong>{session.title || session.id}</strong>
+                        <span>{session.preview || `${session.message_count ?? 0} messages`}</span>
+                        <small>{dateText(session.last_active ?? session.started_at)}</small>
+                      </span>
+                      {session.parent_session_id ? <GitFork size={12} aria-label="Forked session" /> : <ChevronRight size={13} />}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="hermes-session-detail">
+                  {detailLoading ? <Skeleton variant="list" lines={6} /> : detailFailure ? (
+                    <ResourceState
+                      kind={detailFailure.kind}
+                      title={detailFailure.kind === "permission" ? "Transcript access denied" : "Transcript unavailable"}
+                      description="Mission Control cannot load this session transcript."
+                      detail={detailFailure.detail}
+                      diagnostics={diagnosticsText("Hermes session transcript", detailFailure, {
+                        node: selectedNode,
+                        session_id: selectedId,
+                      })}
+                      onRetry={() => setDetailAttempt((current) => current + 1)}
+                      operationsHref="/infra"
+                      compact
+                    />
+                  ) : selectedSession ? (
+                    <>
                 <div className="hermes-session-detail__header">
                   <div>
                     <h3>{selectedSession.title || selectedSession.id}</h3>
@@ -310,10 +420,13 @@ export function HermesSessions() {
                     Fork session
                   </ActionButton>
                 </div>
-              </>
+                    </>
+                  ) : null}
+                </div>
+              </div>
             ) : null}
-          </div>
-        </div>
+          </>
+        ) : null}
       </div>
     </Panel>
   );

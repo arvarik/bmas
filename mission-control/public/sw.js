@@ -1,6 +1,5 @@
-const CACHE_NAME = "bmas-swarm-cache-v3";
+const CACHE_NAME = "bmas-swarm-cache-v4";
 const STATIC_ASSETS = [
-  "/",
   "/ant-head.png",
   "/icon.png",
   "/apple-icon.png",
@@ -38,42 +37,34 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
-  // Bypass cache entirely for POST/PUT/DELETE and dynamic API/SSE routes
-  if (url.pathname.startsWith("/api") || event.request.method !== "GET") {
+  // Keep server data, event streams, and document responses on the network.
+  // Cached HTML can reference an older client bundle after an update.
+  if (
+    url.origin !== self.location.origin ||
+    url.pathname.startsWith("/api") ||
+    event.request.method !== "GET" ||
+    event.request.mode === "navigate" ||
+    event.request.headers.get("accept")?.includes("text/html")
+  ) {
     return;
   }
 
-  // Handle caching for layout pages and static assets
+  const cacheable = STATIC_ASSETS.includes(url.pathname)
+    || url.pathname.startsWith("/_next/static/");
+  if (!cacheable) return;
+
+  // Versioned Next.js assets and explicit icons are safe to cache first.
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        // Asynchronous background refresh for document paths
-        if (event.request.headers.get("accept")?.includes("text/html")) {
-          fetch(event.request)
-            .then((networkResponse) => {
-              if (networkResponse.status === 200) {
-                caches
-                  .open(CACHE_NAME)
-                  .then((cache) => cache.put(event.request, networkResponse));
-              }
-            })
-            .catch(() => {});
-        }
-        return cachedResponse;
-      }
+      if (cachedResponse) return cachedResponse;
 
       return fetch(event.request).then((response) => {
-        // Cache static local assets dynamically upon discovery
-        if (
-          response &&
-          response.status === 200 &&
-          url.origin === self.location.origin &&
-          !url.pathname.startsWith("/_next/webpack-hmr")
-        ) {
+        if (response && response.status === 200) {
           const responseToCache = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
+          return caches
+            .open(CACHE_NAME)
+            .then((cache) => cache.put(event.request, responseToCache))
+            .then(() => response);
         }
         return response;
       });
