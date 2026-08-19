@@ -1,11 +1,18 @@
 # /opt/bmas/daemon/src/routes/tasks.py
 """Task REST endpoints — list, detail, debate, cost, logs, config probe."""
 
+from datetime import datetime
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 import database as db
-from config import BLACKBOARD_V2, COORDINATION_VARIANT
+from config import (
+    BLACKBOARD_V2,
+    COORDINATION_VARIANT,
+    STORAGE_MAX_TASK_OUTPUT_MB,
+    STORAGE_MAX_UPLOAD_MB,
+)
 
 router = APIRouter()
 
@@ -29,8 +36,13 @@ async def list_tasks_endpoint(
     limit: int = 50,
     offset: int = 0,
     status: str | None = None,
+    search: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    min_cost: float | None = None,
+    max_cost: float | None = None,
 ):
-    """List task history with pagination and optional status filter."""
+    """List task history with pagination and operator filters."""
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
 
@@ -40,8 +52,35 @@ async def list_tasks_endpoint(
             status_code=400,
         )
 
-    tasks = await db.list_tasks(limit=limit, offset=offset, status=status)
-    total = await db.count_tasks(status=status)
+    for label, value in (("date_from", date_from), ("date_to", date_to)):
+        if value:
+            try:
+                datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return JSONResponse(
+                    {"error": f"Invalid {label}: use an ISO-8601 timestamp"},
+                    status_code=400,
+                )
+    if min_cost is not None and min_cost < 0:
+        return JSONResponse({"error": "min_cost cannot be negative"}, status_code=400)
+    if max_cost is not None and max_cost < 0:
+        return JSONResponse({"error": "max_cost cannot be negative"}, status_code=400)
+    if min_cost is not None and max_cost is not None and min_cost > max_cost:
+        return JSONResponse(
+            {"error": "min_cost cannot exceed max_cost"},
+            status_code=400,
+        )
+
+    filters = {
+        "status": status,
+        "search": search.strip() if search else None,
+        "date_from": date_from,
+        "date_to": date_to,
+        "min_cost": min_cost,
+        "max_cost": max_cost,
+    }
+    tasks = await db.list_tasks(limit=limit, offset=offset, **filters)
+    total = await db.count_tasks(**filters)
 
     return {"tasks": tasks, "total": total, "limit": limit, "offset": offset}
 
@@ -55,6 +94,12 @@ async def get_task_detail(task_id: str):
 
     sub_tasks = await db.get_sub_tasks(task_id)
     task["event_delivery"] = await db.get_event_delivery_health(task_id)
+    task["storage"] = {
+        "input_bytes": await db.get_task_files_total_bytes(task_id),
+        "output_bytes": await db.get_task_artifacts_total_bytes(task_id),
+        "max_upload_mb": STORAGE_MAX_UPLOAD_MB,
+        "max_output_mb": STORAGE_MAX_TASK_OUTPUT_MB,
+    }
     return {"task": task, "sub_tasks": sub_tasks}
 
 

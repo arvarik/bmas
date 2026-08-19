@@ -101,6 +101,12 @@ export function mapTaskMeta(task: Record<string, unknown>): TaskMeta {
     completed_at: task.completed_at as string | undefined,
     duration_ms: task.duration_ms as number | undefined,
     full_input: task.full_input as string | undefined,
+    run_state: task.run_state as string | undefined,
+    started_at: task.started_at as string | undefined,
+    last_heartbeat_at: task.last_heartbeat_at as string | undefined,
+    error_message: task.error_message as string | undefined,
+    resume_count: task.resume_count as number | undefined,
+    storage: task.storage as TaskMeta["storage"],
   };
 }
 

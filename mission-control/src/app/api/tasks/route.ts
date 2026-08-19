@@ -6,7 +6,16 @@ export async function GET(request: Request): Promise<NextResponse> {
   const params = new URLSearchParams();
 
   // Forward supported query params
-  for (const key of ["limit", "offset", "status"]) {
+  for (const key of [
+    "limit",
+    "offset",
+    "status",
+    "search",
+    "date_from",
+    "date_to",
+    "min_cost",
+    "max_cost",
+  ]) {
     const val = searchParams.get(key);
     if (val) params.set(key, val);
   }

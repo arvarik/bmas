@@ -1,8 +1,6 @@
-const CACHE_NAME = "bmas-swarm-cache-v2";
+const CACHE_NAME = "bmas-swarm-cache-v3";
 const STATIC_ASSETS = [
   "/",
-  "/globals.css",
-  "/views.css",
   "/ant-head.png",
   "/icon.png",
   "/apple-icon.png",

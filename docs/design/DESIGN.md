@@ -332,7 +332,8 @@ Replaced from feature-navigation to **task-history sidebar**.
 - **Width:** 240px (collapsible to 48px icon-only mode).
 - **Background:** `--surface-raised`
 - **"+ New Task" button:** Top of sidebar, primary ActionButton, navigates to `/` (landing page).
-- **Task list:** Date-grouped (Today, Yesterday, Last 7 Days, etc.). Each item shows status indicator + task ID + truncated label. Active item (matching `usePathname()`) styled with `--surface-active` + 2px left accent bar.
+- **Task list:** Date-grouped (Today, Yesterday, Last 7 Days, etc.). Each item shows a status indicator, task ID, truncated label, and pin action. Failed tasks and pending operator actions appear first.
+- **Task filters:** Search matches the task ID, label, and full input. State, date, and cost controls filter the server query.
 - **System section:** Divider + Infrastructure (`/infra`) and Skills (`/skills`) nav items.
 - **Collapse behavior:** Toggle icon collapses to 48px. In collapsed mode: "+" icon for new task, status dots for each task (no labels).
 - **Bottom:** Agent health indicators — three small dots (one per agent node), colored green/red. Data from `useSystemStream()`.
@@ -349,11 +350,13 @@ The main area renders Next.js App Router pages based on the URL:
 | `/task/[taskId]/mission` | Blackboard | Mission cockpit — 4-panel live layout with blackboard board (timeline/threads/graph views), agent minds, budget gauge, convergence meter, and HITL controls |
 | `/task/[taskId]/dag` | Graph | Execution graph — React Flow canvas with swimlane visualization of agent turns grouped by round |
 | `/task/[taskId]/logs` | Logs | Distributed log stream — unified chronological log across all agents with per-role filtering and structured detail drawer |
-| `/task/[taskId]/artifacts` | Artifacts | Artifact browser — file tree + downloads for agent-produced output files |
+| `/task/[taskId]/files` | Files | Unified input and output workspace with previews, history, downloads, and version comparisons |
+
+The old `/task/[taskId]/artifacts` route remains compatible with saved links. It renders the Files workspace.
 | `/infra` | — | Infrastructure telemetry — Beszel Hub metrics for all nodes |
 | `/skills` | — | Skills explorer — per-agent skill lists with view/delete actions |
 
-All `/task/[taskId]/*` pages share a **task detail layout** (`task/[taskId]/layout.tsx`) that renders the task header + tab navigation and hosts the `TaskStreamContext.Provider` for SSE data distribution. Tab switches are instantaneous DOM swaps — the SSE connection persists in the layout.
+All `/task/[taskId]/*` pages share a **task detail layout** (`task/[taskId]/layout.tsx`). The layout renders the task header, lifecycle row, operations row, actions, and tab navigation. It also hosts the `TaskStreamContext.Provider` for SSE data distribution. Tab switches keep the SSE connection.
 
 ### 6.5 Responsive Behavior
 
@@ -461,7 +464,8 @@ src/
 │   │       ├── mission/page.tsx      # Blackboard — 4-panel live cockpit
 │   │       ├── dag/page.tsx          # Graph — execution graph (React Flow)
 │   │       ├── logs/page.tsx         # Logs — distributed log stream
-│   │       └── artifacts/page.tsx    # Artifacts — file tree + downloads
+│   │       ├── files/page.tsx        # Inputs, outputs, previews, and versions
+│   │       └── artifacts/page.tsx    # Compatibility route for saved links
 │   ├── infra/page.tsx                # Infrastructure telemetry
 │   └── skills/page.tsx               # Skills explorer
 ├── components/

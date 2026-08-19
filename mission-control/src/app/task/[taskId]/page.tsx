@@ -12,13 +12,13 @@
 
 import { useState, useCallback, useRef, useEffect, Fragment, useMemo } from "react";
 import type { ComponentType } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 
 import { useTaskData } from "./TaskStreamContext";
 import { Panel } from "@/components/ui/Panel";
 import { MetricCard } from "@/components/ui/MetricCard";
 import {
-  Activity, AlertTriangle, Pause, Play, XCircle,
+  Activity, Pause, Play, XCircle,
   Send, ChevronDown, Clock, Users,
   Layers, Zap, Radio, MessageSquare, Cpu, Cloud,
 } from "lucide-react";
@@ -804,7 +804,6 @@ function LiveStat({
 
 export default function TaskOverviewPage() {
   const { taskId } = useParams();
-  const router = useRouter();
   const streamData = useTaskData();
   const {
     result, error, isLive, taskMeta, cost,
@@ -871,39 +870,29 @@ export default function TaskOverviewPage() {
   if (error) {
     return (
       <div className="view-container overview">
-        <div className="overview__error-card">
-          <div className="overview__error-header">
-            <AlertTriangle size={20} />
-            <h3>Task Failed</h3>
-          </div>
-          <div className="overview__error-body">{error}</div>
-          <button
-            className="overview__retry-btn"
-            onClick={async () => {
-              // Re-submit the same input as a new task
-              try {
-                const res = await fetch("/api/submit", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    task: taskMeta?.label ?? "",
-                    variant: runtime.capability?.id,
-                  }),
-                });
-                if (res.ok) {
-                  const data = await res.json();
-                  if (data.task_id) {
-                    router.push(`/task/${data.task_id}`);
-                  }
-                }
-              } catch {
-                // Retry is best-effort
-              }
-            }}
-          >
-            Retry Task →
-          </button>
-        </div>
+        <InputPromptBox prompt={taskMeta?.full_input} />
+        <Panel
+          title="Task stopped"
+          status="empty"
+          emptyIcon={XCircle}
+          emptyMessage="The task did not complete."
+          emptyHint="Use Retry above to create a new task with the same inputs."
+        />
+      </div>
+    );
+  }
+
+  if (["blocked", "paused", "pause_requested"].includes(taskMeta?.run_state ?? "")) {
+    return (
+      <div className="view-container overview">
+        <InputPromptBox prompt={taskMeta?.full_input} />
+        <Panel
+          title="Task blocked"
+          status="empty"
+          emptyIcon={Pause}
+          emptyMessage="This task needs operator attention."
+          emptyHint="Correct the failed dependency, then use Resume above."
+        />
       </div>
     );
   }

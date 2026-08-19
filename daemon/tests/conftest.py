@@ -91,6 +91,13 @@ _fake_config.EDGE_NODE_MODELS = ["edge-node-1"]  # type: ignore
 _fake_config.LITELLM_KEY = "test-key"  # type: ignore
 _fake_config.LITELLM_URL = "http://litellm.test"  # type: ignore
 _fake_config.MODEL_PRICING = {}  # type: ignore
+_fake_config.MODEL_CREDENTIALS = [{  # type: ignore
+    "alias": "test-medium",
+    "provider": "test",
+    "env_var": "TEST_PROVIDER_KEY",
+    "required": True,
+    "configured": True,
+}]
 _fake_config.TRIAGE_URL = "http://triage.test"  # type: ignore
 _fake_config.LOCK_TTL_MS = 300000  # type: ignore
 _fake_config.NODE_URL_TO_NAME = {}  # type: ignore

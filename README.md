@@ -41,7 +41,7 @@ The default stack runs on one host.
 | LiteLLM | Routes model requests through one API. |
 | Starter agent | Executes classic roles through LiteLLM. It does not provide tools. |
 | Daemon | Runs task lifecycles and saves durable state in SQLite. |
-| Mission Control | Shows tasks, logs, board entries, costs, and readiness. |
+| Mission Control | Shows setup health, task lifecycles, files, logs, board entries, costs, and operator actions. |
 
 The optional GPU profile adds local triage through vLLM. The normal starter does not need a GPU or a separate edge node.
 

@@ -94,6 +94,31 @@ The browser requests a username and password. Enter any username. Use the `BMAS_
 
 Mission Control checks readiness before it enables task submission. A failed check includes one repair command.
 
+The setup center shows these checks in one place:
+
+- Provider credential variables and the model gateway
+- Agent availability
+- Upload and output storage access
+- Redis access
+- Active and queued task capacity
+
+Select **Run one test task** after every required check passes. This action submits a real classic task. It verifies the browser, daemon, queue, agent, model provider, and event stream.
+
+The left task list shows failed tasks and pending operator actions first. Use its search, state, date, and cost filters to find older work. Pin a task to keep it at the top of the list.
+
+Each task page shows one lifecycle row. The row identifies queued, running, blocked, failed, and completed work. It also shows the queue, provider, agents, model, tokens, cost, and storage use.
+
+Use these task actions when they appear:
+
+- **Cancel** stops a queued or running task.
+- **Resume** restarts a paused task or queues compatible blocked recovery.
+- **Retry** creates a new task from a failed task and copies its input files.
+- **Duplicate** creates a new task from any saved task and copies its input files.
+
+Open the **Files** tab to review all task files. The Inputs section contains user uploads. The Outputs section contains agent artifacts and their immutable versions.
+
+Mission Control previews PDF, image, text, JSON, Markdown, and common code files. Select two output versions to compare them side by side.
+
 ## Stop the stack
 
 ```bash

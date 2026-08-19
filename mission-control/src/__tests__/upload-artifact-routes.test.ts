@@ -9,8 +9,10 @@ import { POST as submitTask } from "@/app/api/submit/route";
 import { GET as listFiles } from "@/app/api/tasks/[taskId]/files/route";
 import { GET as downloadFile } from "@/app/api/tasks/[taskId]/files/[fileId]/route";
 import { GET as previewFile } from "@/app/api/tasks/[taskId]/files/[fileId]/text/route";
+import { GET as inlineFile } from "@/app/api/tasks/[taskId]/files/[fileId]/preview/route";
 import { GET as listArtifacts } from "@/app/api/tasks/[taskId]/artifacts/route";
 import { GET as downloadArtifact } from "@/app/api/tasks/[taskId]/artifacts/[artifactId]/route";
+import { GET as inlineArtifact } from "@/app/api/tasks/[taskId]/artifacts/[artifactId]/preview/route";
 
 describe("upload and artifact proxy routes", () => {
   afterEach(() => {
@@ -140,5 +142,26 @@ describe("upload and artifact proxy routes", () => {
     expect(downloadResponse.headers.get("cache-control")).toBe(
       "private, no-store",
     );
+  });
+
+  it("forces safe inline headers for file and artifact previews", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("preview bytes", {
+      headers: {
+        "Content-Type": "text/markdown",
+        "Content-Disposition": "attachment; filename=result.md",
+      },
+    })));
+
+    const fileResponse = await inlineFile(new Request("http://mission-control"), {
+      params: Promise.resolve({ taskId: "task-1", fileId: "file-1" }),
+    });
+    const artifactResponse = await inlineArtifact(new Request("http://mission-control"), {
+      params: Promise.resolve({ taskId: "task-1", artifactId: "artifact-1" }),
+    });
+
+    expect(fileResponse.headers.get("content-disposition")).toBe("inline");
+    expect(artifactResponse.headers.get("content-disposition")).toBe("inline");
+    expect(fileResponse.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(artifactResponse.headers.get("cache-control")).toBe("private, no-store");
   });
 });

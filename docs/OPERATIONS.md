@@ -37,9 +37,13 @@ Read readiness directly:
 curl -fsS http://127.0.0.1:9000/readiness
 ```
 
-The response checks Redis, SQLite, LiteLLM, execution agents, the classic runtime, and event delivery.
+The response checks Redis, SQLite, the model gateway, provider credentials, execution agents, the classic runtime, storage, and event delivery.
 
-Mission Control uses the same response. It disables submission when one check fails.
+Mission Control uses the same response. It disables submission when one required check fails.
+
+File storage is optional. A storage failure does not block a text-only task. The setup center still shows the exact storage repair step.
+
+The readiness response also includes current task queue capacity. The setup center displays active and queued task counts.
 
 ## Container state
 
@@ -107,6 +111,17 @@ List recent tasks:
 curl -fsS http://127.0.0.1:9000/tasks
 ```
 
+Filter task history with these query parameters:
+
+| Parameter | Purpose |
+|:---|:---|
+| `status` | Selects one final task status. |
+| `search` | Searches the task ID, label, and full input. |
+| `date_from` and `date_to` | Select an ISO-8601 creation period. |
+| `min_cost` and `max_cost` | Select a task cost range in US dollars. |
+
+The API returns blocked or paused tasks first. It then returns failed, running, queued, and completed tasks.
+
 Read one task:
 
 ```bash
@@ -114,6 +129,34 @@ curl -fsS http://127.0.0.1:9000/tasks/TASK_ID
 ```
 
 When `BMAS_API_KEY` protects a mutation request, send `Authorization: Bearer VALUE`. Read-only task routes do not require this key.
+
+## Mission Control task controls
+
+The task lifecycle row supplies the current operator actions.
+
+| Action | Result |
+|:---|:---|
+| Cancel | Requests cancellation for a queued or active task. |
+| Resume | Clears a pause or queues one compatible blocked task. |
+| Retry | Creates a new task with the same full input and input files. |
+| Duplicate | Creates a new task with the same full input and input files. |
+
+Retry and duplicate create a new task ID. They do not change the saved source task.
+
+A blocked task keeps its captured runtime configuration. Resume validates that configuration before it queues recovery. An incompatible task stays blocked and shows the returned cause.
+
+## Files workspace
+
+The Files tab combines user uploads and agent outputs.
+
+- Inputs are the immutable files that entered the task.
+- Outputs are immutable artifact versions that agents created.
+- The preview uses private, non-cached proxy responses.
+- The browser can preview PDF, image, text, JSON, Markdown, and common code files.
+- Text previews stop after 1 MB to protect browser responsiveness.
+- The comparison view shows two saved output versions side by side.
+
+Use the download action for a file type that has no safe inline preview.
 
 ## Backup
 
@@ -200,6 +243,26 @@ docker compose logs dashboard daemon
 3. Read `/health`, then inspect `task_queue` and `runtime.endpoint_requests`.
 
 Reduce request load or correct the failed endpoint. Do not increase capacity before you identify the failed dependency.
+
+### A task is blocked
+
+1. The lifecycle row marks the task as blocked.
+2. A saved runtime can become unavailable after a restart or upgrade.
+3. Correct the runtime or provider failure, then select **Resume**.
+
+The daemon validates the saved runtime configuration. It does not apply new live settings to the existing task.
+
+### A file preview fails
+
+1. The Files tab identifies the preview component and timestamp.
+2. Storage access, the daemon route, or an unsupported file type can prevent the preview.
+3. Select **Retry**, then check the daemon and dashboard logs.
+
+```bash
+docker compose logs --tail 200 daemon dashboard
+```
+
+Download the file when its type has no inline preview.
 
 ### A task reaches the cost ceiling
 

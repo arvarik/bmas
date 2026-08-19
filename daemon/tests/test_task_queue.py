@@ -220,6 +220,48 @@ async def test_blocked_recovery_rotates_past_an_incompatible_full_page(
 
 
 @pytest.mark.asyncio
+async def test_operator_resume_enqueues_one_compatible_blocked_task(monkeypatch):
+    submit._task_queue = asyncio.Queue(maxsize=2)
+
+    class CompatibleRuntime:
+        @classmethod
+        def configuration_from_metadata(cls, metadata):
+            return metadata["effective_configuration"]
+
+    monkeypatch.setattr(
+        submit.db,
+        "get_task",
+        AsyncMock(return_value={
+            "id": "task-blocked",
+            "variant": "classic",
+            "status": "running",
+            "full_input": "Continue this task",
+        }),
+    )
+    monkeypatch.setattr(
+        submit.db,
+        "get_board_meta",
+        AsyncMock(return_value={
+            "effective_configuration": {"version": "1"},
+            "submission_overrides": {"routing": {"medium": "model-a"}},
+        }),
+    )
+    retry = AsyncMock(return_value=True)
+    monkeypatch.setattr(submit.db, "retry_blocked_task", retry)
+    monkeypatch.setattr(submit, "require_variant_class", lambda _variant: CompatibleRuntime)
+
+    assert await submit.resume_blocked_task("task-blocked") is True
+
+    item = submit._task_queue.get_nowait()
+    submit._task_queue.task_done()
+    assert item.task_id == "task-blocked"
+    assert item.resume is True
+    assert item.effective_configuration == {"version": "1"}
+    assert item.overrides == {"routing": {"medium": "model-a"}}
+    retry.assert_awaited_once_with("task-blocked")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "error",
     [LeaseBusyError("busy"), LeaseLostError("lost")],
