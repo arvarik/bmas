@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
+from benchmarks import scheduler as benchmark_scheduler
 from config import COORDINATION_VARIANT, PROJECT_NAME
 from core.event_delivery import delivery_reconciliation_loop, stop_delivery_task
 from core.orchestrator import Orchestrator
@@ -19,6 +20,7 @@ from database import init_db
 from monitoring.health_loop import system_health_loop
 from routes import (
     artifacts,
+    benchmarks,
     capabilities,
     datasets,
     events,
@@ -59,6 +61,7 @@ async def lifespan(app: FastAPI):
 
     # Start the bounded admission queue after all shared clients are ready.
     await submit.start_task_workers(orch)
+    await benchmark_scheduler.start_scheduler()
 
     # Reconcile durable events independently from task execution.
     delivery_task = asyncio.create_task(delivery_reconciliation_loop(orch.bb.redis))
@@ -71,6 +74,7 @@ async def lifespan(app: FastAPI):
 
     health_task.cancel()
     await stop_delivery_task(delivery_task)
+    await benchmark_scheduler.stop_scheduler()
     await submit.stop_task_workers()
     await app.state.health_client.aclose()
     await orch.close()
@@ -80,6 +84,7 @@ app = FastAPI(title=f"{PROJECT_NAME} — bMAS Daemon", version="1.0.0", lifespan
 
 # Register route modules
 app.include_router(submit.router)
+app.include_router(benchmarks.router)
 app.include_router(capabilities.router)
 app.include_router(datasets.router)
 app.include_router(tasks.router)

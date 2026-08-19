@@ -1,6 +1,6 @@
 # Benchmark domain foundation
 
-This document defines the stable records for the benchmark system. The schema starts at database version 8.
+This document defines the stable records for the benchmark system. The foundation starts at database version 8. Benchmark execution uses version 9.
 
 ## Design goals
 
@@ -20,6 +20,7 @@ Dataset
 Benchmark test
 └── Test revision
     ├── Test arm
+    ├── Scorer version selection
     └── Benchmark run
         └── Trial, one arm and one dataset item
             └── Attempt
@@ -41,6 +42,8 @@ Each test arm uses two fields for runtime data:
 - `configuration` stores the runtime configuration as JSON.
 
 The benchmark core does not interpret the configuration. The selected runtime validates the configuration against its own versioned contract.
+
+The authoring preflight resolves each arm before publication. It stores a secret-free runtime envelope and a checksum. A published revision cannot change.
 
 This design supports `classic`, Patchboard, and future Stigmergic variants. A new runtime does not require a benchmark schema change.
 
@@ -93,6 +96,36 @@ The daemon saves the request before it sends the action. The daemon then saves t
 
 The event journal exposes both records in the task timeline. The audit record includes the operator identity when the caller supplies `X-Operator-Id`.
 
+## Run execution contract
+
+A run materializes all trials and initial attempts in one transaction. An idempotency key prevents duplicate runs after a client retry.
+
+The scheduler applies a global active-attempt limit. Each test revision also defines its own concurrency limit.
+
+The scheduler admits attempts through the normal task queue. Each task receives its saved runtime configuration and benchmark identifiers.
+
+A pause stops new attempt admission. It does not stop active tasks. A resume starts admission again.
+
+A cancellation cancels queued attempts first. It then asks active tasks to stop at their safe boundary.
+
+Each repetition has a stable repeat index and random seed. A retry creates a new attempt with a higher retry index. The prior attempt remains available.
+
+The scheduler recovers a claimed attempt without a task after a daemon restart. The scheduler returns that attempt to the queue.
+
+## Scoring contract
+
+Each scorer has an immutable identifier, kind, and version. A test revision selects exact scorer versions.
+
+The daemon calculates numeric, multiple-choice letter, and exact text scores. It saves the extracted output, explanation, and evidence.
+
+A failed, cancelled, or timed-out attempt receives an excluded score. The score does not convert the execution result into a zero.
+
+Reports must use only the latest retry for each repetition. Reports must keep prior retries available for provenance.
+
 ## Current phase boundary
 
-This foundation does not schedule benchmark runs. It does not calculate aggregate reports. Later phases add test authoring, durable run scheduling, scoring, comparison, and regression gates.
+Mission Control now authors tests and revisions. It starts, pauses, resumes, cancels, and retries durable runs.
+
+The current run view shows attempt results and a simple average. Later phases add paired comparisons, statistical intervals, baselines, and regression gates.
+
+The current scheduler uses one daemon owner. A later scale phase adds distributed ownership and durable leases for multiple daemon replicas.

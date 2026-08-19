@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -654,6 +654,46 @@ END;
 """
 
 
+MIGRATION_V9_BENCHMARK_EXECUTION_DDL = """
+CREATE TABLE IF NOT EXISTS benchmark_test_revision_scorers (
+    test_revision_id    TEXT NOT NULL
+                        REFERENCES benchmark_test_revisions(id) ON DELETE CASCADE,
+    scorer_id           TEXT NOT NULL REFERENCES benchmark_scorers(id),
+    sort_order          INTEGER NOT NULL DEFAULT 0,
+    configuration       TEXT NOT NULL DEFAULT '{}',
+    configuration_checksum TEXT NOT NULL,
+    PRIMARY KEY(test_revision_id, scorer_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_revision_scorers
+ON benchmark_test_revision_scorers(test_revision_id, sort_order);
+
+CREATE TRIGGER IF NOT EXISTS prevent_published_test_scorer_insert
+BEFORE INSERT ON benchmark_test_revision_scorers
+WHEN (SELECT status FROM benchmark_test_revisions WHERE id = NEW.test_revision_id) = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published test scorers are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_published_test_scorer_update
+BEFORE UPDATE ON benchmark_test_revision_scorers
+WHEN (SELECT status FROM benchmark_test_revisions WHERE id = OLD.test_revision_id) = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published test scorers are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_published_test_scorer_delete
+BEFORE DELETE ON benchmark_test_revision_scorers
+WHEN (SELECT status FROM benchmark_test_revisions WHERE id = OLD.test_revision_id) = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published test scorers are immutable');
+END;
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_attempts_status
+ON benchmark_attempts(status, created_at);
+"""
+
+
 # ── Connection Infrastructure ────────────────────────────────────────
 
 
@@ -922,6 +962,79 @@ async def _migrate_to_v8(db: aiosqlite.Connection) -> None:
     logger.info("Migration v8 applied: benchmark foundation and task terminal identity")
 
 
+async def _migrate_to_v9(db: aiosqlite.Connection) -> None:
+    """Add versioned scorers and durable benchmark execution controls."""
+    await db.executescript(MIGRATION_V9_BENCHMARK_EXECUTION_DDL)
+    db.row_factory = aiosqlite.Row
+
+    cursor = await db.execute("PRAGMA table_info(benchmark_runs)")
+    run_columns = {row[1] for row in await cursor.fetchall()}
+    for column, ddl in (
+        (
+            "idempotency_key",
+            "ALTER TABLE benchmark_runs ADD COLUMN idempotency_key TEXT",
+        ),
+        (
+            "total_attempts",
+            "ALTER TABLE benchmark_runs ADD COLUMN total_attempts INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            "completed_attempts",
+            "ALTER TABLE benchmark_runs ADD COLUMN completed_attempts INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            "cancel_reason",
+            "ALTER TABLE benchmark_runs ADD COLUMN cancel_reason TEXT",
+        ),
+        (
+            "state_revision",
+            "ALTER TABLE benchmark_runs ADD COLUMN state_revision INTEGER NOT NULL DEFAULT 0",
+        ),
+    ):
+        if column not in run_columns:
+            await db.execute(ddl)
+
+    cursor = await db.execute("PRAGMA table_info(benchmark_attempts)")
+    attempt_columns = {row[1] for row in await cursor.fetchall()}
+    for column, ddl in (
+        (
+            "repeat_index",
+            "ALTER TABLE benchmark_attempts ADD COLUMN repeat_index INTEGER NOT NULL DEFAULT 1",
+        ),
+        (
+            "retry_index",
+            "ALTER TABLE benchmark_attempts ADD COLUMN retry_index INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            "random_seed",
+            "ALTER TABLE benchmark_attempts ADD COLUMN random_seed INTEGER",
+        ),
+        (
+            "claimed_at",
+            "ALTER TABLE benchmark_attempts ADD COLUMN claimed_at TEXT",
+        ),
+    ):
+        if column not in attempt_columns:
+            await db.execute(ddl)
+
+    await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_benchmark_runs_idempotency "
+        "ON benchmark_runs(idempotency_key) WHERE idempotency_key IS NOT NULL"
+    )
+    await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_benchmark_attempt_repeat_retry "
+        "ON benchmark_attempts(trial_id, repeat_index, retry_index)"
+    )
+    await db.execute(
+        "INSERT OR IGNORE INTO benchmark_scorers "
+        "(id, name, version, kind, configuration_schema) "
+        "VALUES ('scorer-exact-match-v1', 'Exact text match', '1', "
+        "'exact_match', '{}')"
+    )
+    await db.commit()
+    logger.info("Migration v9 applied: benchmark authoring, execution, and scoring")
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -932,6 +1045,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         6: _migrate_to_v6,
         7: _migrate_to_v7,
         8: _migrate_to_v8,
+        9: _migrate_to_v9,
     }
     fn = migrations.get(version)
     if fn is None:
