@@ -33,7 +33,10 @@ export function mergeTaskArtifacts(
       created_at: artifact.created_at || previous.created_at,
     } : artifact);
   }
-  return [...merged.values()];
+  return [...merged.values()].sort((left, right) => (
+    left.rel_path.localeCompare(right.rel_path)
+    || right.version - left.version
+  ));
 }
 
 function formatBytes(bytes: number): string {
@@ -79,6 +82,7 @@ function TaskArtifactBrowser({
   const [artifacts, setArtifacts] = useState<TaskArtifact[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadVersion, setLoadVersion] = useState(0);
   const visibleArtifacts = useMemo(
     () => mergeTaskArtifacts(artifacts, liveArtifacts),
     [artifacts, liveArtifacts],
@@ -88,7 +92,7 @@ function TaskArtifactBrowser({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/tasks/${taskId}/artifacts`, {
+        const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/artifacts`, {
           cache: "no-store",
         });
         if (res.ok) {
@@ -109,7 +113,7 @@ function TaskArtifactBrowser({
     return () => {
       cancelled = true;
     };
-  }, [taskId]);
+  }, [taskId, loadVersion]);
 
   if (loading && visibleArtifacts.length === 0) {
     return (
@@ -124,6 +128,17 @@ function TaskArtifactBrowser({
     return (
       <div className="artifact-browser artifact-browser--error">
         <span>{error}</span>
+        <button
+          type="button"
+          className="artifact-browser__retry"
+          onClick={() => {
+            setLoading(true);
+            setError(null);
+            setLoadVersion((version) => version + 1);
+          }}
+        >
+          Retry
+        </button>
       </div>
     );
   }
@@ -186,10 +201,14 @@ function TaskArtifactBrowser({
                     {formatBytes(a.bytes)}
                   </span>
                   <a
-                    href={`/api/tasks/${taskId}/artifacts/${a.id}`}
+                    href={
+                      `/api/tasks/${encodeURIComponent(taskId)}`
+                      + `/artifacts/${encodeURIComponent(a.id)}`
+                    }
                     download={filename}
                     className="artifact-browser__download"
-                    title="Download"
+                    title={`Download ${a.rel_path} version ${a.version}`}
+                    aria-label={`Download ${a.rel_path} version ${a.version}`}
                   >
                     <Download size={14} />
                   </a>

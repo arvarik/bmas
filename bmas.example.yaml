@@ -93,7 +93,7 @@ coordination:
       penalty: 0.3
 
 storage:
-  enabled: false
+  enabled: true
   user_media_dir: "/data/uploads"
   artifacts_dir: "/data/output"
   max_upload_mb: 50

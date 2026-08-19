@@ -11,9 +11,10 @@ export async function GET(
   { params }: { params: Promise<{ taskId: string }> },
 ): Promise<NextResponse> {
   const { taskId } = await params;
+  const encodedTaskId = encodeURIComponent(taskId);
 
   try {
-    const upstream = await fetch(`${DAEMON_BASE_URL}/tasks/${taskId}/files`, {
+    const upstream = await fetch(`${DAEMON_BASE_URL}/tasks/${encodedTaskId}/files`, {
       cache: "no-store",
       signal: AbortSignal.timeout(5_000),
     });
@@ -51,13 +52,14 @@ export async function POST(
   { params }: { params: Promise<{ taskId: string }> },
 ): Promise<NextResponse> {
   const { taskId } = await params;
+  const encodedTaskId = encodeURIComponent(taskId);
 
   try {
     // Forward the multipart body as-is to the daemon
     const body = await request.arrayBuffer();
     const contentType = request.headers.get("content-type") || "";
 
-    const upstream = await fetch(`${DAEMON_BASE_URL}/tasks/${taskId}/files`, {
+    const upstream = await fetch(`${DAEMON_BASE_URL}/tasks/${encodedTaskId}/files`, {
       method: "POST",
       headers: {
         "content-type": contentType,

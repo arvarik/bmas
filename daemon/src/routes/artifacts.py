@@ -7,6 +7,7 @@ GET  /tasks/{task_id}/artifacts             — list artifacts
 GET  /tasks/{task_id}/artifacts/{artifact_id} — download artifact
 """
 
+import contextlib
 import logging
 import os
 import shutil
@@ -170,16 +171,64 @@ async def ingest_artifact(
     current_version = await db.get_artifact_max_version(task_id, rel_path)
     new_version = current_version + 1
 
-    # If file exists, archive previous version
-    if os.path.exists(safe_path) and current_version > 0:
-        versions_dir = os.path.join(output_dir, ".bmas-versions")
-        os.makedirs(versions_dir, exist_ok=True)
-        archive_name = f"{rel_path.replace('/', '__')}.v{current_version}"
-        archive_path = os.path.join(versions_dir, archive_name)
+    # Move the previous database version to an immutable archive path before
+    # the live path receives new bytes.
+    if current_version > 0:
+        previous = await db.get_artifact_version(
+            task_id,
+            rel_path,
+            current_version,
+        )
+        if not previous:
+            return JSONResponse(
+                {"error": "Previous artifact version is missing from the database"},
+                status_code=409,
+            )
+        archive_rel_path = (
+            f".bmas-versions/{rel_path}.v{current_version}"
+        )
         try:
-            shutil.copy2(safe_path, archive_path)
-        except Exception as e:
-            logger.warning(f"Failed to archive {safe_path} → {archive_path}: {e}")
+            archive_path = validate_path_traversal(
+                archive_rel_path,
+                output_dir,
+            )
+        except ValueError as exc:
+            return JSONResponse(
+                {"error": f"Archive path rejected: {exc}"},
+                status_code=422,
+            )
+
+        previous_path = str(previous.get("stored_path") or "")
+        if previous_path != archive_path:
+            if not previous_path or not os.path.isfile(previous_path):
+                return JSONResponse(
+                    {"error": "Previous artifact file is missing from disk"},
+                    status_code=409,
+                )
+            os.makedirs(os.path.dirname(archive_path), exist_ok=True)
+            try:
+                shutil.copy2(previous_path, archive_path)
+            except OSError as exc:
+                logger.error(
+                    "Failed to archive artifact %s version %d: %s",
+                    rel_path,
+                    current_version,
+                    exc,
+                )
+                return JSONResponse(
+                    {"error": "Previous artifact version could not be archived"},
+                    status_code=500,
+                )
+            if not await db.update_artifact_stored_path(
+                str(previous["id"]),
+                archive_path,
+            ):
+                with contextlib.suppress(OSError):
+                    os.unlink(archive_path)
+                return JSONResponse(
+                    {"error": "Previous artifact version could not be updated"},
+                    status_code=500,
+                )
 
     # Write the file
     os.makedirs(os.path.dirname(safe_path), exist_ok=True)
@@ -202,6 +251,7 @@ async def ingest_artifact(
         await orch.bb.publish_event(task_id, "artifact_created", {
             "artifact_id": artifact_id,
             "rel_path": rel_path,
+            "mime": mime,
             "version": new_version,
             "bytes": len(content),
             "sha256": computed_sha256,
@@ -222,7 +272,7 @@ async def ingest_artifact(
         if author:
             body += f"\nProduced by: {author}"
 
-        await orch.gateway.append(
+        await orch.append_task_entry(
             task_id=task_id,
             actor=author or "daemon",
             capabilities=["post:artifact"],

@@ -153,7 +153,7 @@ class TestArtifactIngest:
         assert "quota" in response.json()["error"].lower()
 
     def test_versioning(self, client, task_id):
-        """Re-syncing the same rel_path should bump the version."""
+        """Each artifact version must keep its original download bytes."""
         content_v1 = b"version 1"
         sha_v1 = _sha256(content_v1)
 
@@ -166,6 +166,7 @@ class TestArtifactIngest:
         )
         assert r1.status_code == 200
         assert r1.json()["version"] == 1
+        artifact_v1 = r1.json()["artifact_id"]
 
         # Second upload (same path, different content)
         content_v2 = b"version 2 - updated"
@@ -179,6 +180,18 @@ class TestArtifactIngest:
         )
         assert r2.status_code == 200
         assert r2.json()["version"] == 2
+        artifact_v2 = r2.json()["artifact_id"]
+
+        download_v1 = client.get(
+            f"/tasks/{task_id}/artifacts/{artifact_v1}",
+        )
+        download_v2 = client.get(
+            f"/tasks/{task_id}/artifacts/{artifact_v2}",
+        )
+        assert download_v1.status_code == 200
+        assert download_v1.content == content_v1
+        assert download_v2.status_code == 200
+        assert download_v2.content == content_v2
 
     def test_sha256_mismatch(self, client, task_id):
         """Mismatched sha256 should be rejected."""

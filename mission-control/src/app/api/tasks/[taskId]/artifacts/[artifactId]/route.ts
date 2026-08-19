@@ -12,10 +12,12 @@ export async function GET(
   { params }: { params: Promise<{ taskId: string; artifactId: string }> },
 ): Promise<Response> {
   const { taskId, artifactId } = await params;
+  const encodedTaskId = encodeURIComponent(taskId);
+  const encodedArtifactId = encodeURIComponent(artifactId);
 
   try {
     const upstream = await fetch(
-      `${DAEMON_BASE_URL}/tasks/${taskId}/artifacts/${artifactId}`,
+      `${DAEMON_BASE_URL}/tasks/${encodedTaskId}/artifacts/${encodedArtifactId}`,
       {
         cache: "no-store",
         signal: AbortSignal.timeout(15_000),
@@ -38,6 +40,7 @@ export async function GET(
     if (contentType) headers.set("content-type", contentType);
     if (contentDisposition) headers.set("content-disposition", contentDisposition);
     if (contentLength) headers.set("content-length", contentLength);
+    headers.set("cache-control", "private, no-store");
     headers.set("x-content-type-options", "nosniff");
 
     return new Response(upstream.body, {

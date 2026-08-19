@@ -14,7 +14,8 @@ The default Compose stack publishes it at [http://localhost:9321](http://localho
 | Logs | Daemon logs and agent traces |
 | Blackboard | Durable board entries, references, and debate threads |
 | Mission | Live board, role activity, events, and convergence |
-| Artifacts | Uploaded files and task outputs |
+| Task header | Uploaded files, extracted-text previews, and original downloads |
+| Artifacts | Agent-created task outputs and immutable version downloads |
 | Infrastructure | Agent health and optional Beszel telemetry |
 
 The interface exposes only the classic runtime. A single available runtime appears as a fixed status label.
@@ -51,6 +52,8 @@ The `/api/health` route stays public for container and load-balancer checks. It 
 Use HTTPS whenever a browser connects outside the local computer. HTTP Basic sends a reusable credential with each request.
 
 Mission Control sends `BMAS_API_KEY` only from server routes to daemon mutation routes.
+
+Mission Control stores initial attachments before it admits a task to the execution queue. A rejected attachment prevents the task from starting.
 
 ## Server environment
 

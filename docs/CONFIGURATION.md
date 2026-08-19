@@ -248,6 +248,8 @@ Every non-null `preferred_host` must match a `nodes[].host` value.
 
 The Compose stack mounts named volumes at `/data/uploads` and `/data/output`. Keep these container paths for the starter.
 
+The published starter files set `storage.enabled` to `true`. Set it to `false` only when the deployment must disable uploads and artifacts.
+
 ## `monitoring`
 
 Set `monitoring.beszel_hub` to a Beszel URL when Mission Control must read host telemetry.

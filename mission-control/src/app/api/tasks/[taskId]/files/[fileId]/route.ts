@@ -12,10 +12,12 @@ export async function GET(
   { params }: { params: Promise<{ taskId: string; fileId: string }> },
 ): Promise<Response> {
   const { taskId, fileId } = await params;
+  const encodedTaskId = encodeURIComponent(taskId);
+  const encodedFileId = encodeURIComponent(fileId);
 
   try {
     const upstream = await fetch(
-      `${DAEMON_BASE_URL}/tasks/${taskId}/files/${fileId}`,
+      `${DAEMON_BASE_URL}/tasks/${encodedTaskId}/files/${encodedFileId}`,
       {
         cache: "no-store",
         signal: AbortSignal.timeout(15_000),
@@ -38,6 +40,7 @@ export async function GET(
     if (contentType) headers.set("content-type", contentType);
     if (contentDisposition) headers.set("content-disposition", contentDisposition);
     if (contentLength) headers.set("content-length", contentLength);
+    headers.set("cache-control", "private, no-store");
     headers.set("x-content-type-options", "nosniff");
 
     return new Response(upstream.body, {

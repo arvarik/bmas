@@ -271,3 +271,15 @@ def extract_text_file(file_bytes: bytes, max_chars: int = 60000) -> str:
     if len(text) > max_chars:
         return text[:max_chars] + "\n[truncated — fetch full file]"
     return text
+
+
+def read_extracted_text(stored_path: str) -> str:
+    """Read the extracted-text sidecar for one uploaded file."""
+    if not stored_path:
+        return ""
+    text_path = stored_path + ".extracted.txt"
+    try:
+        with open(text_path, encoding="utf-8") as text_file:
+            return text_file.read()
+    except (OSError, UnicodeError):
+        return ""

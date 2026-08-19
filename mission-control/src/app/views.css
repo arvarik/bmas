@@ -1010,6 +1010,8 @@
 .artifact-browser__spinner{width:20px;height:20px;border:2px solid var(--border-default);border-top-color:var(--accent-primary);border-radius:50%;animation:spin 800ms linear infinite}
 .artifact-browser--empty p{margin:0;font-weight:var(--weight-medium);color:var(--text-secondary)}
 .artifact-browser--empty span{font-size:var(--text-xs)}
+.artifact-browser__retry{border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--surface-overlay);color:var(--text-primary);padding:var(--space-1) var(--space-3);font:inherit;cursor:pointer}
+.artifact-browser__retry:hover{background:var(--surface-hover);border-color:var(--accent-primary)}
 
 .artifact-browser__header{display:flex;align-items:center;justify-content:space-between}
 .artifact-browser__header h3{display:flex;align-items:center;gap:var(--space-2);margin:0;font-size:var(--text-sm);font-weight:var(--weight-semibold);color:var(--text-primary)}

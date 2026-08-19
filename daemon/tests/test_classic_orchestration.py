@@ -62,7 +62,11 @@ async def test_failed_turn_never_becomes_board_entry(status):
 
     response = await orch._dispatch_traditional_turn(
         variant,
-        {"task_id": "task-1", "query": "question"},
+        {
+            "task_id": "task-1",
+            "query": "question",
+            "attachments": [{"file_id": "file-1", "name": "brief.txt"}],
+        },
         _activation(),
         round_no=2,
     )
@@ -71,6 +75,9 @@ async def test_failed_turn_never_becomes_board_entry(status):
     dispatch_kwargs = orch._dispatch_turn.await_args.kwargs
     assert dispatch_kwargs["activation_id"] == dispatch_kwargs["turn_id"]
     assert dispatch_kwargs["activation_id"].startswith("activation-")
+    assert dispatch_kwargs["context"]["attachments"] == [
+        {"file_id": "file-1", "name": "brief.txt"},
+    ]
     variant.parse_agent_response.assert_not_called()
     variant.apply.assert_not_awaited()
     end_event = orch.bb.publish_event.await_args_list[-1].args[2]
@@ -564,8 +571,8 @@ async def test_genesis_retry_does_not_duplicate_entries():
             complexity=SimpleNamespace(value="simple"),
         ),
         "attachments": [
-            {"id": "file-a", "name": "a.txt", "text_preview": "A"},
-            {"id": "file-b", "name": "b.txt", "text_preview": "B"},
+            {"file_id": "file-a", "name": "a.txt", "text_preview": "A"},
+            {"file_id": "file-b", "name": "b.txt", "text_preview": "B"},
         ],
     }
 
@@ -582,6 +589,12 @@ async def test_genesis_retry_does_not_duplicate_entries():
 
     assert [entry.type for entry in snapshot.values()].count("objective") == 1
     assert [entry.type for entry in snapshot.values()].count("attachment") == 2
+    attachment_bodies = {
+        entry.body
+        for entry in snapshot.values()
+        if entry.type == "attachment"
+    }
+    assert attachment_bodies == {"A", "B"}
     assert meta["genesis_complete"] is True
     assert meta["genesis_started_at"] == first_started_at
 
@@ -611,7 +624,7 @@ async def test_genesis_does_not_mark_an_incomplete_attachment_write():
             complexity=SimpleNamespace(value="simple"),
         ),
         "attachments": [
-            {"id": "file-a", "name": "a.txt", "text_preview": "A"},
+            {"file_id": "file-a", "name": "a.txt", "text_preview": "A"},
         ],
     }
 

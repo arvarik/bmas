@@ -877,6 +877,49 @@ def test_telemetry_event_and_log_fields_are_bounded(monkeypatch):
     assert api_server._json_size(log) <= 1024
 
 
+def test_text_model_prompt_excludes_binary_attachment_metadata():
+    context = api_server._context_for_prompt({
+        "board": {"entries": []},
+        "attachments": [{"file_id": "file-1", "text_preview": "secret"}],
+    })
+
+    assert context == {"board": {"entries": []}}
+
+
+def test_artifact_sync_sends_the_agent_role(monkeypatch, tmp_path):
+    calls = []
+
+    class SyncClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, url, **kwargs):
+            calls.append({"url": url, **kwargs})
+            return FakeResponse(data={"version": 1})
+
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+    (output_dir / "report.txt").write_text("verified")
+    monkeypatch.setattr(api_server.httpx, "AsyncClient", SyncClient)
+    monkeypatch.setattr(api_server, "DAEMON_INGEST_URL", "http://daemon")
+
+    asyncio.run(api_server._sync_artifacts(
+        task_id="task-1",
+        turn_id="turn-1",
+        author="planner",
+        outputs_dir=output_dir,
+        request_id="request-1",
+    ))
+
+    assert calls[0]["data"]["author"] == "planner"
+
+
 def test_cli_deadline_includes_attachment_staging(monkeypatch):
     subprocess_called = False
 
