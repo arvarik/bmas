@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef } from "react";
 import { AlertTriangle, ArrowRight } from "lucide-react";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 export interface SettingsChange {
   label: string;
@@ -35,6 +36,7 @@ export function SettingsChangeDialog({
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const descriptionId = useId();
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -50,6 +52,13 @@ export function SettingsChangeDialog({
       else dialog.removeAttribute("open");
     }
   }, [open]);
+
+  useFocusTrap({
+    active: open,
+    containerRef: dialogRef,
+    initialFocusRef: cancelRef,
+    onEscape: busy ? undefined : onCancel,
+  });
 
   return (
     <dialog
@@ -95,11 +104,11 @@ export function SettingsChangeDialog({
 
       <div className="settings-change-dialog__actions">
         <button
+          ref={cancelRef}
           type="button"
           className="settings-btn settings-btn--ghost"
           onClick={onCancel}
           disabled={busy}
-          autoFocus
         >
           Cancel
         </button>

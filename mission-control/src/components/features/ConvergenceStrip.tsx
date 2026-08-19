@@ -174,6 +174,23 @@ export function ConvergenceStrip({
           </AreaChart>
         </ResponsiveContainer>
       </div>
+
+      <div className="sr-only">
+          <table className="task-detail-table">
+            <caption>Convergence metrics by round</caption>
+            <thead><tr><th>Round</th><th>Open critiques</th><th>Convergence</th><th>Budget used</th></tr></thead>
+            <tbody>
+              {data.map((datum) => (
+                <tr key={datum.round}>
+                  <td>{datum.round}</td>
+                  <td>{datum.openCritiques}</td>
+                  <td>{datum.convergence}%</td>
+                  <td>{datum.budgetPct}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+      </div>
     </div>
   );
 }

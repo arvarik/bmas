@@ -205,9 +205,12 @@ function CostDisplay({ cost }: { cost: CostData | null }) {
   return (
     <div>
       <div className="overview__stats">
-        <div
+        <button
+          type="button"
           className={`overview__metric-toggle ${expanded === "cost" ? "overview__metric-toggle--active" : ""}`}
           onClick={() => setExpanded(expanded === "cost" ? null : "cost")}
+          aria-expanded={expanded === "cost"}
+          aria-controls="cost-breakdown"
         >
           <MetricCard
             label={
@@ -226,10 +229,13 @@ function CostDisplay({ cost }: { cost: CostData | null }) {
             value={cost.total_cost}
             format="currency"
           />
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           className={`overview__metric-toggle ${expanded === "tokens" ? "overview__metric-toggle--active" : ""}`}
           onClick={() => setExpanded(expanded === "tokens" ? null : "tokens")}
+          aria-expanded={expanded === "tokens"}
+          aria-controls="cost-breakdown"
         >
           <MetricCard
             label={
@@ -248,11 +254,12 @@ function CostDisplay({ cost }: { cost: CostData | null }) {
             value={cost.total_tokens}
             format="number"
           />
-        </div>
+        </button>
       </div>
 
       {expanded && (
         <div
+          id="cost-breakdown"
           className="overview__breakdown-panel"
           style={{
             padding: "var(--space-3)",
@@ -438,9 +445,12 @@ function TimeDisplay({
   return (
     <div style={{ marginTop: "var(--space-2)" }}>
       <div className="overview__stats">
-        <div
+        <button
+          type="button"
           className={`overview__metric-toggle ${expanded ? "overview__metric-toggle--active" : ""}`}
           onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          aria-controls="duration-breakdown"
         >
           <MetricCard
             label={
@@ -459,7 +469,7 @@ function TimeDisplay({
             }
             value={totalMs ? fmtDuration(totalMs) : "—"}
           />
-        </div>
+        </button>
         <MetricCard
             label="Peak Parallelism"
             value={`${maxConcurrent} agent${maxConcurrent !== 1 ? "s" : ""}`}
@@ -468,6 +478,7 @@ function TimeDisplay({
 
       {expanded && timeline.length > 0 && (
         <div
+          id="duration-breakdown"
           className="overview__breakdown-panel"
           style={{
             padding: "var(--space-3)",

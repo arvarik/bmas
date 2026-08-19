@@ -12,7 +12,8 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { authorColor } from "@/lib/design-tokens";
 import type { TraceEvent, TurnRecord } from "@/hooks/useTaskStream";
 import { ToolCallCard } from "./ToolCallCard";
-import { Activity } from "lucide-react";
+import { Activity, Download, Search, X } from "lucide-react";
+import { matchesTraceQuery, updateUrlParams } from "@/lib/task-detail-tools";
 
 // ── Trace line glyph map (doc 09 §3) ─────────────────────────────────
 
@@ -85,11 +86,32 @@ export function AgentTrace({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const [newCount, setNewCount] = useState(0);
+  const [search, setSearch] = useState("");
+  const [urlReady, setUrlReady] = useState(false);
   const prevLen = useRef(traceEvents.length);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setSearch(params.get("trace_q") ?? "");
+    setUrlReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!urlReady) return;
+    const nextSearch = updateUrlParams(window.location.search, {
+      trace_q: search.trim() || null,
+    });
+    window.history.replaceState(null, "", `${window.location.pathname}${nextSearch}${window.location.hash}`);
+  }, [search, urlReady]);
+
+  const filteredTraces = useMemo(
+    () => traceEvents.filter((trace) => matchesTraceQuery(trace, search)),
+    [search, traceEvents],
+  );
+
   const groups = useMemo(
-    () => groupByTurn(traceEvents, activeTurns, completedTurns),
-    [traceEvents, activeTurns, completedTurns],
+    () => groupByTurn(filteredTraces, activeTurns, completedTurns),
+    [filteredTraces, activeTurns, completedTurns],
   );
 
   // Flatten for virtualizer
@@ -114,8 +136,8 @@ export function AgentTrace({
 
   // Smart auto-scroll
   useEffect(() => {
-    const added = traceEvents.length - prevLen.current;
-    prevLen.current = traceEvents.length;
+    const added = filteredTraces.length - prevLen.current;
+    prevLen.current = filteredTraces.length;
     if (added > 0) {
       if (isNearBottom && scrollRef.current) {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -123,7 +145,7 @@ export function AgentTrace({
         setNewCount((p) => p + added);
       }
     }
-  }, [traceEvents.length, isNearBottom]);
+  }, [filteredTraces.length, isNearBottom]);
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -137,6 +159,16 @@ export function AgentTrace({
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     setNewCount(0);
   }, []);
+
+  const exportTraces = useCallback(() => {
+    const blob = new Blob([JSON.stringify(filteredTraces, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "task-traces.json";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, [filteredTraces]);
 
   if (traceEvents.length === 0) {
     return (
@@ -162,6 +194,27 @@ export function AgentTrace({
 
   return (
     <div style={{ position: "relative", height: "100%", display: "flex", flexDirection: "column" }}>
+      <div className="task-detail-toolbar" role="search">
+        <label className="task-detail-search">
+          <span className="sr-only">Search traces</span>
+          <Search size={13} aria-hidden="true" />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search trace content, agent, type, turn, or payload"
+          />
+          {search ? (
+            <button type="button" onClick={() => setSearch("")} aria-label="Clear trace search"><X size={13} /></button>
+          ) : null}
+        </label>
+        <span role="status">{filteredTraces.length} of {traceEvents.length} events</span>
+        <button type="button" onClick={exportTraces} disabled={filteredTraces.length === 0}>
+          <Download size={13} /> Export JSON
+        </button>
+      </div>
+      {filteredTraces.length === 0 ? (
+        <div className="dls-empty">No trace events match the current search.</div>
+      ) : (
       <div
         ref={scrollRef}
         onScroll={handleScroll}
@@ -197,6 +250,7 @@ export function AgentTrace({
                   }}
                 >
                   <button
+                    type="button"
                     onClick={() => onTurnClick?.(g.turnId)}
                     className="trace-turn-header"
                     style={{
@@ -233,7 +287,7 @@ export function AgentTrace({
                             color: g.turn.status === "active" ? "var(--accent-primary)" : "var(--text-secondary)",
                           }}
                         >
-                          {g.turn.phase}
+                          {g.turn.phase} · {g.turn.status}
                         </span>
                         {g.turn.tokens_in != null && (
                           <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", marginLeft: "auto" }}>
@@ -278,6 +332,7 @@ export function AgentTrace({
                 >
                   {/* Gutter glyph */}
                   <span
+                    aria-hidden="true"
                     style={{
                       flexShrink: 0,
                       width: 14,
@@ -290,6 +345,7 @@ export function AgentTrace({
                   >
                     {glyph}
                   </span>
+                  <span className="sr-only">{trace.type.replaceAll("_", " ")}</span>
 
                   {/* Timestamp */}
                   <span
@@ -328,6 +384,7 @@ export function AgentTrace({
           })}
         </div>
       </div>
+      )}
 
       {/* "N new" pill */}
       {newCount > 0 && (

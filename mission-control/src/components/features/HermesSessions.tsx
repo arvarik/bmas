@@ -1,15 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Bot,
   ChevronRight,
+  ExternalLink,
   GitFork,
+  MessagesSquare,
   RefreshCw,
+  Search,
 } from "lucide-react";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { Panel } from "@/components/ui/Panel";
 import { ResourceState } from "@/components/ui/ResourceState";
+import { RichContent } from "@/components/ui/RichContent";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useToast } from "@/hooks/useToast";
 import {
@@ -18,6 +23,15 @@ import {
   failureFromResponse,
   type RequestFailure,
 } from "@/lib/request-state";
+import {
+  filterHermesMessages,
+  filterHermesSessions,
+  sessionLineage,
+  taskIdForSession,
+  type HermesMessageRecord,
+  type HermesSessionRecord,
+} from "@/lib/hermes-session-presentation";
+import styles from "./HermesSessions.module.css";
 
 interface NodeData {
   role: string;
@@ -27,7 +41,7 @@ interface NodeData {
   reachable: boolean;
 }
 
-interface HermesSession {
+interface HermesSession extends HermesSessionRecord {
   id: string;
   title?: string | null;
   source?: string;
@@ -44,7 +58,7 @@ interface HermesSession {
   ended_at?: number | string | null;
 }
 
-interface HermesMessage {
+interface HermesMessage extends HermesMessageRecord {
   id?: string | number;
   role?: string;
   content?: unknown;
@@ -86,6 +100,8 @@ export function HermesSessions() {
   const [messages, setMessages] = useState<HermesMessage[]>([]);
   const [selectedSession, setSelectedSession] = useState<HermesSession | null>(null);
   const [forkTitle, setForkTitle] = useState("");
+  const [sessionQuery, setSessionQuery] = useState("");
+  const [messageQuery, setMessageQuery] = useState("");
   const [discovering, setDiscovering] = useState(true);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -208,6 +224,31 @@ export function HermesSessions() {
     () => nodes.find((node) => node.role === selectedNode)?.profiles[0]?.name ?? selectedNode,
     [nodes, selectedNode],
   );
+  const visibleSessions = useMemo(
+    () => filterHermesSessions(sessions, sessionQuery),
+    [sessionQuery, sessions],
+  );
+  const visibleMessages = useMemo(
+    () => filterHermesMessages(messages, messageQuery),
+    [messageQuery, messages],
+  );
+  const lineage = useMemo(
+    () => sessionLineage(sessions, selectedId),
+    [selectedId, sessions],
+  );
+  const linkedTaskId = useMemo(
+    () => taskIdForSession(selectedSession, selectedNode),
+    [selectedNode, selectedSession],
+  );
+  const selectSession = useCallback((sessionId: string) => {
+    if (sessionId === selectedId) return;
+    setSelectedSession(null);
+    setMessages([]);
+    setMessageQuery("");
+    setDetailFailure(null);
+    setDetailLoading(true);
+    setSelectedId(sessionId);
+  }, [selectedId]);
 
   const fork = async () => {
     if (!selectedId || !selectedNode || !forkTitle.trim()) return;
@@ -217,6 +258,7 @@ export function HermesSessions() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ node: selectedNode, title: forkTitle.trim() }),
+        signal: AbortSignal.timeout(15_000),
       });
       if (!response.ok) throw await failureFromResponse(response, "Session fork failed");
       const body = await response.json() as { session?: HermesSession; object?: string };
@@ -309,8 +351,24 @@ export function HermesSessions() {
                   ))}
                 </select>
               </label>
+              <label className={styles.searchField}>
+                <span>Search sessions</span>
+                <span className={styles.searchControl}>
+                  <Search size={14} aria-hidden="true" />
+                  <input
+                    type="search"
+                    value={sessionQuery}
+                    onChange={(event) => setSessionQuery(event.target.value)}
+                    placeholder="Title, ID, model, or preview"
+                  />
+                </span>
+              </label>
               <span className="capability-badge capability-badge--enabled">{activeProfile}</span>
             </div>
+
+            <p className="sr-only" aria-live="polite">
+              {visibleSessions.length} of {sessions.length} sessions shown.
+            </p>
 
             {loading && sessions.length === 0 ? <Skeleton variant="list" lines={6} /> : null}
 
@@ -340,30 +398,31 @@ export function HermesSessions() {
 
             {sessions.length > 0 ? (
               <div className="hermes-sessions__layout">
-                <div className="hermes-sessions__list" aria-label="Hermes session list">
-                  {sessions.map((session) => (
-                    <button
-                      key={session.id}
-                      type="button"
-                      className={`hermes-session-row ${selectedId === session.id ? "hermes-session-row--active" : ""}`}
-                      onClick={() => {
-                        setSelectedSession(null);
-                        setMessages([]);
-                        setDetailFailure(null);
-                        setDetailLoading(true);
-                        setSelectedId(session.id);
-                      }}
-                    >
-                      <Bot size={14} />
-                      <span className="hermes-session-row__content">
-                        <strong>{session.title || session.id}</strong>
-                        <span>{session.preview || `${session.message_count ?? 0} messages`}</span>
-                        <small>{dateText(session.last_active ?? session.started_at)}</small>
-                      </span>
-                      {session.parent_session_id ? <GitFork size={12} aria-label="Forked session" /> : <ChevronRight size={13} />}
-                    </button>
+                <ul className={`hermes-sessions__list ${styles.sessionList}`} aria-label="Hermes session list">
+                  {visibleSessions.length === 0 ? (
+                    <li className={styles.noMatches}>No sessions match this search.</li>
+                  ) : visibleSessions.map((session) => (
+                    <li key={session.id}>
+                      <button
+                        type="button"
+                        className={`hermes-session-row ${selectedId === session.id ? "hermes-session-row--active" : ""}`}
+                        onClick={() => selectSession(session.id)}
+                        aria-current={selectedId === session.id ? "true" : undefined}
+                      >
+                        <Bot size={14} aria-hidden="true" />
+                        <span className="hermes-session-row__content">
+                          <strong>{session.title || session.id}</strong>
+                          <span>{session.preview || `${session.message_count ?? 0} messages`}</span>
+                          <small>{dateText(session.last_active ?? session.started_at)}</small>
+                          {session.parent_session_id ? <small>Forked session</small> : null}
+                        </span>
+                        {session.parent_session_id
+                          ? <GitFork size={12} aria-hidden="true" />
+                          : <ChevronRight size={13} aria-hidden="true" />}
+                      </button>
+                    </li>
                   ))}
-                </div>
+                </ul>
 
                 <div className="hermes-session-detail">
                   {detailLoading ? <Skeleton variant="list" lines={6} /> : detailFailure ? (
@@ -382,44 +441,113 @@ export function HermesSessions() {
                     />
                   ) : selectedSession ? (
                     <>
-                <div className="hermes-session-detail__header">
-                  <div>
-                    <h3>{selectedSession.title || selectedSession.id}</h3>
-                    <span>{selectedSession.model || activeProfile} · {messages.length} messages</span>
-                  </div>
-                  <div className="hermes-session-detail__metrics">
-                    <span>{((selectedSession.input_tokens ?? 0) + (selectedSession.output_tokens ?? 0)).toLocaleString()} tok</span>
-                    <span>${(selectedSession.actual_cost_usd ?? selectedSession.estimated_cost_usd ?? 0).toFixed(4)}</span>
-                  </div>
-                </div>
-
-                <div className="hermes-session-detail__messages">
-                  {messages.length === 0 ? (
-                    <div className="hermes-sessions__empty">This session has no messages.</div>
-                  ) : messages.map((message, index) => (
-                    <article key={message.id ?? index} className={`hermes-message hermes-message--${message.role || "unknown"}`}>
-                      <div className="hermes-message__meta">
-                        <strong>{message.role || "unknown"}</strong>
-                        <span>{dateText(message.timestamp)}</span>
+                      <div className="hermes-session-detail__header">
+                        <div>
+                          <h3 id="hermes-session-title">{selectedSession.title || selectedSession.id}</h3>
+                          <span>{selectedSession.model || activeProfile} · {messages.length} messages</span>
+                        </div>
+                        <div className="hermes-session-detail__metrics" aria-label="Session usage">
+                          <span>{((selectedSession.input_tokens ?? 0) + (selectedSession.output_tokens ?? 0)).toLocaleString()} tokens</span>
+                          <span>${(selectedSession.actual_cost_usd ?? selectedSession.estimated_cost_usd ?? 0).toFixed(4)} cost</span>
+                        </div>
                       </div>
-                      <pre>{contentText(message.content)}</pre>
-                    </article>
-                  ))}
-                </div>
 
-                <div className="hermes-session-detail__fork">
-                  <GitFork size={15} />
-                  <input
-                    value={forkTitle}
-                    onChange={(event) => setForkTitle(event.target.value)}
-                    maxLength={200}
-                    placeholder="Fork title"
-                    aria-label="Fork title"
-                  />
-                  <ActionButton onClick={() => void fork()} loading={forking} disabled={!forkTitle.trim()}>
-                    Fork session
-                  </ActionButton>
-                </div>
+                      <div className={styles.detailContext}>
+                        <nav className={styles.lineage} aria-label="Session lineage">
+                          <span className={styles.contextLabel}>Lineage</span>
+                          <ol>
+                            {lineage.ancestors.map((session) => (
+                              <li key={session.id}>
+                                <button type="button" onClick={() => selectSession(session.id)}>
+                                  {session.title || session.id}
+                                </button>
+                              </li>
+                            ))}
+                            <li aria-current="page">{selectedSession.title || selectedSession.id}</li>
+                          </ol>
+                          {selectedSession.parent_session_id && lineage.ancestors.length === 0 ? (
+                            <span className={styles.missingParent}>
+                              Parent {selectedSession.parent_session_id} is outside the loaded result set.
+                            </span>
+                          ) : null}
+                          {lineage.children.length > 0 ? (
+                            <div className={styles.children}>
+                              <span>Direct forks</span>
+                              {lineage.children.map((session) => (
+                                <button key={session.id} type="button" onClick={() => selectSession(session.id)}>
+                                  <GitFork size={12} aria-hidden="true" /> {session.title || session.id}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </nav>
+                        {linkedTaskId ? (
+                          <Link className={styles.taskLink} href={`/task/${encodeURIComponent(linkedTaskId)}`}>
+                            Open task {linkedTaskId} <ExternalLink size={13} aria-hidden="true" />
+                          </Link>
+                        ) : (
+                          <span className={styles.noTask}>No linked task was reported.</span>
+                        )}
+                      </div>
+
+                      <div className={styles.messageToolbar}>
+                        <label>
+                          <span className="sr-only">Search this transcript</span>
+                          <Search size={14} aria-hidden="true" />
+                          <input
+                            type="search"
+                            value={messageQuery}
+                            onChange={(event) => setMessageQuery(event.target.value)}
+                            placeholder="Search this transcript"
+                          />
+                        </label>
+                        <span aria-live="polite">
+                          {visibleMessages.length} of {messages.length} messages
+                        </span>
+                      </div>
+
+                      <div className="hermes-session-detail__messages" aria-labelledby="hermes-session-title">
+                        {messages.length === 0 ? (
+                          <div className="hermes-sessions__empty">This session has no messages.</div>
+                        ) : visibleMessages.length === 0 ? (
+                          <div className="hermes-sessions__empty">No messages match this search.</div>
+                        ) : visibleMessages.map((message, index) => (
+                          <article
+                            key={message.id ?? index}
+                            className={`hermes-message hermes-message--${message.role || "unknown"}`}
+                            aria-label={`${message.role || "Unknown"} message`}
+                          >
+                            <div className="hermes-message__meta">
+                              <strong>{message.role || "unknown"}</strong>
+                              {message.tool_name ? (
+                                <span className={styles.toolBadge}>
+                                  <MessagesSquare size={11} aria-hidden="true" /> {message.tool_name}
+                                </span>
+                              ) : null}
+                              <span>{dateText(message.timestamp)}</span>
+                            </div>
+                            <RichContent
+                              content={contentText(message.content)}
+                              forceMarkdown={typeof message.content === "string"}
+                              className={styles.messageContent}
+                            />
+                          </article>
+                        ))}
+                      </div>
+
+                      <div className="hermes-session-detail__fork">
+                        <GitFork size={15} aria-hidden="true" />
+                        <input
+                          value={forkTitle}
+                          onChange={(event) => setForkTitle(event.target.value)}
+                          maxLength={200}
+                          placeholder="Fork title"
+                          aria-label="Fork title"
+                        />
+                        <ActionButton onClick={() => void fork()} loading={forking} disabled={!forkTitle.trim()}>
+                          Fork session
+                        </ActionButton>
+                      </div>
                     </>
                   ) : null}
                 </div>

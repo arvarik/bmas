@@ -20,6 +20,12 @@ import {
   useTaskOperatorAction,
 } from "@/hooks/useTaskOperatorAction";
 import { ActionableError } from "@/components/ui/ActionableError";
+import {
+  operatorHistoryKey,
+  parseOperatorHistory,
+  serializeOperatorHistory,
+  type StoredOperatorAction,
+} from "@/lib/operator-action-history";
 
 interface OperationsStatus {
   providerReady: boolean;
@@ -27,12 +33,6 @@ interface OperationsStatus {
   agentsTotal: number;
   queued: number;
   queueCapacity: number;
-}
-
-interface OperatorActionEvent {
-  id: string;
-  label: string;
-  timestamp: string;
 }
 
 type StageId = "queued" | "running" | "blocked" | "failed" | "completed";
@@ -96,12 +96,13 @@ export function TaskLifecycle({
   controls: readonly string[];
 }) {
   const router = useRouter();
+  const taskId = task?.task_id ?? "";
   const [actionName, setActionName] = useState("");
   const [copyError, setCopyError] = useState("");
   const [guidance, setGuidance] = useState("");
   const [showGuidance, setShowGuidance] = useState(false);
   const [optimisticPaused, setOptimisticPaused] = useState<boolean | null>(null);
-  const [operatorEvents, setOperatorEvents] = useState<OperatorActionEvent[]>([]);
+  const [operatorEvents, setOperatorEvents] = useState<StoredOperatorAction[]>([]);
   const [operations, setOperations] = useState<OperationsStatus | null>(null);
   const [operationsError, setOperationsError] = useState("");
   const [operationsVersion, setOperationsVersion] = useState(0);
@@ -110,6 +111,14 @@ export function TaskLifecycle({
     execute: executeOperatorAction,
     retry: retryOperatorAction,
   } = useTaskOperatorAction();
+
+  useEffect(() => {
+    if (!taskId) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- local history loads after hydration to keep server and client markup equal.
+    setOperatorEvents(parseOperatorHistory(
+      window.localStorage.getItem(operatorHistoryKey(taskId)),
+    ));
+  }, [taskId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -143,11 +152,27 @@ export function TaskLifecycle({
 
   const recordOperatorAction = useCallback((action: TaskOperatorAction) => {
     const timestamp = new Date().toISOString();
-    setOperatorEvents((events) => [
-      ...events,
-      { id: `${action}:${timestamp}`, label: actionEventLabel(action), timestamp },
-    ].slice(-4));
-  }, []);
+    setOperatorEvents((events) => {
+      const next = [
+        ...events,
+        { id: `${action}:${timestamp}`, action, label: actionEventLabel(action), timestamp },
+      ].slice(-20);
+      if (taskId) {
+        window.localStorage.setItem(
+          operatorHistoryKey(taskId),
+          serializeOperatorHistory(next),
+        );
+      }
+      return next;
+    });
+  }, [taskId]);
+
+  const clearOperatorHistory = useCallback(() => {
+    setOperatorEvents([]);
+    if (taskId) {
+      window.localStorage.removeItem(operatorHistoryKey(taskId));
+    }
+  }, [taskId]);
 
   const applyOperatorResult = useCallback((
     action: TaskOperatorAction,
@@ -378,19 +403,25 @@ export function TaskLifecycle({
         </div>
       ) : null}
       {operatorEvents.length > 0 ? (
-        <div
-          role="log"
-          aria-label="Operator actions from this browser view"
-          aria-live="polite"
-          style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)", color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}
-        >
-          <strong>Current view</strong>
-          {operatorEvents.map((event) => (
-            <span key={event.id}>
-              {event.label} at <time dateTime={event.timestamp}>{new Date(event.timestamp).toLocaleTimeString()}</time>
-            </span>
-          ))}
-        </div>
+        <details className="task-lifecycle__history">
+          <summary>Operator action history ({operatorEvents.length})</summary>
+          <div
+            role="log"
+            aria-label="Operator actions saved in this browser"
+            aria-live="polite"
+          >
+            <p>Saved in this browser for this task.</p>
+            <ol>
+              {[...operatorEvents].reverse().map((event) => (
+                <li key={event.id}>
+                  <strong>{event.label}</strong>{" "}
+                  <time dateTime={event.timestamp}>{new Date(event.timestamp).toLocaleString()}</time>
+                </li>
+              ))}
+            </ol>
+            <button type="button" onClick={clearOperatorHistory}>Clear local history</button>
+          </div>
+        </details>
       ) : null}
       {operationsError ? (
         <ActionableError

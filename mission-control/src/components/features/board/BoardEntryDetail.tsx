@@ -6,8 +6,8 @@
  * in/out reference links so the operator can walk the debate.
  */
 
-import React, { useMemo, useState } from "react";
-import { X } from "lucide-react";
+import React, { useMemo, useRef, useState } from "react";
+import { GitCompareArrows, X } from "lucide-react";
 import { authorColor } from "@/lib/design-tokens";
 import { RichContent } from "@/components/ui/RichContent";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
@@ -18,6 +18,7 @@ import {
   prettyAuthor,
   normalizeBody,
 } from "./boardModel";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 interface BoardEntryDetailProps {
   entry: MergedBoardEntry;
@@ -26,6 +27,9 @@ interface BoardEntryDetailProps {
   onSelect: (id: string) => void;
   controls: readonly string[];
   onSteer: (action: "boost" | "retract", entryId: string) => Promise<void>;
+  compared?: boolean;
+  onToggleCompare?: (entryId: string) => void;
+  backlinkCount?: number;
 }
 
 export function BoardEntryDetail({
@@ -35,12 +39,17 @@ export function BoardEntryDetail({
   onSelect,
   controls,
   onSteer,
+  compared = false,
+  onToggleCompare,
+  backlinkCount = 0,
 }: BoardEntryDetailProps) {
   const meta = typeMeta(entry.type);
   const Icon = meta.icon;
   const aColor = authorColor(entry.author);
   const [pendingAction, setPendingAction] = useState<"boost" | "retract" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap({ active: true, containerRef: dialogRef, onEscape: onClose });
 
   const byId = useMemo(() => new Map(allEntries.map((e) => [e.id, e])), [allEntries]);
   const refsOut = useMemo(
@@ -54,7 +63,12 @@ export function BoardEntryDetail({
 
   return (
     <div
+      ref={dialogRef}
       className="bb-detail entry-appear"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="blackboard-entry-detail-title"
+      tabIndex={-1}
       style={{
         position: "absolute",
         top: 0,
@@ -82,6 +96,7 @@ export function BoardEntryDetail({
       >
         <Icon size={16} style={{ color: meta.color }} />
         <span
+          id="blackboard-entry-detail-title"
           style={{
             fontSize: "var(--text-sm)",
             fontWeight: "var(--weight-semibold)",
@@ -96,6 +111,17 @@ export function BoardEntryDetail({
           {entry.id}
         </span>
         <span style={{ flex: 1 }} />
+        {onToggleCompare ? (
+          <button
+            type="button"
+            onClick={() => onToggleCompare(entry.id)}
+            aria-pressed={compared}
+            aria-label={compared ? "Remove entry from comparison" : "Add entry to comparison"}
+            style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+          >
+            <GitCompareArrows size={14} /> {compared ? "Compared" : "Compare"}
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={onClose}
@@ -126,6 +152,7 @@ export function BoardEntryDetail({
             {prettyAuthor(entry.author)}
           </Chip>
           <Chip>{entry.round === 0 ? "Genesis" : `Round ${entry.round}`}</Chip>
+          <Chip>{backlinkCount} backlink{backlinkCount === 1 ? "" : "s"}</Chip>
           <Chip
             color={
               entry.status === "removed"

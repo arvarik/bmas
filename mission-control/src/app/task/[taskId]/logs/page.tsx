@@ -24,6 +24,7 @@ import type { LogLine } from "@/components/features/DistributedLogStream";
 import { AgentTrace } from "@/components/features/AgentTrace";
 import { TurnInspector } from "@/components/features/TurnInspector";
 import { RefreshCw, AlertTriangle, Terminal as TerminalIcon } from "lucide-react";
+import { updateUrlParams } from "@/lib/task-detail-tools";
 
 // ── Archived log shape from REST ──────────────────────────────────────
 
@@ -84,18 +85,46 @@ interface ModeToggleProps {
 }
 
 function ModeToggle({ viewMode, hasTraces, onSetMode }: ModeToggleProps) {
+  const modes: ("stream" | "trace")[] = hasTraces ? ["stream", "trace"] : ["stream"];
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, mode: "stream" | "trace") => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
+    event.preventDefault();
+    const currentIndex = modes.indexOf(mode);
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? modes.length - 1
+        : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + modes.length) % modes.length;
+    const next = modes[nextIndex];
+    onSetMode(next);
+    event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("button")[nextIndex]?.focus();
+  };
   return (
-    <div className="logs-mode-toggle">
+    <div className="logs-mode-toggle" role="tablist" aria-label="Log view">
       <button
+        type="button"
+        id="logs-stream-tab"
+        role="tab"
+        aria-selected={viewMode === "stream"}
+        aria-controls="logs-stream-panel"
+        tabIndex={viewMode === "stream" ? 0 : -1}
         className={`logs-mode-btn ${viewMode === "stream" ? "logs-mode-btn--active" : ""}`}
         onClick={() => onSetMode("stream")}
+        onKeyDown={(event) => handleKeyDown(event, "stream")}
       >
         Stream
       </button>
       {hasTraces && (
         <button
+          type="button"
+          id="logs-trace-tab"
+          role="tab"
+          aria-selected={viewMode === "trace"}
+          aria-controls="logs-trace-panel"
+          tabIndex={viewMode === "trace" ? 0 : -1}
           className={`logs-mode-btn ${viewMode === "trace" ? "logs-mode-btn--active" : ""}`}
           onClick={() => onSetMode("trace")}
+          onKeyDown={(event) => handleKeyDown(event, "trace")}
         >
           Trace
         </button>
@@ -124,6 +153,22 @@ export default function LogsPage() {
   // View mode: "stream" (raw logs) or "trace" (structured turns)
   const hasTraces = traceEvents.length > 0;
   const [viewMode, setViewMode] = useState<"stream" | "trace">("stream");
+
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("log_view");
+    if (requested === "trace") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- URL state initializes this client-only tab.
+      setViewMode("trace");
+    }
+  }, []);
+
+  const selectViewMode = useCallback((mode: "stream" | "trace") => {
+    setViewMode(mode);
+    const nextSearch = updateUrlParams(window.location.search, {
+      log_view: mode === "stream" ? null : mode,
+    });
+    window.history.replaceState(null, "", `${window.location.pathname}${nextSearch}${window.location.hash}`);
+  }, []);
 
   // ── Archived logs state (completed tasks) ─────────────────────────
   const [archivedLogs, setArchivedLogs] = useState<ArchivedLog[]>([]);
@@ -163,10 +208,10 @@ export default function LogsPage() {
 
     return (
       <div className="view-container logs-view">
-        <ModeToggle viewMode={viewMode} hasTraces={hasTraces} onSetMode={setViewMode} />
+        <ModeToggle viewMode={viewMode} hasTraces={hasTraces} onSetMode={selectViewMode} />
 
         {viewMode === "trace" ? (
-          <div style={{ flex: 1, minHeight: 0 }}>
+          <div id="logs-trace-panel" role="tabpanel" aria-labelledby="logs-trace-tab" style={{ flex: 1, minHeight: 0 }}>
             <Panel title="Agent Trace" subtitle={`${traceEvents.length} events`}>
               <AgentTrace
                 traceEvents={traceEvents}
@@ -177,7 +222,7 @@ export default function LogsPage() {
             </Panel>
           </div>
         ) : (
-          <div className="logs-stream-container">
+          <div id="logs-stream-panel" role="tabpanel" aria-labelledby="logs-stream-tab" className="logs-stream-container">
             <DistributedLogStream
               lines={liveLines}
               isLive={true}
@@ -292,10 +337,10 @@ export default function LogsPage() {
 
   return (
     <div className="view-container logs-view">
-      <ModeToggle viewMode={viewMode} hasTraces={hasTraces} onSetMode={setViewMode} />
+      <ModeToggle viewMode={viewMode} hasTraces={hasTraces} onSetMode={selectViewMode} />
 
       {viewMode === "trace" && traceEvents.length > 0 ? (
-        <div style={{ flex: 1, minHeight: 0 }}>
+        <div id="logs-trace-panel" role="tabpanel" aria-labelledby="logs-trace-tab" style={{ flex: 1, minHeight: 0 }}>
           <Panel title="Agent Trace" subtitle={`${traceEvents.length} events`}>
             <AgentTrace
               traceEvents={traceEvents}
@@ -306,7 +351,7 @@ export default function LogsPage() {
           </Panel>
         </div>
       ) : (
-        <div className="logs-stream-container">
+        <div id="logs-stream-panel" role="tabpanel" aria-labelledby="logs-stream-tab" className="logs-stream-container">
           <DistributedLogStream
             lines={archivedLines}
             isLive={false}

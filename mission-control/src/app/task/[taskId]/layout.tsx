@@ -10,7 +10,7 @@
  */
 
 import React, { useEffect, useRef, useState } from "react";
-import { useParams, useSelectedLayoutSegment } from "next/navigation";
+import { useParams, useRouter, useSelectedLayoutSegment } from "next/navigation";
 import Link from "next/link";
 import { useTaskStream } from "@/hooks/useTaskStream";
 import type { TaskStreamData, CostData } from "@/hooks/useTaskStream";
@@ -142,8 +142,10 @@ export default function TaskLayout({
   children: React.ReactNode;
 }) {
   const { taskId } = useParams();
+  const router = useRouter();
   const segment = useSelectedLayoutSegment();
   const basePath = `/task/${taskId}`;
+  const tabRefs = useRef<Map<number, HTMLAnchorElement>>(new Map());
 
   // ── Optimistic state from PendingTaskContext ──────────────────────
   const { consumePending } = usePendingTask();
@@ -172,6 +174,13 @@ export default function TaskLayout({
   const panelAvailable = tabs.some((panel) => (
     panel.segment === segment || (segment === "artifacts" && panel.segment === "files")
   ));
+  const activeTabIndex = Math.max(0, tabs.findIndex((tab) => tab.segment === segment));
+  const selectTab = (index: number) => {
+    const tab = tabs[index];
+    if (!tab) return;
+    tabRefs.current.get(index)?.focus();
+    router.push(tab.segment ? `${basePath}/${tab.segment}` : basePath);
+  };
 
   // Clear optimistic state when real data arrives
   useEffect(() => {
@@ -197,20 +206,42 @@ export default function TaskLayout({
           isPaused={streamData.isPaused}
           controls={capability?.features.controls ?? []}
         />
-        {tabs.length > 0 ? <nav className="task-tabs" role="tablist">
-          {tabs.map((tab) => (
+        {tabs.length > 0 ? <nav className="task-tabs" role="tablist" aria-label="Task detail views">
+          {tabs.map((tab, index) => (
             <Link
               key={tab.label}
               href={tab.segment ? `${basePath}/${tab.segment}` : basePath}
               className={`task-tabs__tab ${segment === tab.segment ? "task-tabs__tab--active" : ""}`}
               role="tab"
               aria-selected={segment === tab.segment}
+              aria-controls="task-tab-panel"
+              id={`task-tab-${index}`}
+              tabIndex={index === activeTabIndex ? 0 : -1}
+              ref={(element) => {
+                if (element) tabRefs.current.set(index, element);
+                else tabRefs.current.delete(index);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
+                event.preventDefault();
+                const nextIndex = event.key === "Home"
+                  ? 0
+                  : event.key === "End"
+                    ? tabs.length - 1
+                    : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+                selectTab(nextIndex);
+              }}
             >
               {tab.label}
             </Link>
           ))}
         </nav> : null}
-        <div className="task-content">
+        <div
+          id="task-tab-panel"
+          className="task-content"
+          role="tabpanel"
+          aria-labelledby={`task-tab-${activeTabIndex}`}
+        >
           {streamData.runtime.status === "ready" && streamData.hydrationError ? (
             <ActionableError
               component="Saved task data"

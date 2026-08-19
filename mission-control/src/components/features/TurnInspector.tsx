@@ -9,7 +9,7 @@
  * Includes live approvals, run steering, and Hermes delegation details.
  */
 
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useMemo, useState, useCallback, useRef } from "react";
 import { authorColor } from "@/lib/design-tokens";
 import type { TurnRecord, TraceEvent, BoardEntry, RejectedEntry } from "@/hooks/useTaskStream";
 import { ToolCallCard } from "./ToolCallCard";
@@ -21,6 +21,7 @@ import {
   requestTaskOperatorAction,
   useTaskOperatorAction,
 } from "@/hooks/useTaskOperatorAction";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 type ApprovalChoice = "once" | "session" | "always" | "deny";
 
@@ -74,6 +75,8 @@ export function TurnInspector({
     retry: retrySteer,
   } = useTaskOperatorAction();
   const steerPending = steerAction.status === "pending";
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap({ active: turnId !== null, containerRef: dialogRef, onEscape: onClose });
 
   // Find turn
   const turn = useMemo(() => {
@@ -183,14 +186,18 @@ export function TurnInspector({
   return (
     <>
       {/* Backdrop */}
-      <div
+      <button
+        type="button"
         className="turn-inspector-backdrop"
         onClick={onClose}
         aria-hidden="true"
+        tabIndex={-1}
         style={{
           position: "fixed",
           inset: 0,
           background: "hsl(0 0% 0% / 0.4)",
+          border: 0,
+          padding: 0,
           zIndex: 900,
           cursor: "pointer",
         }}
@@ -198,10 +205,12 @@ export function TurnInspector({
 
       {/* Slide-over panel */}
       <div
+        ref={dialogRef}
         className="turn-inspector"
         role="dialog"
         aria-modal="true"
         aria-label={`${actor.replace(/_/g, " ")} turn details`}
+        tabIndex={-1}
         style={{
           position: "fixed",
           top: 0,
@@ -400,9 +409,10 @@ export function TurnInspector({
                     fontSize: "var(--text-sm)",
                   }}
                 >
-                  <span style={{ width: 14, textAlign: "center", color: glyphColor, fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", flexShrink: 0 }}>
+                  <span aria-hidden="true" style={{ width: 14, textAlign: "center", color: glyphColor, fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", flexShrink: 0 }}>
                     {glyph}
                   </span>
+                  <span className="sr-only">{trace.type.replaceAll("_", " ")}</span>
                   <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", minWidth: 60, flexShrink: 0 }}>
                     {new Date(trace.timestamp).toLocaleTimeString()}
                   </span>

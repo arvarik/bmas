@@ -21,13 +21,14 @@ import { useTaskHistory } from "@/hooks/useTaskHistory";
 import { useSystemStream } from "@/hooks/useSystemStream";
 import { usePendingTask } from "@/contexts/PendingTaskContext";
 import { useToast } from "@/hooks/useToast";
-import { ArrowUp, Zap, DollarSign, BarChart3, Paperclip, Cpu, Cloud } from "lucide-react";
+import { ArrowUp, Zap, DollarSign, BarChart3, Paperclip, Cpu, Cloud, X } from "lucide-react";
 import { VariantSelect } from "@/components/features/VariantSelect";
 import { ReadinessPanel } from "@/components/features/ReadinessPanel";
 import {
+  addAttachments,
   createTaskSubmissionRequest,
+  MAX_TASK_ATTACHMENTS,
   submissionErrorMessage,
-  validateAttachment,
 } from "@/lib/task-submission";
 
 // ── Example tasks ─────────────────────────────────────────────────────
@@ -58,30 +59,38 @@ const EXAMPLE_TASKS = [
 // ── Status indicator ──────────────────────────────────────────────────
 
 function TaskStatusDot({ status }: { status: string }) {
+  const label = status === "pending" ? "Queued" : status.charAt(0).toUpperCase() + status.slice(1);
   switch (status) {
     case "running":
       return (
-        <span
-          className="landing__status-dot pulse-dot"
-          style={{ background: "var(--status-running)" }}
-        />
+        <span className="landing__recent-status">
+          <span
+            className="landing__status-dot pulse-dot"
+            style={{ background: "var(--status-running)" }}
+            aria-hidden="true"
+          />
+          {label}
+        </span>
       );
     case "completed":
       return (
-        <span className="landing__status-icon" style={{ color: "var(--status-success)" }}>
-          ✓
+        <span className="landing__recent-status">
+          <span className="landing__status-icon" style={{ color: "var(--status-success)" }} aria-hidden="true">✓</span>
+          {label}
         </span>
       );
     case "failed":
       return (
-        <span className="landing__status-icon" style={{ color: "var(--status-error)" }}>
-          ✗
+        <span className="landing__recent-status">
+          <span className="landing__status-icon" style={{ color: "var(--status-error)" }} aria-hidden="true">✗</span>
+          {label}
         </span>
       );
     default:
       return (
-        <span className="landing__status-icon" style={{ color: "var(--status-pending)" }}>
-          ○
+        <span className="landing__recent-status">
+          <span className="landing__status-icon" style={{ color: "var(--status-pending)" }} aria-hidden="true">○</span>
+          {label}
         </span>
       );
   }
@@ -116,6 +125,9 @@ export function LandingPageClient({
   const [stackReady, setStackReady] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [attachmentFeedback, setAttachmentFeedback] = useState("");
+  const [attachmentError, setAttachmentError] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -173,6 +185,8 @@ export function LandingPageClient({
         });
         setTask("");
         setAttachedFiles([]);
+        setAttachmentFeedback("");
+        setAttachmentError(false);
         router.push(`/task/${data.task_id}`);
       }
     } catch (err) {
@@ -202,6 +216,41 @@ export function LandingPageClient({
   const hasInput = task.trim().length > 0;
   const canSubmit = hasInput && variantAvailable && stackReady && !submitting;
 
+  const acceptAttachments = useCallback((candidates: readonly File[], source: string) => {
+    if (candidates.length === 0) return;
+    if (!storageEnabled) {
+      setAttachmentFeedback("Attachments are unavailable because storage is disabled.");
+      setAttachmentError(true);
+      return;
+    }
+    const selection = addAttachments(
+      attachedFiles,
+      candidates,
+      allowedUploadTypes,
+      maxUploadMb,
+    );
+    setAttachedFiles(selection.files);
+    const addedCount = selection.files.length - attachedFiles.length;
+    if (selection.errors.length > 0) {
+      const addedMessage = addedCount > 0
+        ? `${addedCount} ${addedCount === 1 ? "file was" : "files were"} added. `
+        : "";
+      const message = `${addedMessage}${selection.errors.join(" ")}`;
+      setAttachmentFeedback(message);
+      setAttachmentError(true);
+      toast({ type: "error", message });
+      return;
+    }
+    setAttachmentFeedback(
+      `${addedCount} ${addedCount === 1 ? "file" : "files"} added from ${source}.`,
+    );
+    setAttachmentError(false);
+  }, [allowedUploadTypes, attachedFiles, maxUploadMb, storageEnabled, toast]);
+
+  const attachmentHelp = storageEnabled
+    ? `Attach up to ${MAX_TASK_ATTACHMENTS} files. Each file can be up to ${maxUploadMb} MB. Allowed types: ${allowedUploadTypes.join(", ")}. You can choose, drop, or paste files.`
+    : "Attachments are unavailable because storage is disabled.";
+
   return (
     <div className="landing">
       <div className="landing__container">
@@ -229,7 +278,32 @@ export function LandingPageClient({
         />
 
         {/* ── Input Card ────────────────────────────────────────── */}
-        <div className="landing__input-card">
+        <div
+          className={`landing__input-card ${dragActive ? "landing__input-card--drag-active" : ""}`}
+          onDragEnter={(event) => {
+            if (event.dataTransfer.types.includes("Files")) {
+              event.preventDefault();
+              setDragActive(true);
+            }
+          }}
+          onDragOver={(event) => {
+            if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setDragActive(false);
+            }
+          }}
+          onDrop={(event) => {
+            if (!event.dataTransfer.types.includes("Files")) return;
+            event.preventDefault();
+            setDragActive(false);
+            acceptAttachments(Array.from(event.dataTransfer.files), "drop");
+          }}
+        >
+          {dragActive ? (
+            <div className="landing__drop-message" aria-hidden="true">Drop files to attach them</div>
+          ) : null}
           <textarea
             ref={textareaRef}
             className="landing__textarea"
@@ -241,9 +315,19 @@ export function LandingPageClient({
                 void handleSubmit();
               }
             }}
+            onPaste={(event) => {
+              const files = Array.from(event.clipboardData.items)
+                .filter((item) => item.kind === "file")
+                .map((item) => item.getAsFile())
+                .filter((file): file is File => file !== null);
+              if (files.length === 0) return;
+              event.preventDefault();
+              acceptAttachments(files, "the clipboard");
+            }}
             placeholder="Describe a task for the swarm to execute…"
             rows={3}
             disabled={submitting}
+            aria-describedby="attachment-help attachment-feedback"
           />
           {/* Hidden file input */}
           <input
@@ -254,20 +338,7 @@ export function LandingPageClient({
             style={{ display: "none" }}
             onChange={(e) => {
               const files = Array.from(e.target.files || []);
-              const accepted: File[] = [];
-              for (const file of files) {
-                const error = validateAttachment(
-                  file,
-                  allowedUploadTypes,
-                  maxUploadMb,
-                );
-                if (error) {
-                  toast({ type: "error", message: error });
-                } else {
-                  accepted.push(file);
-                }
-              }
-              setAttachedFiles((previous) => [...previous, ...accepted]);
+              acceptAttachments(files, "the file picker");
               e.target.value = "";
             }}
           />
@@ -284,9 +355,11 @@ export function LandingPageClient({
                     : "Enable storage in bmas.yaml to attach files"
                 }
                 type="button"
-                aria-label="Attach files"
+                aria-label={`Attach files. ${attachmentHelp}`}
+                aria-describedby="attachment-help"
               >
                 <Paperclip size={13} />
+                <span>Attach</span>
               </button>
               <VariantSelect
                 value={variant}
@@ -321,19 +394,37 @@ export function LandingPageClient({
               </button>
             </div>
           </div>
+          <p id="attachment-help" className="landing__attachment-help">
+            {attachmentHelp}
+          </p>
+          <p
+            id="attachment-feedback"
+            className="landing__attachment-feedback"
+            role={attachmentError ? "alert" : "status"}
+            aria-live={attachmentError ? "assertive" : "polite"}
+          >
+            {attachmentFeedback}
+          </p>
           {/* Attached files chips */}
           {attachedFiles.length > 0 && (
-            <div className="landing__attached-files">
+            <div className="landing__attached-files" aria-label={`${attachedFiles.length} attached files`}>
+              <span className="landing__attached-count">
+                {attachedFiles.length} of {MAX_TASK_ATTACHMENTS} attached
+              </span>
               {attachedFiles.map((f, i) => (
-                <span key={i} className="landing__attached-chip">
-                  {f.name}
+                <span key={`${f.name}:${f.size}:${f.lastModified}`} className="landing__attached-chip">
+                  <span className="landing__attached-name">{f.name}</span>
                   <button
-                    onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))}
+                    onClick={() => {
+                      setAttachedFiles((previous) => previous.filter((_, index) => index !== i));
+                      setAttachmentFeedback(`${f.name} removed.`);
+                      setAttachmentError(false);
+                    }}
                     className="landing__attached-remove"
                     type="button"
                     aria-label={`Remove ${f.name}`}
                   >
-                    ×
+                    <X size={14} aria-hidden="true" />
                   </button>
                 </span>
               ))}

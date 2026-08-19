@@ -20,12 +20,15 @@
  * with the durable Redis snapshot so content never disappears.
  */
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Download,
+  GitCompareArrows,
   LayoutList,
   Search,
   Filter,
   Inbox,
+  X,
 } from "lucide-react";
 import { authorColor } from "@/lib/design-tokens";
 import type { BoardEntry, ConsensusState, TurnRecord } from "@/hooks/useTaskStream";
@@ -36,10 +39,17 @@ import {
   typeMeta,
   prettyAuthor,
   TYPE_ORDER,
+  countBoardBacklinks,
+  normalizeBody,
+  sortBoardEntries,
+  type BoardSort,
   type GroupMode,
 } from "./board/boardModel";
 import { BoardEntryCard } from "./board/BoardEntryCard";
 import { BoardEntryDetail } from "./board/BoardEntryDetail";
+import { RichContent } from "@/components/ui/RichContent";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
+import { updateUrlParams } from "@/lib/task-detail-tools";
 
 
 interface BlackboardBoardProps {
@@ -71,7 +81,39 @@ export function BlackboardBoard({
   const [authorFilter, setAuthorFilter] = useState<Set<string>>(new Set());
   const [showRemoved, setShowRemoved] = useState(false);
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<BoardSort>("sequence-asc");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [showComparison, setShowComparison] = useState(false);
+  const [urlReady, setUrlReady] = useState(false);
+
+  /* eslint-disable react-hooks/set-state-in-effect -- URL state initializes client-only board controls. */
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestedGroup = params.get("board_group");
+    const requestedSort = params.get("board_sort");
+    if (requestedGroup === "round" || requestedGroup === "type" || requestedGroup === "author") {
+      setGroupMode(requestedGroup);
+    }
+    if (["sequence-asc", "sequence-desc", "salience", "confidence", "backlinks"].includes(requestedSort ?? "")) {
+      setSort(requestedSort as BoardSort);
+    }
+    setSearch(params.get("board_q") ?? "");
+    setShowRemoved(params.get("board_removed") === "1");
+    setUrlReady(true);
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    if (!urlReady) return;
+    const nextSearch = updateUrlParams(window.location.search, {
+      board_q: search.trim() || null,
+      board_group: groupMode === "round" ? null : groupMode,
+      board_sort: sort === "sequence-asc" ? null : sort,
+      board_removed: showRemoved ? "1" : null,
+    });
+    window.history.replaceState(null, "", `${window.location.pathname}${nextSearch}${window.location.hash}`);
+  }, [groupMode, search, showRemoved, sort, urlReady]);
 
   // ── Derived stats (over the full board) ─────────────────────────────
   const stats = useMemo(() => {
@@ -109,9 +151,10 @@ export function BlackboardBoard({
   }, [entries, allTurns]);
 
   // ── Filter pipeline ──────────────────────────────────────────────────
+  const backlinkCounts = useMemo(() => countBoardBacklinks(entries), [entries]);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return entries.filter((e) => {
+    const matches = entries.filter((e) => {
       if (!showRemoved && e.status === "removed") return false;
       if (typeFilter.size && !typeFilter.has(e.type)) return false;
       if (authorFilter.size && !authorFilter.has(e.author)) return false;
@@ -119,10 +162,21 @@ export function BlackboardBoard({
       const meta = stats.entryMeta.get(e.id);
       if (modelFilter.size && meta && !modelFilter.has(meta.model)) return false;
 
-      if (q && !(`${e.title} ${e.body}`.toLowerCase().includes(q))) return false;
+      if (q && !([
+        e.id,
+        e.title,
+        e.body,
+        e.type,
+        e.author,
+        e.status,
+        e.refs.join(" "),
+        meta?.model ?? "",
+        `round ${e.round}`,
+      ].join(" ").toLowerCase().includes(q))) return false;
       return true;
     });
-  }, [entries, showRemoved, typeFilter, modelFilter, authorFilter, search, stats.entryMeta]);
+    return sortBoardEntries(matches, sort, backlinkCounts);
+  }, [entries, showRemoved, typeFilter, modelFilter, authorFilter, search, stats.entryMeta, sort, backlinkCounts]);
 
   const groups = useMemo(
     () => groupEntries(filtered, groupMode),
@@ -132,6 +186,10 @@ export function BlackboardBoard({
   const selected = useMemo(
     () => entries.find((e) => e.id === selectedId) ?? null,
     [entries, selectedId],
+  );
+  const comparedEntries = useMemo(
+    () => compareIds.map((id) => entries.find((entry) => entry.id === id)).filter(Boolean) as typeof entries,
+    [compareIds, entries],
   );
 
   const presentTypes = TYPE_ORDER.filter((t) => stats.typeCounts.has(t)).concat(
@@ -147,6 +205,21 @@ export function BlackboardBoard({
     });
     if (!response.ok) throw new Error(`${action} returned HTTP ${response.status}`);
   }, [taskId]);
+  const toggleCompare = useCallback((entryId: string) => {
+    setCompareIds((current) => {
+      if (current.includes(entryId)) return current.filter((id) => id !== entryId);
+      return [...current.slice(-1), entryId];
+    });
+  }, []);
+  const exportBoard = useCallback(() => {
+    const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${taskId}-blackboard.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, [filtered, taskId]);
 
   return (
     <div className="bb-board" style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -174,8 +247,8 @@ export function BlackboardBoard({
 
         {/* type distribution bar */}
         {!empty && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 120, justifyContent: "flex-end" }}>
-            <div style={{ display: "flex", height: 8, borderRadius: "var(--radius-full)", overflow: "hidden", width: "min(280px, 100%)", background: "var(--surface-active)" }}>
+          <div aria-label="Entry type distribution" style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 240, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            <div aria-hidden="true" style={{ display: "flex", height: 8, borderRadius: "var(--radius-full)", overflow: "hidden", width: "min(220px, 100%)", background: "var(--surface-active)" }}>
               {presentTypes.map((t) => {
                 const count = stats.typeCounts.get(t) ?? 0;
                 const pct = (count / stats.total) * 100;
@@ -188,6 +261,12 @@ export function BlackboardBoard({
                 );
               })}
             </div>
+            {presentTypes.map((type) => (
+              <span key={type} style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>
+                <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: "var(--radius-full)", background: typeMeta(type).color }} />
+                {typeMeta(type).label} {stats.typeCounts.get(type) ?? 0}
+              </span>
+            ))}
           </div>
         )}
       </div>
@@ -233,6 +312,7 @@ export function BlackboardBoard({
           >
             <Search size={13} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />
             <input
+              aria-label="Search Blackboard entries"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search board…"
@@ -304,6 +384,29 @@ export function BlackboardBoard({
 
           <span style={{ flex: 1 }} />
 
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>
+            Sort
+            <select value={sort} onChange={(event) => setSort(event.target.value as BoardSort)}>
+              <option value="sequence-asc">Oldest first</option>
+              <option value="sequence-desc">Newest first</option>
+              <option value="salience">Highest salience</option>
+              <option value="confidence">Highest confidence</option>
+              <option value="backlinks">Most backlinks</option>
+            </select>
+          </label>
+
+          <button type="button" onClick={exportBoard} disabled={filtered.length === 0}>
+            <Download size={13} /> Export {filtered.length}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowComparison(true)}
+            disabled={comparedEntries.length !== 2}
+            aria-label={comparedEntries.length === 2 ? "Compare selected Blackboard entries" : `Select ${2 - comparedEntries.length} more entries to compare`}
+          >
+            <GitCompareArrows size={13} /> Compare {comparedEntries.length}/2
+          </button>
+
           <button
             type="button"
             onClick={() => setShowRemoved((v) => !v)}
@@ -339,7 +442,7 @@ export function BlackboardBoard({
         )}
 
         {/* Detail drawer */}
-        {selected && (
+        {selected && !showComparison && (
           <BoardEntryDetail
             entry={selected}
             allEntries={entries}
@@ -347,8 +450,14 @@ export function BlackboardBoard({
             onSelect={(id) => setSelectedId(id)}
             controls={controls}
             onSteer={handleSteer}
+            compared={compareIds.includes(selected.id)}
+            onToggleCompare={toggleCompare}
+            backlinkCount={backlinkCounts.get(selected.id) ?? 0}
           />
         )}
+        {showComparison && comparedEntries.length === 2 ? (
+          <BlackboardComparison entries={comparedEntries} onClose={() => setShowComparison(false)} />
+        ) : null}
       </div>
     </div>
   );
@@ -471,6 +580,8 @@ function Segmented({
 }) {
   return (
     <div
+      role="toolbar"
+      aria-label="Group Blackboard entries"
       style={{
         display: "inline-flex",
         padding: 2,
@@ -488,6 +599,20 @@ function Segmented({
             key={o.key}
             type="button"
             onClick={() => onChange(o.key)}
+            aria-pressed={active}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
+              event.preventDefault();
+              const nextIndex = event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? options.length - 1
+                  : (options.indexOf(o) + (event.key === "ArrowRight" ? 1 : -1) + options.length) % options.length;
+              onChange(options[nextIndex].key);
+              event.currentTarget.parentElement
+                ?.querySelectorAll<HTMLButtonElement>("button")[nextIndex]
+                ?.focus();
+            }}
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -507,6 +632,50 @@ function Segmented({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+function BlackboardComparison({
+  entries,
+  onClose,
+}: {
+  entries: ReturnType<typeof sortBoardEntries>;
+  onClose: () => void;
+}) {
+  const dialogRef = React.useRef<HTMLDivElement>(null);
+  useFocusTrap({ active: true, containerRef: dialogRef, onEscape: onClose });
+  return (
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="blackboard-comparison-title"
+      tabIndex={-1}
+      style={{ position: "absolute", inset: 0, zIndex: 30, background: "var(--surface-raised)", padding: "var(--space-4)", overflow: "auto" }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-4)" }}>
+        <GitCompareArrows size={16} />
+        <h2 id="blackboard-comparison-title" style={{ fontSize: "var(--text-base)" }}>Compare Blackboard entries</h2>
+        <span style={{ flex: 1 }} />
+        <button type="button" onClick={onClose} aria-label="Close Blackboard comparison"><X size={16} /></button>
+      </div>
+      <div className="bb-comparison-grid">
+        {entries.map((entry) => (
+          <section key={entry.id} aria-labelledby={`compare-${entry.id}`}>
+            <span>{typeMeta(entry.type).label} · {entry.status}</span>
+            <h3 id={`compare-${entry.id}`}>{entry.title || entry.id}</h3>
+            <dl>
+              <div><dt>Author</dt><dd>{prettyAuthor(entry.author)}</dd></div>
+              <div><dt>Round</dt><dd>{entry.round}</dd></div>
+              <div><dt>Salience</dt><dd>{Math.round(entry.salience * 100)}%</dd></div>
+              <div><dt>Confidence</dt><dd>{Math.round(entry.confidence * 100)}%</dd></div>
+              <div><dt>References</dt><dd>{entry.refs.length}</dd></div>
+            </dl>
+            <RichContent content={normalizeBody(entry.body || "No body recorded.")} forceMarkdown />
+          </section>
+        ))}
+      </div>
     </div>
   );
 }

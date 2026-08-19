@@ -1,0 +1,53 @@
+.operationsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.metric {
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-overlay);
+}
+
+.metric dt {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.metric dd {
+  margin: 4px 0 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.metric dd[data-state="ready"] {
+  color: var(--status-success);
+}
+
+.metric dd[data-state="degraded"],
+.metric dd[data-state="unavailable"] {
+  color: var(--status-error);
+}
+
+.taskLink {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  color: var(--accent-primary);
+}
+
+@media (max-width: 720px) {
+  .operationsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .taskLink {
+    min-height: 44px;
+  }
+}

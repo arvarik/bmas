@@ -22,6 +22,48 @@ import {
 } from "@/lib/design-tokens";
 import type { StatusType, AgentRole } from "@/lib/design-tokens";
 
+type Rgb = [number, number, number];
+
+function hslToRgb(value: string): Rgb {
+  const match = value.match(/hsl\(\s*([\d.]+)[,\s]+([\d.]+)%[,\s]+([\d.]+)%/);
+  if (!match) throw new Error(`Invalid HSL color: ${value}`);
+
+  const hue = Number(match[1]);
+  const saturation = Number(match[2]) / 100;
+  const lightness = Number(match[3]) / 100;
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const segment = hue / 60;
+  const intermediate = chroma * (1 - Math.abs((segment % 2) - 1));
+  const offset = lightness - chroma / 2;
+  let channels: Rgb;
+
+  if (segment < 1) channels = [chroma, intermediate, 0];
+  else if (segment < 2) channels = [intermediate, chroma, 0];
+  else if (segment < 3) channels = [0, chroma, intermediate];
+  else if (segment < 4) channels = [0, intermediate, chroma];
+  else if (segment < 5) channels = [intermediate, 0, chroma];
+  else channels = [chroma, 0, intermediate];
+
+  return channels.map((channel) => channel + offset) as Rgb;
+}
+
+function relativeLuminance(color: string): number {
+  const linearChannels = hslToRgb(color).map((channel) => (
+    channel <= 0.04045
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4
+  )) as Rgb;
+  return linearChannels[0] * 0.2126
+    + linearChannels[1] * 0.7152
+    + linearChannels[2] * 0.0722;
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const values = [relativeLuminance(foreground), relativeLuminance(background)]
+    .sort((left, right) => right - left);
+  return (values[0] + 0.05) / (values[1] + 0.05);
+}
+
 // ── authorColor ───────────────────────────────────────────────────────
 
 describe("authorColor", () => {
@@ -201,5 +243,21 @@ describe("ACCENT_COLORS", () => {
     expect(ACCENT_COLORS).toHaveProperty("primary");
     expect(ACCENT_COLORS).toHaveProperty("primaryHover");
     expect(ACCENT_COLORS).toHaveProperty("subtle");
+  });
+
+  it("keeps small semantic text above a 4.5 to 1 contrast ratio", () => {
+    const smallTextColors = [
+      TEXT_COLORS.secondary,
+      TEXT_COLORS.tertiary,
+      ACCENT_COLORS.primary,
+      ...Object.values(STATUS_COLORS),
+    ];
+    const interactiveSurfaces = [SURFACE_COLORS.hover, SURFACE_COLORS.active];
+
+    for (const textColor of smallTextColors) {
+      for (const surfaceColor of interactiveSurfaces) {
+        expect(contrastRatio(textColor, surfaceColor)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
   });
 });

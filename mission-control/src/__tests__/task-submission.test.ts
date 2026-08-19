@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  addAttachments,
   createTaskSubmissionRequest,
   submissionErrorMessage,
   validateAttachment,
@@ -44,6 +45,34 @@ describe("task submission attachments", () => {
       ["txt"],
       1,
     )).toContain("1 MB");
+  });
+
+  it("accepts dropped or pasted files without duplicates", () => {
+    const brief = { name: "brief.txt", size: 10, lastModified: 1 };
+    const notes = { name: "notes.txt", size: 20, lastModified: 2 };
+    const selection = addAttachments(
+      [brief],
+      [brief, notes],
+      ["txt"],
+      1,
+      10,
+    );
+
+    expect(selection.files).toEqual([brief, notes]);
+    expect(selection.errors).toEqual(["brief.txt is already attached."]);
+  });
+
+  it("reports the attachment count limit", () => {
+    const selection = addAttachments(
+      [{ name: "one.txt", size: 10 }],
+      [{ name: "two.txt", size: 10 }, { name: "three.txt", size: 10 }],
+      ["txt"],
+      1,
+      2,
+    );
+
+    expect(selection.files.map((file) => file.name)).toEqual(["one.txt", "two.txt"]);
+    expect(selection.errors).toContain("You can attach up to 2 files to one task.");
   });
 
   it("reads a structured daemon attachment error", () => {

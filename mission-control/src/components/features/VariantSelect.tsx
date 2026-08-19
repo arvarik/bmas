@@ -10,6 +10,7 @@ import {
   hasMissionControlAdapter,
   supportsMissionControlVariant,
 } from "@/lib/variant-support";
+import { describeRuntime } from "@/lib/runtime-presentation";
 
 interface VariantSelectProps {
   value: string;
@@ -21,6 +22,17 @@ type LoadState = "loading" | "ready" | "error";
 
 function isSelectable(variant: VariantCapability): boolean {
   return supportsMissionControlVariant(variant);
+}
+
+function RuntimeDetails({ variant }: { variant: VariantCapability }) {
+  const details = describeRuntime(variant);
+  return (
+    <dl className="variant-details" aria-label={`${variant.label} runtime effects`}>
+      <div><dt>Speed</dt><dd>{details.speed}</dd></div>
+      <div><dt>Cost</dt><dd>{details.cost}</dd></div>
+      <div><dt>Tools</dt><dd>{details.tools}</dd></div>
+    </dl>
+  );
 }
 
 export function VariantSelect({
@@ -71,6 +83,9 @@ export function VariantSelect({
   }, [loadState, onAvailabilityChange, onChange, value, variants]);
 
   const selectableVariants = variants.filter(isSelectable);
+  const selectedVariant = selectableVariants.find(
+    (variant) => variant.id === value || variant.aliases.includes(value),
+  ) ?? selectableVariants[0];
 
   if (loadState === "loading") {
     return <span className="variant-status">Checking classic runtime…</span>;
@@ -86,42 +101,52 @@ export function VariantSelect({
 
   if (selectableVariants.length === 1) {
     return (
-      <span className="variant-status" title="The classic runtime is active">
-        {selectableVariants[0].label}
-      </span>
+      <div className="variant-picker">
+        <span className="variant-picker__label">Runtime</span>
+        <strong className="variant-status">{selectableVariants[0].label}</strong>
+        <RuntimeDetails variant={selectableVariants[0]} />
+      </div>
     );
   }
 
   return (
-    <select
-      id="variant-select"
-      className="variant-select"
-      value={value}
-      onChange={(event) => {
-        const next = event.target.value;
-        onChange(next);
-        onAvailabilityChange?.(
-          variants.some((variant) => variant.id === next && isSelectable(variant)),
-        );
-      }}
-      aria-label="Coordination variant"
-    >
-      {variants.map((variant) => (
-        <option
-          key={variant.id}
-          value={variant.id}
-          disabled={!isSelectable(variant)}
-          title={variant.reason ? `${variant.label}: ${variant.reason}` : variant.label}
-        >
-          {variant.label}
-          {!variant.available && variant.reason ? ` (${variant.reason})` : ""}
-          {!hasMissionControlAdapter(variant.id) ? " (interface unavailable)" : ""}
-          {hasMissionControlAdapter(variant.id) && !isSelectable(variant)
-            ? " (unsupported contract)"
-            : ""}
-        </option>
-      ))}
-    </select>
+    <div className="variant-picker">
+      <label className="variant-picker__label" htmlFor="variant-select">Runtime</label>
+      <select
+        id="variant-select"
+        className="variant-select"
+        value={selectedVariant?.id ?? value}
+        onChange={(event) => {
+          const next = event.target.value;
+          onChange(next);
+          onAvailabilityChange?.(
+            variants.some((variant) => variant.id === next && isSelectable(variant)),
+          );
+        }}
+        aria-describedby="variant-runtime-effects"
+      >
+        {variants.map((variant) => (
+          <option
+            key={variant.id}
+            value={variant.id}
+            disabled={!isSelectable(variant)}
+            title={variant.reason ? `${variant.label}: ${variant.reason}` : variant.label}
+          >
+            {variant.label}
+            {!variant.available && variant.reason ? ` (${variant.reason})` : ""}
+            {!hasMissionControlAdapter(variant.id) ? " (interface unavailable)" : ""}
+            {hasMissionControlAdapter(variant.id) && !isSelectable(variant)
+              ? " (unsupported contract)"
+              : ""}
+          </option>
+        ))}
+      </select>
+      {selectedVariant ? (
+        <div id="variant-runtime-effects">
+          <RuntimeDetails variant={selectedVariant} />
+        </div>
+      ) : null}
+    </div>
   );
 }
 

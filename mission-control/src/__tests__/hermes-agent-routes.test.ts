@@ -61,10 +61,24 @@ describe("Hermes agent API routes", () => {
   });
 
   it("derives one active profile from the capability document", async () => {
-    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => Response.json({
-      object: "hermes.api_server.capabilities",
-      model: "planner",
-    })));
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async (input) => {
+      if (String(input).endsWith("/health/detailed")) {
+        return Response.json({
+          status: "healthy",
+          ready: true,
+          model: "planner",
+          runs_api_ready: true,
+          hermes_status: "ready",
+          hermes_version: "0.20.4",
+          execution_backend: "hermes-runs-api",
+          current_task: "task-1",
+        });
+      }
+      return Response.json({
+        object: "hermes.api_server.capabilities",
+        model: "planner",
+      });
+    }));
 
     const response = await getProfiles();
 
@@ -73,6 +87,13 @@ describe("Hermes agent API routes", () => {
         role: "starter",
         reachable: true,
         profiles: [{ name: "planner", gateway_running: true }],
+        health: {
+          status: "ready",
+          capacity: "busy",
+          current_task: "task-1",
+          current_task_reported: true,
+          hermes_version: "0.20.4",
+        },
       }],
     });
   });

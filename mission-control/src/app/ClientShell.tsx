@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useCallback, useEffect } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import React, { useState, useCallback, useEffect, useRef } from "react";
+import { usePathname } from "next/navigation";
 import { ToastProvider } from "@/components/ui/Toast";
 import { PendingTaskProvider } from "@/contexts/PendingTaskContext";
 import { TopBar } from "@/components/layout/TopBar";
@@ -9,6 +9,7 @@ import { TaskSidebar } from "@/components/ui/TaskSidebar";
 import { useSystemStream } from "@/hooks/useSystemStream";
 import { useTaskHistory } from "@/hooks/useTaskHistory";
 import type { TaskHistoryFilters } from "@/hooks/useTaskHistory";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 // ── Route → breadcrumb label mapping ─────────────────────────────────
 
@@ -45,11 +46,13 @@ function getBreadcrumb(pathname: string): string {
  * native <Link> components — no imperative route mapping needed.
  */
 export function ClientShell({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
   const pathname = usePathname();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [drawerMode, setDrawerMode] = useState(false);
+  const drawerRef = useRef<HTMLElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const [taskFilters, setTaskFilters] = useState<TaskHistoryFilters>({
     search: "",
     status: "",
@@ -88,6 +91,25 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
     setMobileDrawerOpen((prev) => !prev);
   }, []);
 
+  const closeMobileDrawer = useCallback(() => {
+    setMobileDrawerOpen(false);
+  }, []);
+
+  useFocusTrap({
+    active: drawerMode && mobileDrawerOpen,
+    containerRef: drawerRef,
+    returnFocusRef: menuButtonRef,
+    onEscape: closeMobileDrawer,
+  });
+
+  useEffect(() => {
+    if (!drawerMode || mobileDrawerOpen) return;
+    const activeElement = document.activeElement;
+    if (activeElement && drawerRef.current?.contains(activeElement)) {
+      menuButtonRef.current?.focus();
+    }
+  }, [drawerMode, mobileDrawerOpen]);
+
   // ── Close mobile drawer on navigation ─────────────────────────────
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- sync UI state to pathname change
@@ -98,6 +120,7 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 1023px)");
     const handler = (e: MediaQueryListEvent | MediaQueryList) => {
+      setDrawerMode(e.matches);
       setSidebarCollapsed(e.matches);
       if (!e.matches) setMobileDrawerOpen(false);
     };
@@ -148,13 +171,6 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
-      // Esc → back to landing page
-      if (e.key === "Escape") {
-        router.push("/");
-        setMobileDrawerOpen(false);
-        return;
-      }
-
       // Cmd/Ctrl+K → command palette (reserved, noop for now)
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
@@ -164,7 +180,7 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [router]);
+  }, []);
 
   const currentView = getBreadcrumb(pathname);
 
@@ -172,6 +188,7 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
     <ToastProvider>
       <PendingTaskProvider>
         <div className="app-shell">
+          <a className="skip-link" href="#main-content">Skip to main content</a>
           <TopBar
             systemState={system.connectionState}
             lastSuccessfulEventAt={system.lastSuccessfulEventAt}
@@ -183,11 +200,14 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
             totalCost={totalCost}
             currentView={currentView}
             onMenuToggle={handleToggleMobileDrawer}
+            menuOpen={mobileDrawerOpen}
+            menuButtonRef={menuButtonRef}
+            inert={drawerMode && mobileDrawerOpen}
           />
 
           {system.connectionState === "offline" && (
-            <div className="offline-banner">
-              <span className="offline-banner__dot" />
+            <div className="offline-banner" inert={drawerMode && mobileDrawerOpen}>
+              <span className="offline-banner__dot" aria-hidden="true" />
               Offline. Live data and server actions are unavailable.
             </div>
           )}
@@ -195,9 +215,11 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
           <div className="app-shell__body">
             {/* Mobile backdrop */}
             {mobileDrawerOpen && (
-              <div
+              <button
+                type="button"
                 className="mobile-backdrop"
-                onClick={() => setMobileDrawerOpen(false)}
+                aria-label="Close navigation menu"
+                onClick={closeMobileDrawer}
               />
             )}
 
@@ -207,6 +229,9 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
               collapsed={sidebarCollapsed}
               onToggleCollapse={handleToggleCollapse}
               mobileOpen={mobileDrawerOpen}
+              drawerMode={drawerMode}
+              sidebarRef={drawerRef}
+              onRequestClose={closeMobileDrawer}
               isLoading={taskHistory.isLoading}
               hasMore={taskHistory.hasMore}
               onLoadMore={taskHistory.loadMore}
@@ -216,7 +241,12 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
               onRetry={() => void taskHistory.refetch()}
             />
 
-            <main id="main-content" className="app-shell__main">
+            <main
+              id="main-content"
+              className="app-shell__main"
+              inert={drawerMode && mobileDrawerOpen}
+              tabIndex={-1}
+            >
               {children}
             </main>
           </div>

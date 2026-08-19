@@ -11,6 +11,7 @@ import type {
   SystemDependencyIssue,
 } from "@/hooks/useSystemStream";
 import styles from "./SystemStatusPanel.module.css";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 interface SystemStatusPanelProps {
   state: SystemConnectionState;
@@ -89,30 +90,31 @@ export function SystemStatusPanel({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
   const { toast } = useToast();
   const presentation = STATE_PRESENTATION[state];
   const timestamp = formatEventTime(lastSuccessfulEventAt);
 
+  const closePanel = useCallback(() => setOpen(false), []);
+
+  useFocusTrap({
+    active: open,
+    containerRef: panelRef,
+    initialFocusRef: closeRef,
+    returnFocusRef: triggerRef,
+    onEscape: closePanel,
+  });
+
   useEffect(() => {
     if (!open) return;
-    closeRef.current?.focus();
 
     function handlePointerDown(event: PointerEvent) {
       if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false);
     }
 
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
-      event.stopPropagation();
-      setOpen(false);
-      triggerRef.current?.focus();
-    }
-
     document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown, true);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown, true);
     };
   }, [open]);
 
@@ -156,6 +158,7 @@ export function SystemStatusPanel({
 
       {open ? (
         <section
+          ref={panelRef}
           id="global-system-status"
           className={styles.panel}
           role="dialog"
@@ -172,10 +175,7 @@ export function SystemStatusPanel({
               type="button"
               className={styles.close}
               aria-label="Close system status"
-              onClick={() => {
-                setOpen(false);
-                triggerRef.current?.focus();
-              }}
+              onClick={closePanel}
             >
               <X size={17} aria-hidden="true" />
             </button>

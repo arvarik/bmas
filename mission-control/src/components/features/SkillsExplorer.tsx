@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   ChevronDown,
   ChevronRight,
@@ -24,6 +25,7 @@ import {
   failureFromResponse,
   type RequestFailure,
 } from "@/lib/request-state";
+import styles from "./SkillsExplorer.module.css";
 
 interface Skill {
   name: string;
@@ -49,12 +51,26 @@ interface ProfileInfo {
   description?: string;
 }
 
+interface NodeHealthInfo {
+  status: "ready" | "degraded" | "unavailable";
+  ready: boolean;
+  capacity: "available" | "busy" | "ready" | "unavailable";
+  current_task: string | null;
+  current_task_reported: boolean;
+  model: string | null;
+  hermes_version: string | null;
+  hermes_status: string | null;
+  execution_backend: string | null;
+  runs_api_ready: boolean;
+}
+
 interface NodeData {
   role: string;
   name: string;
   host: string;
   profiles: ProfileInfo[];
   reachable: boolean;
+  health?: NodeHealthInfo;
 }
 
 interface CapabilityCollection<T> {
@@ -160,7 +176,16 @@ export default function SkillsExplorer() {
     const toolsetItems = data.toolsets.items.filter((toolset) =>
       [toolset.name, toolset.label, toolset.description, ...(toolset.tools ?? [])]
         .some((value) => typeof value === "string" && value.toLowerCase().includes(normalizedFilter)));
-    const nodeMatches = [node.role, node.name, node.host, node.profiles[0]?.name]
+    const nodeMatches = [
+      node.role,
+      node.name,
+      node.host,
+      node.profiles[0]?.name,
+      node.health?.model,
+      node.health?.hermes_version,
+      node.health?.current_task,
+      node.health?.execution_backend,
+    ]
       .some((value) => typeof value === "string" && value.toLowerCase().includes(normalizedFilter));
     return {
       node,
@@ -293,6 +318,7 @@ export default function SkillsExplorer() {
                   <span
                     className="node-card__dot"
                     style={{ background: node.reachable ? "var(--status-success)" : "var(--status-error)" }}
+                    aria-hidden="true"
                   />
                   <span className="node-card__identity">
                     <span className="node-card__name">Node {nodeNumber} · {node.name}</span>
@@ -307,13 +333,18 @@ export default function SkillsExplorer() {
 
                 {expanded ? (
                   <div className="node-card__body">
+                    <NodeOperations node={node} />
                     <section className="node-card__section">
                       <div className="node-card__section-header">
                         <Cpu size={13} />
                         <span>Active API profile</span>
                       </div>
                       <div className="hermes-profile-control">
-                        <span className="node-card__profile-dot" style={{ background: node.reachable ? color : "var(--status-error)" }} />
+                        <span
+                          className="node-card__profile-dot"
+                          style={{ background: node.reachable ? color : "var(--status-error)" }}
+                          aria-hidden="true"
+                        />
                         <select value={profile?.name ?? node.role} disabled aria-label={`${node.name} active Hermes profile`}>
                           <option>{profile?.name ?? node.role}</option>
                         </select>
@@ -421,6 +452,60 @@ export default function SkillsExplorer() {
         ) : null}
       </div>
     </Panel>
+  );
+}
+
+function NodeOperations({ node }: { node: NodeData }) {
+  const health = node.health;
+  const healthLabel = !node.reachable
+    ? "Unavailable"
+    : health?.ready ? "Ready" : "Degraded";
+  const capacityLabel = health?.capacity === "busy"
+    ? "Busy"
+    : health?.capacity === "available"
+      ? "Available"
+      : health?.capacity === "ready" ? "Ready, usage not reported" : "Unavailable";
+  const currentTask = health?.current_task;
+
+  return (
+    <section className="node-card__section" aria-labelledby={`operations-${node.role}`}>
+      <div className="node-card__section-header" id={`operations-${node.role}`}>
+        <Cpu size={13} aria-hidden="true" />
+        <span>Operations</span>
+      </div>
+      <dl className={styles.operationsGrid}>
+        <div className={styles.metric}>
+          <dt>Health</dt>
+          <dd data-state={health?.status ?? "unavailable"}>{healthLabel}</dd>
+        </div>
+        <div className={styles.metric}>
+          <dt>Capacity</dt>
+          <dd>{capacityLabel}</dd>
+        </div>
+        <div className={styles.metric}>
+          <dt>Model</dt>
+          <dd>{health?.model ?? node.profiles[0]?.model ?? "Not reported"}</dd>
+        </div>
+        <div className={styles.metric}>
+          <dt>Hermes version</dt>
+          <dd>{health?.hermes_version ?? "Not reported"}</dd>
+        </div>
+        <div className={styles.metric}>
+          <dt>Execution API</dt>
+          <dd>{health?.runs_api_ready ? "Ready" : "Unavailable"}</dd>
+        </div>
+        <div className={styles.metric}>
+          <dt>Current task</dt>
+          <dd>
+            {currentTask ? (
+              <Link className={styles.taskLink} href={`/task/${encodeURIComponent(currentTask)}`}>
+                {currentTask}
+              </Link>
+            ) : health?.current_task_reported ? "Idle" : "Not reported"}
+          </dd>
+        </div>
+      </dl>
+    </section>
   );
 }
 

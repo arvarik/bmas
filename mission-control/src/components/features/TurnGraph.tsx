@@ -57,7 +57,13 @@ import {
   Timer,
   Coins,
   GitBranch,
+  Download,
+  Network,
+  Search,
+  Table2,
+  X as ClearIcon,
 } from "lucide-react";
+import { matchesTurnQuery, turnsToCsv, updateUrlParams } from "@/lib/task-detail-tools";
 
 // ── Layout constants ────────────────────────────────────────────────────
 
@@ -241,7 +247,9 @@ interface CoordNodeData extends Record<string, unknown> {
 function CoordinatorNode({ data }: { data: CoordNodeData }) {
   const accent = "hsl(217, 91%, 60%)";
   return (
-    <div
+    <button
+      type="button"
+      aria-label={`Round ${data.round} coordinator decision${data.phase ? `, ${data.phase}` : ""}`}
       style={{
         background: data.selected ? "hsl(217 60% 16%)" : "hsl(222 44% 11%)",
         border: `2px solid ${data.selected ? accent : "hsl(217 50% 38%)"}`,
@@ -301,7 +309,7 @@ function CoordinatorNode({ data }: { data: CoordNodeData }) {
       </div>
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
       <Handle id="down" type="source" position={Position.Bottom} style={{ opacity: 0 }} />
-    </div>
+    </button>
   );
 }
 
@@ -320,7 +328,9 @@ function TurnNode({ data }: { data: TurnNodeData }) {
   const { Icon, tone, isRunning } = statusVisuals(data.status);
   const borderColor = tone ?? color;
   return (
-    <div
+    <button
+      type="button"
+      aria-label={`${data.actor}, round ${data.round}, ${data.status}`}
       style={{
         background: isRunning ? "hsl(142 40% 10%)" : "hsl(222 36% 13%)",
         border: `2px solid ${data.selected ? "hsl(210 20% 96%)" : borderColor}`,
@@ -368,6 +378,7 @@ function TurnNode({ data }: { data: TurnNodeData }) {
           {data.actor.includes(".") ? prettyActor(data.actor) : data.role.replace(/_/g, " ")}
         </span>
         <Icon size={12} style={{ color: tone ?? color, flexShrink: 0 }} />
+        <span style={{ fontSize: 9.5, color: tone ?? color, textTransform: "capitalize" }}>{data.status}</span>
       </div>
       <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
         <span
@@ -406,7 +417,7 @@ function TurnNode({ data }: { data: TurnNodeData }) {
         )}
       </div>
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
-    </div>
+    </button>
   );
 }
 
@@ -883,6 +894,26 @@ interface TurnGraphProps {
 
 export function TurnGraph({ activeTurns, completedTurns, isLive, narrations = [], roster = [] }: TurnGraphProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"graph" | "table">("graph");
+  const [search, setSearch] = useState("");
+  const [urlReady, setUrlReady] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- URL state initializes client-only graph controls.
+    setSearch(params.get("turn_q") ?? "");
+    if (params.get("turn_view") === "table") setViewMode("table");
+    setUrlReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!urlReady) return;
+    const nextSearch = updateUrlParams(window.location.search, {
+      turn_q: search.trim() || null,
+      turn_view: viewMode === "graph" ? null : viewMode,
+    });
+    window.history.replaceState(null, "", `${window.location.pathname}${nextSearch}${window.location.hash}`);
+  }, [search, urlReady, viewMode]);
 
   const allTurns = useMemo(() => {
     const byId = new Map<string, TurnRecord>();
@@ -896,9 +927,14 @@ export function TurnGraph({ activeTurns, completedTurns, isLive, narrations = []
     );
   }, [completedTurns, activeTurns]);
 
+  const filteredTurns = useMemo(
+    () => allTurns.filter((turn) => matchesTurnQuery(turn, search)),
+    [allTurns, search],
+  );
+
   const built = useMemo(
-    () => buildGraph(allTurns, narrations, selectedId),
-    [allTurns, narrations, selectedId],
+    () => buildGraph(filteredTurns, narrations, selectedId),
+    [filteredTurns, narrations, selectedId],
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(built.nodes);
@@ -925,6 +961,20 @@ export function TurnGraph({ activeTurns, completedTurns, isLive, narrations = []
 
   const onPaneClick = useCallback(() => setSelectedId(null), []);
 
+  const selectView = useCallback((mode: "graph" | "table") => {
+    setViewMode(mode);
+  }, []);
+
+  const exportTurns = useCallback(() => {
+    const blob = new Blob([turnsToCsv(filteredTurns)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "task-turns.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, [filteredTurns]);
+
   if (allTurns.length === 0) {
     return <EmptyGraph isLive={isLive} />;
   }
@@ -933,7 +983,52 @@ export function TurnGraph({ activeTurns, completedTurns, isLive, narrations = []
   const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
 
   return (
-    <div style={{ width: "100%", height: "100%", position: "relative" }}>
+    <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+      <div className="task-detail-toolbar">
+        <div className="task-detail-tabs" role="tablist" aria-label="Execution data view">
+          {(["graph", "table"] as const).map((mode, index, modes) => (
+            <button
+              key={mode}
+              type="button"
+              id={`turn-${mode}-tab`}
+              role="tab"
+              aria-selected={viewMode === mode}
+              aria-controls={`turn-${mode}-panel`}
+              tabIndex={viewMode === mode ? 0 : -1}
+              onClick={() => selectView(mode)}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
+                event.preventDefault();
+                const nextIndex = event.key === "Home"
+                  ? 0
+                  : event.key === "End"
+                    ? modes.length - 1
+                    : (index + (event.key === "ArrowRight" ? 1 : -1) + modes.length) % modes.length;
+                selectView(modes[nextIndex]);
+                event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("button")[nextIndex]?.focus();
+              }}
+            >
+              {mode === "graph" ? <Network size={13} /> : <Table2 size={13} />}
+              {mode === "graph" ? "Graph" : "Table"}
+            </button>
+          ))}
+        </div>
+        <label className="task-detail-search">
+          <span className="sr-only">Search turns</span>
+          <Search size={13} aria-hidden="true" />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search agent, model, node, status, phase, or rationale" />
+          {search ? <button type="button" onClick={() => setSearch("")} aria-label="Clear turn search"><ClearIcon size={13} /></button> : null}
+        </label>
+        <span role="status">{filteredTurns.length} of {allTurns.length} turns</span>
+        <button type="button" onClick={exportTurns} disabled={filteredTurns.length === 0}><Download size={13} /> Export CSV</button>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+      {filteredTurns.length === 0 ? (
+        <div className="dls-empty">No turns match the current search.</div>
+      ) : viewMode === "table" ? (
+        <TurnTable turns={filteredTurns} onSelect={(turnId) => setSelectedId(turnId)} />
+      ) : (
+      <div id="turn-graph-panel" role="tabpanel" aria-labelledby="turn-graph-tab" style={{ position: "absolute", inset: 0 }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -969,7 +1064,36 @@ export function TurnGraph({ activeTurns, completedTurns, isLive, narrations = []
         )}
       </ReactFlow>
       <Legend />
+      </div>
+      )}
       <DetailPanel selection={selection} roster={roster} onClose={() => setSelectedId(null)} />
+      </div>
+    </div>
+  );
+}
+
+function TurnTable({ turns, onSelect }: { turns: TurnRecord[]; onSelect: (turnId: string) => void }) {
+  return (
+    <div id="turn-table-panel" role="tabpanel" aria-labelledby="turn-table-tab" className="task-detail-table-wrap">
+      <table className="task-detail-table">
+        <caption>Agent turns in chronological order</caption>
+        <thead><tr><th>Round</th><th>Agent</th><th>Status</th><th>Phase</th><th>Model</th><th>Node</th><th>Tokens</th><th>Cost</th><th>Rationale</th></tr></thead>
+        <tbody>
+          {turns.map((turn) => (
+            <tr key={turn.turn_id}>
+              <td>{turn.round_no}</td>
+              <td><button type="button" onClick={() => onSelect(turn.turn_id)}>{prettyActor(turn.actor)}</button></td>
+              <td>{turn.status}</td>
+              <td>{turn.phase}</td>
+              <td>{turn.model || "Not recorded"}</td>
+              <td>{turn.node || "Not recorded"}</td>
+              <td>{((turn.tokens_in ?? 0) + (turn.tokens_out ?? 0)).toLocaleString()}</td>
+              <td>{turn.cost_usd == null ? "Not recorded" : `$${turn.cost_usd.toFixed(4)}`}</td>
+              <td>{turn.rationale || "Not recorded"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

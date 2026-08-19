@@ -362,7 +362,7 @@ export function FilesWorkspace({
           </section>
         </aside>
 
-        <main className="files-detail">
+        <section className="files-detail" aria-label="Selected file details">
           {activeSelection ? (
             <FileDetail
               key={`${activeSelection.type}:${selectionName(activeSelection)}`}
@@ -377,7 +377,7 @@ export function FilesWorkspace({
               <p>This task has no files.</p>
             </div>
           )}
-        </main>
+        </section>
       </div>
     </div>
   );

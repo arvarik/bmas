@@ -4,6 +4,7 @@
 
 import { Menu } from "lucide-react";
 import Link from "next/link";
+import type { Ref } from "react";
 import { SystemStatusPanel } from "./SystemStatusPanel";
 import type {
   SystemConnectionState,
@@ -21,6 +22,9 @@ export interface TopBarProps {
   totalCost?: number;
   currentView?: string;
   onMenuToggle?: () => void;
+  menuOpen?: boolean;
+  menuButtonRef?: Ref<HTMLButtonElement>;
+  inert?: boolean;
 }
 
 export function TopBar({
@@ -34,18 +38,25 @@ export function TopBar({
   totalCost = 0,
   currentView = "Overview",
   onMenuToggle,
+  menuOpen = false,
+  menuButtonRef,
+  inert = false,
 }: TopBarProps) {
   const costFormatted = totalCost.toFixed(4);
 
   return (
-    <header className="topbar">
+    <header className="topbar" inert={inert}>
       {/* ── Left: Hamburger + Title + Status ──────────────────────── */}
       <div className="topbar__left">
         {/* Mobile hamburger */}
         <button
+          ref={menuButtonRef}
+          type="button"
           className="topbar__menu-btn"
           onClick={onMenuToggle}
-          aria-label="Toggle navigation menu"
+          aria-label={menuOpen ? "Close navigation menu" : "Open navigation menu"}
+          aria-controls="primary-navigation"
+          aria-expanded={menuOpen}
         >
           <Menu size={20} />
         </button>
