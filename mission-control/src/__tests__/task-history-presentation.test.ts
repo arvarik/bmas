@@ -40,11 +40,13 @@ describe("task history presentation", () => {
       task({ id: "first", full_input: "Review alpha pricing" }),
       task({ id: "second", model_used: "edge-model" }),
       task({ id: "third", error_message: "Quota exceeded", status: "failed" }),
+      task({ id: "fourth", result_summary: "Verified lighthouse report" }),
     ];
 
     expect(filterTaskHistory(tasks, { ...emptyFilters, search: "alpha" }).map((item) => item.id)).toEqual(["first"]);
     expect(filterTaskHistory(tasks, { ...emptyFilters, search: "edge-model" }).map((item) => item.id)).toEqual(["second"]);
     expect(filterTaskHistory(tasks, { ...emptyFilters, search: "quota" }).map((item) => item.id)).toEqual(["third"]);
+    expect(filterTaskHistory(tasks, { ...emptyFilters, search: "lighthouse" }).map((item) => item.id)).toEqual(["fourth"]);
   });
 
   it("filters attention states and sorts the loaded results", () => {
@@ -52,11 +54,13 @@ describe("task history presentation", () => {
       task({ id: "old", created_at: "2026-08-01T00:00:00Z", total_cost_usd: 2 }),
       task({ id: "paused", status: "running", run_state: "paused", total_cost_usd: 1 }),
       task({ id: "failed", status: "failed", total_cost_usd: 3 }),
+      task({ id: "approval", pending_approval: true }),
+      task({ id: "stale", stale: true }),
     ];
     const attention = filterTaskHistory(tasks, { ...emptyFilters, status: "attention" });
 
-    expect(attention.map((item) => item.id)).toEqual(["paused", "failed"]);
-    expect(sortTaskHistory(attention, "cost-high").map((item) => item.id)).toEqual(["failed", "paused"]);
+    expect(attention.map((item) => item.id)).toEqual(["paused", "failed", "approval", "stale"]);
+    expect(sortTaskHistory(attention, "cost-high").map((item) => item.id)).toEqual(["failed", "paused", "approval", "stale"]);
   });
 
   it("exports filtered tasks as escaped CSV", () => {

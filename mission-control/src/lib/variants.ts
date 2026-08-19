@@ -611,9 +611,9 @@ export const CLASSIC_ADAPTER: VariantUIAdapter = {
   nodeTypes: CLASSIC_NODE_TYPES,
   edgeSpecs: CLASSIC_EDGE_SPECS,
   navigationPanels: [
-    { id: "overview", label: "Overview", segment: null, feature: "mission", featureType: "panel" },
+    { id: "overview", label: "Summary", segment: null, feature: "mission", featureType: "panel" },
     { id: "blackboard", label: "Blackboard", segment: "mission", feature: "blackboard", featureType: "panel" },
-    { id: "graph", label: "Graph", segment: "dag", feature: "turns", featureType: "graph" },
+    { id: "graph", label: "Execution", segment: "dag", feature: "turns", featureType: "graph" },
     { id: "logs", label: "Logs", segment: "logs", feature: "logs", featureType: "panel" },
     { id: "files", label: "Files", segment: "files", feature: "artifacts", featureType: "panel" },
   ],

@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
   addAttachments,
+  buildTaskObjective,
   createTaskSubmissionRequest,
   submissionErrorMessage,
   validateAttachment,
 } from "@/lib/task-submission";
 
 describe("task submission attachments", () => {
+  it("builds a guided objective without changing quick mode text", () => {
+    expect(buildTaskObjective("Investigate", "Use primary sources", "A table", false)).toBe(
+      "Objective\nInvestigate\n\nConstraints\nUse primary sources\n\nExpected output\nA table",
+    );
+    expect(buildTaskObjective("  Investigate  ", "Ignored", "Ignored", true)).toBe("Investigate");
+  });
   it("uses JSON when the task has no files", () => {
     const request = createTaskSubmissionRequest("Question", "classic", []);
 

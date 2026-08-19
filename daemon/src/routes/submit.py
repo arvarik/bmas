@@ -12,6 +12,7 @@ from typing import Any, cast
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, ConfigDict
+from starlette.datastructures import Headers
 
 import database as db
 from auth import require_api_key
@@ -694,3 +695,50 @@ async def submit_task_with_files(
         TaskSubmission(task=task, variant=variant or None),
         list(files or []),
     )
+
+
+@router.post(
+    "/tasks/{task_id}/duplicate",
+    status_code=202,
+    response_model=TaskSubmissionResponse,
+)
+async def duplicate_task(task_id: str, request: Request):
+    """Create a queued task from durable server-side task inputs."""
+    require_api_key(request, BMAS_API_KEY)
+    source = await db.get_task(task_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail={"message": "Task not found"})
+
+    metadata = await db.get_board_meta(task_id)
+    raw_overrides = metadata.get("submission_overrides")
+    overrides = (
+        TaskOverrides.model_validate(raw_overrides)
+        if isinstance(raw_overrides, dict)
+        else None
+    )
+    uploads: list[UploadFile] = []
+    try:
+        for stored in await db.get_task_files(task_id):
+            path = str(stored.get("stored_path") or "")
+            if not path or not os.path.isfile(path):
+                raise HTTPException(
+                    status_code=409,
+                    detail={"message": f"Stored input is unavailable: {stored.get('name', 'file')}"},
+                )
+            uploads.append(UploadFile(
+                file=open(path, "rb"),  # noqa: SIM115 -- UploadFile closes this handle below.
+                filename=str(stored.get("name") or "input"),
+                size=int(stored.get("bytes") or 0),
+                headers=Headers({"content-type": str(stored.get("mime") or "application/octet-stream")}),
+            ))
+        return await _admit_task(
+            TaskSubmission(
+                task=str(source.get("full_input") or source.get("label") or ""),
+                variant=str(source.get("variant") or COORDINATION_VARIANT),
+                overrides=overrides,
+            ),
+            uploads,
+        )
+    finally:
+        for upload in uploads:
+            await upload.close()

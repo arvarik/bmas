@@ -7,7 +7,7 @@
  * - Hero heading with project name
  * - Auto-resizing textarea with inline send button
  * - Example task pills
- * - Recent tasks list (clickable → /task/{id})
+ * - Operational task queues
  * - Footer stats (agents online, total cost, task count)
  * - Optimistic submit flow via PendingTaskContext
  *
@@ -21,11 +21,12 @@ import { useTaskHistory } from "@/hooks/useTaskHistory";
 import { useSystemStream } from "@/hooks/useSystemStream";
 import { usePendingTask } from "@/contexts/PendingTaskContext";
 import { useToast } from "@/hooks/useToast";
-import { ArrowUp, Zap, DollarSign, BarChart3, Paperclip, Cpu, Cloud, X } from "lucide-react";
+import { ArrowUp, Zap, Paperclip, X } from "lucide-react";
 import { VariantSelect } from "@/components/features/VariantSelect";
 import { ReadinessPanel } from "@/components/features/ReadinessPanel";
 import {
   addAttachments,
+  buildTaskObjective,
   createTaskSubmissionRequest,
   MAX_TASK_ATTACHMENTS,
   submissionErrorMessage,
@@ -52,7 +53,7 @@ const EXAMPLE_TASKS = [
   {
     label: "Research market trends",
     prompt:
-      "Research and summarize the key market trends for Q3 2026 in the AI infrastructure space, with focus on self-hosted solutions.",
+      "Research the main market trends in AI infrastructure. Compare self-hosted and managed options. Cite the evidence for each conclusion.",
   },
 ];
 
@@ -109,17 +110,18 @@ function formatRelativeTime(iso: string): string {
 // ── Landing Page ──────────────────────────────────────────────────────
 
 export function LandingPageClient({
-  projectName,
   storageEnabled,
   maxUploadMb,
   allowedUploadTypes,
 }: {
-  projectName: string;
   storageEnabled: boolean;
   maxUploadMb: number;
   allowedUploadTypes: string[];
 }) {
   const [task, setTask] = useState("");
+  const [constraints, setConstraints] = useState("");
+  const [expectedOutput, setExpectedOutput] = useState("");
+  const [quickMode, setQuickMode] = useState(false);
   const [variant, setVariant] = useState("classic");
   const [variantAvailable, setVariantAvailable] = useState(false);
   const [stackReady, setStackReady] = useState(false);
@@ -134,13 +136,15 @@ export function LandingPageClient({
   const router = useRouter();
   const { toast } = useToast();
   const { setPending } = usePendingTask();
-  const { tasks, total, isLoading } = useTaskHistory();
+  const history = useTaskHistory({ sort: "activity-desc" });
+  const runningHistory = useTaskHistory({ status: "running", sort: "activity-desc" });
+  const attentionHistory = useTaskHistory({ status: "attention", sort: "activity-desc" });
   const { agentHealth } = useSystemStream();
 
   // Count agents online
   const agentsOnline = Object.values(agentHealth).filter((a) => a.alive).length;
-  const totalCost = tasks.reduce((sum, t) => sum + (t.total_cost_usd ?? 0), 0);
-  const recentTasks = tasks.slice(0, 5);
+  const failedTasks = attentionHistory.tasks.filter((item) => item.status === "failed").slice(0, 4);
+  const approvalTasks = attentionHistory.tasks.filter((item) => item.pending_approval).slice(0, 4);
 
   // ── Auto-resize textarea ──────────────────────────────────────────
   const maxHeight =
@@ -160,7 +164,7 @@ export function LandingPageClient({
 
   // ── Submit handler ────────────────────────────────────────────────
   const handleSubmit = useCallback(async () => {
-    const input = task.trim();
+    const input = buildTaskObjective(task, constraints, expectedOutput, quickMode);
     if (!input || submitting || !variantAvailable || !stackReady) return;
     setSubmitting(true);
 
@@ -184,6 +188,8 @@ export function LandingPageClient({
           submittedAt: Date.now(),
         });
         setTask("");
+        setConstraints("");
+        setExpectedOutput("");
         setAttachedFiles([]);
         setAttachmentFeedback("");
         setAttachmentError(false);
@@ -197,7 +203,7 @@ export function LandingPageClient({
     } finally {
       setSubmitting(false);
     }
-  }, [task, variant, variantAvailable, stackReady, submitting, attachedFiles, setPending, router, toast]);
+  }, [task, constraints, expectedOutput, quickMode, variant, variantAvailable, stackReady, submitting, attachedFiles, setPending, router, toast]);
 
   // ── Example pill click ────────────────────────────────────────────
   const handleExampleClick = useCallback((prompt: string) => {
@@ -215,6 +221,15 @@ export function LandingPageClient({
 
   const hasInput = task.trim().length > 0;
   const canSubmit = hasInput && variantAvailable && stackReady && !submitting;
+  const submissionReason = submitting
+    ? "Submitting the task…"
+    : !hasInput
+      ? "Enter an objective to submit this task."
+      : !variantAvailable
+        ? "Select an available runtime to submit this task."
+        : !stackReady
+          ? "Complete the readiness checks to submit this task."
+          : "Ready to submit.";
 
   const acceptAttachments = useCallback((candidates: readonly File[], source: string) => {
     if (candidates.length === 0) return;
@@ -259,22 +274,22 @@ export function LandingPageClient({
           <div className="landing__logo-container">
             <Image
               src="/ant-head.png"
-              alt="bMAS Swarm Logo"
+              alt="Stigmergic"
               className="landing__logo animate-float"
               width={96}
               height={96}
               loading="eager"
             />
           </div>
-          <h1 className="landing__title">{projectName}</h1>
+          <h1 className="landing__title">Stigmergic</h1>
           <p className="landing__subtitle">
-            What should the swarm work on?
+            Mission Control for the bMAS architecture
           </p>
         </div>
 
         <ReadinessPanel
           onReadyChange={setStackReady}
-          showReadyGuide={!isLoading && total === 0}
+          showReadyGuide={!history.isLoading && history.total === 0}
         />
 
         {/* ── Input Card ────────────────────────────────────────── */}
@@ -304,7 +319,13 @@ export function LandingPageClient({
           {dragActive ? (
             <div className="landing__drop-message" aria-hidden="true">Drop files to attach them</div>
           ) : null}
+          <div className="landing__mode-row">
+            <label className="landing__mode-toggle"><input type="checkbox" checked={quickMode} onChange={(event) => setQuickMode(event.target.checked)} /> Quick mode</label>
+            <span>{quickMode ? "Use one field for an experienced workflow." : "Add structure so the runtime can verify the result."}</span>
+          </div>
+          <label className="landing__field-label" htmlFor="task-objective">Objective</label>
           <textarea
+            id="task-objective"
             ref={textareaRef}
             className="landing__textarea"
             value={task}
@@ -324,11 +345,19 @@ export function LandingPageClient({
               event.preventDefault();
               acceptAttachments(files, "the clipboard");
             }}
-            placeholder="Describe a task for the swarm to execute…"
+            placeholder="State the result that the agents must produce…"
             rows={3}
             disabled={submitting}
             aria-describedby="attachment-help attachment-feedback"
           />
+          {!quickMode ? (
+            <div className="landing__guided-fields">
+              <label htmlFor="task-constraints">Constraints <span>Optional</span></label>
+              <textarea id="task-constraints" value={constraints} onChange={(event) => setConstraints(event.target.value)} rows={2} placeholder="List limits, required sources, exclusions, or quality rules…" disabled={submitting} />
+              <label htmlFor="task-output">Expected output <span>Optional</span></label>
+              <textarea id="task-output" value={expectedOutput} onChange={(event) => setExpectedOutput(event.target.value)} rows={2} placeholder="Describe the format, files, sections, or acceptance checks…" disabled={submitting} />
+            </div>
+          ) : null}
           {/* Hidden file input */}
           <input
             ref={fileInputRef}
@@ -392,6 +421,7 @@ export function LandingPageClient({
                   <ArrowUp size={16} />
                 )}
               </button>
+              <span className="landing__submit-reason" aria-live="polite">{submissionReason}</span>
             </div>
           </div>
           <p id="attachment-help" className="landing__attachment-help">
@@ -446,12 +476,12 @@ export function LandingPageClient({
           ))}
         </div>
 
-        {/* ── Recent Tasks ──────────────────────────────────────── */}
-        {recentTasks.length > 0 && (
-          <div className="landing__recent">
-            <h3 className="landing__recent-title">Recent Tasks</h3>
-            <div className="landing__recent-list">
-              {recentTasks.map((t) => (
+        {/* ── Operational work ─────────────────────────────────── */}
+        <div className="landing__operations-grid">
+          <section className="landing__recent">
+            <div className="landing__section-heading"><h3 className="landing__recent-title">Running tasks</h3><Link href="/activity">View live activity</Link></div>
+            {runningHistory.tasks.length ? <div className="landing__recent-list">
+              {runningHistory.tasks.slice(0, 4).map((t) => (
                 <Link
                   key={t.id}
                   href={`/task/${t.id}`}
@@ -460,39 +490,24 @@ export function LandingPageClient({
                   <TaskStatusDot status={t.status} />
                   <span className="landing__recent-id">{t.id}</span>
                   <span className="landing__recent-label">{t.label}</span>
-                  {t.model_used && (
-                    <span
-                      className="landing__recent-model"
-                      title={
-                        t.model_used.startsWith("edge-")
-                          ? `Local inference (${t.model_used})`
-                          : `Cloud API (${t.model_used})`
-                      }
-                    >
-                      {t.model_used.startsWith("edge-")
-                        ? <Cpu size={11} />
-                        : <Cloud size={11} />
-                      }
-                    </span>
-                  )}
                   <span className="landing__recent-time">
                     {formatRelativeTime(t.created_at)}
                   </span>
-                  <span className="landing__recent-cost">
-                    ${(t.total_cost_usd ?? 0).toFixed(3)}
-                  </span>
                 </Link>
               ))}
-            </div>
-          </div>
-        )}
-
-        {/* ── Empty state ───────────────────────────────────────── */}
-        {!isLoading && recentTasks.length === 0 && (
-          <div className="landing__empty">
-            No tasks yet. Submit your first task to see the swarm in action.
-          </div>
-        )}
+            </div> : <p className="landing__empty">No tasks run now.</p>}
+          </section>
+          <section className="landing__recent">
+            <div className="landing__section-heading"><h3 className="landing__recent-title">Needs attention</h3><Link href="/tasks?status=attention">View all</Link></div>
+            {approvalTasks.length || failedTasks.length ? <div className="landing__recent-list">
+              {[...approvalTasks, ...failedTasks.filter((taskItem) => !approvalTasks.some((approval) => approval.id === taskItem.id))].slice(0, 4).map((t) => (
+                <Link key={t.id} href={`/task/${t.id}`} className="landing__recent-item">
+                  <TaskStatusDot status={t.status} /><span className="landing__recent-label">{t.label}</span><span className="landing__recent-time">{t.pending_approval ? "Approval required" : t.error_message || "Failed"}</span>
+                </Link>
+              ))}
+            </div> : <p className="landing__empty">No tasks need attention.</p>}
+          </section>
+        </div>
 
         {/* ── Footer Stats ──────────────────────────────────────── */}
         <div className="landing__stats">
@@ -500,14 +515,7 @@ export function LandingPageClient({
             <Zap size={14} />
             {agentsOnline} agent{agentsOnline !== 1 ? "s" : ""} online
           </span>
-          <span className="landing__stat">
-            <DollarSign size={14} />
-            ${totalCost.toFixed(2)} total
-          </span>
-          <span className="landing__stat">
-            <BarChart3 size={14} />
-            {total} task{total !== 1 ? "s" : ""}
-          </span>
+          <Link className="landing__stat" href="/tasks">Open task history</Link>
         </div>
       </div>
     </div>

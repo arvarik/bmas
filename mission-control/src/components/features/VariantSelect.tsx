@@ -28,9 +28,9 @@ function RuntimeDetails({ variant }: { variant: VariantCapability }) {
   const details = describeRuntime(variant);
   return (
     <dl className="variant-details" aria-label={`${variant.label} runtime effects`}>
-      <div><dt>Speed</dt><dd>{details.speed}</dd></div>
-      <div><dt>Cost</dt><dd>{details.cost}</dd></div>
-      <div><dt>Tools</dt><dd>{details.tools}</dd></div>
+      <div><dt>Runtime class</dt><dd>{details.speed}</dd></div>
+      <div><dt>Cost class</dt><dd>{details.cost}</dd></div>
+      <div><dt>Estimated tool access</dt><dd>{details.tools}</dd></div>
     </dl>
   );
 }

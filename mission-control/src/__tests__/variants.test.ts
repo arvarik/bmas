@@ -57,9 +57,9 @@ describe("variant adapter registry", () => {
 
   it("derives navigation from daemon features", () => {
     expect(visibleNavigationPanels(CLASSIC_ADAPTER, capability).map((panel) => panel.label)).toEqual([
-      "Overview",
+      "Summary",
       "Blackboard",
-      "Graph",
+      "Execution",
       "Logs",
     ]);
   });

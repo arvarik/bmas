@@ -21,7 +21,8 @@ async def task_history_db(tmp_path, monkeypatch):
         await db.create_task(task_id, label, f"Full input for {label}")
     async with aiosqlite.connect(path) as connection:
         await connection.execute(
-            "UPDATE tasks SET status='completed', total_cost_usd=0.05 "
+            "UPDATE tasks SET status='completed', total_cost_usd=0.05, "
+            "result_summary='Verified lighthouse report' "
             "WHERE id='task-completed'"
         )
         await connection.execute(
@@ -57,7 +58,41 @@ async def test_task_history_filters_search_status_and_cost(task_history_db):
     searched = await db.list_tasks(limit=20, search="quarterly")
     costly = await db.list_tasks(limit=20, min_cost=0.4, max_cost=1.0)
     failed_count = await db.count_tasks(status="failed")
+    result_search = await db.list_tasks(limit=20, search="lighthouse")
 
     assert [task["id"] for task in searched] == ["task-completed"]
     assert [task["id"] for task in costly] == ["task-blocked"]
     assert failed_count == 1
+    assert [task["id"] for task in result_search] == ["task-completed"]
+
+
+@pytest.mark.asyncio
+async def test_attention_filter_uses_approval_events_and_server_sort(task_history_db):
+    await db.append_delivery_event(
+        "task:task-running",
+        "approval_request",
+        {"run_id": "run-one"},
+        task_id="task-running",
+    )
+
+    attention = await db.list_tasks(limit=20, status="attention", sort="cost-desc")
+
+    assert [task["id"] for task in attention] == [
+        "task-failed",
+        "task-blocked",
+        "task-running",
+    ]
+    assert next(task for task in attention if task["id"] == "task-running")["pending_approval"] == 1
+
+
+@pytest.mark.asyncio
+async def test_archive_hides_terminal_tasks_and_rejects_active_tasks(task_history_db):
+    accepted, rejected = await db.archive_tasks(
+        ["task-completed", "task-running"],
+        archived=True,
+    )
+
+    assert accepted == ["task-completed"]
+    assert rejected == ["task-running"]
+    assert await db.count_tasks() == 3
+    assert await db.count_tasks(archived="only") == 1

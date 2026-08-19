@@ -106,6 +106,9 @@ export function mapTaskMeta(task: Record<string, unknown>): TaskMeta {
     last_heartbeat_at: task.last_heartbeat_at as string | undefined,
     error_message: task.error_message as string | undefined,
     resume_count: task.resume_count as number | undefined,
+    effective_configuration: task.effective_configuration as Record<string, unknown> | undefined,
+    submission_overrides: task.submission_overrides as Record<string, unknown> | undefined,
+    event_delivery: task.event_delivery as TaskMeta["event_delivery"],
     storage: task.storage as TaskMeta["storage"],
   };
 }
