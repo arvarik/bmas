@@ -47,6 +47,8 @@ The classic runtime uses a control unit and a shared blackboard.
 
 The task stops when it reaches a final answer, a runtime limit, a cost limit, or a failure state.
 
+Mission Control shows five operator states: queued, running, blocked, failed, and completed. A blocked task needs an operator or a compatible runtime before it can continue.
+
 ## Roles and nodes
 
 A **role** defines the requested behavior. Examples include `planner`, `expert`, `critic`, and `decider`.
@@ -83,7 +85,9 @@ The `/health` endpoint reports service state for monitoring tools. It returns HT
 
 The `/readiness` endpoint reports whether the complete classic stack can accept a task. Each failed check includes one repair command.
 
-Mission Control uses readiness to disable task submission until the stack can execute the request.
+Mission Control uses readiness to disable task submission until the stack can execute the request. Its setup center also shows provider credentials, storage access, queue capacity, and one real test-task action.
+
+The Files workspace separates user Inputs from agent Outputs. It keeps every output version and supports side-by-side comparisons.
 
 ## Triage and routing
 

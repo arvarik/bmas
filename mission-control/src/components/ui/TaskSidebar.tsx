@@ -22,8 +22,12 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ChevronDown,
+  Search,
+  Pin,
 } from "lucide-react";
-import type { TaskSummary } from "@/hooks/useTaskHistory";
+import type { TaskHistoryFilters, TaskSummary } from "@/hooks/useTaskHistory";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { ActionableError } from "@/components/ui/ActionableError";
 
 // ── Props ─────────────────────────────────────────────────────────────
 
@@ -36,6 +40,31 @@ export interface TaskSidebarProps {
   isLoading: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
+  filters: TaskHistoryFilters;
+  onFiltersChange: (filters: TaskHistoryFilters) => void;
+  error: string | null;
+  onRetry: () => void;
+}
+
+const PIN_STORAGE_KEY = "bmas:pinned-tasks:v1";
+const PIN_EVENT = "bmas-pins-changed";
+
+function subscribePins(callback: () => void): () => void {
+  window.addEventListener("storage", callback);
+  window.addEventListener(PIN_EVENT, callback);
+  return () => {
+    window.removeEventListener("storage", callback);
+    window.removeEventListener(PIN_EVENT, callback);
+  };
+}
+
+function getPinSnapshot(): string {
+  return window.localStorage.getItem(PIN_STORAGE_KEY) ?? "[]";
+}
+
+function needsAttention(task: TaskSummary): boolean {
+  return task.status === "failed"
+    || ["blocked", "paused", "pause_requested"].includes(task.run_state ?? "");
 }
 
 // ── Date grouping ─────────────────────────────────────────────────────
@@ -74,7 +103,18 @@ function groupByDate(tasks: TaskSummary[]): Map<string, TaskSummary[]> {
 
 // ── Status indicator ──────────────────────────────────────────────────
 
-function StatusIcon({ status }: { status: string }) {
+function StatusIcon({ status, runState }: { status: string; runState?: string | null }) {
+  if (["blocked", "paused", "pause_requested"].includes(runState ?? "")) {
+    return (
+      <span
+        className="task-sidebar__item-status"
+        style={{ color: "var(--status-paused)" }}
+        aria-label="Needs operator attention"
+      >
+        !
+      </span>
+    );
+  }
   switch (status) {
     case "running":
       return (
@@ -136,9 +176,71 @@ export function TaskSidebar({
   isLoading,
   hasMore,
   onLoadMore,
+  filters,
+  onFiltersChange,
+  error,
+  onRetry,
 }: TaskSidebarProps) {
   const pathname = usePathname();
-  const groups = groupByDate(tasks);
+  const [searchDraft, setSearchDraft] = useState(filters.search);
+  const [dateChoice, setDateChoice] = useState("");
+  const pinSnapshot = useSyncExternalStore(subscribePins, getPinSnapshot, () => "[]");
+  const pinnedIds = useMemo(() => {
+    try {
+      const values = JSON.parse(pinSnapshot) as unknown;
+      return Array.isArray(values)
+        ? values.filter((value): value is string => typeof value === "string")
+        : [];
+    } catch {
+      return [];
+    }
+  }, [pinSnapshot]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      if (searchDraft !== filters.search) {
+        onFiltersChange({ ...filters, search: searchDraft });
+      }
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [filters, onFiltersChange, searchDraft]);
+
+  const visibleTasks = useMemo(() => {
+    const filtered = filters.status === "attention"
+      ? tasks.filter(needsAttention)
+      : tasks;
+    const pins = new Set(pinnedIds);
+    return [...filtered].sort((left, right) => {
+      const pinOrder = Number(pins.has(right.id)) - Number(pins.has(left.id));
+      if (pinOrder) return pinOrder;
+      return Number(needsAttention(right)) - Number(needsAttention(left));
+    });
+  }, [filters.status, pinnedIds, tasks]);
+  const pinnedTaskIds = new Set(pinnedIds);
+  const pinnedTasks = visibleTasks.filter((task) => pinnedTaskIds.has(task.id));
+  const groups = groupByDate(
+    visibleTasks.filter((task) => !pinnedTaskIds.has(task.id)),
+  );
+  if (pinnedTasks.length) {
+    const datedGroups = [...groups.entries()];
+    groups.clear();
+    groups.set("Pinned", pinnedTasks);
+    for (const [label, tasksForDate] of datedGroups) {
+      groups.set(label, tasksForDate);
+    }
+  }
+
+  const updateFilter = (patch: Partial<TaskHistoryFilters>) => {
+    onFiltersChange({ ...filters, ...patch });
+  };
+
+  const togglePin = (taskId: string) => {
+    const next = pinnedIds.includes(taskId)
+      ? pinnedIds.filter((id) => id !== taskId)
+      : [...pinnedIds, taskId];
+    window.localStorage.setItem(PIN_STORAGE_KEY, JSON.stringify(next));
+    window.dispatchEvent(new Event(PIN_EVENT));
+  };
 
   // Determine active task ID from pathname
   const activeTaskId =
@@ -187,6 +289,67 @@ export function TaskSidebar({
       {/* ── Task List (scrollable, hidden when collapsed) ─────── */}
       {!collapsed && (
         <div className="task-sidebar__scroll">
+          <div className="task-sidebar__filters">
+            <label className="task-sidebar__search">
+              <Search size={13} aria-hidden="true" />
+              <span className="sr-only">Search tasks</span>
+              <input
+                value={searchDraft}
+                onChange={(event) => setSearchDraft(event.target.value)}
+                placeholder="Search tasks"
+              />
+            </label>
+            <div className="task-sidebar__filter-grid">
+              <select
+                aria-label="Filter tasks by status"
+                value={filters.status}
+                onChange={(event) => updateFilter({ status: event.target.value })}
+              >
+                <option value="">All states</option>
+                <option value="attention">Needs attention</option>
+                <option value="pending">Queued</option>
+                <option value="running">Running</option>
+                <option value="failed">Failed</option>
+                <option value="completed">Completed</option>
+              </select>
+              <select
+                aria-label="Filter tasks by date"
+                value={dateChoice}
+                onChange={(event) => {
+                  const choice = event.target.value;
+                  setDateChoice(choice);
+                  const days = Number(choice);
+                  const threshold = new Date();
+                  threshold.setHours(0, 0, 0, 0);
+                  threshold.setDate(threshold.getDate() - days);
+                  updateFilter({ dateFrom: choice ? threshold.toISOString() : "" });
+                }}
+              >
+                <option value="">Any date</option>
+                <option value="0">Today</option>
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+              </select>
+              <select
+                aria-label="Filter tasks by cost"
+                value={filters.minCost}
+                onChange={(event) => updateFilter({ minCost: event.target.value })}
+              >
+                <option value="">Any cost</option>
+                <option value="0.000001">With cost</option>
+                <option value="0.1">Over $0.10</option>
+                <option value="1">Over $1.00</option>
+              </select>
+            </div>
+          </div>
+          {error ? (
+            <ActionableError
+              component="Task history"
+              cause={error}
+              onRetry={onRetry}
+              compact
+            />
+          ) : null}
           {isLoading && tasks.length === 0 && (
             <div className="task-sidebar__loading">
               <div className="shimmer" style={{ height: 32, borderRadius: "var(--radius-sm)" }} />
@@ -207,22 +370,31 @@ export function TaskSidebar({
               {groupTasks.map((task) => {
                 const isActive = activeTaskId === task.id;
                 return (
-                  <Link
+                  <div
                     key={task.id}
-                    href={`/task/${task.id}`}
                     className={`task-sidebar__item ${isActive ? "task-sidebar__item--active" : ""}`}
                   >
                     {isActive && <div className="task-sidebar__active-bar" />}
-                    <StatusIcon status={task.status} />
-                    <div className="task-sidebar__item-text">
-                      <span className="task-sidebar__item-id">
-                        {task.id}
-                      </span>
-                      <span className="task-sidebar__item-label">
-                        {task.label}
-                      </span>
-                    </div>
-                  </Link>
+                    <Link href={`/task/${task.id}`} className="task-sidebar__item-link">
+                      <StatusIcon status={task.status} runState={task.run_state} />
+                      <div className="task-sidebar__item-text">
+                        <span className="task-sidebar__item-id">
+                          {task.id}
+                        </span>
+                        <span className="task-sidebar__item-label">
+                          {task.label}
+                        </span>
+                      </div>
+                    </Link>
+                    <button
+                      type="button"
+                      className={`task-sidebar__pin ${pinnedIds.includes(task.id) ? "task-sidebar__pin--active" : ""}`}
+                      onClick={() => togglePin(task.id)}
+                      aria-label={`${pinnedIds.includes(task.id) ? "Unpin" : "Pin"} ${task.label}`}
+                    >
+                      <Pin size={12} fill={pinnedIds.includes(task.id) ? "currentColor" : "none"} />
+                    </button>
+                  </div>
                 );
               })}
             </div>

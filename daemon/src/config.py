@@ -285,6 +285,22 @@ print("  Validating model routing...", file=sys.stderr)
 _models = _cfg.get("models", {})
 _routing = _cfg.get("routing", {})
 
+# Public credential readiness metadata. This reports only whether each
+# configured environment variable has a value. It never exposes the value.
+MODEL_CREDENTIALS: list[dict[str, object]] = []
+_active_model_aliases = {str(value) for value in _routing.values()}
+if TRIAGE_ENABLED and TRIAGE_BACKEND == "cloud":
+    _active_model_aliases.add(TRIAGE_GEMINI_MODEL)
+for _model_alias, _model_cfg in _models.items():
+    _credential_env = str(_model_cfg.get("api_key_env", "")).strip()
+    MODEL_CREDENTIALS.append({
+        "alias": str(_model_alias),
+        "provider": str(_model_cfg.get("provider", "unknown")),
+        "env_var": _credential_env,
+        "required": bool(_credential_env) and _model_alias in _active_model_aliases,
+        "configured": not _credential_env or bool(os.getenv(_credential_env)),
+    })
+
 # Validate that the cloud backend model alias exists in the models section.
 # (deferred to here because _models is defined above)
 if TRIAGE_ENABLED and TRIAGE_BACKEND == "cloud" and TRIAGE_GEMINI_MODEL not in _models:

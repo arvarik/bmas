@@ -184,6 +184,56 @@ async def _retry_compatible_blocked_tasks() -> None:
             _recovery_blocked.pop(task_id, None)
 
 
+async def resume_blocked_task(task_id: str) -> bool:
+    """Validate and enqueue one blocked task immediately."""
+    if _task_queue is None:
+        raise RuntimeError("The task queue is not running")
+    task = await db.get_task(task_id)
+    if task is None:
+        raise KeyError(task_id)
+    if task_id in _scheduled_ids:
+        return True
+    if _task_queue.full():
+        raise asyncio.QueueFull
+
+    variant_class = require_variant_class(
+        str(task.get("variant") or COORDINATION_VARIANT)
+    )
+    board_meta = await db.get_board_meta(task_id)
+    configuration = variant_class.configuration_from_metadata(board_meta)
+    if configuration is None:
+        raise VariantConfigurationError(
+            "The blocked task has no saved configuration"
+        )
+    persisted_overrides = board_meta.get("submission_overrides")
+
+    _scheduled_ids.add(task_id)
+    if not await db.retry_blocked_task(task_id):
+        _scheduled_ids.discard(task_id)
+        return False
+    try:
+        _task_queue.put_nowait(TaskWorkItem(
+            task_id=task_id,
+            user_task=str(task.get("full_input") or task.get("label") or ""),
+            overrides=(
+                persisted_overrides
+                if isinstance(persisted_overrides, dict)
+                else None
+            ),
+            variant_id=canonical_variant_id(
+                str(task.get("variant") or COORDINATION_VARIANT)
+            ),
+            effective_configuration=configuration,
+            resume=task.get("status") == "running",
+        ))
+    except Exception:
+        _scheduled_ids.discard(task_id)
+        await db.block_task_recovery(task_id)
+        raise
+    _recovery_blocked.pop(task_id, None)
+    return True
+
+
 async def _run_task_safe(
     orch: Orchestrator,
     task_id: str,

@@ -88,3 +88,46 @@ async def test_steer_route_uses_orchestrator_gateway(monkeypatch):
 
     assert result["status"] == "boosted"
     orch.steer_entry.assert_awaited_once_with("task-1", "e-1", "boost")
+
+
+@pytest.mark.asyncio
+async def test_resume_route_requeues_a_blocked_task(monkeypatch):
+    redis = SimpleNamespace(delete=AsyncMock())
+    orch = SimpleNamespace(bb=SimpleNamespace(redis=redis))
+    _install_app(monkeypatch, orch)
+    monkeypatch.setattr(
+        hitl.db,
+        "get_task",
+        AsyncMock(return_value={"id": "task-1", "run_state": "blocked"}),
+    )
+    resume_blocked = AsyncMock(return_value=True)
+    monkeypatch.setattr(submit, "resume_blocked_task", resume_blocked)
+
+    result = await hitl.resume_task("task-1", SimpleNamespace(headers={}))
+
+    assert result == {"status": "recovery_queued", "task_id": "task-1"}
+    resume_blocked.assert_awaited_once_with("task-1")
+    redis.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resume_route_returns_the_incompatible_configuration_cause(monkeypatch):
+    redis = SimpleNamespace(delete=AsyncMock())
+    orch = SimpleNamespace(bb=SimpleNamespace(redis=redis))
+    _install_app(monkeypatch, orch)
+    monkeypatch.setattr(
+        hitl.db,
+        "get_task",
+        AsyncMock(return_value={"id": "task-1", "run_state": "blocked"}),
+    )
+    monkeypatch.setattr(
+        submit,
+        "resume_blocked_task",
+        AsyncMock(side_effect=hitl.VariantConfigurationError("saved model is unavailable")),
+    )
+
+    with pytest.raises(hitl.HTTPException) as raised:
+        await hitl.resume_task("task-1", SimpleNamespace(headers={}))
+
+    assert raised.value.status_code == 409
+    assert "saved model is unavailable" in raised.value.detail

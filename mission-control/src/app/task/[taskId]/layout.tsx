@@ -17,7 +17,8 @@ import type { TaskStreamData, CostData } from "@/hooks/useTaskStream";
 import { TaskStreamContext } from "./TaskStreamContext";
 import { usePendingTask, type PendingTask } from "@/contexts/PendingTaskContext";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { AttachmentRail } from "@/components/features/AttachmentRail";
+import { TaskLifecycle } from "@/components/features/TaskLifecycle";
+import { ActionableError } from "@/components/ui/ActionableError";
 import type { StatusType } from "@/lib/design-tokens";
 import { ArrowLeft } from "lucide-react";
 import { UnsupportedVariantState } from "@/components/features/UnsupportedVariantState";
@@ -52,7 +53,9 @@ function TaskHeader({
   // Use optimistic data when SSE hasn't delivered real meta yet
   const hasMeta = !!taskMeta;
   const status = taskMeta?.status ?? (isLive ? "running" : "pending");
-  const statusType = STATUS_MAP[status] ?? "pending";
+  const runState = taskMeta?.run_state ?? "";
+  const blocked = ["blocked", "paused", "pause_requested"].includes(runState);
+  const statusType = blocked ? "paused" : STATUS_MAP[status] ?? "pending";
   const label = hasMeta
     ? (taskMeta?.label ?? "Loading…")
     : pending
@@ -78,7 +81,9 @@ function TaskHeader({
           <StatusBadge
             status={statusType}
             label={
-              isLive
+              blocked
+                ? runState === "paused" ? "Paused" : "Blocked"
+                : isLive
                 ? "Running"
                 : status === "completed"
                   ? "Completed"
@@ -161,8 +166,12 @@ export default function TaskLayout({
   const tabs = adapter && capability
     ? visibleNavigationPanels(adapter, capability)
     : [];
-  const requestedPanel = adapter?.navigationPanels.find((panel) => panel.segment === segment);
-  const panelAvailable = tabs.some((panel) => panel.segment === segment);
+  const requestedPanel = adapter?.navigationPanels.find((panel) => (
+    panel.segment === segment || (segment === "artifacts" && panel.segment === "files")
+  ));
+  const panelAvailable = tabs.some((panel) => (
+    panel.segment === segment || (segment === "artifacts" && panel.segment === "files")
+  ));
 
   // Clear optimistic state when real data arrives
   useEffect(() => {
@@ -181,9 +190,10 @@ export default function TaskLayout({
           pending={pending}
           cost={streamData.cost}
         />
-        <AttachmentRail
-          taskId={taskId as string}
-          liveFiles={streamData.liveFiles}
+        <TaskLifecycle
+          task={streamData.taskMeta}
+          cost={streamData.cost}
+          isLive={streamData.isLive}
         />
         {tabs.length > 0 ? <nav className="task-tabs" role="tablist">
           {tabs.map((tab) => (
@@ -200,9 +210,11 @@ export default function TaskLayout({
         </nav> : null}
         <div className="task-content">
           {streamData.runtime.status === "ready" && streamData.hydrationError ? (
-            <div className="task-hydration-warning" role="alert">
-              Saved task data could not refresh. {streamData.hydrationError}
-            </div>
+            <ActionableError
+              component="Saved task data"
+              cause={streamData.hydrationError}
+              compact
+            />
           ) : null}
           {streamData.runtime.status !== "ready" ? (
             <UnsupportedVariantState runtime={streamData.runtime} />

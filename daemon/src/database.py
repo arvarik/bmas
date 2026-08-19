@@ -1088,35 +1088,103 @@ async def update_task_lifecycle_telemetry(
         return cursor.rowcount == 1
 
 
+def _task_filter_clause(
+    *,
+    status: str | None = None,
+    search: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    min_cost: float | None = None,
+    max_cost: float | None = None,
+) -> tuple[str, list[Any]]:
+    """Build one parameterized task-history filter."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if search:
+        clauses.append(
+            "(LOWER(id) LIKE ? OR LOWER(label) LIKE ? "
+            "OR LOWER(full_input) LIKE ?)"
+        )
+        pattern = f"%{search.strip().lower()}%"
+        params.extend((pattern, pattern, pattern))
+    if date_from:
+        clauses.append("created_at >= ?")
+        params.append(date_from)
+    if date_to:
+        clauses.append("created_at <= ?")
+        params.append(date_to)
+    if min_cost is not None:
+        clauses.append("COALESCE(total_cost_usd, 0) >= ?")
+        params.append(min_cost)
+    if max_cost is not None:
+        clauses.append("COALESCE(total_cost_usd, 0) <= ?")
+        params.append(max_cost)
+    return (f"WHERE {' AND '.join(clauses)}" if clauses else "", params)
+
+
 async def list_tasks(
-    limit: int = 50, offset: int = 0, status: str | None = None
+    limit: int = 50,
+    offset: int = 0,
+    status: str | None = None,
+    *,
+    search: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    min_cost: float | None = None,
+    max_cost: float | None = None,
 ) -> list[dict]:
-    """List tasks newest-first with pagination and optional status filter."""
+    """List filtered tasks with urgent operator work first."""
+    where, params = _task_filter_clause(
+        status=status,
+        search=search,
+        date_from=date_from,
+        date_to=date_to,
+        min_cost=min_cost,
+        max_cost=max_cost,
+    )
+    params.extend((limit, offset))
     async with _connect() as conn:
-        if status:
-            rows = await conn.execute_fetchall(
-                "SELECT * FROM tasks WHERE status = ? "
-                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (status, limit, offset),
-            )
-        else:
-            rows = await conn.execute_fetchall(
-                "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            )
+        rows = await conn.execute_fetchall(
+            "SELECT * FROM tasks "
+            f"{where} "
+            "ORDER BY CASE "
+            "WHEN COALESCE(run_state, '') IN "
+            "('blocked', 'paused', 'pause_requested') THEN 0 "
+            "WHEN status = 'failed' THEN 1 "
+            "WHEN status = 'running' THEN 2 "
+            "WHEN status = 'pending' THEN 3 ELSE 4 END, "
+            "created_at DESC LIMIT ? OFFSET ?",
+            params,
+        )
         return [dict(r) for r in rows]
 
 
-async def count_tasks(status: str | None = None) -> int:
-    """Count total tasks, optionally filtered by status."""
+async def count_tasks(
+    status: str | None = None,
+    *,
+    search: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    min_cost: float | None = None,
+    max_cost: float | None = None,
+) -> int:
+    """Count tasks that match one task-history filter."""
+    where, params = _task_filter_clause(
+        status=status,
+        search=search,
+        date_from=date_from,
+        date_to=date_to,
+        min_cost=min_cost,
+        max_cost=max_cost,
+    )
     async with _connect() as conn:
-        if status:
-            cursor = await conn.execute(
-                "SELECT COUNT(*) as cnt FROM tasks WHERE status = ?",
-                (status,),
-            )
-        else:
-            cursor = await conn.execute("SELECT COUNT(*) as cnt FROM tasks")
+        cursor = await conn.execute(
+            f"SELECT COUNT(*) as cnt FROM tasks {where}",
+            params,
+        )
         row = await cursor.fetchone()
         return row["cnt"] if row else 0
 
@@ -2315,6 +2383,16 @@ async def get_task_files(task_id: str) -> list[dict]:
             (task_id,),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_task_files_total_bytes(task_id: str) -> int:
+    """Return total bytes of all user inputs for one task."""
+    async with _connect() as db, db.execute(
+        "SELECT COALESCE(SUM(bytes), 0) FROM task_files WHERE task_id = ?",
+        (task_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
 
 
 async def get_task_file(file_id: str) -> dict | None:

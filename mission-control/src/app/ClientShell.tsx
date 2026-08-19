@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useSyncExternalStore } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { ToastProvider } from "@/components/ui/Toast";
 import { PendingTaskProvider } from "@/contexts/PendingTaskContext";
@@ -8,6 +8,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { TaskSidebar } from "@/components/ui/TaskSidebar";
 import { useSystemStream } from "@/hooks/useSystemStream";
 import { useTaskHistory } from "@/hooks/useTaskHistory";
+import type { TaskHistoryFilters } from "@/hooks/useTaskHistory";
 import type { StatusType } from "@/lib/design-tokens";
 
 // ── Route → breadcrumb label mapping ─────────────────────────────────
@@ -27,6 +28,19 @@ function getBreadcrumb(pathname: string): string {
   if (pathname === "/skills") return "Skills";
   if (pathname === "/settings") return "Settings";
   return "Overview";
+}
+
+function subscribeToNetworkStatus(callback: () => void): () => void {
+  window.addEventListener("online", callback);
+  window.addEventListener("offline", callback);
+  return () => {
+    window.removeEventListener("online", callback);
+    window.removeEventListener("offline", callback);
+  };
+}
+
+function getOfflineSnapshot(): boolean {
+  return !navigator.onLine;
 }
 
 /**
@@ -49,15 +63,27 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
-  const [isOffline, setIsOffline] = useState(() =>
-    typeof navigator !== "undefined" ? !navigator.onLine : false
+  const [taskFilters, setTaskFilters] = useState<TaskHistoryFilters>({
+    search: "",
+    status: "",
+    dateFrom: "",
+    minCost: "",
+    maxCost: "",
+  });
+  const isOffline = useSyncExternalStore(
+    subscribeToNetworkStatus,
+    getOfflineSnapshot,
+    () => false,
   );
 
   // ── System health (replaces useBlackboard.startPolling) ───────────
   const system = useSystemStream();
 
   // ── Task history (feeds sidebar and landing page stats) ───────────
-  const taskHistory = useTaskHistory();
+  const taskHistory = useTaskHistory({
+    ...taskFilters,
+    status: taskFilters.status === "attention" ? "" : taskFilters.status,
+  });
 
   // ── Re-fetch task list when system stream emits lifecycle events ──
   useEffect(() => {
@@ -105,20 +131,6 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
     handler(mq);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
-  }, []);
-
-  // ── PWA Offline listener ──────────────────────────────────────────
-  useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
-    const handleOffline = () => setIsOffline(true);
-
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
   }, []);
 
   // ── Dynamic Tab Title (running tasks) ─────────────────────────────
@@ -209,6 +221,10 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
               isLoading={taskHistory.isLoading}
               hasMore={taskHistory.hasMore}
               onLoadMore={taskHistory.loadMore}
+              filters={taskFilters}
+              onFiltersChange={setTaskFilters}
+              error={taskHistory.error}
+              onRetry={() => void taskHistory.refetch()}
             />
 
             <main id="main-content" className="app-shell__main">

@@ -9,6 +9,7 @@ Endpoints:
   POST /api/tasks/{taskId}/approval  — approve/deny a pending run approval
 """
 
+import asyncio
 import contextlib
 import logging
 import os
@@ -17,6 +18,9 @@ import re
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, field_validator
+
+import database as db
+from core.variants import UnknownVariantError, VariantConfigurationError
 
 logger = logging.getLogger("bmas.daemon")
 
@@ -202,12 +206,38 @@ async def resume_task(task_id: str, request: Request):
     bb = orch.bb
 
     try:
+        task = await db.get_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if task.get("run_state") == "blocked":
+            from routes.submit import resume_blocked_task
+            resumed = await resume_blocked_task(task_id)
+            if not resumed:
+                raise HTTPException(
+                    status_code=409,
+                    detail="The task is no longer blocked",
+                )
+            logger.info("Blocked task resumed: %s", task_id)
+            return {"status": "recovery_queued", "task_id": task_id}
         pause_key = f"bmas:public:pause:{task_id}"
         await bb.redis.delete(pause_key)
-        from database import update_run_state
-        await update_run_state(task_id, "running")
+        await db.update_run_state(task_id, "running")
         logger.info("Resume requested for task %s", task_id)
         return {"status": "resumed", "task_id": task_id}
+    except HTTPException:
+        raise
+    except asyncio.QueueFull as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="The task queue is full. Retry when capacity is available.",
+        ) from exc
+    except (UnknownVariantError, VariantConfigurationError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Blocked task recovery is incompatible: {exc}",
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as e:
         logger.warning("Resume failed for %s: %s", task_id, e)
         raise HTTPException(status_code=500, detail="Resume failed") from e

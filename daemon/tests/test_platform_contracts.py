@@ -570,6 +570,16 @@ async def test_nonclassic_fake_runs_through_submission_worker_and_detail(
     monkeypatch.setattr(tasks_route.db, "get_sub_tasks", AsyncMock(return_value=[]))
     monkeypatch.setattr(
         tasks_route.db,
+        "get_task_files_total_bytes",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        tasks_route.db,
+        "get_task_artifacts_total_bytes",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        tasks_route.db,
         "get_event_delivery_health",
         AsyncMock(return_value={"pending": 0}),
     )

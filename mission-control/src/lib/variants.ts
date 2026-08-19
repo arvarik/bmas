@@ -584,7 +584,10 @@ function projectClassicHydration(
       MAX_TRACE_EVENTS,
     ),
     roster: state.roster.length ? state.roster : roster,
-    isLive: hydratedMeta?.status === "running" ? state.isLive : false,
+    isLive: hydratedMeta?.status === "running"
+      && !["blocked", "paused", "pause_requested"].includes(hydratedMeta.run_state ?? "")
+      ? state.isLive
+      : false,
   };
 }
 
@@ -600,7 +603,7 @@ export const CLASSIC_ADAPTER: VariantUIAdapter = {
     { id: "blackboard", label: "Blackboard", segment: "mission", feature: "blackboard", featureType: "panel" },
     { id: "graph", label: "Graph", segment: "dag", feature: "turns", featureType: "graph" },
     { id: "logs", label: "Logs", segment: "logs", feature: "logs", featureType: "panel" },
-    { id: "artifacts", label: "Artifacts", segment: "artifacts", feature: "artifacts", featureType: "panel" },
+    { id: "files", label: "Files", segment: "files", feature: "artifacts", featureType: "panel" },
   ],
   graphViews: { turns: "turns", entry_references: "entry-references" },
   decodeEvent(name, value, taskId) {

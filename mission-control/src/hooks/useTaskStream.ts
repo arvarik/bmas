@@ -176,6 +176,17 @@ export interface TaskMeta {
   completed_at?: string;
   duration_ms?: number;
   full_input?: string;
+  run_state?: string;
+  started_at?: string;
+  last_heartbeat_at?: string;
+  error_message?: string;
+  resume_count?: number;
+  storage?: {
+    input_bytes: number;
+    output_bytes: number;
+    max_upload_mb: number;
+    max_output_mb: number;
+  };
 }
 
 export interface ConsensusState {
@@ -616,7 +627,14 @@ export function useTaskStream(taskId: string): TaskStreamData {
       eventSourceRef.current = eventSource;
 
       eventSource.addEventListener("open", () => {
-        setData((current) => ({ ...current, isLive: true }));
+        setData((current) => {
+          const runState = current.taskMeta?.run_state ?? "";
+          const blocked = ["blocked", "paused", "pause_requested"].includes(runState);
+          const live = current.taskMeta
+            ? current.taskMeta.status === "running" && !blocked
+            : true;
+          return { ...current, isLive: live };
+        });
         if (!initialHydrationStarted) {
           initialHydrationStarted = true;
           void refreshHydration();

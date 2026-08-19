@@ -171,6 +171,11 @@ describe("mapTaskMeta", () => {
       created_at: "2026-01-01T00:00:00Z",
       duration_ms: 5000,
       full_input: "What is the meaning of life?",
+      run_state: "recovering",
+      started_at: "2026-01-01T00:00:01Z",
+      last_heartbeat_at: "2026-01-01T00:00:02Z",
+      resume_count: 2,
+      storage: { input_bytes: 10, output_bytes: 20 },
     };
     const result = mapTaskMeta(raw);
     expect(result.task_id).toBe("task-abc");
@@ -181,6 +186,9 @@ describe("mapTaskMeta", () => {
     expect(result.variant).toBe("traditional");
     expect(result.duration_ms).toBe(5000);
     expect(result.full_input).toBe("What is the meaning of life?");
+    expect(result.run_state).toBe("recovering");
+    expect(result.resume_count).toBe(2);
+    expect(result.storage?.output_bytes).toBe(20);
   });
 
   it("falls back task_id → task_id when id is missing", () => {

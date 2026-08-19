@@ -3,15 +3,49 @@
 
 import asyncio
 import contextlib
+import os
 from datetime import UTC, datetime
 
 import httpx
 from fastapi import APIRouter
 
 import database as db
-from config import AGENT_ENDPOINTS, COORDINATION_VARIANT, LITELLM_KEY, LITELLM_URL
+from config import (
+    AGENT_ENDPOINTS,
+    COORDINATION_VARIANT,
+    LITELLM_KEY,
+    LITELLM_URL,
+    MODEL_CREDENTIALS,
+    STORAGE_ARTIFACTS_DIR,
+    STORAGE_ENABLED,
+    STORAGE_MAX_TASK_OUTPUT_MB,
+    STORAGE_MAX_UPLOAD_MB,
+    STORAGE_USER_MEDIA_DIR,
+)
 
 router = APIRouter()
+
+
+def _storage_health() -> dict:
+    """Return current storage access without exposing host-only details."""
+    uploads_writable = bool(
+        STORAGE_ENABLED
+        and os.path.isdir(STORAGE_USER_MEDIA_DIR)
+        and os.access(STORAGE_USER_MEDIA_DIR, os.W_OK)
+    )
+    artifacts_writable = bool(
+        STORAGE_ENABLED
+        and os.path.isdir(STORAGE_ARTIFACTS_DIR)
+        and os.access(STORAGE_ARTIFACTS_DIR, os.W_OK)
+    )
+    return {
+        "enabled": STORAGE_ENABLED,
+        "uploads_writable": uploads_writable,
+        "artifacts_writable": artifacts_writable,
+        "ready": uploads_writable and artifacts_writable,
+        "max_upload_mb": STORAGE_MAX_UPLOAD_MB,
+        "max_output_mb": STORAGE_MAX_TASK_OUTPUT_MB,
+    }
 
 
 def _has_runtime_pressure(queue: dict, runtime: dict) -> bool:
@@ -142,11 +176,18 @@ async def health():
     agents_ready = bool(agent_health) and all(
         value.get("alive") for value in agent_health.values()
     )
+    provider_credentials = [dict(item) for item in MODEL_CREDENTIALS]
+    credentials_ready = all(
+        not item.get("required") or item.get("configured")
+        for item in provider_credentials
+    )
+    storage_health = _storage_health()
     degraded = (
         not redis_ok
         or not sqlite_ok
         or not litellm_ok
         or not agents_ready
+        or not credentials_ready
         or bool(delivery_health.get("overloaded"))
         or _has_runtime_pressure(queue_health, runtime_health)
     )
@@ -158,6 +199,9 @@ async def health():
         "litellm_connected": litellm_ok,
         "agents": list(AGENT_ENDPOINTS.keys()),
         "agent_health": agent_health,
+        "provider_credentials": provider_credentials,
+        "provider_credentials_ready": credentials_ready,
+        "storage": storage_health,
         "runtime_id": COORDINATION_VARIANT,
         "event_delivery": delivery_health,
         "task_queue": queue_health,
@@ -193,7 +237,7 @@ async def readiness():
         },
         {
             "id": "litellm",
-            "label": "LiteLLM",
+            "label": "Model gateway",
             "ready": snapshot["litellm_connected"],
             "detail": "The model gateway is reachable.",
             "fix": "Run: docker compose logs litellm",
@@ -224,8 +268,50 @@ async def readiness():
             "fix": "Run: docker compose logs daemon",
         },
     ]
+    for credential in snapshot["provider_credentials"]:
+        if not credential.get("required"):
+            continue
+        env_var = str(credential["env_var"])
+        checks.append({
+            "id": f"provider-{credential['alias']}",
+            "label": f"{credential['provider']} credentials",
+            "ready": bool(credential["configured"]),
+            "detail": (
+                f"{env_var} is configured for {credential['alias']}."
+                if credential["configured"]
+                else f"{env_var} is missing for {credential['alias']}."
+            ),
+            "fix": (
+                f"Set {env_var} in .env, then run: docker compose up -d"
+            ),
+        })
+    storage = snapshot["storage"]
+    checks.append({
+        "id": "storage",
+        "label": "File storage",
+        "ready": bool(storage["ready"]),
+        "blocking": False,
+        "detail": (
+            "Upload and artifact directories are writable."
+            if storage["ready"]
+            else "File storage is disabled or one directory is not writable."
+        ),
+        "fix": (
+            "Set storage.enabled to true in bmas.yaml, check volume permissions, "
+            "then run: docker compose up -d"
+        ),
+    })
+    blocking_ready = all(
+        check["ready"] or not check.get("blocking", True)
+        for check in checks
+    )
     return {
-        "status": "ready" if all(check["ready"] for check in checks) else "not_ready",
+        "status": "ready" if blocking_ready else "not_ready",
         "checks": checks,
         "agent_health": agent_health,
+        "provider_credentials": snapshot["provider_credentials"],
+        "storage": storage,
+        "task_queue": snapshot["task_queue"],
+        "litellm_connected": snapshot["litellm_connected"],
+        "redis_connected": snapshot["redis_connected"],
     }

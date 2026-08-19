@@ -26,6 +26,15 @@ export interface TaskSummary {
   complexity: string | null;
   model_used: string | null;
   error_message: string | null;
+  run_state: string | null;
+}
+
+export interface TaskHistoryFilters {
+  search: string;
+  status: string;
+  dateFrom: string;
+  minCost: string;
+  maxCost: string;
 }
 
 export interface TaskHistoryData {
@@ -44,17 +53,34 @@ const PAGE_SIZE = 50;
 
 // ── Hook ──────────────────────────────────────────────────────────────
 
-export function useTaskHistory(): TaskHistoryData {
+export function useTaskHistory(
+  filters: Partial<TaskHistoryFilters> = {},
+): TaskHistoryData {
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const offsetRef = useRef(0);
 
+  const search = filters.search?.trim() ?? "";
+  const status = filters.status ?? "";
+  const dateFrom = filters.dateFrom ?? "";
+  const minCost = filters.minCost ?? "";
+  const maxCost = filters.maxCost ?? "";
+
   const fetchPage = useCallback(async (offset: number, append: boolean) => {
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/tasks?limit=${PAGE_SIZE}&offset=${offset}`, {
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String(offset),
+      });
+      if (search) params.set("search", search);
+      if (status) params.set("status", status);
+      if (dateFrom) params.set("date_from", dateFrom);
+      if (minCost) params.set("min_cost", minCost);
+      if (maxCost) params.set("max_cost", maxCost);
+      const res = await fetch(`/api/tasks?${params.toString()}`, {
         cache: "no-store",
       });
 
@@ -81,7 +107,7 @@ export function useTaskHistory(): TaskHistoryData {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [dateFrom, maxCost, minCost, search, status]);
 
   // Initial fetch on mount
   useEffect(() => {

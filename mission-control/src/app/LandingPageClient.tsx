@@ -214,6 +214,7 @@ export function LandingPageClient({
               className="landing__logo animate-float"
               width={96}
               height={96}
+              loading="eager"
             />
           </div>
           <h1 className="landing__title">{projectName}</h1>
