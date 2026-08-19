@@ -18,7 +18,7 @@ import { useTaskData } from "./TaskStreamContext";
 import { Panel } from "@/components/ui/Panel";
 import { MetricCard } from "@/components/ui/MetricCard";
 import {
-  Activity, Check, Circle, AlertTriangle, Pause, Play, XCircle,
+  Activity, AlertTriangle, Pause, Play, XCircle,
   Send, ChevronDown, Clock, Users,
   Layers, Zap, Radio, MessageSquare, Cpu, Cloud,
 } from "lucide-react";
@@ -126,29 +126,6 @@ function InputPromptBox({ prompt }: { prompt?: string }) {
   );
 }
 
-// ── Process summary stages (derived from real turn data) ──────────────
-
-interface ProcessStage {
-  key: string;
-  label: string;
-  status: "completed" | "running" | "failed" | "pending";
-  detail?: string;
-}
-
-// Stable role ordering for process summaries that contain these roles.
-const ROLE_STAGE_ORDER = [
-  "planner", "expert", "critic", "conflict_resolver", "cleaner", "decider",
-];
-
-const ROLE_STAGE_LABELS: Record<string, string> = {
-  planner: "Planning",
-  expert: "Expert Analysis",
-  critic: "Critique",
-  conflict_resolver: "Conflict Resolution",
-  cleaner: "Board Cleanup",
-  decider: "Decision",
-};
-
 /** Map internal phase codes to human-readable names */
 const PHASE_LABELS: Record<string, string> = {
   "control_plane:ag": "Agent Generator",
@@ -160,12 +137,6 @@ const PHASE_LABELS: Record<string, string> = {
 
 function prettyPhase(phase: string): string {
   return PHASE_LABELS[phase] ?? phase.replace(/_/g, " ");
-}
-
-function stageLabelForRole(role: string): string {
-  const base = role.split(".")[0];
-  if (ROLE_STAGE_LABELS[base]) return ROLE_STAGE_LABELS[base];
-  return base.charAt(0).toUpperCase() + base.slice(1).replace(/_/g, " ");
 }
 
 // ── Model display helpers ─────────────────────────────────────────────
@@ -202,99 +173,6 @@ function ModelBadge({ model }: { model?: string }) {
       <span className="overview__model-badge-name">{info.label}</span>
     </span>
   );
-}
-
-/**
- * Build the process summary from the *actual* stages that occurred.
- *
- * Build a process summary from actual turn records.
- * Static sub-tasks do not describe every coordination runtime accurately.
- */
-function buildProcessStages(
-  subTasks: ReturnType<typeof useTaskData>["subTasks"],
-  allTurns: TurnRecord[],
-  taskMeta: ReturnType<typeof useTaskData>["taskMeta"],
-): ProcessStage[] {
-  const stages: ProcessStage[] = [];
-  const taskDone = taskMeta?.status === "completed";
-  const taskFailed = taskMeta?.status === "failed";
-  const isRunning = taskMeta?.status === "running";
-
-  // 1. Triage — completed once any turn exists (meaning the orchestrator
-  //    has passed triage and entered the round loop).
-  const triage = subTasks.find(
-    (s) => s.id.includes("triage") || s.label.toLowerCase().includes("triage"),
-  );
-  const triageStatus: ProcessStage["status"] =
-    (triage?.status === "completed" || allTurns.length > 0)
-      ? "completed"
-      : isRunning
-        ? "running"
-        : taskDone ? "completed" : "pending";
-  stages.push({
-    key: "triage",
-    label: "Triage",
-    status: triageStatus,
-    detail: taskMeta?.complexity
-      ? `${taskMeta.complexity} complexity → ${prettyModel(taskMeta.model).label}${prettyModel(taskMeta.model).isLocal ? " (local)" : ""}`
-      : undefined,
-  });
-
-  // 2. Stages from real turns, grouped by base role
-  const groups = new Map<string, TurnRecord[]>();
-  for (const t of allTurns) {
-    const base = (t.actor || "agent").split(".")[0];
-    const arr = groups.get(base) ?? [];
-    arr.push(t);
-    groups.set(base, arr);
-  }
-  const orderedRoles = [
-    ...ROLE_STAGE_ORDER.filter((r) => groups.has(r)),
-    ...[...groups.keys()].filter((r) => !ROLE_STAGE_ORDER.includes(r)),
-  ];
-  for (const role of orderedRoles) {
-    const turns = groups.get(role)!;
-    const anyFailed = turns.some((t) => t.status === "failed");
-    const anyActive = turns.some((t) => t.status === "active" || t.status === "running");
-    const rounds = [...new Set(turns.map((t) => t.round_no).filter((n) => n > 0))];
-    const parts: string[] = [`${turns.length} turn${turns.length === 1 ? "" : "s"}`];
-    if (rounds.length === 1) parts.push(`round ${rounds[0]}`);
-    else if (rounds.length > 1) parts.push(`rounds ${Math.min(...rounds)}\u2013${Math.max(...rounds)}`);
-    // For expert groups, also list the unique expert names (readable slug format)
-    if (role === "expert") {
-      const expertActors = [...new Set(turns.map((t) => t.actor).filter((a) => a.includes(".")))];
-      if (expertActors.length > 0) {
-        const names = expertActors.map((a) =>
-          a.split(".").slice(1).join(".").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
-        );
-        parts.push(names.join(", "));
-      }
-    }
-    stages.push({
-      key: `role-${role}`,
-      label: stageLabelForRole(role),
-      status: anyFailed ? "failed" : anyActive ? "running" : "completed",
-      detail: parts.join(" \u00b7 "),
-    });
-  }
-
-  // 3. Completion
-  stages.push({
-    key: "complete",
-    label: taskFailed ? "Failed" : "Completed",
-    status: taskFailed ? "failed" : taskDone ? "completed" : "pending",
-  });
-
-  return stages;
-}
-
-function getPhaseIcon(status: string) {
-  switch (status) {
-    case "completed": return <Check size={14} />;
-    case "running":   return <Activity size={14} />;
-    case "failed":    return <XCircle size={14} />;
-    default:          return <Circle size={14} />;
-  }
 }
 
 // ── Duration formatter ────────────────────────────────────────────────

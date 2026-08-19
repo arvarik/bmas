@@ -1,5 +1,6 @@
 import React from "react";
 import Link from "next/link";
+import Image from "next/image";
 
 export default function NotFound() {
   return (
@@ -14,7 +15,7 @@ export default function NotFound() {
       >
         <div className="landing__hero">
           <div className="landing__logo-container">
-            <img
+            <Image
               src="/ant-head.png"
               alt="Lost Swarm Ant Mascot"
               className="landing__logo animate-float"

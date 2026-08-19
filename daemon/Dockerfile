@@ -1,11 +1,11 @@
 # bMAS Daemon — Python FastAPI Application
-FROM python:3.13-slim
+FROM python:3.13.14-slim-bookworm
 
 WORKDIR /app
 
 # Install dependencies first (layer caching)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --disable-pip-version-check --root-user-action=ignore -r requirements.txt
 
 # Copy application source
 COPY src/ src/

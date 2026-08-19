@@ -1,0 +1,85 @@
+# Advanced classic deployment with three Hermes agents and local inference.
+# Replace every 192.168.1.x address with an address from your network.
+
+project:
+  name: "Classic Homelab"
+  description: "Three execution nodes with cloud and local model routing"
+
+control_plane:
+  host: "192.168.1.10"
+  ports: {redis: 6379, litellm: 4000, triage: 8001, daemon: 9000, dashboard: 9321}
+
+nodes:
+  - name: agent-1
+    host: "192.168.1.21"
+    port: 8000
+    role: agent-1
+    inference: {host: "192.168.1.31", port: 8080, model: "local-model"}
+  - name: agent-2
+    host: "192.168.1.22"
+    port: 8000
+    role: agent-2
+    inference: {host: "192.168.1.32", port: 8080, model: "local-model"}
+  - name: agent-3
+    host: "192.168.1.23"
+    port: 8000
+    role: agent-3
+    inference: {host: "192.168.1.33", port: 8080, model: "local-model"}
+
+triage:
+  enabled: true
+  backend: cloud
+  model: "cloud-model"
+  default_complexity: medium
+
+models:
+  cloud-model:
+    provider: gemini
+    model: "gemini-3.5-flash"
+    api_key_env: GEMINI_API_KEY
+    max_tokens: 65536
+
+routing:
+  simple: local
+  light: cloud-model
+  medium: cloud-model
+  complex: cloud-model
+
+coordination:
+  variant: classic
+  view_budget_tokens: 12000
+  round_execution: concurrent
+  classic:
+    max_rounds: 6
+    max_duration_s: 1800
+    budget_ceiling_usd: 1.00
+    max_concurrent_activations: 3
+    experts_per_tier: {simple: 0, light: 1, medium: 2, complex: 4}
+    cleaner_entry_threshold: 12
+    cleaner_token_threshold: 8000
+    stall_rounds: 2
+    max_replans: 2
+    cu_mode: llm
+    coordinator_narration: true
+    sole_similarity: auto
+  role_registry:
+    planner: {preferred_host: "192.168.1.21", profile: planner, dispatch_port: 8000}
+    expert: {preferred_host: null, profile: expert, dispatch_port: 8000}
+    critic: {preferred_host: "192.168.1.21", profile: critic, dispatch_port: 8000}
+    conflict_resolver: {preferred_host: "192.168.1.23", profile: conflict_resolver, dispatch_port: 8000}
+    cleaner: {preferred_host: "192.168.1.21", profile: cleaner, dispatch_port: 8000}
+    decider: {preferred_host: "192.168.1.22", profile: decider, dispatch_port: 8000}
+  board:
+    max_entry_chars: 8000
+    max_title_len: 200
+    salience_weights: {confidence: 0.4, recency: 0.2, refs_in: 0.3, penalty: 0.3}
+
+storage:
+  enabled: true
+  user_media_dir: "/data/uploads"
+  artifacts_dir: "/data/output"
+  max_upload_mb: 50
+  max_task_output_mb: 500
+  allowed_upload_types: [pdf, txt, md, csv, json, png, jpg, docx]
+  pdf_extraction: pymupdf
+  extraction_max_chars: 60000

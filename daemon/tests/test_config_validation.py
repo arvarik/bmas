@@ -315,12 +315,11 @@ class TestModelPricing:
         )
         assert r.returncode == 0
         pricing = json.loads(r.stdout.strip())
-        # The test bmas.yaml has pricing for gemini-pro
-        assert "gemini-pro" in pricing
-        assert pricing["gemini-pro"]["input_cost_per_token"] > 0
+        assert "starter-model" in pricing
+        assert pricing["starter-model"]["input_cost_per_token"] > 0
 
-    def test_model_without_pricing_warns(self):
-        """Models without pricing produce a warning, not an error."""
+    def test_model_without_pricing_is_informational(self):
+        """Models without pricing load without an operator warning."""
         r = _run_config_probe(
             yaml_override={"models": {
                 "test-model": {
@@ -332,7 +331,8 @@ class TestModelPricing:
             }},
         )
         assert r.returncode == 0
-        assert "no pricing" in r.stderr
+        assert "Pricing:  1/2 models configured" in r.stderr
+        assert "WARNING" not in r.stderr
 
 
 # ── Tests: BMAS_NODE_KEY ─────────────────────────────────────────────
@@ -358,23 +358,24 @@ class TestBmasNodeKey:
 
 class TestTriageBackend:
 
-    def test_default_backend_is_gemini(self):
-        """When triage.backend is not set, it defaults to 'gemini'."""
+    def test_default_backend_is_cloud(self):
+        """The published starter uses the cloud triage backend."""
         r = _run_config_probe(
             yaml_override={"triage": {"enabled": True}},
             probe_expr="print(config.TRIAGE_BACKEND)",
         )
         assert r.returncode == 0
-        assert "gemini" in r.stdout
+        assert "cloud" in r.stdout
 
-    def test_backend_gemini_loads(self):
-        """Setting backend=gemini loads correctly with gemini model alias."""
+    def test_legacy_gemini_backend_maps_to_cloud(self):
+        """The legacy gemini backend maps to the cloud backend."""
         r = _run_config_probe(
             yaml_override={"triage": {"backend": "gemini", "model": "gemini-flash-lite"}},
             probe_expr="print(f'{config.TRIAGE_BACKEND}|{config.TRIAGE_MODEL}')",
         )
         assert r.returncode == 0
-        assert "gemini|gemini-flash-lite" in r.stdout
+        assert "cloud|gemini-flash-lite" in r.stdout
+        assert "deprecated" in r.stderr
 
     def test_backend_local_loads(self):
         """Setting backend=local loads correctly with local model name."""
@@ -402,19 +403,19 @@ class TestTriageBackend:
         assert r.returncode == 0
         assert "Qwen/Qwen3-1.7B" in r.stdout
 
-    def test_backend_gemini_model_alias(self):
-        """With backend=gemini, TRIAGE_MODEL points to the gemini model alias."""
+    def test_backend_cloud_model_alias(self):
+        """The cloud backend exposes the selected LiteLLM alias."""
         r = _run_config_probe(
-            yaml_override={"triage": {"backend": "gemini", "model": "gemini-flash-lite"}},
+            yaml_override={"triage": {"backend": "cloud", "model": "gemini-flash-lite"}},
             probe_expr="print(config.TRIAGE_MODEL)",
         )
         assert r.returncode == 0
         assert "gemini-flash-lite" in r.stdout
 
-    def test_gemini_backend_warns_on_unknown_model(self):
-        """Gemini backend with unknown model alias produces a warning (not FATAL)."""
+    def test_cloud_backend_warns_on_unknown_model(self):
+        """Cloud triage reports an unknown model alias as a warning."""
         r = _run_config_probe(
-            yaml_override={"triage": {"backend": "gemini", "model": "nonexistent-model"}},
+            yaml_override={"triage": {"backend": "cloud", "model": "nonexistent-model"}},
         )
         assert r.returncode == 0  # Warning, not fatal
         assert "WARNING" in r.stderr or "not defined" in r.stderr
@@ -422,7 +423,7 @@ class TestTriageBackend:
     def test_triage_disabled_ignores_backend(self):
         """When triage is disabled, backend validation still passes."""
         r = _run_config_probe(
-            yaml_override={"triage": {"enabled": False, "backend": "gemini"}},
+            yaml_override={"triage": {"enabled": False, "backend": "cloud"}},
             probe_expr="print(config.TRIAGE_ENABLED)",
         )
         assert r.returncode == 0

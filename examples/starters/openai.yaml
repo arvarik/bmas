@@ -1,0 +1,69 @@
+# bMAS classic starter with OpenAI cloud inference.
+
+project:
+  name: "My bMAS"
+  description: "A classic blackboard multi-agent system"
+
+control_plane:
+  host: "localhost"
+  ports: {redis: 6379, litellm: 4000, triage: 8001, daemon: 9000, dashboard: 9321}
+
+nodes:
+  - {name: starter-agent, host: agent, port: 8000, role: starter, color: "#5eead4"}
+
+triage:
+  enabled: false
+  backend: cloud
+  default_complexity: medium
+
+models:
+  starter-model:
+    provider: openai
+    model: "gpt-4o"
+    api_key_env: OPENAI_API_KEY
+    max_tokens: 4096
+
+routing:
+  simple: starter-model
+  light: starter-model
+  medium: starter-model
+  complex: starter-model
+
+coordination:
+  variant: classic
+  view_budget_tokens: 12000
+  round_execution: concurrent
+  classic:
+    max_rounds: 4
+    max_duration_s: 1800
+    budget_ceiling_usd: 0.50
+    max_concurrent_activations: 3
+    experts_per_tier: {simple: 0, light: 1, medium: 2, complex: 4}
+    cleaner_entry_threshold: 12
+    cleaner_token_threshold: 8000
+    stall_rounds: 2
+    max_replans: 2
+    cu_mode: llm
+    coordinator_narration: false
+    sole_similarity: auto
+  role_registry:
+    planner: {preferred_host: null, profile: planner, dispatch_port: 8000}
+    expert: {preferred_host: null, profile: expert, dispatch_port: 8000}
+    critic: {preferred_host: null, profile: critic, dispatch_port: 8000}
+    conflict_resolver: {preferred_host: null, profile: conflict_resolver, dispatch_port: 8000}
+    cleaner: {preferred_host: null, profile: cleaner, dispatch_port: 8000}
+    decider: {preferred_host: null, profile: decider, dispatch_port: 8000}
+  board:
+    max_entry_chars: 8000
+    max_title_len: 200
+    salience_weights: {confidence: 0.4, recency: 0.2, refs_in: 0.3, penalty: 0.3}
+
+storage:
+  enabled: false
+  user_media_dir: "/data/uploads"
+  artifacts_dir: "/data/output"
+  max_upload_mb: 50
+  max_task_output_mb: 500
+  allowed_upload_types: [pdf, txt, md, csv, json, png, jpg, docx]
+  pdf_extraction: pymupdf
+  extraction_max_chars: 60000

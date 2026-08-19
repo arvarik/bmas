@@ -134,13 +134,6 @@ export function BlackboardBoard({
     [entries, selectedId],
   );
 
-  const toggle = (set: Set<string>, key: string): Set<string> => {
-    const next = new Set(set);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    return next;
-  };
-
   const presentTypes = TYPE_ORDER.filter((t) => stats.typeCounts.has(t)).concat(
     [...stats.typeCounts.keys()].filter((t) => !TYPE_ORDER.includes(t)),
   );

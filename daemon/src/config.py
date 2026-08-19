@@ -20,6 +20,9 @@ import sys
 from typing import Any
 
 import yaml
+from pydantic import ValidationError
+
+from config_schema import validate_config_document
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -40,6 +43,11 @@ def _warn(msg: str) -> None:
 def _ok(msg: str) -> None:
     """Print a success check to stderr."""
     print(f"  ✓ {msg}", file=sys.stderr)
+
+
+def _info(msg: str) -> None:
+    """Print a non-blocking information message to stderr."""
+    print(f"  ℹ {msg}", file=sys.stderr)
 
 
 def _require(path: str) -> Any:
@@ -97,6 +105,14 @@ if not isinstance(_cfg, dict):
         "The file must contain a top-level YAML mapping (key: value pairs).",
     )
 
+try:
+    validate_config_document(_cfg)
+except ValidationError as exc:
+    _fatal(
+        f"Configuration schema validation failed for {CONFIG_PATH}",
+        str(exc),
+    )
+
 
 # ── Project ──────────────────────────────────────────────────────────
 
@@ -149,9 +165,18 @@ BMAS_API_KEY = os.getenv("BMAS_API_KEY", "")
 
 # ── Derived URLs ─────────────────────────────────────────────────────
 
-REDIS_URL = f"redis://:{REDIS_PASSWORD}@{CP_HOST}:{CP_PORTS['redis']}/0"
-LITELLM_URL = f"http://{CP_HOST}:{CP_PORTS['litellm']}/v1"
-TRIAGE_URL = f"http://{CP_HOST}:{int(CP_PORTS.get('triage', 8001))}/v1"
+REDIS_URL = os.getenv(
+    "BMAS_REDIS_URL",
+    f"redis://:{REDIS_PASSWORD}@{CP_HOST}:{CP_PORTS['redis']}/0",
+)
+LITELLM_URL = os.getenv(
+    "BMAS_LITELLM_URL",
+    f"http://{CP_HOST}:{CP_PORTS['litellm']}/v1",
+)
+TRIAGE_URL = os.getenv(
+    "BMAS_TRIAGE_URL",
+    f"http://{CP_HOST}:{int(CP_PORTS.get('triage', 8001))}/v1",
+)
 
 # ── Nodes & Agent Endpoints ──────────────────────────────────────────
 
@@ -202,7 +227,10 @@ for node in _nodes:
 
 
 if not AGENT_ENDPOINTS:
-    _warn("No agent nodes configured in bmas.yaml. The daemon cannot dispatch tasks.")
+    _fatal(
+        "No execution nodes are configured in bmas.yaml.",
+        "Add the starter agent or an external Hermes node under nodes.",
+    )
 
 # ── Triage Configuration ────────────────────────────────────────────
 
@@ -212,20 +240,26 @@ print("  Validating triage configuration...", file=sys.stderr)
 _triage = _cfg.get("triage", {})
 TRIAGE_ENABLED: bool = _triage.get("enabled", True)
 
-_VALID_TRIAGE_BACKENDS = {"gemini", "local"}
-TRIAGE_BACKEND: str = _triage.get("backend", "gemini")
+_VALID_TRIAGE_BACKENDS = {"cloud", "local"}
+_configured_triage_backend = str(_triage.get("backend", "cloud"))
+TRIAGE_BACKEND: str = (
+    "cloud" if _configured_triage_backend == "gemini"
+    else _configured_triage_backend
+)
+if _configured_triage_backend == "gemini":
+    _warn("triage.backend=gemini is deprecated. Use triage.backend=cloud.")
 if TRIAGE_BACKEND not in _VALID_TRIAGE_BACKENDS:
     _fatal(
         f"Invalid triage.backend: '{TRIAGE_BACKEND}'",
         f"Must be one of: {', '.join(sorted(_VALID_TRIAGE_BACKENDS))}.",
     )
 
-# Gemini backend: LiteLLM model alias used for classification
+# Cloud backend: LiteLLM model alias used for classification
 TRIAGE_GEMINI_MODEL: str = _triage.get("model", "gemini-flash-lite")
 # Local backend: vLLM model name (HuggingFace ID)
 TRIAGE_LOCAL_MODEL: str = _triage.get("local_model", "Qwen/Qwen3-1.7B")
 # Legacy alias — points to whichever backend is active
-TRIAGE_MODEL: str = TRIAGE_GEMINI_MODEL if TRIAGE_BACKEND == "gemini" else TRIAGE_LOCAL_MODEL
+TRIAGE_MODEL: str = TRIAGE_GEMINI_MODEL if TRIAGE_BACKEND == "cloud" else TRIAGE_LOCAL_MODEL
 
 TRIAGE_GPU_MEMORY: float = _triage.get("gpu_memory_utilization", 0.35)
 TRIAGE_MAX_MODEL_LEN: int = _triage.get("max_model_len", 8192)
@@ -251,9 +285,9 @@ print("  Validating model routing...", file=sys.stderr)
 _models = _cfg.get("models", {})
 _routing = _cfg.get("routing", {})
 
-# Validate gemini backend model alias exists in models section
+# Validate that the cloud backend model alias exists in the models section.
 # (deferred to here because _models is defined above)
-if TRIAGE_ENABLED and TRIAGE_BACKEND == "gemini" and TRIAGE_GEMINI_MODEL not in _models:
+if TRIAGE_ENABLED and TRIAGE_BACKEND == "cloud" and TRIAGE_GEMINI_MODEL not in _models:
     _warn(
         f"triage.model '{TRIAGE_GEMINI_MODEL}' is not defined in the 'models' section. "
         f"Triage classification will use LiteLLM alias '{TRIAGE_GEMINI_MODEL}' — "
@@ -325,19 +359,29 @@ for _model_alias, _model_cfg in _models.items():
         }
         _ok(f"  {_model_alias}: in=${_in_cost:.2e}/tok, out=${_out_cost:.2e}/tok")
     else:
-        _warn(f"  {_model_alias}: no pricing — cost_usd will be 0.0 until pricing is set")
+        _info(f"{_model_alias}: no static pricing; runtime cost data will be used when available")
 
 # ── Model Pools (Phase 3b — model-pool diversity, doc 05 §2.1) ──────
 # Optional: map each complexity tier to a list of model aliases for
 # round-robin diversity across generated experts.
 # Falls back to [routing.<tier>] when not configured (single-model pool).
 
-_pools_raw = _models.get("pools", {})
+_pools_raw = _cfg.get("model_pools", {})
 MODEL_POOLS: dict[str, list[str]] = {}
 if isinstance(_pools_raw, dict):
     for _pool_tier, _pool_list in _pools_raw.items():
         if isinstance(_pool_list, list) and _pool_list:
-            MODEL_POOLS[_pool_tier] = [str(m) for m in _pool_list]
+            _pool_models = [str(m) for m in _pool_list]
+            _unknown_pool_models = [
+                model for model in _pool_models if model not in _models
+            ]
+            if _unknown_pool_models:
+                _fatal(
+                    f"model_pools.{_pool_tier} references unknown models: "
+                    f"{', '.join(_unknown_pool_models)}",
+                    "Define each model alias in the models section.",
+                )
+            MODEL_POOLS[_pool_tier] = _pool_models
 if MODEL_POOLS:
     _ok(f"Model pools: {', '.join(f'{k}={len(v)}' for k, v in MODEL_POOLS.items())}")
 
@@ -347,6 +391,12 @@ print("", file=sys.stderr)
 print("  Validating coordination config...", file=sys.stderr)
 
 _coordination = _cfg.get("coordination", {})
+
+if "blackboard_v2" in _coordination:
+    _warn(
+        "coordination.blackboard_v2 is obsolete. "
+        "The classic runtime always uses the durable board."
+    )
 
 _VARIANT_ALIASES = {"traditional": "classic"}
 _configured_variant = str(_coordination.get("variant", "classic")).strip().lower()
@@ -362,7 +412,9 @@ if not COORDINATION_VARIANT or any(
         "Use lower-case letters, digits, underscores, or hyphens.",
     )
 
-BLACKBOARD_V2: bool = bool(_coordination.get("blackboard_v2", False))
+# The classic runtime always uses the durable board substrate. Keep this
+# constant for older clients that still inspect the active-config endpoint.
+BLACKBOARD_V2: bool = True
 
 VIEW_BUDGET_TOKENS: int = int(_coordination.get("view_budget_tokens", 12000))
 if VIEW_BUDGET_TOKENS <= 0:
@@ -499,7 +551,7 @@ SALIENCE_W_R: float = float(_sal_weights.get("recency", 0.2))
 SALIENCE_W_X: float = float(_sal_weights.get("refs_in", 0.3))
 SALIENCE_W_P: float = float(_sal_weights.get("penalty", 0.3))
 
-_ok(f"Coordination: variant={COORDINATION_VARIANT}, bb_v2={BLACKBOARD_V2}, round_exec={ROUND_EXECUTION}")
+_ok(f"Coordination: variant={COORDINATION_VARIANT}, durable_board=on, round_exec={ROUND_EXECUTION}")
 _ok(f"Board: max_entry={MAX_ENTRY_CHARS}, max_title={MAX_TITLE_LEN}, salience_w=[{SALIENCE_W_C},{SALIENCE_W_R},{SALIENCE_W_X},{SALIENCE_W_P}]")
 
 # ── Role Registry (Phase 3a, doc 12 §2.5) ────────────────────────────
@@ -658,12 +710,12 @@ if _inference_nodes:
 print("┌─────────────────────────────────────────────┐", file=sys.stderr)
 print(f"│  ✅ {PROJECT_NAME} — Configuration OK        ", file=sys.stderr)
 print("└─────────────────────────────────────────────┘", file=sys.stderr)
-print(f"  Redis:    {CP_HOST}:{CP_PORTS['redis']}", file=sys.stderr)
-print(f"  LiteLLM:  {CP_HOST}:{CP_PORTS['litellm']}", file=sys.stderr)
+print(f"  Redis:    {REDIS_URL.rsplit('@', 1)[-1]}", file=sys.stderr)
+print(f"  LiteLLM:  {LITELLM_URL}", file=sys.stderr)
 print(f"  Triage:   {'enabled' if TRIAGE_ENABLED else 'disabled'} (backend={TRIAGE_BACKEND}, model={TRIAGE_MODEL})", file=sys.stderr)
 print(f"  Agents:   {', '.join(AGENT_ENDPOINTS.keys()) or 'none'}", file=sys.stderr)
 print(f"  Routing:  {' | '.join(f'{k}→{v}' for k, v in MODEL_ROUTING.items())}", file=sys.stderr)
-print(f"  Variant:  {COORDINATION_VARIANT} (bb_v2={'on' if BLACKBOARD_V2 else 'off'})", file=sys.stderr)
+print(f"  Variant:  {COORDINATION_VARIANT} (durable board)", file=sys.stderr)
 print(f"  Storage:  {'enabled' if STORAGE_ENABLED else 'disabled'}", file=sys.stderr)
 print(f"  Roles:    {len(ROLE_REGISTRY)} registered" if ROLE_REGISTRY else "  Roles:    none", file=sys.stderr)
 print(f"  Pricing:  {len(MODEL_PRICING)}/{len(_models)} models configured", file=sys.stderr)

@@ -1,359 +1,312 @@
-# Configuration Reference
+# Configuration
 
-Complete reference for `bmas.yaml` — the central configuration file for your bMAS deployment.
+Stigmergic uses two local configuration files.
 
-## File Location
+- `bmas.yaml` contains non-secret runtime settings.
+- `.env` contains secrets and host-level overrides.
 
-By default, all services look for the config at `/etc/bmas/bmas.yaml` (mounted via Docker Compose).
-Override with the `BMAS_CONFIG` environment variable.
+Run `./scripts/bmas init` to create both files. Do not commit either file.
 
-## Schema
+## Validate a configuration
 
----
+Run these commands after each change.
 
-### `project` *(required)*
-
-| Field | Type | Required | Default | Description |
-|:---|:---|:---|:---|:---|
-| `name` | string | ✅ | — | Your deployment name. Shown in the dashboard title. |
-| `description` | string | ❌ | — | Description for SEO/metadata. |
-
-```yaml
-project:
-  name: "My bMAS Swarm"
-  description: "AI agent swarm for automated research"
+```bash
+python3 scripts/validate_configs.py
+docker compose config --quiet
+./scripts/bmas doctor
 ```
 
----
+The first command validates all published examples. The daemon rejects unknown fields, invalid values, and invalid cross-references.
 
-### `control_plane` *(required)*
+The generated [JSON Schema](reference/config.schema.json) supports editor completion. Run this command after a schema change:
 
-Defines the machine running the Docker Compose stack.
-
-| Field | Type | Required | Default | Description |
-|:---|:---|:---|:---|:---|
-| `host` | string | ✅ | — | IP or hostname of the control plane machine. |
-| `ports.redis` | int | ✅ | — | Redis port. |
-| `ports.litellm` | int | ✅ | — | LiteLLM proxy port. |
-| `ports.triage` | int | ❌ | `8001` | Triage vLLM port. |
-| `ports.daemon` | int | ✅ | — | Daemon API port. |
-| `ports.dashboard` | int | ❌ | `9321` | Mission Control dashboard port. |
-
-```yaml
-control_plane:
-  host: "192.168.1.100"
-  ports:
-    redis: 6379
-    litellm: 4000
-    triage: 8001
-    daemon: 9000
-    dashboard: 9321
+```bash
+python3 scripts/generate_config_schema.py
 ```
 
----
+## Supported templates
 
-### `nodes` *(optional, default: `[]`)*
+| File | Use |
+|:---|:---|
+| [`bmas.example.yaml`](../bmas.example.yaml) | Single-host Gemini starter. |
+| [`examples/starters/anthropic.yaml`](../examples/starters/anthropic.yaml) | Single-host Anthropic starter. |
+| [`examples/starters/openai.yaml`](../examples/starters/openai.yaml) | Single-host OpenAI starter. |
+| [`examples/classic-homelab.yaml`](../examples/classic-homelab.yaml) | Advanced Hermes and local-inference example. |
 
-List of agent + inference nodes in your cluster. Each node runs a Hermes agent and optionally a local inference server.
+Use one starter template for a first installation. The homelab template requires external services at each configured address.
 
-| Field | Type | Required | Default | Description |
-|:---|:---|:---|:---|:---|
-| `name` | string | ✅ | — | Friendly name for the node. |
-| `host` | string | ✅ | — | IP or hostname of the agent. |
-| `port` | int | ❌ | `8000` | Agent API port. |
-| `role` | string | ✅ | — | Primary role: `planner`, `executor`, `auditor`, or any custom role. |
-| `color` | string | ❌ | per-role default | Hex color for the dashboard UI. |
-| `inference.host` | string | ❌ | — | IP of the local inference server. |
-| `inference.port` | int | ❌ | `8080` | Inference server port. |
-| `inference.model` | string | ❌ | — | Model identifier (e.g., `gemma-4-e4b`). |
+## Top-level structure
+
+```yaml
+project: {}
+control_plane: {}
+nodes:
+  - name: execution-node
+triage: {}
+models: {}
+model_pools: {}
+routing: {}
+coordination: {}
+storage: {}
+monitoring: {}
+```
+
+The `model_pools` and `monitoring` sections are optional.
+
+## `project`
+
+| Field | Type | Required | Purpose |
+|:---|:---|:---|:---|
+| `name` | string | Yes | Sets the Mission Control title. |
+| `description` | string | No | Describes the deployment. |
+
+## `control_plane`
+
+This section defines published service addresses.
+
+| Field | Type | Required | Purpose |
+|:---|:---|:---|:---|
+| `host` | string | Yes | Sets the public host label and non-Compose fallback host. |
+| `ports.redis` | integer | Yes | Sets the Redis port. |
+| `ports.litellm` | integer | Yes | Sets the LiteLLM port. |
+| `ports.daemon` | integer | Yes | Sets the daemon port. |
+| `ports.dashboard` | integer | No | Sets the Mission Control port. The default is `9321`. |
+| `ports.triage` | integer | No | Sets the optional local triage port. The default is `8001`. |
+
+The starter keeps `host: localhost`. Docker Compose supplies internal service URLs through environment variables.
+
+Do not set `host: localhost` for an external Hermes node. That value would refer to the node itself.
+
+## `nodes`
+
+The classic runtime requires at least one execution node.
+
+The starter defines one Docker service:
 
 ```yaml
 nodes:
-  - name: "node-1"
-    host: "192.168.1.101"
+  - name: starter-agent
+    host: agent
     port: 8000
-    role: planner
-    color: "#a78bfa"
-    inference:
-      host: "192.168.1.102"
-      port: 8080
-      model: "gemma-4-e4b"
+    role: starter
+    color: "#5eead4"
 ```
 
-**No nodes?** Set `nodes: []` and all routing goes to cloud models.
-
----
-
-### `triage` *(optional)*
-
-Controls the local complexity classifier that runs on the control plane GPU.
-
-| Field | Type | Required | Default | Description |
-|:---|:---|:---|:---|:---|
-| `enabled` | bool | ❌ | `true` | Set `false` to skip classification. |
-| `model` | string | ❌ | `Qwen/Qwen3-1.7B` | vLLM model for classification. |
-| `gpu_memory_utilization` | float | ❌ | `0.35` | GPU memory fraction for vLLM. |
-| `max_model_len` | int | ❌ | `8192` | Maximum context length. |
-| `default_complexity` | string | ❌ | `medium` | Fallback tier when triage is disabled or unreachable. |
-
-```yaml
-# With GPU
-triage:
-  enabled: true
-  model: "Qwen/Qwen3-1.7B"
-
-# Without GPU
-triage:
-  enabled: false
-  default_complexity: medium
-```
-
----
-
-### `models` *(required)*
-
-Define the LLM models available for task execution. Each key becomes a LiteLLM model alias.
-
-| Field | Type | Required | Description |
+| Field | Type | Required | Purpose |
 |:---|:---|:---|:---|
-| `provider` | string | ✅ | LiteLLM provider: `gemini`, `anthropic`, `openai`, etc. |
-| `model` | string | ✅ | Model identifier (e.g., `gemini-3.1-pro-preview`). |
-| `api_key_env` | string | ✅ | Environment variable name holding the API key. |
-| `max_tokens` | int | ❌ | Maximum tokens for generation. |
-| `pricing.input_cost_per_token` | float | ❌ | Cost per input token (USD). Enables daemon-side cost tracking. |
-| `pricing.output_cost_per_token` | float | ❌ | Cost per output token (USD). |
+| `name` | string | Yes | Gives the node a stable operator name. |
+| `host` | string | Yes | Sets the agent API host. |
+| `port` | integer | No | Sets the agent API port. The default is `8000`. |
+| `role` | string | Yes | Gives the physical node a display role. |
+| `color` | string | No | Sets the node color in Mission Control. |
+| `dashboard_port` | integer | No | Sets an optional Hermes dashboard port. |
+| `inference` | mapping | No | Registers a local OpenAI-compatible model server. |
+
+An `inference` mapping accepts `host`, `port`, `model`, and optional `max_tokens` fields.
+
+The starter agent performs tool-free model calls. Use [Node Setup](NODE_SETUP.md) when an agent needs tools, an isolated workspace, or more capacity.
+
+## `triage`
+
+Triage selects one routing tier for each task.
+
+| Field | Type | Default | Purpose |
+|:---|:---|:---|:---|
+| `enabled` | boolean | `true` | Enables model-based classification. |
+| `backend` | `cloud` or `local` | `cloud` | Selects the classification service. |
+| `model` | string | `starter-model` | Selects a LiteLLM alias for cloud triage. |
+| `local_model` | string | `Qwen/Qwen3-1.7B` | Selects the vLLM model for local triage. |
+| `gpu_memory_utilization` | number | `0.35` | Limits the local vLLM GPU fraction. |
+| `max_model_len` | integer | `8192` | Limits the local triage context. |
+| `default_complexity` | tier | `medium` | Selects the tier when triage is disabled or fails. |
+
+The cloud backend uses the alias from `triage.model`. The provider can be Gemini, Anthropic, OpenAI, or another LiteLLM provider.
+
+The local backend requires the Compose `gpu` profile and an NVIDIA runtime.
+
+## `models`
+
+Each key under `models` creates one LiteLLM alias.
 
 ```yaml
 models:
-  gemini-pro:
+  starter-model:
     provider: gemini
-    model: "gemini-3.1-pro-preview"
+    model: gemini-3.5-flash
     api_key_env: GEMINI_API_KEY
-    max_tokens: 8192
+    max_tokens: 65536
     pricing:
-      input_cost_per_token: 1.25e-6
-      output_cost_per_token: 5.0e-6
-
-  claude-sonnet:
-    provider: anthropic
-    model: "claude-sonnet-4-20250514"
-    api_key_env: ANTHROPIC_API_KEY
-
-  gpt-4o:
-    provider: openai
-    model: "gpt-4o"
-    api_key_env: OPENAI_API_KEY
+      input_cost_per_token: 1.5e-7
+      output_cost_per_token: 6.0e-7
 ```
 
----
+| Field | Type | Required | Purpose |
+|:---|:---|:---|:---|
+| `provider` | string | Yes | Sets the LiteLLM provider prefix. |
+| `model` | string | Yes | Sets the provider model identifier. |
+| `api_key_env` | string | Yes | Names the environment variable that contains the provider key. |
+| `api_base` | string | No | Sets a custom OpenAI-compatible API base. |
+| `max_tokens` | integer | No | Limits output tokens. The default is `4096`. |
+| `pricing.input_cost_per_token` | number | No | Sets static input pricing in US dollars. |
+| `pricing.output_cost_per_token` | number | No | Sets static output pricing in US dollars. |
+| `pricing.source` | string | No | Records the pricing source label. |
 
-### `routing` *(required)*
+Static pricing supports daemon cost estimates. Runtime provider cost data can fill missing pricing.
 
-Maps complexity tiers to models defined in the `models` section.
+## `routing`
 
-| Tier | Description |
-|:---|:---|
-| `complex` | Most demanding tasks (reasoning, multi-step analysis) |
-| `medium` | Moderate tasks (summarization, code review) |
-| `light` | Simple tasks (formatting, basic Q&A) |
-| `simple` | Trivial tasks (routing to free local models) |
-
-The special value `"local"` routes to edge inference nodes (round-robin).
+Routing maps each complexity tier to one model alias.
 
 ```yaml
 routing:
-  complex: gemini-pro
-  medium: gemini-flash
-  light: gemini-flash-lite
-  simple: local
+  simple: starter-model
+  light: starter-model
+  medium: starter-model
+  complex: starter-model
 ```
 
----
+Each value must match a key under `models`. The special value `local` requires at least one node with an `inference` mapping.
 
-### `coordination` *(required)*
+## `model_pools`
 
-Controls the coordination paradigm used for multi-agent tasks.
-
-| Field | Type | Required | Default | Description |
-|:---|:---|:---|:---|:---|
-| `variant` | string | ✅ | `classic` | Default registered coordination runtime. This build provides `classic`. |
-| `blackboard_v2` | bool | ❌ | `false` | Enables the v2 board substrate (entries + events). |
-| `view_budget_tokens` | int | ❌ | `12000` | Full-board token budget; budgeted view mode above this. |
-| `round_execution` | string | ❌ | `concurrent` | `concurrent` (parallel agents) or `sequential` (paper-exact). |
-
-#### `coordination.classic` *(when variant = classic)*
-
-| Field | Type | Default | Description |
-|:---|:---|:---|:---|
-| `max_rounds` | int | `4` | Maximum CU rounds before forced convergence. |
-| `max_duration_s` | int | `1800` | Maximum task duration in seconds. |
-| `budget_ceiling_usd` | float | `0.50` | Maximum LLM spend per task (USD). Halts execution when exceeded. |
-| `max_concurrent_activations` | int | `3` | Max agents activated per round. |
-| `experts_per_tier` | map | see below | Number of expert agents per complexity tier. |
-| `cleaner_entry_threshold` | int | `12` | Board entry count that triggers Cleaner activation. |
-| `stall_rounds` | int | `2` | Consecutive rounds without progress before forced convergence. |
-| `cu_mode` | string | `llm` | Control Unit mode: `llm` (LLM-driven) or `heuristic_first` (rule-based). |
-| `coordinator_narration` | bool | `false` | Emit CU narration events (routing rationale visible in TurnGraph). |
-| `sole_similarity` | string | `auto` | Similarity check mode: `auto`, `exact`, `embedding`, or `judge`. |
+This optional section gives generated experts more than one model choice.
 
 ```yaml
-coordination:
-  variant: classic
-  view_budget_tokens: 12000
-  round_execution: concurrent
-  classic:
-    max_rounds: 8
-    max_duration_s: 1800
-    budget_ceiling_usd: 1.00
-    max_concurrent_activations: 3
-    experts_per_tier: { simple: 0, light: 1, medium: 2, complex: 3 }
-    cleaner_entry_threshold: 12
-    stall_rounds: 2
-    cu_mode: llm
-    coordinator_narration: true
-    sole_similarity: auto
+model_pools:
+  medium: [fast-model, careful-model]
+  complex: [careful-model, second-opinion-model]
 ```
 
-#### `coordination.role_registry` *(optional)*
+Each key must be `simple`, `light`, `medium`, or `complex`. Each list entry must match a key under `models`.
 
-Maps blackboard roles to Hermes profiles and preferred hosts for dispatch.
+The runtime uses `routing.<tier>` when a tier has no model pool.
 
-| Field | Type | Description |
+## `coordination`
+
+Set `variant: classic`. This repository has no second runtime.
+
+| Field | Type | Default | Purpose |
+|:---|:---|:---|:---|
+| `variant` | string | `classic` | Selects the classic runtime. |
+| `view_budget_tokens` | integer | `12000` | Limits the blackboard text supplied to a model. |
+| `round_execution` | value | `concurrent` | Selects `concurrent` or `sequential` role execution. |
+
+### `coordination.classic`
+
+| Field | Default | Purpose |
 |:---|:---|:---|
-| `enabled` | bool | Enables the role. The default is `true`. |
-| `preferred_host` | string or null | IP for preferred dispatch. `null` = load-balanced across all nodes. |
-| `profile` | string | Hermes profile name (in `~/.hermes/profiles/<profile>/`). |
-| `dispatch_port` | int | Port of the `api_server.py` bridge on the target node. |
+| `max_rounds` | `4` | Limits control-unit rounds. |
+| `max_duration_s` | `1800` | Limits the complete task duration. |
+| `budget_ceiling_usd` | `0.50` | Stops a task at the cost ceiling. |
+| `max_concurrent_activations` | `3` | Limits active role calls in one round. |
+| `experts_per_tier` | tier mapping | Sets the generated expert count. |
+| `cleaner_entry_threshold` | `12` | Starts cleanup after this board entry count. |
+| `cleaner_token_threshold` | `8000` | Starts cleanup after this estimated token count. |
+| `cleaner_retention_weights` | weight mapping | Scores entries during cleanup. |
+| `stall_rounds` | `2` | Stops repeated rounds that add no progress. |
+| `max_replans` | `2` | Limits control-unit replans. |
+| `cu_mode` | `llm` | Selects `llm` or `heuristic_first`. |
+| `coordinator_narration` | `false` | Adds control-unit reasons to the event stream. |
+| `sole_similarity` | `auto` | Selects `auto`, `exact`, `embedding`, or `judge`. |
 
-```yaml
-  role_registry:
-    planner:
-      enabled: true
-      preferred_host: "192.168.1.101"
-      profile: planner
-      dispatch_port: 8000
-    expert:
-      preferred_host: null              # load-balanced
-      profile: expert
-      dispatch_port: 8000
-    critic:
-      preferred_host: "192.168.1.101"
-      profile: critic
-      dispatch_port: 8000
-    decider:
-      preferred_host: "192.168.1.111"
-      profile: decider
-      dispatch_port: 8000
-```
+Use lower limits during initial provider tests. Increase one limit at a time and run `./scripts/bmas smoke` after each change.
 
-#### `coordination.board` *(optional)*
+### `coordination.role_registry`
 
-Board entry constraints and salience scoring weights.
+Each key names one classic role. The starter includes `planner`, `expert`, `critic`, `conflict_resolver`, `cleaner`, and `decider`.
 
-| Field | Type | Default | Description |
-|:---|:---|:---|:---|
-| `max_entry_chars` | int | `8000` | Max body length; larger content becomes artifacts. |
-| `max_title_len` | int | `200` | Max title length for indexing. |
-| `salience_weights.confidence` | float | `0.4` | Weight for entry confidence score. |
-| `salience_weights.recency` | float | `0.2` | Weight for entry recency. |
-| `salience_weights.refs_in` | float | `0.3` | Weight for inbound references. |
-| `salience_weights.penalty` | float | `0.3` | Weight for superseded/deprecated penalty. |
-
----
-
-### `storage` *(optional)*
-
-File upload and artifact storage settings.
-
-| Field | Type | Default | Description |
-|:---|:---|:---|:---|
-| `enabled` | bool | `false` | Enable file upload and artifact storage. |
-| `user_media_dir` | string | `/opt/bmas-data/uploads` | Directory for user-uploaded files. |
-| `artifacts_dir` | string | `/opt/output` | Directory for agent-produced artifacts. |
-| `max_upload_mb` | int | `50` | Maximum file upload size (MB). |
-| `max_task_output_mb` | int | `500` | Maximum total artifact size per task (MB). |
-| `allowed_upload_types` | list | `[pdf, txt, md, ...]` | Allowed file extensions for upload. |
-| `pdf_extraction` | string | `pymupdf` | PDF text extraction backend: `pymupdf`, `pypdf`, or `off`. |
-| `extraction_max_chars` | int | `60000` | Maximum characters extracted from a document. |
-
-```yaml
-storage:
-  enabled: true
-  user_media_dir: "/opt/bmas-data/uploads"
-  artifacts_dir: "/opt/output"
-  max_upload_mb: 50
-  allowed_upload_types: [pdf, txt, md, csv, json, png, jpg, docx]
-  pdf_extraction: pymupdf
-```
-
----
-
-### `monitoring` *(optional)*
-
-| Field | Type | Required | Description |
-|:---|:---|:---|:---|
-| `beszel_hub` | string | ❌ | URL of your Beszel Hub for system monitoring. |
-
-```yaml
-monitoring:
-  beszel_hub: "http://192.168.1.200:8090"
-```
-
----
-
-## Environment Variables (`.env`)
-
-Secrets are **never** stored in `bmas.yaml`. They go in `.env`:
-
-| Variable | Required | Description |
+| Field | Default | Purpose |
 |:---|:---|:---|
-| `REDIS_PASSWORD` | ✅ | Redis authentication password. |
-| `LITELLM_MASTER_KEY` | ✅ | LiteLLM proxy authentication key. |
-| `BMAS_NODE_KEY` | ✅ | Bearer token for agent ingest auth (traces + logs). |
-| `BMAS_EXECUTE_KEY` | ❌ | Shared daemon-to-agent execution key. |
-| `BMAS_API_KEY` | ❌ | Operator key for task and settings mutations. |
-| `BMAS_DASHBOARD_KEY` | ❌ | Mission Control access key. |
-| `BMAS_MAX_ACTIVE_TASKS` | ❌ | Global concurrent task limit. The default is `4`. |
-| `BMAS_MAX_QUEUED_TASKS` | ❌ | Global queued task limit. The default is `100`. |
-| `BMAS_MAX_TASK_CHARS` | ❌ | Maximum task objective size in characters. The default is `200000`. |
-| `BMAS_SHUTDOWN_GRACE_S` | ❌ | Graceful task drain limit. The default is `30`. |
-| `BMAS_AGENT_TURN_TIMEOUT_S` | ❌ | Per-agent turn limit. The default is `600`. |
-| `BMAS_AGENT_ENDPOINT_MAX_CONCURRENCY` | ❌ | Concurrent requests per agent endpoint. The default is `4`. |
-| `BMAS_AGENT_ENDPOINT_WAIT_TIMEOUT_S` | ❌ | Endpoint capacity wait in seconds. The default is `30`. |
-| `BMAS_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | ❌ | Consecutive endpoint failures before the circuit opens. The default is `3`. |
-| `BMAS_CIRCUIT_BREAKER_RECOVERY_S` | ❌ | Seconds before one endpoint recovery probe. The default is `30`. |
-| `BMAS_EVENT_PAYLOAD_MAX_BYTES` | ❌ | Maximum serialized payload size for one durable event. The default is `1048576`. |
-| `BMAS_EVENT_OUTBOX_MAX` | ❌ | Maximum pending durable event count. The default is `10000`. |
-| `BMAS_EVENT_OUTBOX_OVERLOAD` | ❌ | Pending event count that marks delivery as overloaded. The default is `5000`. |
-| `BMAS_EVENT_OUTBOX_BATCH` | ❌ | Maximum events in one delivery retry batch. The default is `100`. |
-| `BMAS_EVENT_REPLAY_PAGE` | ❌ | Maximum events in one SSE replay query. The default is `250`. |
-| `BMAS_BOARD_PROJECTION_CACHE_TASKS` | ❌ | Maximum Redis board projections retained in daemon memory. The default is `128`. |
-| `GEMINI_API_KEY` | ❌ | Google Gemini API key. |
-| `ANTHROPIC_API_KEY` | ❌ | Anthropic (Claude) API key. |
-| `OPENAI_API_KEY` | ❌ | OpenAI API key. |
-| `HF_TOKEN` | ❌ | Hugging Face token for gated models. |
-| `BESZEL_EMAIL` | ❌ | Beszel Hub login email (for telemetry). |
-| `BESZEL_PASSWORD` | ❌ | Beszel Hub login password (for telemetry). |
+| `enabled` | `true` | Enables the role. |
+| `preferred_host` | `null` | Pins the role to one node host. `null` enables load balancing. |
+| `profile` | Required | Selects the Hermes profile name or starter prompt profile. |
+| `dispatch_port` | `8000` | Selects the agent API port. |
 
-At least one cloud API key is required unless all routing goes to `local`.
+Every non-null `preferred_host` must match a `nodes[].host` value.
 
-**`BMAS_NODE_KEY`:** This token authenticates agent nodes when they ship traces and logs back to the daemon. Set the same value on the daemon (via `.env`) and on each agent node (in its systemd service Environment).
+### `coordination.board`
 
-**`BMAS_EXECUTE_KEY`:** Set the same value on the daemon and each agent node. The agent then rejects unauthenticated execution requests.
+| Field | Default | Purpose |
+|:---|:---|:---|
+| `max_entry_chars` | `8000` | Limits one board entry body. |
+| `max_title_len` | `200` | Limits one board entry title. |
+| `salience_weights` | weight mapping | Scores entries by confidence, recency, references, and penalties. |
 
-**`BMAS_API_KEY`:** Set the same value on the daemon, dashboard, and evaluation runner. The daemon then rejects unauthenticated mutation requests.
+## `storage`
 
-**`BMAS_DASHBOARD_KEY`:** Set this value to protect all Mission Control pages and API routes. Enter any username and this value as the browser password. Keep this key separate from `BMAS_API_KEY`. Use HTTPS outside the local host because HTTP Basic sends reusable credentials with each request. Leave the key empty only on a trusted network.
+| Field | Default | Purpose |
+|:---|:---|:---|
+| `enabled` | `false` | Enables uploads and task artifacts. |
+| `user_media_dir` | `/data/uploads` | Sets the upload directory inside the daemon. |
+| `artifacts_dir` | `/data/output` | Sets the artifact directory inside the daemon. |
+| `max_upload_mb` | `50` | Limits one upload. |
+| `max_task_output_mb` | `500` | Limits all artifacts for one task. |
+| `allowed_upload_types` | extension list | Allows upload filename extensions. |
+| `pdf_extraction` | `pymupdf` | Selects `pymupdf`, `pypdf`, or `off`. |
+| `extraction_max_chars` | `60000` | Limits extracted document text. |
 
-**Beszel credentials:** Required if `monitoring.beszel_hub` is set in `bmas.yaml`. These are the email/password you use to log into the Beszel web UI.
+The Compose stack mounts named volumes at `/data/uploads` and `/data/output`. Keep these container paths for the starter.
 
----
+## `monitoring`
 
-## Example Configurations
+Set `monitoring.beszel_hub` to a Beszel URL when Mission Control must read host telemetry.
 
-See the `examples/` directory:
-- **[stigmergic.yaml](../examples/stigmergic/stigmergic.yaml)** — Legacy example name for a full 3-node classic deployment with Gemini
-- **[minimal-cloud.yaml](../examples/minimal-cloud.yaml)** — No edge nodes, single cloud provider
-- **[multi-provider.yaml](../examples/multi-provider.yaml)** — Mix of Gemini + Claude + local
+Leave the complete section out when you do not use Beszel.
 
-See also **[bmas.example.yaml](../bmas.example.yaml)** for a fully commented reference with all options.
+## Required `.env` values
+
+The starter command generates the first six values.
+
+| Variable | Purpose |
+|:---|:---|
+| `REDIS_PASSWORD` | Authenticates Redis clients. |
+| `LITELLM_MASTER_KEY` | Authenticates model gateway clients. |
+| `BMAS_NODE_KEY` | Authenticates agent logs and traces. |
+| `BMAS_EXECUTE_KEY` | Authenticates daemon execution requests to agents. |
+| `BMAS_API_KEY` | Authenticates task and control mutations. |
+| `BMAS_DASHBOARD_KEY` | Protects Mission Control pages and proxy routes. |
+
+Also set each provider variable named by `models.*.api_key_env`.
+
+Do not reuse one value for different keys. Do not put a secret in `bmas.yaml`.
+
+## Host and port overrides
+
+| Variable | Default | Purpose |
+|:---|:---|:---|
+| `BMAS_BIND_ADDRESS` | `127.0.0.1` | Selects the host address for every published port. |
+| `REDIS_PORT` | `6379` | Changes the host Redis port. |
+| `LITELLM_PORT` | `4000` | Changes the host LiteLLM port. |
+| `AGENT_PORT` | `8000` | Changes the host starter-agent port. |
+| `DAEMON_PORT` | `9000` | Changes the host daemon port. |
+| `DASHBOARD_PORT` | `9321` | Changes the host Mission Control port. |
+| `TRIAGE_PORT` | `8001` | Changes the optional local triage port. |
+| `BMAS_STARTER_MODEL` | `starter-model` | Selects the starter-agent LiteLLM alias. |
+
+Keep `BMAS_STARTER_MODEL` equal to a configured model alias.
+
+## Runtime limit overrides
+
+The `.env.example` file lists every supported runtime limit. The main groups control task admission, agent endpoint capacity, circuit recovery, event delivery, and projection caching.
+
+Change these limits only after you capture a baseline with the [Classic Harness](CLASSIC_HARNESS.md).
+
+## Internal service URL overrides
+
+Docker Compose sets these values inside containers:
+
+- `BMAS_REDIS_URL`
+- `BMAS_LITELLM_URL`
+- `BMAS_TRIAGE_URL`
+- `BMAS_DAEMON_URL`
+
+Do not add these values to a normal starter `.env`. Set them only when you run services outside the default Compose network.
+
+## Compatibility fields
+
+The loader accepts `traditional` as an old alias for `classic`. It also accepts `triage.backend: gemini` as an old alias for `cloud`.
+
+Do not use these aliases in a new configuration. The loader reports a warning and the public examples stay warning-free.
+
+The old `blackboard_v2` field has no effect. The classic runtime always uses the durable board.

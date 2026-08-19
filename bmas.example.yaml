@@ -1,18 +1,15 @@
-# ─────────────────────────────────────────────────────────────────────
-# bMAS Configuration — Example
-# ─────────────────────────────────────────────────────────────────────
-# This file defines your entire bMAS deployment.
-# Copy to bmas.yaml and customize for your infrastructure.
-# Secrets (API keys, passwords) go in .env, NOT here.
+# bMAS classic starter configuration
+#
+# Copy this file to bmas.yaml. The default Docker Compose stack uses its own
+# internal service addresses. Keep control_plane.host as localhost for the
+# single-host starter.
 
 project:
-  name: "My Swarm"
-  description: "Distributed AI swarm"
+  name: "My bMAS"
+  description: "A classic blackboard multi-agent system"
 
-# ── Control Plane ──────────────────────────────────────────────────
-# The machine running Docker Compose (Redis, LiteLLM, Daemon, Dashboard).
 control_plane:
-  host: "10.0.0.1"                 # Your control plane IP
+  host: "localhost"
   ports:
     redis: 6379
     litellm: 4000
@@ -20,87 +17,24 @@ control_plane:
     daemon: 9000
     dashboard: 9321
 
-# ── Nodes ──────────────────────────────────────────────────────────
-# Your agent + inference nodes. Each node runs a Hermes agent
-# and optionally a local inference server (llama.cpp / vLLM).
-#
-# role: The primary bMAS role for this node. Used for identification
-#   and load-balancing hints. The Control Unit dynamically assigns
-#   roles each round via the role_registry (see coordination section).
-#   Common roles: planner, executor, auditor (or any custom name).
-#
-# The role_registry maps blackboard roles (planner, expert, critic,
-# conflict_resolver, cleaner, decider) to Hermes profiles and
-# preferred dispatch hosts. See coordination.role_registry below.
+# The starter agent runs in Docker and executes every classic role.
+# Add external Hermes nodes later for tools, isolation, or more capacity.
 nodes:
-  - name: "node-1"
-    host: "10.0.0.101"             # Agent node IP
+  - name: "starter-agent"
+    host: "agent"
     port: 8000
-    role: planner
-    color: "#a78bfa"               # UI color (optional, has defaults)
-    # dashboard_port: 9119         # Hermes Dashboard port (optional, default 9119)
-    inference:                     # Optional — omit if no local model
-      host: "10.0.0.102"           # Inference server IP (can be same machine)
-      port: 8080
-      model: "gemma-4-e4b"
-
-  - name: "node-2"
-    host: "10.0.0.111"
-    port: 8000
-    role: executor
+    role: starter
     color: "#5eead4"
-    inference:
-      host: "10.0.0.112"
-      port: 8080
-      model: "gemma-4-e4b"
 
-  - name: "node-3"
-    host: "10.0.0.121"
-    port: 8000
-    role: auditor
-    color: "#fbbf24"
-    inference:
-      host: "10.0.0.122"
-      port: 8080
-      model: "gemma-4-e4b"
-
-# ── Triage ─────────────────────────────────────────────────────────
-# Complexity classifier that routes tasks to the cheapest capable model.
-# Set enabled: false to skip triage (all tasks route to the
-# default_complexity tier).
-#
-# backend: Which inference backend to use for classification.
-#   gemini  — (default) Routes through LiteLLM → Gemini API. No GPU needed.
-#   local   — Uses a local vLLM server (Qwen3-1.7B). Requires GPU +
-#             docker compose --profile gpu. See triage/README.md.
+# Gemini triage uses LiteLLM. It does not need a local GPU.
 triage:
   enabled: true
-  backend: gemini                    # gemini (default, cloud API) | local (vLLM, requires GPU)
-  model: "gemini-flash-lite"         # LiteLLM model alias (used when backend: gemini)
-  default_complexity: medium         # Fallback if triage is disabled/unreachable
-  # ── Local backend options (only used when backend: local) ────────
-  # local_model: "Qwen/Qwen3-1.7B"
-  # gpu_memory_utilization: 0.35
-  # max_model_len: 8192
+  backend: cloud
+  model: "starter-model"
+  default_complexity: medium
 
-# ── Models ─────────────────────────────────────────────────────────
-# Define the models available for task execution.
-# Each model gets registered in LiteLLM under its key name.
-# Provider format follows LiteLLM conventions:
-#   gemini, anthropic, openai, openai/<custom> (for vLLM/local)
-#
-# api_key_env: name of the env var holding the API key (from .env)
 models:
-  gemini-pro:
-    provider: gemini
-    model: "gemini-3.1-pro-preview"
-    api_key_env: GEMINI_API_KEY
-    max_tokens: 65536                  # Gemini max output tokens
-    pricing:                           # Optional — enables daemon-side cost_usd
-      input_cost_per_token: 1.25e-6    # $/token (input)
-      output_cost_per_token: 5.0e-6    # $/token (output)
-
-  gemini-flash:
+  starter-model:
     provider: gemini
     model: "gemini-3.5-flash"
     api_key_env: GEMINI_API_KEY
@@ -109,126 +43,61 @@ models:
       input_cost_per_token: 1.5e-7
       output_cost_per_token: 6.0e-7
 
-  gemini-flash-lite:
-    provider: gemini
-    model: "gemini-3.1-flash-lite-preview"
-    api_key_env: GEMINI_API_KEY
-    max_tokens: 65536
-    pricing:
-      input_cost_per_token: 7.5e-8
-      output_cost_per_token: 3.0e-7
-
-  # Example: Adding Anthropic alongside Gemini
-  # claude-sonnet:
-  #   provider: anthropic
-  #   model: "claude-sonnet-4-20250514"
-  #   api_key_env: ANTHROPIC_API_KEY
-  #   max_tokens: 8192
-
-  # Example: Adding OpenAI
-  # gpt-4o:
-  #   provider: openai
-  #   model: "gpt-4o"
-  #   api_key_env: OPENAI_API_KEY
-  #   max_tokens: 4096
-
-# ── Routing ────────────────────────────────────────────────────────
-# Map each complexity tier to a model defined above.
-# "local" is a special value that routes to edge inference
-# nodes (round-robin across all nodes with an inference block).
-#
-# Mix and match providers freely:
-#   complex: gemini-pro       ← Gemini for hardest tasks
-#   medium: claude-sonnet     ← Claude for medium
-#   light: gemini-flash-lite  ← Gemini for cheap tasks
-#   simple: local             ← Free, runs on your edge nodes
 routing:
-  complex: gemini-pro
-  medium: gemini-flash
-  light: gemini-flash-lite
-  simple: local
+  simple: starter-model
+  light: starter-model
+  medium: starter-model
+  complex: starter-model
 
-# ── Monitoring (Optional) ─────────────────────────────────────────
-# monitoring:
-#   beszel_hub: "http://10.0.0.200:8090"
-
-# ── Coordination (Blackboard Migration) ───────────────────────────
-# Controls the coordination paradigm used for multi-agent tasks.
-# See docs/CONFIGURATION.md for full reference.
 coordination:
-  variant: classic                   # This build provides the classic runtime.
-  blackboard_v2: true                 # Gates the new board substrate independently of variant
-  view_budget_tokens: 12000         # Full-board default; budgeted mode above this
-  round_execution: concurrent       # concurrent | sequential (paper-exact reproduction)
+  variant: classic
+  view_budget_tokens: 12000
+  round_execution: concurrent
+
   classic:
     max_rounds: 4
     max_duration_s: 1800
     budget_ceiling_usd: 0.50
     max_concurrent_activations: 3
-    experts_per_tier: { simple: 0, light: 1, medium: 2, complex: 4 }
+    experts_per_tier: {simple: 0, light: 1, medium: 2, complex: 4}
     cleaner_entry_threshold: 12
     cleaner_token_threshold: 8000
-    cleaner_retention_weights: { salience: 2.0, confidence: 1.0, recency: 0.1, size_penalty: 0.01 }
+    cleaner_retention_weights:
+      salience: 2.0
+      confidence: 1.0
+      recency: 0.1
+      size_penalty: 0.01
     stall_rounds: 2
-    max_replans: 2                 # revise a stalled plan before final synthesis
-    cu_mode: llm                    # llm | heuristic_first
+    max_replans: 2
+    cu_mode: llm
     coordinator_narration: false
-    sole_similarity: auto           # auto | exact | embedding | judge
+    sole_similarity: auto
 
-  # ── Role Registry ────────────────────────────────────────────────────────
-  # Maps blackboard roles to Hermes profiles and preferred hosts.
-  # preferred_host: null → load-balanced across all nodes.
-  # profile: Hermes profile name (in ~/.hermes/profiles/<profile>/).
-  # dispatch_port: Port of the api_server.py bridge on the target node.
-  # enabled: false removes a role from coordinator selections.
+  # Every classic role uses the one starter agent. Production deployments can
+  # set preferred_host values or add more nodes.
   role_registry:
-    planner:
-      enabled: true
-      preferred_host: "192.168.4.103"     # node-1
-      profile: planner
-      dispatch_port: 8000
-    expert:
-      preferred_host: null                # any host (load-balanced)
-      profile: expert
-      dispatch_port: 8000
-    critic:
-      preferred_host: "192.168.4.103"     # node-1
-      profile: critic
-      dispatch_port: 8000
-    conflict_resolver:
-      preferred_host: "192.168.4.122"     # node-3
-      profile: conflict_resolver
-      dispatch_port: 8000
-    cleaner:
-      preferred_host: "192.168.4.103"     # node-1
-      profile: cleaner
-      dispatch_port: 8000
-    decider:
-      preferred_host: "192.168.4.112"     # node-2
-      profile: decider
-      dispatch_port: 8000
-    universal:
-      preferred_host: null                # any host
-      profile: universal
-      dispatch_port: 8000
+    planner: {preferred_host: null, profile: planner, dispatch_port: 8000}
+    expert: {preferred_host: null, profile: expert, dispatch_port: 8000}
+    critic: {preferred_host: null, profile: critic, dispatch_port: 8000}
+    conflict_resolver: {preferred_host: null, profile: conflict_resolver, dispatch_port: 8000}
+    cleaner: {preferred_host: null, profile: cleaner, dispatch_port: 8000}
+    decider: {preferred_host: null, profile: decider, dispatch_port: 8000}
 
   board:
-    max_entry_chars: 8000           # Max body length; larger content → artifacts
-    max_title_len: 200              # Max title length for indexing
-    salience_weights:               # Deterministic importance signal
+    max_entry_chars: 8000
+    max_title_len: 200
+    salience_weights:
       confidence: 0.4
       recency: 0.2
       refs_in: 0.3
       penalty: 0.3
 
-# ── Storage (Files & Artifacts) ───────────────────────────────────
-# File upload and artifact storage.
 storage:
   enabled: false
-  user_media_dir: "/opt/bmas-data/uploads"
-  artifacts_dir: "/opt/output"
+  user_media_dir: "/data/uploads"
+  artifacts_dir: "/data/output"
   max_upload_mb: 50
   max_task_output_mb: 500
   allowed_upload_types: [pdf, txt, md, csv, json, png, jpg, docx]
-  pdf_extraction: pymupdf           # pymupdf | pypdf | off
+  pdf_extraction: pymupdf
   extraction_max_chars: 60000

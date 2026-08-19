@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────
 # bMAS — Unified Docker Compose (Control Plane)
 # ─────────────────────────────────────────────────────────────────────
-# Runs all 5 control plane services from a single compose file.
+# Runs the complete single-host classic starter stack.
 # Configuration: bmas.yaml (mounted read-only into containers)
 # Secrets: .env (loaded by Docker Compose automatically)
 #
@@ -15,8 +15,7 @@
 services:
   # ── Redis (Blackboard) ─────────────────────────────────────────────
   redis:
-    image: redis:8-alpine
-    container_name: bmas-redis
+    image: redis:8.10.0-alpine3.23
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     environment:
@@ -26,7 +25,7 @@ services:
       - ./redis/entrypoint.sh:/entrypoint.sh:ro
       - redis-data:/data
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${BMAS_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
@@ -39,7 +38,6 @@ services:
   litellm:
     build:
       context: ./litellm
-    container_name: bmas-litellm
     restart: unless-stopped
     depends_on:
       redis:
@@ -54,7 +52,7 @@ services:
       - LITELLM_LOG_LEVEL=INFO
       - REDIS_PASSWORD=${REDIS_PASSWORD}
     ports:
-      - "${LITELLM_PORT:-4000}:4000"
+      - "${BMAS_BIND_ADDRESS:-127.0.0.1}:${LITELLM_PORT:-4000}:4000"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/readiness')"]
       interval: 15s
@@ -66,8 +64,7 @@ services:
   # ── Triage (Complexity Classifier) ─────────────────────────────────
   # Requires NVIDIA GPU. Set TRIAGE_ENABLED=false in bmas.yaml to skip.
   triage:
-    image: vllm/vllm-openai:latest
-    container_name: bmas-triage
+    image: vllm/vllm-openai:v0.27.1
     restart: unless-stopped
     profiles:
       - gpu     # Only starts with: docker compose --profile gpu up
@@ -89,7 +86,33 @@ services:
       --host 0.0.0.0
       --port 8000
     ports:
-      - "${TRIAGE_PORT:-8001}:8000"
+      - "${BMAS_BIND_ADDRESS:-127.0.0.1}:${TRIAGE_PORT:-8001}:8000"
+    networks:
+      - bmas
+
+  # ── Starter Agent (tool-free classic executor) ─────────────────────
+  # This service lets a new user run the classic runtime on one host.
+  # Production deployments can replace it with external Hermes nodes.
+  agent:
+    build:
+      context: ./agent
+    restart: unless-stopped
+    depends_on:
+      litellm:
+        condition: service_healthy
+    environment:
+      - BMAS_EXECUTION_BACKEND=litellm
+      - NODE_ID=starter-agent
+      - LITELLM_URL=http://litellm:4000/v1
+      - LITELLM_API_KEY=${LITELLM_MASTER_KEY}
+      - LITELLM_MODEL=${BMAS_STARTER_MODEL:-starter-model}
+      - DAEMON_INGEST_URL=http://daemon:9000
+      - BMAS_NODE_KEY=${BMAS_NODE_KEY}
+      - BMAS_EXECUTE_KEY=${BMAS_EXECUTE_KEY}
+    volumes:
+      - agent-data:/var/lib/bmas-agent
+    ports:
+      - "${BMAS_BIND_ADDRESS:-127.0.0.1}:${AGENT_PORT:-8000}:8000"
     networks:
       - bmas
 
@@ -97,20 +120,26 @@ services:
   daemon:
     build:
       context: ./daemon
-    container_name: bmas-daemon
     restart: unless-stopped
     depends_on:
       redis:
         condition: service_healthy
+      litellm:
+        condition: service_healthy
+      agent:
+        condition: service_healthy
     volumes:
       - ./bmas.yaml:/etc/bmas/bmas.yaml:ro
       - daemon-data:/data                    # SQLite database for task history
-      - ${BMAS_UPLOADS:-/opt/bmas-data/uploads}:/data/uploads    # File uploads (storage.user_media_dir)
-      - ${BMAS_OUTPUT:-/opt/output}:/data/output                 # Artifacts (storage.artifacts_dir)
+      - uploads-data:/data/uploads
+      - artifacts-data:/data/output
     environment:
       - BMAS_CONFIG=/etc/bmas/bmas.yaml
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      - BMAS_REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - BMAS_LITELLM_URL=http://litellm:4000/v1
+      - BMAS_TRIAGE_URL=http://triage:8000/v1
       - BMAS_NODE_KEY=${BMAS_NODE_KEY:-}
       - BMAS_EXECUTE_KEY=${BMAS_EXECUTE_KEY:-}
       - BMAS_API_KEY=${BMAS_API_KEY:-}
@@ -121,6 +150,8 @@ services:
       - BMAS_AGENT_TURN_TIMEOUT_S=${BMAS_AGENT_TURN_TIMEOUT_S:-600}
       - BMAS_AGENT_ENDPOINT_MAX_CONCURRENCY=${BMAS_AGENT_ENDPOINT_MAX_CONCURRENCY:-4}
       - BMAS_AGENT_ENDPOINT_WAIT_TIMEOUT_S=${BMAS_AGENT_ENDPOINT_WAIT_TIMEOUT_S:-30}
+      - BMAS_CIRCUIT_BREAKER_FAILURE_THRESHOLD=${BMAS_CIRCUIT_BREAKER_FAILURE_THRESHOLD:-3}
+      - BMAS_CIRCUIT_BREAKER_RECOVERY_S=${BMAS_CIRCUIT_BREAKER_RECOVERY_S:-30}
       - BMAS_EVENT_PAYLOAD_MAX_BYTES=${BMAS_EVENT_PAYLOAD_MAX_BYTES:-1048576}
       - BMAS_EVENT_OUTBOX_MAX=${BMAS_EVENT_OUTBOX_MAX:-10000}
       - BMAS_EVENT_OUTBOX_OVERLOAD=${BMAS_EVENT_OUTBOX_OVERLOAD:-5000}
@@ -128,7 +159,7 @@ services:
       - BMAS_EVENT_REPLAY_PAGE=${BMAS_EVENT_REPLAY_PAGE:-250}
       - BMAS_BOARD_PROJECTION_CACHE_TASKS=${BMAS_BOARD_PROJECTION_CACHE_TASKS:-128}
     ports:
-      - "${DAEMON_PORT:-9000}:9000"
+      - "${BMAS_BIND_ADDRESS:-127.0.0.1}:${DAEMON_PORT:-9000}:9000"
     networks:
       - bmas
 
@@ -136,21 +167,22 @@ services:
   dashboard:
     build:
       context: ./mission-control
-    container_name: bmas-dashboard
     restart: unless-stopped
     depends_on:
-      - daemon
+      daemon:
+        condition: service_healthy
     volumes:
       - ./bmas.yaml:/etc/bmas/bmas.yaml:ro
     environment:
-      - BMAS_CONFIG=/etc/bmas/bmas.yaml
       - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - BMAS_REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - BMAS_DAEMON_URL=http://daemon:9000
       - BESZEL_EMAIL=${BESZEL_EMAIL:-}
       - BESZEL_PASSWORD=${BESZEL_PASSWORD:-}
       - BMAS_API_KEY=${BMAS_API_KEY:-}
       - BMAS_DASHBOARD_KEY=${BMAS_DASHBOARD_KEY:-}
     ports:
-      - "${DASHBOARD_PORT:-9321}:9321"
+      - "${BMAS_BIND_ADDRESS:-127.0.0.1}:${DASHBOARD_PORT:-9321}:9321"
     networks:
       - bmas
 
@@ -159,6 +191,12 @@ volumes:
   redis-data:
     driver: local
   daemon-data:                                # SQLite task history (persists across restarts)
+    driver: local
+  agent-data:
+    driver: local
+  uploads-data:
+    driver: local
+  artifacts-data:
     driver: local
 
 # ── Networks ─────────────────────────────────────────────────────────

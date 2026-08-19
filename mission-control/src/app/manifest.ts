@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Blackboard Multi-Agent Swarm (bMAS)",
     short_name: "bMAS",
-    description: "A decentralized swarm of autonomous agents collaborating to execute tasks based on stigmergy and local interactions.",
+    description: "A classic multi-agent runtime that coordinates agents through a durable shared blackboard.",
     start_url: "/",
     scope: "/",
     display: "standalone",

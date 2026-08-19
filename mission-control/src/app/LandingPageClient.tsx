@@ -16,12 +16,14 @@
 import React, { useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { useTaskHistory } from "@/hooks/useTaskHistory";
 import { useSystemStream } from "@/hooks/useSystemStream";
 import { usePendingTask } from "@/contexts/PendingTaskContext";
 import { useToast } from "@/hooks/useToast";
 import { ArrowUp, Zap, DollarSign, BarChart3, Paperclip, Cpu, Cloud } from "lucide-react";
 import { VariantSelect } from "@/components/features/VariantSelect";
+import { ReadinessPanel } from "@/components/features/ReadinessPanel";
 
 // ── Example tasks ─────────────────────────────────────────────────────
 
@@ -96,6 +98,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
   const [task, setTask] = useState("");
   const [variant, setVariant] = useState("classic");
   const [variantAvailable, setVariantAvailable] = useState(false);
+  const [stackReady, setStackReady] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -131,7 +134,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
   // ── Submit handler ────────────────────────────────────────────────
   const handleSubmit = useCallback(async () => {
     const input = task.trim();
-    if (!input || submitting || !variantAvailable) return;
+    if (!input || submitting || !variantAvailable || !stackReady) return;
     setSubmitting(true);
 
     try {
@@ -184,7 +187,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
     } finally {
       setSubmitting(false);
     }
-  }, [task, variant, variantAvailable, submitting, attachedFiles, setPending, router, toast]);
+  }, [task, variant, variantAvailable, stackReady, submitting, attachedFiles, setPending, router, toast]);
 
   // ── Example pill click ────────────────────────────────────────────
   const handleExampleClick = useCallback((prompt: string) => {
@@ -201,6 +204,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
   }, [maxHeight]);
 
   const hasInput = task.trim().length > 0;
+  const canSubmit = hasInput && variantAvailable && stackReady && !submitting;
 
   return (
     <div className="landing">
@@ -208,7 +212,7 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
         {/* ── Hero ──────────────────────────────────────────────── */}
         <div className="landing__hero">
           <div className="landing__logo-container">
-            <img
+            <Image
               src="/ant-head.png"
               alt="bMAS Swarm Logo"
               className="landing__logo animate-float"
@@ -221,6 +225,11 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
             What should the swarm work on?
           </p>
         </div>
+
+        <ReadinessPanel
+          onReadyChange={setStackReady}
+          showReadyGuide={!isLoading && total === 0}
+        />
 
         {/* ── Input Card ────────────────────────────────────────── */}
         <div className="landing__input-card">
@@ -273,11 +282,11 @@ export function LandingPageClient({ projectName }: { projectName: string }) {
             <div className="landing__toolbar-right">
               <span className="landing__shortcut-hint">⌘ Enter</span>
               <button
-                className={`landing__send-btn ${hasInput ? "landing__send-btn--active" : ""}`}
+                className={`landing__send-btn ${canSubmit ? "landing__send-btn--active" : ""}`}
                 onClick={handleSubmit}
-                disabled={!hasInput || submitting || !variantAvailable}
+                disabled={!canSubmit}
                 aria-label="Submit task"
-                title="Submit task (⌘+Enter)"
+                title={stackReady ? "Submit task (⌘+Enter)" : "Complete the readiness checks first"}
               >
                 {submitting ? (
                   <span

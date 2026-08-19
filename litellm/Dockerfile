@@ -6,7 +6,7 @@
 # from bmas.yaml, then launches the proxy.
 # ─────────────────────────────────────────────────────────────────────
 
-FROM ghcr.io/berriai/litellm:main-stable
+FROM ghcr.io/berriai/litellm:v1.94.1
 
 # Copy config generator and entrypoint
 COPY generate_config.py /app/generate_config.py

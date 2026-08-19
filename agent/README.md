@@ -1,185 +1,125 @@
-# bMAS Agent API Server
+# Execution Agent API
 
-FastAPI server that runs on each **edge node**, bridging the bMAS Daemon to the local [Hermes](https://github.com/hypermodeinc/hermes) agent installation.
+This FastAPI service executes one classic role activation for the daemon.
 
-Supports two execution paths:
-1. **Runs API** (primary) — `POST /v1/runs` + SSE streaming via the Hermes Gateway, with real-time trace and log ingest back to the daemon
-2. **CLI fallback** — `hermes -z` subprocess execution when the Runs API is unavailable
+The default Docker stack runs the tool-free LiteLLM backend. Advanced nodes can use a Hermes Runs API or Hermes CLI.
 
-> **This is the canonical source.** Deploy updates by copying `api_server.py` and `profiles/` to each target node and restarting the `hermes-agent` service.
+## Execution backends
+
+| Backend | Configuration | Use |
+|:---|:---|:---|
+| Direct LiteLLM | `BMAS_EXECUTION_BACKEND=litellm` | Single-host starter without tools |
+| Hermes Runs API | `BMAS_EXECUTION_BACKEND=hermes` plus `HERMES_GATEWAY_URL` | Advanced tools, sessions, and streamed run state |
+| Hermes CLI | `BMAS_EXECUTION_BACKEND=hermes` plus `HERMES_BIN` | Advanced one-process fallback |
+
+The direct backend sends the role prompt, task objective, and blackboard context to LiteLLM. It returns the model result and token usage.
+
+The Hermes backends add profiles, persistent session state, tool traces, and cancellation of remote runs.
 
 ## Endpoints
 
-| Method | Path | Description |
+| Method | Path | Purpose |
 |:---|:---|:---|
-| `GET` | `/health` | Health check — verifies Hermes binary, optional Runs API gateway, and LiteLLM connectivity |
-| `POST` | `/execute` | Execute a task via Runs API (SSE) or `hermes -z` fallback, with persona/profile injection |
-| `POST` | `/tasks/{task_id}/cancel` | Cancel local activations and stop recorded Hermes runs for one task |
+| `GET` | `/health` | Reports the selected backend and LiteLLM reachability. |
+| `POST` | `/execute` | Executes one idempotent role activation. |
+| `POST` | `/tasks/{task_id}/cancel` | Cancels local activations and known Hermes runs. |
 
-The `/execute` route accepts `session_id` and `activation_id`. The daemon must
-keep each value stable when it retries the same actor activation. The server
-uses `session_id` for Hermes memory. The server uses `activation_id` to prevent
-duplicate runs. A stable `turn_id` provides the idempotency key when the
-request omits `activation_id`.
+Set `BMAS_EXECUTE_KEY` to protect both mutation routes. The daemon sends the same value as a bearer credential.
 
-The server writes a persistent `running` record before execution. It adds the
-Hermes run ID after submission. A retry reconnects to that run and saves its
-terminal response. The server returns HTTP 409 when the record has no run ID.
-This rule prevents an automatic duplicate after a server restart.
+## Idempotent execution
 
-The cancellation state is terminal. A late run-ID update or result cannot
-replace it. Fresh terminal records remain protected for
-`ACTIVATION_CACHE_TTL_SECONDS`. The server returns HTTP 503 when protected
-records fill the cache.
+The request can include `activation_id`, `session_id`, and `turn_id`.
 
-An uncertain record without a run ID enters quarantine after
-`ACTIVATION_UNCERTAIN_TTL_SECONDS`. Cache pressure can remove an expired
-uncertain record. This action can permit a duplicate if the original run still
-exists. Use the cancellation route before a manual retry when the run state is
-unknown.
+1. The daemon keeps `activation_id` stable during retries.
+2. The agent saves a running record before execution.
+3. A retry reads the existing record or reconnects to a known Hermes run.
+4. A terminal response remains in the durable activation cache.
+5. A cancelled activation stays terminal.
 
-Set `BMAS_EXECUTE_KEY` to protect `/execute` and the cancellation route. Send the key as a bearer token or
-as `X-BMAS-Execute-Key`. The endpoint stays open when the variable is empty.
-This default preserves existing deployments. The `/health` route stays open.
+The agent returns HTTP 409 when a running record has no known Hermes run identifier. This result prevents an automatic duplicate.
 
-## Execution Flow
+The direct backend also uses the same activation cache. A daemon retry does not create a second provider request after a saved terminal result.
 
-```
-Daemon ─── POST /execute ──▶ Agent API Server
-                                    │
-                         ┌──────────┴──────────┐
-                         │                      │
-              HERMES_GATEWAY_URL           No gateway
-              is set?                      configured?
-                         │                      │
-                  ┌──────▼──────┐       ┌───────▼───────┐
-                  │ Runs API    │       │ CLI fallback  │
-                  │ POST /v1/runs│      │ hermes -z     │
-                  │ + SSE stream│       │ subprocess    │
-                  └──────┬──────┘       └───────┬───────┘
-                         │                      │
-                  TraceEmitter ──▶ Daemon /ingest/traces
-                  LogEmitter  ──▶ Daemon /ingest/logs
-```
+## Logs and traces
 
-### TraceEmitter & LogEmitter
+Set both `DAEMON_INGEST_URL` and `BMAS_NODE_KEY` to send records to the daemon.
 
-When `DAEMON_INGEST_URL` and `BMAS_NODE_KEY` are configured, the agent server ships structured data back to the daemon in real-time:
+- The log emitter sends bounded structured log records.
+- The trace emitter batches translated execution events.
+- The trace emitter saves failed batches to a disk spool.
+- A later request retries saved batches.
 
-- **TraceEmitter** — Batches and POSTs agent traces (tool calls, content blocks, function results) to `/ingest/traces/{task_id}/{turn_id}`
-- **LogEmitter** — Ships structured per-agent log entries (with fields, node ID, turn ID) to `/ingest/logs/{task_id}`
-
-Both use bearer token authentication through `BMAS_NODE_KEY`. Trace delivery
-uses retries and a disk spool. A later request sends each saved batch again.
-The daemon can receive a trace more than once after an uncertain network
-failure. It must use the trace identity and sequence to remove duplicates.
-The spool evicts old reasoning batches before final and error batches. It
-rejects new low-priority data when only terminal batches remain.
+Use persistent directories outside `/tmp` for a deployed node.
 
 ## Profiles
 
-Hermes profiles implement the persona library from the bMAS paper. Each profile is a fully isolated Hermes instance with its own `SOUL.md`, `config.yaml`, toolset, memory, and sessions.
+The classic Hermes profiles are `planner`, `expert`, `critic`, `conflict_resolver`, `cleaner`, and `decider`.
 
-| Profile | Paper Role | Description |
+Read [profiles/README.md](profiles/README.md) for identity and tool-scope details.
+
+The direct starter uses the profile name as a role selector. It does not load Hermes tools.
+
+## Main environment variables
+
+| Variable | Default | Purpose |
 |:---|:---|:---|
-| `planner` | Planner | Decomposes tasks into structured sub-problems |
-| `expert` | Dynamic Expert | Domain-specific expert, dynamically generated per task |
-| `critic` | Critic | Challenges assumptions, identifies gaps |
-| `conflict_resolver` | Conflict Resolver | Synthesizes conflicting perspectives |
-| `cleaner` | Cleaner | Prunes low-value or redundant board entries |
-| `decider` | Decider | Produces final consensus judgments |
-| `universal` | Roleless (V2) | Full toolset, used for stigmergic variant |
+| `BMAS_EXECUTION_BACKEND` | `auto` | Selects `litellm`, `hermes`, or automatic Hermes detection. |
+| `NODE_ID` | `agent-node1` | Sets the stable node identifier. |
+| `LITELLM_URL` | `http://localhost:4000/v1` | Sets the model gateway URL. |
+| `LITELLM_MODEL` | `medium` | Sets the fallback model alias. |
+| `LITELLM_API_KEY` | Empty | Authenticates model gateway calls. |
+| `BMAS_EXECUTE_KEY` | Empty | Authenticates daemon execution requests. |
+| `DAEMON_INGEST_URL` | Empty | Sets the daemon base URL for logs and traces. |
+| `BMAS_NODE_KEY` | Empty | Authenticates log and trace ingest. |
+| `TASK_TIMEOUT_SECONDS` | `120` | Limits one complete execution request. |
 
-See [profiles/README.md](profiles/README.md) for the full profile specification.
+## Hermes environment variables
 
-## Configuration
-
-All configuration is via environment variables:
-
-| Variable | Default | Description |
+| Variable | Default | Purpose |
 |:---|:---|:---|
-| `LITELLM_URL` | `http://localhost:4000/v1` | LiteLLM gateway URL |
-| `LITELLM_MODEL` | `medium` | Default LiteLLM model name |
-| `HERMES_BIN` | `/usr/local/bin/hermes` | Path to Hermes CLI binary |
-| `TASK_TIMEOUT_SECONDS` | `120` | Default task execution timeout |
-| `NODE_ID` | `agent-node1` | Node identifier (used in logs and trace attribution) |
-| `HERMES_GATEWAY_URL` | *(unset)* | Hermes Gateway URL to enable Runs API path (e.g., `http://localhost:8642`) |
-| `HERMES_GATEWAY_KEY` | *(empty)* | API key for the Hermes Gateway |
-| `DAEMON_INGEST_URL` | *(unset)* | Daemon URL for trace/log ingest (e.g., `http://192.168.4.240:9000`) |
-| `BMAS_NODE_KEY` | *(empty)* | Bearer token for authenticating ingest requests to the daemon |
-| `BMAS_EXECUTE_KEY` | *(empty)* | Optional bearer or `X-BMAS-Execute-Key` credential for `/execute` |
-| `SSE_READ_TIMEOUT` | `600` | SSE stream read timeout in seconds |
-| `CANCELLATION_TIMEOUT_SECONDS` | `5` | Maximum time for one Hermes stop request |
-| `TRACE_FLUSH_RETRIES` | `3` | Number of delivery attempts for each trace batch |
-| `TRACE_RETRY_BASE_SECONDS` | `0.25` | Base delay for trace delivery retries |
-| `TRACE_SPOOL_DIR` | `/tmp/bmas-trace-spool` | Development trace queue directory. Use persistent storage in production. |
-| `TRACE_DRAIN_TIMEOUT_SECONDS` | `5` | Maximum final trace delivery wait |
-| `TRACE_SPOOL_MAX_FILES` | `10000` | Maximum queued trace files |
-| `TRACE_SPOOL_MAX_BYTES` | `268435456` | Maximum queued trace bytes |
-| `TRACE_EVENT_MAX_BYTES` | `65536` | Maximum bytes in one trace event |
-| `TRACE_MEMORY_MAX_EVENTS` | `1000` | Maximum trace events retained in memory |
-| `LOG_RECORD_MAX_BYTES` | `65536` | Maximum bytes in one structured log record |
-| `LOG_BUFFER_MAX_RECORDS` | `1000` | Maximum structured log records retained in memory |
-| `ACTIVATION_CACHE_TTL_SECONDS` | `3600` | Completed activation response lifetime |
-| `ACTIVATION_CACHE_MAX_ENTRIES` | `1000` | Maximum completed activation responses in memory and on disk |
-| `ACTIVATION_CACHE_MAX_BYTES` | `67108864` | Maximum bytes in the durable activation cache |
-| `ACTIVATION_CACHE_DIR` | `$TRACE_SPOOL_DIR/activations` | Activation state directory. Use persistent storage in production. |
-| `ACTIVATION_RUNNING_TTL_SECONDS` | `7200` | Age that changes a stale running record to uncertain |
-| `ACTIVATION_UNCERTAIN_TTL_SECONDS` | `21600` | Age that quarantines an uncertain record without a run ID |
+| `HERMES_GATEWAY_URL` | Empty | Enables the Hermes Runs API. |
+| `HERMES_GATEWAY_KEY` | Empty | Authenticates Hermes gateway calls. |
+| `HERMES_BIN` | `/usr/local/bin/hermes` | Selects the Hermes CLI fallback. |
+| `SSE_READ_TIMEOUT` | `600` | Limits one idle Hermes event read. |
+| `CANCELLATION_TIMEOUT_SECONDS` | `5` | Limits one Hermes cancellation call. |
 
-> **Feature gating:** Set `HERMES_GATEWAY_URL` to enable the Runs API path. Without it, all execution falls back to `hermes -z`. Set `DAEMON_INGEST_URL` + `BMAS_NODE_KEY` to enable trace/log shipping.
+## Reliability limits
 
-`TASK_TIMEOUT_SECONDS` and the request `timeout` field limit the complete
-execution operation. This limit includes staging, run submission, streaming,
-polling, and artifact synchronization. `SSE_READ_TIMEOUT` limits one idle SSE
-read. A bounded cancellation request can run after the execution deadline. The
-CLI path uses the daemon-selected model.
+| Variable | Default | Purpose |
+|:---|:---|:---|
+| `TRACE_SPOOL_DIR` | `/tmp/bmas-trace-spool` | Stores failed trace batches. |
+| `TRACE_FLUSH_RETRIES` | `3` | Limits immediate trace delivery attempts. |
+| `TRACE_SPOOL_MAX_FILES` | `10000` | Limits saved trace files. |
+| `TRACE_SPOOL_MAX_BYTES` | `268435456` | Limits saved trace bytes. |
+| `TRACE_EVENT_MAX_BYTES` | `65536` | Limits one trace event. |
+| `TRACE_MEMORY_MAX_EVENTS` | `1000` | Limits traces held in memory. |
+| `LOG_RECORD_MAX_BYTES` | `65536` | Limits one structured log record. |
+| `LOG_BUFFER_MAX_RECORDS` | `1000` | Limits buffered log records. |
+| `ACTIVATION_CACHE_DIR` | Under the trace directory | Stores durable activation state. |
+| `ACTIVATION_CACHE_TTL_SECONDS` | `3600` | Retains terminal responses. |
+| `ACTIVATION_CACHE_MAX_ENTRIES` | `1000` | Limits activation records. |
+| `ACTIVATION_CACHE_MAX_BYTES` | `67108864` | Limits activation record bytes. |
 
-Trace and log limits never truncate the final result returned to the daemon.
-An oversized cached result returns in full for its first request. The durable
-record then blocks an uncertain duplicate without storing the oversized body.
+The Docker starter mounts persistent agent state at `/var/lib/bmas-agent`.
 
-The `/tmp` defaults support development only. A reboot can erase those files.
-Production nodes must use the persistent paths in `docs/NODE_SETUP.md`.
+## Run the Docker starter
 
-## Requirements
-
-```
-fastapi>=0.115.0
-uvicorn[standard]>=0.34.0
-httpx>=0.28.0
-pydantic>=2.10.0
-```
-
-## Running
+Use the repository command from the root directory.
 
 ```bash
-# Development
-uvicorn api_server:app --host 0.0.0.0 --port 8000 --reload
-
-# Production (via systemd — see docs/NODE_SETUP.md)
-uvicorn api_server:app --host 0.0.0.0 --port 8000
+./scripts/bmas up
 ```
 
-## Deploying to Nodes
+The Compose file sets the direct LiteLLM backend and each required key.
+
+## Run an advanced node
+
+Read [Hermes Node Setup](../docs/NODE_SETUP.md). That guide uses a non-root system service and a protected environment file.
+
+## Test
 
 ```bash
-# Deploy agent code + profiles to all nodes (replace with your IPs from bmas.yaml)
-for ip in <AGENT_NODE_1_IP> <AGENT_NODE_2_IP> <AGENT_NODE_3_IP>; do
-  scp api_server.py root@$ip:/opt/bmas/api_server.py
-  scp requirements.txt root@$ip:/opt/bmas/requirements.txt
-  ssh root@$ip 'cd /opt/bmas && pip install -r requirements.txt'
-  ssh root@$ip 'systemctl restart hermes-agent'
-done
-
-# Deploy Hermes profiles (uses the helper script)
-./scripts/deploy_profiles.sh
+../.venv/bin/python -m pytest tests -q
 ```
 
-## Testing
-
-```bash
-cd agent
-pytest tests/ -v --tb=short
-# 69 tests covering parsing, translation, execution, and reliability
-```
+The tests cover event parsing, idempotency, cancellation, direct LiteLLM dispatch, Hermes dispatch, and trace delivery.

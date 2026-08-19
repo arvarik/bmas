@@ -9,6 +9,12 @@
 # ─────────────────────────────────────────────────────────────────────
 
 services:
+  agent:
+    volumes:
+      - ./agent:/app
+      - agent-data:/var/lib/bmas-agent
+    command: ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
   daemon:
     build:
       context: ./daemon
@@ -16,7 +22,7 @@ services:
       - ./bmas.yaml:/etc/bmas/bmas.yaml:ro
       - ./daemon:/app                    # Mount source for hot reload
       - daemon-data:/data                # SQLite persistence (matches production)
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000", "--reload"]
+    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "9000", "--reload"]
 
   dashboard:
     build:
@@ -29,7 +35,6 @@ services:
       - /app/.next                       # Exclude .next from mount
     command: ["npx", "next", "dev", "--turbopack", "-H", "0.0.0.0", "-p", "9321"]
     environment:
-      - BMAS_CONFIG=/etc/bmas/bmas.yaml
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - ALLOWED_DEV_ORIGINS=${ALLOWED_DEV_ORIGINS:-}
 
@@ -39,4 +44,5 @@ services:
 volumes:
   daemon-data:
     driver: local
-
+  agent-data:
+    driver: local

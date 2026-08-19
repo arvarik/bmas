@@ -7,6 +7,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+PYTHON="$REPO_ROOT/.venv/bin/python"
+if [[ ! -x "$PYTHON" ]]; then
+  echo "ERROR: Run ./scripts/bmas setup-dev before ./scripts/bmas test." >&2
+  exit 1
+fi
+
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 PASS=0; FAIL=0
 
@@ -32,26 +38,38 @@ fi
 echo -e "\n━━━ DAEMON ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 cd "$REPO_ROOT/daemon"
 
-run_check "Daemon: ruff"     ruff check src/ tests/
-run_check "Daemon: mypy"     mypy src/ --ignore-missing-imports
-run_check "Daemon: pytest"   pytest tests/ -q --tb=short
+run_check "Daemon: ruff"     "$PYTHON" -m ruff check src/ tests/
+run_check "Daemon: mypy"     "$PYTHON" -m mypy src/ --ignore-missing-imports
+run_check "Daemon: pytest"   "$PYTHON" -m pytest tests/ -q --tb=short
 
 # ── Agent ──────────────────────────────────────────────────────────────────────
 echo -e "\n━━━ AGENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 cd "$REPO_ROOT/agent"
-if [ -f requirements.txt ]; then pip install -q -r requirements.txt; fi
+run_check "Agent: pytest"    "$PYTHON" -m pytest tests/ -q --tb=short
 
-run_check "Agent: pytest"    pytest tests/ -q --tb=short
+# ── Evaluation ─────────────────────────────────────────────────────────────────
+echo -e "\n━━━ EVALUATION ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+cd "$REPO_ROOT"
+run_check "Evaluation: pytest" "$PYTHON" -m pytest eval/tests/ -q --tb=short
 
 # ── Mission Control ────────────────────────────────────────────────────────────
 echo -e "\n━━━ MISSION CONTROL ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 cd "$REPO_ROOT/mission-control"
 
 run_check "Dashboard: npm ci"  npm ci
+run_check "Dashboard: audit"   npm audit --audit-level=high
 run_check "Dashboard: eslint"  npm run lint
 run_check "Dashboard: tsc"     npx tsc --noEmit
 run_check "Dashboard: tests"   npm run test:run
 run_check "Dashboard: build"   npm run build
+
+# ── Repository contracts ───────────────────────────────────────────────────────
+echo -e "\n━━━ REPOSITORY CONTRACTS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+cd "$REPO_ROOT"
+run_check "Configs: examples" "$PYTHON" scripts/validate_configs.py
+run_check "Configs: schema" "$PYTHON" scripts/generate_config_schema.py --check
+run_check "Docs: links" "$PYTHON" scripts/validate_docs.py
+run_check "Compose: render" docker compose --env-file .env.example config --quiet
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 echo ""

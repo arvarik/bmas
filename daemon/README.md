@@ -1,240 +1,151 @@
-# Daemon — bMAS Orchestrator
+# Daemon
 
-The central orchestration service for bMAS. A Python FastAPI application that manages the complete task lifecycle through a cyclic blackboard protocol: triage → CU agent selection → board read/write → convergence check → repeat.
+The daemon runs the classic task lifecycle and exposes the main Stigmergic API.
 
-> Runs as Docker container `bmas-daemon` on the control plane at port 9000.
+It saves authoritative task state in SQLite. It uses Redis for locks, notifications, and live projections.
 
-## Architecture
+## Responsibilities
 
-```
-User / Mission Control
-        │
-        ▼
-   ┌─────────┐     ┌───────────────┐
-   │  app.py  │────▶│  orchestrator │── coordinates ──▶ Agent Nodes
-   │  FastAPI │     │               │                    (:8000 each)
-   └─────────┘     └───────┬───────┘
-                           │
-              ┌────────────┼────────────┐
-              │            │            │
-         ┌────▼────┐  ┌───▼────┐  ┌───▼─────┐
-         │blackboard│  │ board  │  │ triage  │
-         │ + gateway│  │ store  │  │         │
-         └────┬─────┘  └───┬────┘  └───┬─────┘
-              │            │           │
-         Redis :6379  SQLite /data  vLLM :8001
-```
+1. Validate configuration and required secrets.
+2. Accept and queue task submissions.
+3. Classify task complexity.
+4. Run classic control-unit rounds.
+5. Dispatch role activations to agent endpoints.
+6. Validate and save board entries.
+7. Record usage, costs, logs, traces, files, and artifacts.
+8. Publish durable task events.
+9. Apply operator controls at safe lifecycle points.
 
-## Project Structure
+## Service flow
 
-```
-daemon/
-├── src/
-│   ├── app.py                     # FastAPI entry point + lifespan
-│   ├── config.py                  # YAML config loader + validation
-│   ├── database.py                # Authoritative SQLite state and event journal
-│   ├── auth.py                    # Bearer token auth for node ingest
-│   ├── file_utils.py              # File upload handling + PDF extraction
-│   ├── core/
-│   │   ├── orchestrator.py        # Task lifecycle + multi-round dispatch
-│   │   ├── blackboard.py          # Redis state + durable board snapshots
-│   │   ├── board_store.py         # Event-sourced board (entries + events)
-│   │   ├── gateway.py             # Capability-gated agent dispatch + locking
-│   │   ├── entry.py               # Board entry schema + validation
-│   │   ├── protocol.py            # Agent ↔ Daemon message protocol
-│   │   ├── salience.py            # Entry salience scoring
-│   │   ├── event_delivery.py      # Durable journal outbox and Redis notification
-│   │   ├── event_emitter.py       # Task event interface
-│   │   ├── capabilities.py        # Agent capability registry
-│   │   ├── log_levels.py          # Level normalization (INF→info, etc.)
-│   │   ├── triage.py              # Complexity classifier client (vLLM)
-│   │   └── variants/
-│   │       ├── classic.py         # Registered classic lifecycle adapter
-│   │       └── traditional.py     # Classic CU and board engine
-│   ├── models/
-│   │   └── personas.py            # Agent role definitions + dynamic experts
-│   ├── monitoring/
-│   │   └── health_loop.py         # Background agent health polling
-│   └── routes/
-│       ├── submit.py              # POST /submit
-│       ├── tasks.py               # GET /tasks, /tasks/{id}/*
-│       ├── capabilities.py        # Registered runtime contracts
-│       ├── events.py              # Durable task and system SSE replay
-│       ├── ingest.py              # POST /ingest/traces, /ingest/logs
-│       ├── artifacts.py           # Artifact ingest + retrieval
-│       ├── files.py               # File upload + retrieval
-│       ├── hitl.py                # HITL: pause/resume/directive/steer/approval
-│       └── health.py              # GET /health, /state
-└── tests/                         # 25+ test files (429 tests)
-    ├── test_board_store.py        # Event-sourced board
-    ├── test_gateway.py            # Board mutation authorization
-    ├── test_traditional_cost.py   # Cost tracking in the classic engine
-    ├── test_structured_logs.py    # Structured logging pipeline
-    ├── test_coordinator_narration.py  # CU narration events
-    ├── test_salience.py           # Entry salience scoring
-    ├── test_protocol.py           # Message protocol validation
-    └── ...                        # + 18 more test files
+```mermaid
+flowchart LR
+    M["Mission Control"] --> D["Daemon API"]
+    D --> A["Execution agents"]
+    D --> L["LiteLLM"]
+    D <--> Q["SQLite"]
+    D <--> R["Redis"]
 ```
 
-## API Endpoints
+## Source layout
 
-### Task Management
-
-| Method | Path | Description |
-|:---|:---|:---|
-| `POST` | `/submit` | Submit a task (HTTP 202). Triggers triage → CU → agent cycle. |
-| `GET` | `/tasks` | List task history with pagination and optional status filter. |
-| `GET` | `/tasks/{id}` | Full task detail including variant, turns, cost, status. |
-| `GET` | `/tasks/{id}/cost` | Per-task cost breakdown by model and phase. |
-| `GET` | `/tasks/{id}/logs` | Archived structured log entries with pagination. |
-| `GET` | `/tasks/{id}/debate` | Debate entries for a task. |
-| `GET` | `/tasks/{id}/board` | Durable board snapshot (entries + events). |
-| `GET` | `/tasks/{id}/trace` | Agent trace data (per-turn structured traces). |
-| `GET` | `/tasks/{id}/turns` | Turn-level breakdown (round, agent, selection rationale). |
-| `GET` | `/capabilities` | Registered runtime and UI contracts. |
-| `GET` | `/config/active` | Active coordination runtime and deployment config. |
-
-### Files & Artifacts
-
-| Method | Path | Description |
-|:---|:---|:---|
-| `POST` | `/tasks/{id}/files` | Upload file attachments to a task. |
-| `GET` | `/tasks/{id}/files` | List uploaded files for a task. |
-| `GET` | `/tasks/{id}/files/{fid}` | Download a specific file. |
-| `GET` | `/tasks/{id}/files/{fid}/text` | Extracted text content (PDF/doc). |
-| `GET` | `/tasks/{id}/artifacts` | List artifacts produced by a task. |
-| `GET` | `/tasks/{id}/artifacts/{aid}` | Download a specific artifact. |
-
-### Agent Ingest (bearer-authenticated)
-
-| Method | Path | Description |
-|:---|:---|:---|
-| `POST` | `/ingest/traces/{id}/{turn}` | Ingest structured agent traces. |
-| `POST` | `/ingest/logs/{id}` | Ingest distributed structured logs. |
-| `POST` | `/ingest/artifacts/{id}/{turn}` | Ingest agent-produced artifacts. |
-
-### Streaming & HITL
-
-| Method | Path | Description |
-|:---|:---|:---|
-| `GET` | `/events/{id}` | Task-scoped SSE stream (18 event types). |
-| `GET` | `/events/system` | System health + task lifecycle SSE stream. |
-| `POST` | `/{id}/pause` | Pause a running task at the next round boundary. |
-| `POST` | `/{id}/resume` | Resume a paused task. |
-| `POST` | `/{id}/directive` | Inject an operator directive into the board. |
-| `POST` | `/{id}/steer` | Steer agent selection for the next round. |
-| `POST` | `/{id}/approval` | Approve or reject a pending agent action. |
-| `GET` | `/health` | Dependency health check (Redis + SQLite). |
-| `GET` | `/state` | Public blackboard state with live agent health. |
-
-## Task Lifecycle (Classic Runtime)
-
-The classic runtime implements the bMAS paper's cyclic execution model:
-
-```
-User submits task
-       │
-       ▼
-┌─────────────┐
-│ 1. TRIAGE   │  Qwen3-1.7B classifies complexity → selects model tier
-└──────┬──────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────┐
-│ 2. CYCLIC EXECUTION (repeats until convergence) │
-│                                                  │
-│   ┌──────────────┐                               │
-│   │ Control Unit │  LLM reads the full board,    │
-│   │ (CU)         │  selects agents for this       │
-│   └──────┬───────┘  round with rationale          │
-│          │                                        │
-│   ┌──────▼──────┐                                 │
-│   │ Agent       │  Selected agents execute in     │
-│   │ Execution   │  parallel, read board, write    │
-│   │             │  new entries to the board        │
-│   └──────┬──────┘                                 │
-│          │                                        │
-│   ┌──────▼──────┐                                 │
-│   │ Convergence │  CU checks: is the task done?  │
-│   │ Check       │  Budget exceeded? Stalled?      │
-│   └──────┬──────┘                                 │
-│          │                                        │
-│    NO ───┘──── YES                                │
-│    (loop)      │                                  │
-└────────────────┼──────────────────────────────────┘
-                 │
-                 ▼
-          ┌─────────────┐
-          │ 3. FINALIZE │  Decider agent produces consensus result.
-          └─────────────┘  Board persisted to SQLite.
-```
-
-### Agent Roles
-
-| Role | Description |
+| Path | Purpose |
 |:---|:---|
-| **Planner** | Decomposes tasks into structured sub-problems |
-| **Expert.*** | Domain-specific experts dynamically generated per task |
-| **Critic** | Challenges assumptions, identifies gaps |
-| **Conflict Resolver** | Synthesizes conflicting expert perspectives |
-| **Cleaner** | Prunes low-value or redundant board entries |
-| **Decider** | Produces the final consensus result |
+| `src/app.py` | Creates FastAPI, shared clients, and background loops. |
+| `src/config.py` | Loads validated runtime settings. |
+| `src/config_schema.py` | Defines the typed `bmas.yaml` schema. |
+| `src/database.py` | Owns SQLite task state and the durable event outbox. |
+| `src/settings_store.py` | Stores supported live setting changes. |
+| `src/core/orchestrator.py` | Runs task admission and classic execution. |
+| `src/core/variants/classic.py` | Registers the public classic runtime contract. |
+| `src/core/variants/traditional.py` | Contains the internal classic execution engine. |
+| `src/core/blackboard.py` | Maintains Redis projections and controls. |
+| `src/core/triage.py` | Classifies tasks through cloud or local triage. |
+| `src/routes/` | Defines API route groups. |
 
-The Control Unit (CU) selects which roles to activate each round based on the current board state — roles are not fixed per agent node.
+The internal `traditional.py` name remains for saved-task compatibility. Public configuration uses `classic`.
+
+## API groups
+
+| Method and path | Purpose |
+|:---|:---|
+| `POST /submit` | Accepts a classic task and returns HTTP 202. |
+| `GET /tasks` | Lists durable task history. |
+| `GET /tasks/{id}` | Reads one task and its sub-tasks. |
+| `GET /tasks/{id}/board` | Reads the durable board snapshot. |
+| `GET /tasks/{id}/turns` | Reads role turns. |
+| `GET /tasks/{id}/cost` | Reads model usage and cost data. |
+| `GET /tasks/{id}/logs` | Reads structured logs. |
+| `GET /tasks/{id}/trace` | Reads translated agent traces. |
+| `GET /events/{id}` | Streams task events with replay support. |
+| `GET /events/system` | Streams system task-lifecycle events. |
+| `GET /capabilities` | Reports the classic runtime contract. |
+| `GET /health` | Reports daemon and dependency health. |
+| `GET /readiness` | Reports actionable full-stack readiness. |
+
+File and artifact routes use `/tasks/{id}/files` and `/tasks/{id}/artifacts`.
+
+Operator mutation routes support abort, pause, resume, directives, steering, and approvals.
+
+Settings routes under `/settings` expose only the supported routing and role-registry changes.
+
+## Authentication
+
+| Key | Protected routes |
+|:---|:---|
+| `BMAS_API_KEY` | Task submission, operator controls, and settings mutations |
+| `BMAS_NODE_KEY` | Agent log, trace, and artifact ingest |
+
+Read-only health and task routes remain available to the trusted service network.
+
+Mission Control keeps daemon keys in its server routes. Browser JavaScript does not receive these keys.
+
+## Task admission
+
+The daemon limits active tasks, queued tasks, objective size, endpoint concurrency, and endpoint wait time.
+
+It also uses a circuit breaker for repeatedly failing agent endpoints. The `/health` response reports queue and endpoint state.
+
+## Durable event delivery
+
+The daemon writes the task record and event outbox entry in SQLite. It then publishes the event to Redis.
+
+If Redis publication fails, the outbox keeps the pending event. A background loop retries it.
+
+This order prevents a live event from describing task state that SQLite did not save.
+
+## Health and readiness
+
+`GET /health` always reports the current daemon state. A degraded dependency does not make the daemon process disappear.
+
+`GET /readiness` checks Redis, SQLite, LiteLLM, execution agents, the classic runtime, and event delivery.
+
+Container health requires the complete `/health` status to equal `healthy`.
 
 ## Configuration
 
-All values are loaded from `bmas.yaml` and environment variables:
+The daemon reads `BMAS_CONFIG`, which defaults to `/etc/bmas/bmas.yaml` in Compose.
 
-| Source | Variable | Purpose |
-|:---|:---|:---|
-| `bmas.yaml` | `control_plane.host/ports` | Redis, LiteLLM, Triage URLs |
-| `bmas.yaml` | `nodes[*].host/port` | Agent endpoints |
-| `bmas.yaml` | `routing.*` | Complexity-to-model mapping |
-| `bmas.yaml` | `coordination.variant` | Default registered runtime. This build provides `classic`. |
-| `bmas.yaml` | `coordination.classic.*` | Classic runtime tuning, including rounds and budget. |
-| `bmas.yaml` | `storage.*` | File upload + artifact settings |
-| `.env` | `REDIS_PASSWORD` | Redis authentication |
-| `.env` | `LITELLM_MASTER_KEY` | LiteLLM API key |
-| `.env` | `BMAS_NODE_KEY` | Bearer token for agent ingest auth |
+Docker Compose sets internal Redis, LiteLLM, and triage URLs. External service runs can set `BMAS_REDIS_URL`, `BMAS_LITELLM_URL`, and `BMAS_TRIAGE_URL`.
+
+Read [Configuration](../docs/CONFIGURATION.md) for all source fields and environment limits.
 
 ## Development
 
-```bash
-# Development (with Docker Compose dev override)
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up daemon
-
-# Or run locally
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-BMAS_CONFIG=../bmas.yaml PYTHONPATH=src uvicorn app:app --host 0.0.0.0 --port 9000 --reload
-```
-
-### Testing
+Prepare the shared environment from the repository root.
 
 ```bash
-# Run the full test suite (429 tests)
-cd daemon
-pytest tests/ -v --tb=short
-
-# Lint
-ruff check src/ tests/
-
-# Type check
-mypy src/ --ignore-missing-imports
+./scripts/bmas setup-dev
 ```
 
-## Dependencies
+Run the complete development stack:
 
-| Package | Purpose |
-|:---|:---|
-| `fastapi` ≥ 0.136 | ASGI web framework with automatic OpenAPI docs |
-| `uvicorn[standard]` ≥ 0.46 | ASGI server with uvloop + httptools |
-| `httpx` ≥ 0.28 | Async HTTP client for agent dispatch and LiteLLM calls |
-| `redis[hiredis]` ≥ 7.4 | Async Redis client with C-accelerated parser |
-| `pydantic` ≥ 2.13 | Request/response validation |
-| `aiosqlite` ≥ 0.21 | Async SQLite for task history persistence |
-| `pyyaml` ≥ 6.0 | Configuration file parsing |
-| `pymupdf` ≥ 1.25 | PDF text extraction |
-| `python-multipart` ≥ 0.0.20 | Multipart form data for file uploads |
+```bash
+./scripts/bmas dev
+```
+
+Run the daemon directly when Redis, LiteLLM, and an execution agent are already reachable:
+
+```bash
+BMAS_CONFIG=../bmas.yaml \
+PYTHONPATH=src \
+../.venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 9000 --reload
+```
+
+The shell must also provide the required secrets and internal service URLs.
+
+## Tests
+
+```bash
+../.venv/bin/python -m pytest tests -q
+../.venv/bin/python -m ruff check src tests
+../.venv/bin/python -m mypy src --ignore-missing-imports
+```
+
+Run commands from the `daemon` directory so Ruff and mypy read `pyproject.toml`.
+
+The complete repository command adds agent, evaluation, Mission Control, configuration, documentation, and Compose checks.
+
+```bash
+../scripts/bmas test
+```

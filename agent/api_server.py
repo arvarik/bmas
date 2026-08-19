@@ -1,18 +1,9 @@
 # /opt/bmas/agent/api_server.py
-"""
-Hermes bMAS Agent API Server — Phase 1 (Runs API Integration).
+"""Execution API for the classic bMAS runtime.
 
-Bridges the bMAS Daemon to the local Hermes Agent installation.
-Primary path: POST /v1/runs + SSE event stream via the Hermes Gateway (:8642).
-Fallback path: `hermes -z` one-shot CLI via subprocess (doc 06 §8).
-
-Trace events are translated from Hermes SSE format to bMAS trace schema
-(doc 06 §4) and batch-POSTed to the daemon's ingest endpoint.
-
-Feature-gated: set HERMES_GATEWAY_URL to enable the Runs API path.
-If unset, falls back to the legacy hermes -z subprocess.
-
-Author: bMAS Infrastructure
+The starter backend calls LiteLLM directly without tools. Advanced nodes can
+execute through the Hermes Runs API or the Hermes CLI. The service translates
+execution events and sends bounded logs and traces to the daemon.
 """
 
 import asyncio
@@ -41,9 +32,18 @@ from pydantic import BaseModel, Field
 
 LITELLM_URL = os.getenv("LITELLM_URL", "http://localhost:4000/v1")
 LITELLM_MODEL = os.getenv("LITELLM_MODEL", "medium")
+LITELLM_API_KEY = os.getenv(
+    "LITELLM_API_KEY", os.getenv("LITELLM_MASTER_KEY", "")
+)
 HERMES_BIN = os.getenv("HERMES_BIN", "/usr/local/bin/hermes")
 TASK_TIMEOUT_SECONDS = int(os.getenv("TASK_TIMEOUT_SECONDS", "120"))
 NODE_ID = os.getenv("NODE_ID", "agent-node1")
+EXECUTION_BACKEND = os.getenv("BMAS_EXECUTION_BACKEND", "auto").strip().lower()
+
+if EXECUTION_BACKEND not in {"auto", "litellm", "hermes"}:
+    raise RuntimeError(
+        "BMAS_EXECUTION_BACKEND must be auto, litellm, or hermes"
+    )
 
 # ── Phase 1: Runs API configuration ───────────────────────────────────────
 # Set HERMES_GATEWAY_URL to enable the Runs API path.
@@ -182,6 +182,18 @@ class HealthResponse(BaseModel):
     litellm_url: str
     model: str
     runs_api_available: bool = False
+    execution_backend: str
+
+
+def _selected_execution_backend() -> str:
+    """Return the active execution backend identifier."""
+    if EXECUTION_BACKEND == "litellm":
+        return "litellm"
+    if HERMES_GATEWAY_URL:
+        return "hermes-runs-api"
+    if Path(HERMES_BIN).exists():
+        return "hermes-cli"
+    return "unavailable"
 
 
 def _result_envelope(result: str) -> tuple[str | None, list[dict] | None]:
@@ -1017,18 +1029,18 @@ async def _post_logs_oneshot(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Verify Hermes binary exists on startup; check Runs API availability."""
-    has_hermes_bin = Path(HERMES_BIN).exists()
     has_runs_api = bool(HERMES_GATEWAY_URL)
+    backend = _selected_execution_backend()
 
-    if not has_hermes_bin and not has_runs_api:
+    if backend == "unavailable":
         logger.error(
             f"Neither Hermes binary ({HERMES_BIN}) nor HERMES_GATEWAY_URL is available"
         )
         raise RuntimeError("No execution backend configured")
 
-    mode = "Runs API" if has_runs_api else "hermes -z (legacy)"
     logger.info(
-        f"bMAS Agent API starting | node={NODE_ID} model={LITELLM_MODEL} mode={mode}"
+        f"bMAS Agent API starting | node={NODE_ID} model={LITELLM_MODEL} "
+        f"backend={backend}"
     )
     if has_runs_api:
         logger.info(f"  Gateway: {HERMES_GATEWAY_URL}")
@@ -1039,9 +1051,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Hermes bMAS Agent",
+    title="bMAS Execution Agent",
     version="3.0.0",
-    description="FastAPI wrapper for bMAS Daemon → Hermes Agent integration (Phase 1)",
+    description="Idempotent classic role execution through LiteLLM or Hermes.",
     lifespan=lifespan,
 )
 
@@ -1077,6 +1089,91 @@ def _normalize_usage(usage: Optional[dict], model: str) -> Optional[dict]:
             normalized["prompt_tokens"] + normalized["completion_tokens"]
         )
     return normalized
+
+
+async def _run_via_litellm(
+    description: str,
+    role_prompt: Optional[str],
+    context: Optional[dict],
+    task_id: str,
+    turn_id: str,
+    role: str,
+    model: str,
+    request_id: str,
+    timeout: int = TASK_TIMEOUT_SECONDS,
+) -> tuple[TaskStatus, str, Optional[dict], int, Optional[str]]:
+    """Execute one tool-free starter activation through LiteLLM."""
+    messages: list[dict[str, str]] = []
+    if role_prompt:
+        messages.append({"role": "system", "content": role_prompt})
+
+    input_text = description
+    if context:
+        input_text += (
+            "\n\n## Blackboard Context\n```json\n"
+            f"{json.dumps(context, indent=2)}\n```"
+        )
+    messages.append({"role": "user", "content": input_text})
+
+    headers = {"Content-Type": "application/json"}
+    if LITELLM_API_KEY:
+        headers["Authorization"] = f"Bearer {LITELLM_API_KEY}"
+
+    async with httpx.AsyncClient(timeout=float(timeout)) as client:
+        log = LogEmitter(client, task_id, role, turn_id, request_id)
+        log.log(
+            f"Starting direct LiteLLM activation | model={model}",
+            event="litellm_submit",
+            model=model,
+            objective=description[:500],
+        )
+        emitter = TraceEmitter(client, task_id, turn_id)
+        try:
+            response = await client.post(
+                f"{LITELLM_URL.rstrip('/')}/chat/completions",
+                headers=headers,
+                json={"model": model, "messages": messages},
+            )
+            response.raise_for_status()
+            body = response.json()
+            result = str(body["choices"][0]["message"]["content"])
+            usage = _normalize_usage(body.get("usage"), model)
+            await emitter.emit(
+                translate(
+                    "run.completed",
+                    {"output": result, "usage": usage or {}},
+                    task_id,
+                    turn_id,
+                    seq=1,
+                    role=role,
+                    node=NODE_ID,
+                )
+            )
+            log.log(
+                "Direct LiteLLM activation completed",
+                event="litellm_complete",
+                model=model,
+            )
+            await log.flush()
+            await emitter.flush_all()
+            return TaskStatus.completed, result, usage, emitter.trace_count, None
+        except Exception as exc:
+            message = f"LiteLLM execution failed: {exc}"
+            await emitter.emit(
+                translate(
+                    "run.failed",
+                    {"error": message},
+                    task_id,
+                    turn_id,
+                    seq=1,
+                    role=role,
+                    node=NODE_ID,
+                )
+            )
+            log.log(message, level="error", event="litellm_error", model=model)
+            await log.flush()
+            await emitter.flush_all()
+            return TaskStatus.failed, message, None, emitter.trace_count, None
 
 async def _run_via_api(
     description: str,
@@ -2484,11 +2581,29 @@ async def _execute_task_once(
     logger.info(
         f"[{request_id}] Received task={req.task_id} | "
         f"role={role} profile={profile or 'default'} turn={turn_id} model={model} "
-        f"mode={'api' if HERMES_GATEWAY_URL else 'cli'} "
+        f"backend={_selected_execution_backend()} "
         f"context={'yes' if req.context else 'no'}"
     )
 
-    if HERMES_GATEWAY_URL:
+    backend = _selected_execution_backend()
+    if backend == "litellm":
+        if resume_run_id:
+            raise HTTPException(
+                409,
+                "The LiteLLM execution path cannot reconcile a Hermes run",
+            )
+        status, result, usage, trace_count, run_id = await _run_via_litellm(
+            description=req.description,
+            role_prompt=req.role_prompt,
+            context=req.context,
+            task_id=req.task_id,
+            turn_id=turn_id,
+            role=role,
+            model=model,
+            request_id=request_id,
+            timeout=timeout,
+        )
+    elif backend == "hermes-runs-api":
         status, result, usage, trace_count, run_id = await _run_via_api(
             description=req.description,
             role_prompt=req.role_prompt,
@@ -2505,7 +2620,7 @@ async def _execute_task_once(
             activation_fingerprint=activation_fingerprint,
             resume_run_id=resume_run_id,
         )
-    else:
+    elif backend == "hermes-cli":
         if resume_run_id:
             raise HTTPException(
                 409,
@@ -2523,6 +2638,8 @@ async def _execute_task_once(
             role=role,
             profile=profile,
         )
+    else:
+        raise HTTPException(503, "No execution backend is available")
 
     duration_ms = int((time.monotonic() - start) * 1000)
     envelope_action, envelope_entries = _result_envelope(result)
@@ -2578,7 +2695,9 @@ async def health():
         except Exception:
             pass
 
-    status = "healthy" if (hermes_ok or runs_api_ok) and litellm_ok else "degraded"
+    backend = _selected_execution_backend()
+    execution_ok = backend == "litellm" or hermes_ok or runs_api_ok
+    status = "healthy" if execution_ok and litellm_ok else "degraded"
     return HealthResponse(
         status=status,
         node_id=NODE_ID,
@@ -2587,6 +2706,7 @@ async def health():
         litellm_url=LITELLM_URL,
         model=LITELLM_MODEL,
         runs_api_available=runs_api_ok,
+        execution_backend=backend,
     )
 
 
@@ -2595,8 +2715,8 @@ async def execute_task(req: TaskRequest, request: Request):
     """
     Execute a task with optional persona injection.
 
-    Primary path: Hermes Runs API (POST /v1/runs + SSE stream).
-    Fallback: hermes -z subprocess (if HERMES_GATEWAY_URL is unset).
+    The starter path calls LiteLLM directly without tools.
+    Production nodes use the Hermes Runs API or Hermes CLI.
     """
     _authorize_execute(request)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])

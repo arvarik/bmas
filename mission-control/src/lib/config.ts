@@ -109,7 +109,7 @@ const BUILD_TIME_DEFAULTS: BmasConfig = {
 
 // ── Load Config ───────────────────────────────────────────────────────
 
-const CONFIG_PATH = process.env.BMAS_CONFIG ?? "/etc/bmas/bmas.yaml";
+const CONFIG_PATH = "/etc/bmas/bmas.yaml";
 
 /**
  * Detect whether we are in Next.js's static generation / build phase.
@@ -146,9 +146,6 @@ try {
   if (isBuildPhase) {
     // Build time: use minimal defaults so Next.js can compile pages that
     // import this module. Real values are resolved when the container starts.
-    console.warn(
-      `[config] bmas.yaml not found at build time (${CONFIG_PATH}), using defaults`,
-    );
     cfg = BUILD_TIME_DEFAULTS;
   } else {
     const message = err instanceof Error ? err.message : String(err);
@@ -212,20 +209,19 @@ export const REDIS_URL: string = (() => {
   console.log("  Checking environment variables...");
   const password = requireEnv("REDIS_PASSWORD", "Password for Redis authentication");
   ok("REDIS_PASSWORD is set");
-  return `redis://:${password}@${cp.host}:${cp.ports.redis}/0`;
+  return process.env.BMAS_REDIS_URL ??
+    `redis://:${password}@${cp.host}:${cp.ports.redis}/0`;
 })();
-
-/** bMAS Daemon state endpoint */
-export const DAEMON_STATE_URL: string =
-  `http://${cp.host}:${cp.ports.daemon}/state`;
-
-/** bMAS Daemon submit endpoint */
-export const DAEMON_SUBMIT_URL: string =
-  `http://${cp.host}:${cp.ports.daemon}/submit`;
 
 /** bMAS Daemon base URL (for building arbitrary daemon API paths) */
 export const DAEMON_BASE_URL: string =
-  `http://${cp.host}:${cp.ports.daemon}`;
+  process.env.BMAS_DAEMON_URL ?? `http://${cp.host}:${cp.ports.daemon}`;
+
+/** bMAS Daemon state endpoint */
+export const DAEMON_STATE_URL: string = `${DAEMON_BASE_URL}/state`;
+
+/** bMAS Daemon submit endpoint */
+export const DAEMON_SUBMIT_URL: string = `${DAEMON_BASE_URL}/submit`;
 
 /** Agent host URLs keyed by role (bMAS API at :8000) */
 export const AGENT_HOSTS: Record<string, string> = Object.fromEntries(

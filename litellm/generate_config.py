@@ -26,6 +26,7 @@ def parse_cloud_models(cfg: dict) -> list[dict]:
         model_name = model_cfg["model"]
         api_key_env = model_cfg.get("api_key_env", "")
         max_tokens = model_cfg.get("max_tokens", 4096)
+        pricing = model_cfg.get("pricing", {})
 
         api_base = model_cfg.get("api_base", "")
         entry = {
@@ -33,6 +34,16 @@ def parse_cloud_models(cfg: dict) -> list[dict]:
             "litellm_params": {
                 "model": f"{provider}/{model_name}",
                 "max_tokens": max_tokens,
+            },
+            "model_info": {
+                "input_cost_per_token": float(
+                    pricing.get("input_cost_per_token", 0.0)
+                ),
+                "output_cost_per_token": float(
+                    pricing.get("output_cost_per_token", 0.0)
+                ),
+                "cache_creation_input_token_cost": 0.0,
+                "cache_read_input_token_cost": 0.0,
             },
         }
         if api_key_env:
@@ -75,6 +86,10 @@ def parse_edge_nodes(cfg: dict) -> list[dict]:
         }
         model_info = {
             "description": f"Edge node {node.get('name', i)} ({node.get('role', 'unknown')})",
+            "input_cost_per_token": 0.0,
+            "output_cost_per_token": 0.0,
+            "cache_creation_input_token_cost": 0.0,
+            "cache_read_input_token_cost": 0.0,
         }
 
         # Individual alias (for direct targeting / debugging)
@@ -97,16 +112,16 @@ def parse_edge_nodes(cfg: dict) -> list[dict]:
 def parse_triage_model(cfg: dict) -> list[dict]:
     """Parse the local triage (vLLM) model if enabled and using local backend.
 
-    When backend is 'gemini', triage requests go through an existing
+    When backend is 'cloud', triage requests go through an existing
     cloud model alias — no special LiteLLM entry needed.
     """
     triage = cfg.get("triage", {})
     if not triage.get("enabled", True):
         return []
 
-    backend = triage.get("backend", "gemini")
+    backend = triage.get("backend", "cloud")
     if backend != "local":
-        return []  # Gemini backend uses existing cloud model alias
+        return []  # The cloud backend uses an existing model alias.
 
     triage_model = triage.get("local_model", "Qwen/Qwen3-1.7B")
 
@@ -118,6 +133,12 @@ def parse_triage_model(cfg: dict) -> list[dict]:
             "api_key": "not-needed",
             "max_tokens": 1024,
             "temperature": 0.1,
+        },
+        "model_info": {
+            "input_cost_per_token": 0.0,
+            "output_cost_per_token": 0.0,
+            "cache_creation_input_token_cost": 0.0,
+            "cache_read_input_token_cost": 0.0,
         },
     }]
 
