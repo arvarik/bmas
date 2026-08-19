@@ -17,24 +17,24 @@
 
   /* ── Text Hierarchy (§2.2) ─────────────────────────────────────── */
   --text-primary: hsl(210 20% 96%);
-  --text-secondary: hsl(215 15% 65%);
-  --text-tertiary: hsl(220 10% 45%);
+  --text-secondary: hsl(215 15% 72%);
+  --text-tertiary: hsl(218 12% 64%);
   --text-inverse: hsl(222 47% 6%);
 
   /* ── Semantic Status Colors (§2.3) ─────────────────────────────── */
-  --status-pending: hsl(220 15% 50%);
-  --status-running: hsl(217 91% 60%);
-  --status-success: hsl(142 71% 45%);
-  --status-error: hsl(0 84% 60%);
+  --status-pending: hsl(220 15% 64%);
+  --status-running: hsl(213 90% 68%);
+  --status-success: hsl(142 65% 62%);
+  --status-error: hsl(0 86% 72%);
   --status-paused: hsl(38 92% 50%);
 
   /* ── Accent & Interactive (§2.4) ───────────────────────────────── */
-  --accent-primary: hsl(217 91% 60%);
-  --accent-primary-hover: hsl(217 91% 50%);
-  --accent-subtle: hsl(217 91% 60% / 0.1);
+  --accent-primary: hsl(213 90% 68%);
+  --accent-primary-hover: hsl(213 90% 74%);
+  --accent-subtle: hsl(213 90% 68% / 0.12);
   --border-default: hsl(222 20% 22%);
   --border-subtle: hsl(222 20% 18%);
-  --border-focus: hsl(217 91% 60%);
+  --border-focus: hsl(213 90% 72%);
 
   /* ── Agent Identity Colors (§2.5) ──────────────────────────────── */
   --agent-planner: hsl(265 50% 60%);
@@ -130,8 +130,43 @@ body {
 
 /* ── Focus Ring ────────────────────────────────────────────────────── */
 :focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
+  outline: 2px solid var(--border-focus) !important;
+  outline-offset: 2px !important;
+}
+
+/* ── Interactive Target Contract ───────────────────────────────────── */
+:where(
+  button,
+  [role="button"],
+  a[href][class],
+  summary,
+  select,
+  textarea,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"])
+) {
+  min-block-size: 36px;
+}
+
+:where(button, [role="button"], a[href][class], summary) {
+  min-inline-size: 36px;
+}
+
+@media (max-width: 767px) {
+  :where(
+    button,
+    [role="button"],
+    a[href][class],
+    summary,
+    select,
+    textarea,
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"])
+  ) {
+    min-block-size: 44px;
+  }
+
+  :where(button, [role="button"], a[href][class], summary) {
+    min-inline-size: 44px;
+  }
 }
 
 /* ── Scrollbar Styling ─────────────────────────────────────────────── */

@@ -18,7 +18,7 @@
  * - Mobile-first: stack on small screens, side-by-side on md+
  */
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import {
   Zap,
   RotateCcw,
@@ -31,6 +31,10 @@ import {
   Server,
   Cpu,
 } from "lucide-react";
+import {
+  SettingsChangeDialog,
+  type SettingsChange,
+} from "@/components/ui/SettingsChangeDialog";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -178,6 +182,7 @@ export function ComplexityRoutingEditor({
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [showConfirmation, setShowConfirmation] = useState(false);
 
   // Sync when parent routing changes (e.g. after global reset)
   useEffect(() => {
@@ -193,10 +198,24 @@ export function ComplexityRoutingEditor({
   const denormalize = useCallback((val: string) => val, []);
 
   // Count modified tiers vs. server-authoritative routing
-  const dirtyTiers = COMPLEXITY_ROWS.filter(
-    (r) => normalize(localRouting[r.tier] ?? "") !== normalize(routing[r.tier] ?? "")
+  const dirtyTiers = useMemo(
+    () =>
+      COMPLEXITY_ROWS.filter(
+        (row) =>
+          normalize(localRouting[row.tier] ?? "") !== normalize(routing[row.tier] ?? "")
+      ),
+    [localRouting, normalize, routing]
   );
   const dirtyCount = dirtyTiers.length;
+  const proposedChanges = useMemo<SettingsChange[]>(
+    () =>
+      dirtyTiers.map((row) => ({
+        label: `${row.label} routing`,
+        before: normalize(routing[row.tier] ?? "Not set"),
+        after: normalize(localRouting[row.tier] ?? "Not set"),
+      })),
+    [dirtyTiers, localRouting, normalize, routing]
+  );
 
   useEffect(() => {
     onDirtyChange?.(dirtyCount);
@@ -212,9 +231,11 @@ export function ComplexityRoutingEditor({
     setErrorMsg("");
     try {
       await onSave(localRouting);
+      setShowConfirmation(false);
       setSaveStatus("success");
       setTimeout(() => setSaveStatus("idle"), 2500);
     } catch (e) {
+      setShowConfirmation(false);
       setSaveStatus("error");
       setErrorMsg(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -271,7 +292,7 @@ export function ComplexityRoutingEditor({
             <span>Reset</span>
           </button>
           <button
-            onClick={() => void handleSave()}
+            onClick={() => setShowConfirmation(true)}
             className={`settings-btn ${
               saveStatus === "success" ? "settings-btn--success" : "settings-btn--primary"
             } ${saving ? "settings-btn--loading" : ""}`}
@@ -418,6 +439,17 @@ export function ComplexityRoutingEditor({
           </span>
         </div>
       </div>
+
+      <SettingsChangeDialog
+        open={showConfirmation}
+        title="Apply routing changes?"
+        description={`Review ${dirtyCount} routing change${dirtyCount === 1 ? "" : "s"} before you apply them.`}
+        changes={proposedChanges}
+        confirmLabel="Apply routing"
+        busy={saving}
+        onCancel={() => setShowConfirmation(false)}
+        onConfirm={() => void handleSave()}
+      />
     </div>
   );
 }

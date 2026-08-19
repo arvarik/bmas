@@ -11,10 +11,10 @@
 export type StatusType = "pending" | "running" | "success" | "error" | "paused";
 
 export const STATUS_COLORS: Record<StatusType, string> = {
-  pending: "hsl(220, 15%, 50%)",
-  running: "hsl(217, 91%, 60%)",
-  success: "hsl(142, 71%, 45%)",
-  error: "hsl(0, 84%, 60%)",
+  pending: "hsl(220, 15%, 64%)",
+  running: "hsl(213, 90%, 68%)",
+  success: "hsl(142, 65%, 62%)",
+  error: "hsl(0, 86%, 72%)",
   paused: "hsl(38, 92%, 50%)",
 } as const;
 
@@ -91,9 +91,9 @@ export const ENTRY_TYPE_ICONS: Record<string, string> = {
 // Used for salience encoding and the future stigmergic pressure overlay.
 
 export const HEAT_RAMP = [
-  "hsl(217, 91%, 60%)",  // low — accent blue
+  "hsl(213, 90%, 68%)",  // low — accent blue
   "hsl(38, 92%, 50%)",   // mid — status paused/amber
-  "hsl(0, 84%, 60%)",    // high — status error/red
+  "hsl(0, 86%, 72%)",    // high — status error/red
 ] as const;
 
 // ── Surface Colors ───────────────────────────────────────────────────
@@ -110,15 +110,15 @@ export const SURFACE_COLORS = {
 
 export const TEXT_COLORS = {
   primary: "hsl(210, 20%, 96%)",
-  secondary: "hsl(215, 15%, 65%)",
-  tertiary: "hsl(220, 10%, 45%)",
+  secondary: "hsl(215, 15%, 72%)",
+  tertiary: "hsl(218, 12%, 64%)",
   inverse: "hsl(222, 47%, 6%)",
 } as const;
 
 // ── Accent Colors ────────────────────────────────────────────────────
 
 export const ACCENT_COLORS = {
-  primary: "hsl(217, 91%, 60%)",
-  primaryHover: "hsl(217, 91%, 50%)",
-  subtle: "hsl(217, 91%, 60%, 0.1)",
+  primary: "hsl(213, 90%, 68%)",
+  primaryHover: "hsl(213, 90%, 74%)",
+  subtle: "hsl(213, 90%, 68%, 0.12)",
 } as const;

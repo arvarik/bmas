@@ -2,8 +2,14 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Panel } from "@/components/ui/Panel";
-import { Skeleton } from "@/components/ui/Skeleton";
-import { Monitor, Clock, HardDrive, Thermometer, Activity, Wifi } from "lucide-react";
+import { ResourceState } from "@/components/ui/ResourceState";
+import {
+  diagnosticsText,
+  failureFromReason,
+  failureFromResponse,
+  type RequestFailure,
+} from "@/lib/request-state";
+import { Clock, HardDrive, Thermometer, Activity, Wifi } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -29,6 +35,7 @@ interface TelemetryResponse {
   hub_status?: string;
   systems?: SystemData[];
   error?: string;
+  detail?: string;
   note?: string;
 }
 
@@ -204,22 +211,32 @@ function NodeCard({ sys }: { sys: SystemData }) {
 
 export default function Telemetry() {
   const [systems, setSystems] = useState<SystemData[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<RequestFailure | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [hubStatus, setHubStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchTelemetry = useCallback(async () => {
     try {
       const res = await fetch("/api/telemetry", { cache: "no-store", signal: AbortSignal.timeout(6_000) });
-      if (!res.ok) { setError(`Beszel returned ${res.status}`); return; }
+      if (!res.ok) throw await failureFromResponse(res, "Beszel request failed");
       const data = (await res.json()) as TelemetryResponse;
 
-      if (data.error) { setError(data.error); return; }
-      if (data.note) { setNote(data.note); }
+      if (data.error) {
+        throw {
+          kind: "unavailable",
+          message: data.error,
+          detail: data.detail ?? data.error,
+        } satisfies RequestFailure;
+      }
 
+      setHubStatus(data.hub_status ?? null);
+      setNote(data.note ?? null);
       setSystems(data.systems ?? []);
-      setError(null);
-    } catch (err) { setError(err instanceof Error ? err.message : "Beszel unreachable"); }
+      setFailure(null);
+    } catch (reason) {
+      setFailure(failureFromReason(reason, "Beszel is unreachable"));
+    }
     finally { setLoading(false); }
   }, []);
 
@@ -229,27 +246,64 @@ export default function Telemetry() {
     return () => { clearTimeout(timer); clearInterval(id); };
   }, [fetchTelemetry]);
 
-  const panelStatus = loading ? "loading" as const : error && systems.length === 0 ? "error" as const : undefined;
+  const panelStatus = loading && systems.length === 0 ? "loading" as const : undefined;
   const upCount = systems.filter((s) => s.status === "up").length;
+  const isConfigured = hubStatus !== "not_configured" && hubStatus !== "no_credentials";
+  const diagnostics = failure
+    ? diagnosticsText("Infrastructure telemetry", failure, { hub_status: hubStatus })
+    : undefined;
 
   return (
     <Panel
       title="Infrastructure"
       subtitle={systems.length > 0 ? `${upCount}/${systems.length} systems online` : "Hardware telemetry"}
       status={panelStatus}
-      errorMessage={error ? "Beszel Hub unreachable" : undefined}
-      emptyIcon={Monitor}
-      emptyMessage="No telemetry data"
-      emptyHint={note ?? "Verify Beszel Hub connection and credentials in .env."}
-      onRetry={error ? fetchTelemetry : undefined}
     >
       <div className="infra-content">
         {/* Stale data warning */}
-        {error && systems.length > 0 && (
-          <div className="infra-stale-warning">
-            ⚠ Beszel Hub unreachable — showing last known data
-          </div>
+        {failure && systems.length > 0 && (
+          <details className="infra-stale-warning">
+            <summary>Beszel is unavailable. The page shows the last successful hardware data.</summary>
+            <code>{failure.detail}</code>
+          </details>
         )}
+
+        {!loading && failure && systems.length === 0 ? (
+          <ResourceState
+            kind={failure.kind}
+            title={failure.kind === "permission" ? "Monitoring access denied" : "Hardware telemetry unavailable"}
+            description="Beszel cannot provide hardware data. Task execution and agent controls remain available."
+            detail={failure.detail}
+            diagnostics={diagnostics}
+            onRetry={fetchTelemetry}
+          />
+        ) : null}
+
+        {!loading && !failure && !isConfigured && systems.length === 0 ? (
+          <ResourceState
+            kind="unavailable"
+            title={hubStatus === "no_credentials" ? "Monitoring credentials are missing" : "Monitoring is not configured"}
+            description="Hardware telemetry is unavailable. Task execution and agent controls remain available."
+            detail={note ?? "Configure the Beszel Hub to enable hardware telemetry."}
+            diagnostics={JSON.stringify({
+              component: "Infrastructure telemetry",
+              state: hubStatus,
+              detail: note,
+              captured_at: new Date().toISOString(),
+            }, null, 2)}
+            onRetry={fetchTelemetry}
+          />
+        ) : null}
+
+        {!loading && !failure && isConfigured && systems.length === 0 ? (
+          <ResourceState
+            kind="empty"
+            title="No monitored systems"
+            description="The Beszel connection succeeded, but the hub returned no systems."
+            detail={note ?? undefined}
+            onRetry={fetchTelemetry}
+          />
+        ) : null}
 
         {/* Node cards grid */}
         {systems.length > 0 && (
@@ -258,10 +312,6 @@ export default function Telemetry() {
               <NodeCard key={sys.id} sys={sys} />
             ))}
           </div>
-        )}
-
-        {!loading && !error && systems.length === 0 && !note && (
-          <Skeleton variant="metric" />
         )}
       </div>
     </Panel>

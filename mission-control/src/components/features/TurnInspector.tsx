@@ -9,7 +9,7 @@
  * Includes live approvals, run steering, and Hermes delegation details.
  */
 
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useMemo, useState, useCallback, useRef } from "react";
 import { authorColor } from "@/lib/design-tokens";
 import type { TurnRecord, TraceEvent, BoardEntry, RejectedEntry } from "@/hooks/useTaskStream";
 import { ToolCallCard } from "./ToolCallCard";
@@ -17,6 +17,11 @@ import { DelegationTree } from "./DelegationTree";
 import { bodyPreview } from "./board/boardModel";
 import { typeMeta } from "./board/boardModel";
 import { X, CheckCircle, XCircle, Send } from "lucide-react";
+import {
+  requestTaskOperatorAction,
+  useTaskOperatorAction,
+} from "@/hooks/useTaskOperatorAction";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 type ApprovalChoice = "once" | "session" | "always" | "deny";
 
@@ -64,8 +69,14 @@ export function TurnInspector({
   const [approvalPending, setApprovalPending] = useState<Record<string, boolean>>({});
   const [approvalErrors, setApprovalErrors] = useState<Record<string, string>>({});
   const [steerInput, setSteerInput] = useState("");
-  const [steerPending, setSteerPending] = useState(false);
-  const [steerResult, setSteerResult] = useState<string | null>(null);
+  const {
+    state: steerAction,
+    execute: executeSteer,
+    retry: retrySteer,
+  } = useTaskOperatorAction();
+  const steerPending = steerAction.status === "pending";
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap({ active: turnId !== null, containerRef: dialogRef, onEscape: onClose });
 
   // Find turn
   const turn = useMemo(() => {
@@ -130,20 +141,12 @@ export function TurnInspector({
       setApprovalPending((current) => ({ ...current, [approvalRunId]: true }));
       setApprovalErrors((current) => ({ ...current, [approvalRunId]: "" }));
       try {
-        const resp = await fetch("/api/hitl", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "approval",
-            task_id: taskId,
-            run_id: approvalRunId,
-            choice,
-          }),
+        await requestTaskOperatorAction({
+          action: "approval",
+          task_id: taskId,
+          run_id: approvalRunId,
+          choice,
         });
-        if (!resp.ok) {
-          const body = await resp.json().catch(() => ({})) as { error?: string; detail?: string };
-          throw new Error(body.error ?? body.detail ?? `HTTP ${resp.status}`);
-        }
         setDecidedRuns((prev) => ({ ...prev, [approvalRunId]: choice }));
       } catch (error) {
         setApprovalErrors((current) => ({
@@ -161,31 +164,19 @@ export function TurnInspector({
     const taskId = turn?.task_id;
     const input = steerInput.trim();
     if (!taskId || !runId || !input || steerPending) return;
-    setSteerPending(true);
-    setSteerResult(null);
-    try {
-      const response = await fetch("/api/hitl", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "run-steer",
-          task_id: taskId,
-          run_id: runId,
-          input,
-        }),
-      });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({})) as { error?: string; detail?: string };
-        throw new Error(body.error ?? body.detail ?? `HTTP ${response.status}`);
-      }
+    const result = await executeSteer(
+      { action: "run-steer", task_id: taskId, run_id: runId, input },
+      "Guidance accepted by Hermes.",
+    );
+    if (result.ok) {
       setSteerInput("");
-      setSteerResult("Guidance accepted by Hermes.");
-    } catch (error) {
-      setSteerResult(error instanceof Error ? error.message : "Run steering failed");
-    } finally {
-      setSteerPending(false);
     }
-  }, [runId, steerInput, steerPending, turn]);
+  }, [executeSteer, runId, steerInput, steerPending, turn]);
+
+  const retryRunSteer = useCallback(async () => {
+    const result = await retrySteer("Guidance accepted by Hermes.");
+    if (result.ok) setSteerInput("");
+  }, [retrySteer]);
 
   if (!turnId) return null;
 
@@ -195,14 +186,18 @@ export function TurnInspector({
   return (
     <>
       {/* Backdrop */}
-      <div
+      <button
+        type="button"
         className="turn-inspector-backdrop"
         onClick={onClose}
         aria-hidden="true"
+        tabIndex={-1}
         style={{
           position: "fixed",
           inset: 0,
           background: "hsl(0 0% 0% / 0.4)",
+          border: 0,
+          padding: 0,
           zIndex: 900,
           cursor: "pointer",
         }}
@@ -210,10 +205,12 @@ export function TurnInspector({
 
       {/* Slide-over panel */}
       <div
+        ref={dialogRef}
         className="turn-inspector"
         role="dialog"
         aria-modal="true"
         aria-label={`${actor.replace(/_/g, " ")} turn details`}
+        tabIndex={-1}
         style={{
           position: "fixed",
           top: 0,
@@ -311,7 +308,23 @@ export function TurnInspector({
                 <Send size={13} /> {steerPending ? "Sending" : "Send"}
               </button>
             </div>
-            {steerResult ? <span className="hermes-run-steer__result">{steerResult}</span> : null}
+            {steerAction.status !== "idle" ? (
+              <span
+                className="hermes-run-steer__result"
+                role={steerAction.status === "error" ? "alert" : "status"}
+              >
+                {steerAction.message}
+                {steerAction.status === "error" ? (
+                  <button
+                    type="button"
+                    onClick={() => void retryRunSteer()}
+                    style={{ marginLeft: "var(--space-2)" }}
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </span>
+            ) : null}
           </div>
         ) : null}
 
@@ -396,9 +409,10 @@ export function TurnInspector({
                     fontSize: "var(--text-sm)",
                   }}
                 >
-                  <span style={{ width: 14, textAlign: "center", color: glyphColor, fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", flexShrink: 0 }}>
+                  <span aria-hidden="true" style={{ width: 14, textAlign: "center", color: glyphColor, fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", flexShrink: 0 }}>
                     {glyph}
                   </span>
+                  <span className="sr-only">{trace.type.replaceAll("_", " ")}</span>
                   <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", minWidth: 60, flexShrink: 0 }}>
                     {new Date(trace.timestamp).toLocaleTimeString()}
                   </span>

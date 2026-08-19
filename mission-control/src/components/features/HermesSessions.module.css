@@ -1,0 +1,186 @@
+.searchField {
+  flex: 1;
+}
+
+.searchControl,
+.messageToolbar label {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-tertiary);
+}
+
+.searchControl input,
+.messageToolbar input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.sessionList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.noMatches {
+  padding: var(--space-5) var(--space-3);
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.detailContext {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+}
+
+.lineage {
+  min-width: 0;
+}
+
+.contextLabel {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+}
+
+.lineage ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.lineage li:not(:last-child)::after {
+  margin-left: 4px;
+  color: var(--text-tertiary);
+  content: "/";
+}
+
+.lineage button,
+.children button {
+  min-height: 36px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent-primary);
+  cursor: pointer;
+  font: inherit;
+}
+
+.children {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.missingParent {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.children button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.taskLink {
+  display: inline-flex;
+  min-height: 36px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--accent-primary);
+  font-size: var(--text-xs);
+}
+
+.noTask {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.messageToolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3) 0;
+}
+
+.messageToolbar label {
+  flex: 1;
+}
+
+.messageToolbar > span {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.toolBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: auto;
+  padding: 2px 6px;
+  border-radius: var(--radius-full);
+  background: var(--surface-active);
+  color: var(--text-secondary);
+  text-transform: none;
+}
+
+.messageContent {
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 720px) {
+  .detailContext,
+  .messageToolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .searchControl,
+  .messageToolbar label,
+  .lineage button,
+  .children button,
+  .taskLink {
+    min-height: 44px;
+  }
+
+  .noTask {
+    padding-bottom: var(--space-2);
+  }
+}

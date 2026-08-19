@@ -6,7 +6,7 @@ export default function SessionsPage() {
   return (
     <div className="view-container agents-view">
       <div className="view-breadcrumb">
-        <Link href="/">
+        <Link href="/" className="view-breadcrumb__link">
           <ArrowLeft size={14} /> Home
         </Link>
         <span>/</span>

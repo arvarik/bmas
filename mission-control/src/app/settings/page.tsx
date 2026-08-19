@@ -18,7 +18,7 @@
  * - Dirty count badges in each section header
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -27,8 +27,11 @@ import {
   CheckCircle,
   AlertCircle,
   Terminal,
+  Copy,
 } from "lucide-react";
 import dynamic from "next/dynamic";
+import { SettingsChangeDialog } from "@/components/ui/SettingsChangeDialog";
+import { buildYamlPatch, getResetChanges } from "@/lib/settings-presentation";
 
 const ComplexityRoutingEditor = dynamic(
   () => import("@/components/features/ComplexityRoutingEditor"),
@@ -87,25 +90,75 @@ interface SchemaData {
   known_roles: string[];
 }
 
+class SettingsLoadError extends Error {
+  summary: string;
+  detail: string;
+  status: number | null;
+  timestamp: string;
+
+  constructor(summary: string, detail: string, status: number | null) {
+    super(detail);
+    this.name = "SettingsLoadError";
+    this.summary = summary;
+    this.detail = detail;
+    this.status = status;
+    this.timestamp = new Date().toISOString();
+  }
+}
+
+interface ApiErrorBody {
+  detail?: string;
+  error?: string;
+}
+
+const SETTINGS_REQUEST_TIMEOUT_MS = 12_000;
+
+async function fetchSettingsResource(path: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), SETTINGS_REQUEST_TIMEOUT_MS);
+
+  try {
+    return await fetch(path, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("The settings service did not respond within 12 seconds.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function readApiError(response: Response, resource: string): Promise<SettingsLoadError> {
+  const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
+  const permissionFailure = response.status === 401 || response.status === 403;
+  const summary = permissionFailure
+    ? `You do not have permission to read ${resource}.`
+    : `The daemon did not provide ${resource}.`;
+  const detail = body.detail || body.error || `The request returned HTTP ${response.status}.`;
+
+  return new SettingsLoadError(summary, detail, response.status);
+}
+
 // ── Hook ──────────────────────────────────────────────────────────────────
 
 function useSettings() {
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [schema, setSchema] = useState<SchemaData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<SettingsLoadError | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const [settingsRes, schemaRes] = await Promise.all([
-        fetch("/api/settings"),
-        fetch("/api/settings/schema"),
+        fetchSettingsResource("/api/settings"),
+        fetchSettingsResource("/api/settings/schema"),
       ]);
 
-      if (!settingsRes.ok) throw new Error(`Settings: ${settingsRes.status}`);
-      if (!schemaRes.ok) throw new Error(`Schema: ${schemaRes.status}`);
+      if (!settingsRes.ok) throw await readApiError(settingsRes, "runtime settings");
+      if (!schemaRes.ok) throw await readApiError(schemaRes, "the settings schema");
 
       const [settingsData, schemaData] = await Promise.all([
         settingsRes.json() as Promise<SettingsData>,
@@ -115,7 +168,14 @@ function useSettings() {
       setSettings(settingsData);
       setSchema(schemaData);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load settings");
+      setSettings(null);
+      setSchema(null);
+      if (e instanceof SettingsLoadError) {
+        setError(e);
+      } else {
+        const detail = e instanceof Error ? e.message : "The settings request failed.";
+        setError(new SettingsLoadError("The settings service is unavailable.", detail, null));
+      }
     } finally {
       setLoading(false);
     }
@@ -145,16 +205,23 @@ export default function SettingsPage() {
   const { settings, schema, loading, error, reload } = useSettings();
   const [resetStatus, setResetStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [resetMsg, setResetMsg] = useState("");
+  const [showResetConfirmation, setShowResetConfirmation] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "success" | "error">("idle");
+  const [diagnosticsCopyStatus, setDiagnosticsCopyStatus] = useState<
+    "idle" | "success" | "error"
+  >("idle");
 
   // Track dirty counts from each section for the global ribbon
   const [routingDirty, setRoutingDirty] = useState(0);
   const [registryDirty, setRegistryDirty] = useState(0);
   const totalDirty = routingDirty + registryDirty;
+  const resetChanges = useMemo(() => (settings ? getResetChanges(settings) : []), [settings]);
+  const hasSessionOverrides = resetChanges.length > 0;
 
   // ── Save routing ──────────────────────────────────────────────────────
   const handleSaveRouting = useCallback(
     async (overrides: Record<string, string>) => {
-      const res = await fetch("/api/settings/routing", {
+      const res = await fetchSettingsResource("/api/settings/routing", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(overrides),
@@ -174,7 +241,7 @@ export default function SettingsPage() {
     async (patch: Record<string, Partial<RegistryEntry>>) => {
       if (Object.keys(patch).length === 0) return;
 
-      const res = await fetch("/api/settings/role_registry", {
+      const res = await fetchSettingsResource("/api/settings/role_registry", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ entries: patch }),
@@ -193,20 +260,53 @@ export default function SettingsPage() {
     setResetStatus("loading");
     setResetMsg("");
     try {
-      const res = await fetch("/api/settings/reset", { method: "POST" });
+      const res = await fetchSettingsResource("/api/settings/reset", { method: "POST" });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { detail?: string };
         throw new Error(data.detail ?? `HTTP ${res.status}`);
       }
       await reload();
+      setShowResetConfirmation(false);
       setResetStatus("success");
       setResetMsg("All settings reset to bmas.yaml defaults");
       setTimeout(() => setResetStatus("idle"), 4000);
     } catch (e) {
+      setShowResetConfirmation(false);
       setResetStatus("error");
       setResetMsg(e instanceof Error ? e.message : "Reset failed");
     }
   }, [reload]);
+
+  const handleCopyYaml = useCallback(async () => {
+    if (!settings || !hasSessionOverrides) return;
+    try {
+      await navigator.clipboard.writeText(buildYamlPatch(settings));
+      setCopyStatus("success");
+      window.setTimeout(() => setCopyStatus("idle"), 2500);
+    } catch {
+      setCopyStatus("error");
+    }
+  }, [hasSessionOverrides, settings]);
+
+  const handleCopyDiagnostics = useCallback(async () => {
+    if (!error) return;
+    const diagnostics = [
+      error.summary,
+      error.detail,
+      error.status ? `HTTP status: ${error.status}` : null,
+      `Time: ${error.timestamp}`,
+      `Page: ${window.location.href}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(diagnostics);
+      setDiagnosticsCopyStatus("success");
+    } catch {
+      setDiagnosticsCopyStatus("error");
+    }
+    window.setTimeout(() => setDiagnosticsCopyStatus("idle"), 2500);
+  }, [error]);
 
   return (
     <div className="view-container settings-view">
@@ -242,11 +342,13 @@ export default function SettingsPage() {
             <span>Refresh</span>
           </button>
           <button
-            onClick={() => void handleResetAll()}
+            onClick={() => setShowResetConfirmation(true)}
             className={`settings-btn settings-btn--danger ${resetStatus === "loading" ? "settings-btn--loading" : ""}`}
-            disabled={resetStatus === "loading" || loading}
+            disabled={resetStatus === "loading" || loading || !settings || !hasSessionOverrides}
             id="reset-all-settings-btn"
-            title="Reset all session overrides to bmas.yaml defaults"
+            title={hasSessionOverrides
+              ? "Reset all session overrides to bmas.yaml defaults"
+              : "No active session overrides"}
           >
             {resetStatus === "loading" ? (
               <span className="settings-spinner" aria-hidden="true" />
@@ -282,23 +384,44 @@ export default function SettingsPage() {
         <div className="settings-dirty-bar" role="status" aria-live="polite">
           <span className="settings-dirty-bar__dot" aria-hidden="true" />
           <span>
-            {totalDirty} unsaved change{totalDirty !== 1 ? "s" : ""} — use{" "}
-            <strong>Save</strong> in each section to apply, or{" "}
-            <strong>Reset All to Defaults</strong> to discard everything.
+            {totalDirty} unsaved change{totalDirty !== 1 ? "s" : ""}. Use{" "}
+            <strong>Save</strong> in each section to review and apply the changes. Use each
+            section&apos;s <strong>Reset</strong> control to discard its local changes.
           </span>
         </div>
       )}
 
       {/* ── Error state ───────────────────────────────────────────── */}
       {error && (
-        <div className="settings-error-full" role="alert">
+        <div className="settings-error-full" role="region" aria-labelledby="settings-error-title">
           <AlertCircle size={28} />
-          <h3>Failed to load settings</h3>
-          <p>{error}</p>
-          <button className="settings-btn settings-btn--primary" onClick={() => void reload()}>
-            <RefreshCw size={14} />
-            Retry
-          </button>
+          <h3 id="settings-error-title">Settings are unavailable</h3>
+          <p>{error.summary}</p>
+          <div className="settings-error-full__actions">
+            <button className="settings-btn settings-btn--primary" onClick={() => void reload()}>
+              <RefreshCw size={14} />
+              Retry
+            </button>
+            <Link href="/infra" className="settings-btn settings-btn--ghost">
+              Open Operations
+            </Link>
+            <button
+              className="settings-btn settings-btn--ghost"
+              onClick={() => void handleCopyDiagnostics()}
+            >
+              <Copy size={13} />
+              {diagnosticsCopyStatus === "success"
+                ? "Copied"
+                : diagnosticsCopyStatus === "error"
+                  ? "Copy failed"
+                  : "Copy diagnostics"}
+            </button>
+          </div>
+          <details className="settings-error-full__details">
+            <summary>Technical details</summary>
+            <code>{error.detail}</code>
+            <time dateTime={error.timestamp}>{new Date(error.timestamp).toLocaleString()}</time>
+          </details>
         </div>
       )}
 
@@ -313,6 +436,29 @@ export default function SettingsPage() {
       {/* ── Content ───────────────────────────────────────────────── */}
       {!loading && !error && settings && schema && (
         <div className="settings-content">
+          <div className="settings-persistence-note" role="note">
+            <div>
+              <strong>These settings last for this server session.</strong>
+              <span>Copy the active overrides into bmas.yaml to keep them after a restart.</span>
+            </div>
+            <button
+              type="button"
+              className="settings-btn settings-btn--ghost settings-btn--sm"
+              onClick={() => void handleCopyYaml()}
+              disabled={!hasSessionOverrides}
+              title={hasSessionOverrides
+                ? "Copy the active session overrides as YAML"
+                : "No active session overrides"}
+            >
+              <Copy size={13} />
+              {copyStatus === "success"
+                ? "YAML copied"
+                : copyStatus === "error"
+                  ? "Copy failed"
+                  : "Copy YAML patch"}
+            </button>
+          </div>
+
           <ComplexityRoutingEditor
             routing={settings.routing}
             defaultRouting={settings.defaults.routing}
@@ -354,6 +500,18 @@ export default function SettingsPage() {
           task only — these are not persisted to the session store.
         </p>
       </div>
+
+      <SettingsChangeDialog
+        open={showResetConfirmation}
+        title="Reset active session overrides?"
+        description={`This action resets ${resetChanges.length} active override${resetChanges.length === 1 ? "" : "s"}. It does not edit bmas.yaml.`}
+        changes={resetChanges}
+        confirmLabel="Reset overrides"
+        busy={resetStatus === "loading"}
+        danger
+        onCancel={() => setShowResetConfirmation(false)}
+        onConfirm={() => void handleResetAll()}
+      />
     </div>
   );
 }

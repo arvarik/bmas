@@ -13,16 +13,11 @@
  * clicking agent cards opens TurnInspector.
  */
 
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState } from "react";
 import { useTaskData } from "../TaskStreamContext";
 import { BlackboardBoard } from "@/components/features/BlackboardBoard";
 import { AgentMindCard } from "@/components/features/AgentMindCard";
 import { TurnInspector } from "@/components/features/TurnInspector";
-import {
-  Pause,
-  Play,
-  MessageSquarePlus,
-} from "lucide-react";
 
 export default function MissionPage() {
   const {
@@ -33,7 +28,6 @@ export default function MissionPage() {
     completedTurns,
     traceEvents,
     approvalRequests,
-    isPaused,
     isLive,
     consensus,
     phase,
@@ -42,15 +36,9 @@ export default function MissionPage() {
 
 
   const [selectedActor, setSelectedActor] = useState<string | null>(null);
-  const [showDirectiveInput, setShowDirectiveInput] = useState(false);
-  const [directiveText, setDirectiveText] = useState("");
 
   const taskId = taskMeta?.task_id ?? "";
   const controls = runtime.capability?.features.controls ?? [];
-  const canTogglePause = isPaused
-    ? controls.includes("resume")
-    : controls.includes("pause");
-  const canSendDirective = controls.includes("directive");
 
   // Unique actors from board entries and turns
   const actors = useMemo(() => {
@@ -76,100 +64,18 @@ export default function MissionPage() {
     return actorTurns[actorTurns.length - 1] ?? null;
   }, [selectedActor, activeTurns, completedTurns]);
 
-  // HITL: Pause / Resume
-  const handleTogglePause = useCallback(async () => {
-    const endpoint = isPaused ? "resume" : "pause";
-    try {
-      await fetch("/api/hitl", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: endpoint, task_id: taskId }),
-      });
-    } catch (e) {
-      console.error("Pause/resume failed:", e);
-    }
-  }, [taskId, isPaused]);
-
-  // HITL: Inject directive
-  const handleDirective = useCallback(async () => {
-    const trimmed = directiveText.trim();
-    if (!trimmed) return;
-    try {
-      await fetch("/api/hitl", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "inject-hint",
-          task_id: taskId,
-          hint_text: trimmed,
-        }),
-      });
-      setDirectiveText("");
-      setShowDirectiveInput(false);
-    } catch (e) {
-      console.error("Directive injection failed:", e);
-    }
-  }, [taskId, directiveText]);
-
   return (
     <div className="mission-cockpit">
 
-      {isLive && (canTogglePause || canSendDirective) ? (
+      {isLive ? (
         <div className="mission-cockpit__topbar">
           <div className="mission-cockpit__topbar-left">
             <span className="mission-cockpit__status">
               {runtime.capability?.label ?? "Coordination runtime"}
             </span>
           </div>
-          <div className="mission-cockpit__topbar-right">
-          {canTogglePause ? (
-            <button
-              type="button"
-              className="mission-cockpit__btn"
-              onClick={handleTogglePause}
-              aria-label={isPaused ? "Resume task" : "Pause task"}
-              title={isPaused ? "Resume task" : "Pause task"}
-            >
-              {isPaused ? <Play size={14} /> : <Pause size={14} />}
-            </button>
-          ) : null}
-          {canSendDirective ? (
-            <button
-              type="button"
-              className="mission-cockpit__btn"
-              onClick={() => setShowDirectiveInput((current) => !current)}
-              aria-label="Send a directive"
-              title="Send a directive"
-            >
-              <MessageSquarePlus size={14} />
-            </button>
-          ) : null}
-          </div>
         </div>
       ) : null}
-
-      {/* Directive input bar */}
-      {canSendDirective && showDirectiveInput && (
-        <div className="mission-cockpit__directive-bar">
-          <input
-            type="text"
-            className="mission-cockpit__directive-input"
-            placeholder="Type a directive for the swarm…"
-            value={directiveText}
-            onChange={(e) => setDirectiveText(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleDirective()}
-            maxLength={2000}
-            autoFocus
-          />
-          <button
-            className="mission-cockpit__directive-send"
-            onClick={handleDirective}
-            disabled={!directiveText.trim()}
-          >
-            Send
-          </button>
-        </div>
-      )}
 
       {/* ── Main Content ────────────────────────────────────────── */}
       <div className="mission-cockpit__scroll-area">

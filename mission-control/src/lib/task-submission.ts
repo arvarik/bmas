@@ -1,6 +1,14 @@
 export interface UploadCandidate {
   name: string;
   size: number;
+  lastModified?: number;
+}
+
+export const MAX_TASK_ATTACHMENTS = 10;
+
+export interface AttachmentSelection<T extends UploadCandidate> {
+  files: T[];
+  errors: string[];
 }
 
 export function validateAttachment(
@@ -20,6 +28,42 @@ export function validateAttachment(
     return `${file.name} exceeds the ${maxUploadMb} MB upload limit.`;
   }
   return null;
+}
+
+function attachmentKey(file: UploadCandidate): string {
+  return `${file.name}:${file.size}:${file.lastModified ?? 0}`;
+}
+
+export function addAttachments<T extends UploadCandidate>(
+  current: readonly T[],
+  candidates: readonly T[],
+  allowedTypes: readonly string[],
+  maxUploadMb: number,
+  maxFiles = MAX_TASK_ATTACHMENTS,
+): AttachmentSelection<T> {
+  const files = [...current];
+  const errors: string[] = [];
+  const knownFiles = new Set(current.map(attachmentKey));
+
+  for (const file of candidates) {
+    const validationError = validateAttachment(file, allowedTypes, maxUploadMb);
+    if (validationError) {
+      errors.push(validationError);
+      continue;
+    }
+    if (knownFiles.has(attachmentKey(file))) {
+      errors.push(`${file.name} is already attached.`);
+      continue;
+    }
+    if (files.length >= maxFiles) {
+      errors.push(`You can attach up to ${maxFiles} files to one task.`);
+      break;
+    }
+    files.push(file);
+    knownFiles.add(attachmentKey(file));
+  }
+
+  return { files, errors };
 }
 
 export function createTaskSubmissionRequest(

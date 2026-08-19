@@ -238,6 +238,33 @@ export function useBoardEntries(
 // ── Grouping helpers ──────────────────────────────────────────────────
 
 export type GroupMode = "round" | "type" | "author";
+export type BoardSort = "sequence-asc" | "sequence-desc" | "salience" | "confidence" | "backlinks";
+
+export function countBoardBacklinks(entries: MergedBoardEntry[]): Map<string, number> {
+  const counts = new Map(entries.map((entry) => [entry.id, 0]));
+  for (const entry of entries) {
+    for (const ref of entry.refs) {
+      if (counts.has(ref)) counts.set(ref, (counts.get(ref) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+export function sortBoardEntries(
+  entries: MergedBoardEntry[],
+  sort: BoardSort,
+  backlinkCounts = countBoardBacklinks(entries),
+): MergedBoardEntry[] {
+  return [...entries].sort((a, b) => {
+    if (sort === "sequence-desc") return b.seq - a.seq || b.id.localeCompare(a.id);
+    if (sort === "salience") return b.salience - a.salience || b.seq - a.seq;
+    if (sort === "confidence") return b.confidence - a.confidence || b.seq - a.seq;
+    if (sort === "backlinks") {
+      return (backlinkCounts.get(b.id) ?? 0) - (backlinkCounts.get(a.id) ?? 0) || b.seq - a.seq;
+    }
+    return a.seq - b.seq || a.id.localeCompare(b.id);
+  });
+}
 
 export interface EntryGroup {
   key: string;

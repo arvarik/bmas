@@ -29,7 +29,13 @@ import React, {
 } from "react";
 import { authorColor } from "@/lib/design-tokens";
 import { RichContent } from "@/components/ui/RichContent";
-import { Search, X, ChevronDown, Copy, Check, Layers } from "lucide-react";
+import { Search, X, ChevronDown, Copy, Check, Download, Layers } from "lucide-react";
+import {
+  logsToCsv,
+  matchesLogQuery,
+  parseListParam,
+  updateUrlParams,
+} from "@/lib/task-detail-tools";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -131,12 +137,15 @@ const AgentPill = memo(function AgentPill({
   const color = authorColor(agent);
   return (
     <button
+      type="button"
       className={`dls-agent-pill ${active ? "dls-agent-pill--active" : ""}`}
       style={{
         borderColor: active ? color : "transparent",
         background: active ? `${color}18` : undefined,
       }}
       onClick={onClick}
+      aria-pressed={active}
+      aria-label={`${active ? "Exclude" : "Include"} ${shortAgentName(agent)} logs, ${count} lines`}
       title={agent}
     >
       <span className="dls-agent-pill__dot" style={{ background: color }} />
@@ -277,11 +286,11 @@ function LogDetail({ line, onClose }: { line: LogLine; onClose: () => void }) {
           {line.agent}
         </span>
         <div className="dls-detail__actions">
-          <button className="dls-detail__btn" onClick={copyJson} title="Copy record as JSON">
+          <button type="button" className="dls-detail__btn" onClick={copyJson} title="Copy record as JSON">
             {copied ? <Check size={12} /> : <Copy size={12} />}
             {copied ? "Copied" : "Copy"}
           </button>
-          <button className="dls-detail__btn dls-detail__close" onClick={onClose} aria-label="Close detail">
+          <button type="button" className="dls-detail__btn dls-detail__close" onClick={onClose} aria-label="Close detail">
             <X size={14} />
           </button>
         </div>
@@ -347,17 +356,12 @@ const LogRow = memo(function LogRow({
   }
 
   return (
-    <div
+    <button
+      type="button"
       className={`dls-row ${selected ? "dls-row--selected" : ""}`}
-      role="button"
-      tabIndex={0}
       onClick={() => onSelect(line)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onSelect(line);
-        }
-      }}
+      aria-pressed={selected}
+      aria-label={`${normalizeLevel(line.level)} log from ${shortAgentName(line.agent)} at ${fmtTs(line.timestamp)}. ${line.message}`}
     >
       {/* Timestamp */}
       <span className="dls-row__ts">{fmtTs(line.timestamp)}</span>
@@ -382,7 +386,7 @@ const LogRow = memo(function LogRow({
           <Layers size={12} />
         </span>
       )}
-    </div>
+    </button>
   );
 });
 
@@ -410,6 +414,26 @@ export function DistributedLogStream({
   const [activeLevels, setActiveLevels] = useState<Set<string>>(new Set()); // empty = all
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [urlReady, setUrlReady] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- URL state initializes client-only filters.
+    setSearch(params.get("log_q") ?? "");
+    setActiveAgents(parseListParam(params.get("log_agents")));
+    setActiveLevels(parseListParam(params.get("log_levels")));
+    setUrlReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!urlReady) return;
+    const nextSearch = updateUrlParams(window.location.search, {
+      log_q: search.trim() || null,
+      log_agents: [...activeAgents],
+      log_levels: [...activeLevels],
+    });
+    window.history.replaceState(null, "", `${window.location.pathname}${nextSearch}${window.location.hash}`);
+  }, [activeAgents, activeLevels, search, urlReady]);
 
   // ── Discover agents dynamically ────────────────────────────────────
   const agentCounts = useMemo(() => {
@@ -454,10 +478,7 @@ export function DistributedLogStream({
     }
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      result = result.filter((l) =>
-        l.message.toLowerCase().includes(q) ||
-        l.agent.toLowerCase().includes(q)
-      );
+      result = result.filter((line) => matchesLogQuery(line, q));
     }
     return result;
   }, [lines, activeAgents, activeLevels, search]);
@@ -521,6 +542,21 @@ export function DistributedLogStream({
 
   const hasFilters = activeAgents.size > 0 || activeLevels.size > 0 || search.trim().length > 0;
 
+  const exportLines = useCallback((format: "json" | "csv") => {
+    const content = format === "json"
+      ? JSON.stringify(filtered, null, 2)
+      : logsToCsv(filtered);
+    const blob = new Blob([content], {
+      type: format === "json" ? "application/json" : "text/csv;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `task-logs.${format}`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, [filtered]);
+
   // ── Render ─────────────────────────────────────────────────────────
   return (
     <div className={`dls ${selectedLine ? "dls--detail-open" : ""}`}>
@@ -528,21 +564,22 @@ export function DistributedLogStream({
         {/* ── Toolbar ─────────────────────────────────────────────────── */}
         <div className="dls-toolbar">
           {/* Search */}
-          <div className="dls-search">
+          <label className="dls-search">
+            <span className="sr-only">Search logs</span>
             <Search size={12} className="dls-search__icon" />
             <input
               className="dls-search__input"
-              placeholder="Filter logs…"
+              placeholder="Search message, payload, agent, node, turn, or level"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               spellCheck={false}
             />
             {search && (
-              <button className="dls-search__clear" onClick={() => setSearch("")} aria-label="Clear search">
+              <button type="button" className="dls-search__clear" onClick={() => setSearch("")} aria-label="Clear search">
                 <X size={10} />
               </button>
             )}
-          </div>
+          </label>
 
           {/* Level toggles */}
           <div className="dls-level-filters">
@@ -553,10 +590,12 @@ export function DistributedLogStream({
                 const color = LEVEL_COLOR[level] ?? "var(--text-tertiary)";
                 return (
                   <button
+                    type="button"
                     key={level}
                     className={`dls-level-btn ${activeLevels.size > 0 && !activeLevels.has(level) ? "dls-level-btn--muted" : ""}`}
                     style={{ color: active ? color : undefined }}
                     onClick={() => toggleLevel(level)}
+                    aria-pressed={activeLevels.size === 0 || activeLevels.has(level)}
                     title={`Toggle ${level} logs`}
                   >
                     {LEVEL_LABEL[level] ?? level.toUpperCase()}
@@ -568,11 +607,18 @@ export function DistributedLogStream({
 
           {/* Clear filters */}
           {hasFilters && (
-            <button className="dls-clear-btn" onClick={clearFilters} title="Clear all filters">
+            <button type="button" className="dls-clear-btn" onClick={clearFilters} title="Clear all filters">
               <X size={11} />
               Clear
             </button>
           )}
+
+          <button type="button" className="dls-clear-btn" onClick={() => exportLines("csv")} disabled={filtered.length === 0}>
+            <Download size={11} /> CSV
+          </button>
+          <button type="button" className="dls-clear-btn" onClick={() => exportLines("json")} disabled={filtered.length === 0}>
+            <Download size={11} /> JSON
+          </button>
 
           {/* Stats */}
           <span className="dls-stats">
@@ -582,7 +628,7 @@ export function DistributedLogStream({
             lines
             {sourceLabel && <span className="dls-stats__source"> · {sourceLabel}</span>}
             {isLive && (
-              <span className="dls-live-dot" title="Live streaming" />
+              <span className="dls-live-state"><span className="dls-live-dot" aria-hidden="true" /> Live</span>
             )}
           </span>
         </div>
@@ -628,7 +674,7 @@ export function DistributedLogStream({
 
           {/* Jump-to-bottom pill */}
           {newCount > 0 && (
-            <button className="new-output-pill" onClick={snapToBottom}>
+            <button type="button" className="new-output-pill" onClick={snapToBottom}>
               <ChevronDown size={11} />
               {newCount} new line{newCount !== 1 ? "s" : ""}
             </button>

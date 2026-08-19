@@ -16,6 +16,7 @@ import React, {
 } from "react";
 import { File, FileText, Image, X } from "lucide-react";
 import type { TaskFile } from "@/hooks/useTaskStream";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 const EMPTY_TASK_FILES: readonly TaskFile[] = [];
 
@@ -75,6 +76,7 @@ function TaskAttachmentRail({
   const [previewFile, setPreviewFile] = useState<TaskFile | null>(null);
   const [previewText, setPreviewText] = useState<string>("");
   const previewRequest = useRef(0);
+  const previewDialogRef = useRef<HTMLDivElement>(null);
   const visibleFiles = useMemo(
     () => mergeTaskFiles(files, liveFiles),
     [files, liveFiles],
@@ -154,6 +156,11 @@ function TaskAttachmentRail({
     previewRequest.current += 1;
     setPreviewFile(null);
   }, []);
+  useFocusTrap({
+    active: previewFile !== null,
+    containerRef: previewDialogRef,
+    onEscape: closePreview,
+  });
 
   if (visibleFiles.length === 0) {
     if (!loadError) return null;
@@ -180,6 +187,7 @@ function TaskAttachmentRail({
         <span className="attachment-rail__label">Attachments</span>
         {visibleFiles.map((f) => (
           <button
+            type="button"
             key={f.id}
             className="attachment-rail__chip"
             onClick={() => openPreview(f)}
@@ -196,17 +204,25 @@ function TaskAttachmentRail({
 
       {/* Preview slide-over */}
       {previewFile && (
-        <div className="attachment-preview-overlay" onClick={closePreview}>
+        <div className="attachment-preview-overlay">
+          <button
+            type="button"
+            className="attachment-preview-backdrop"
+            onClick={closePreview}
+            aria-label="Close attachment preview"
+          />
           <div
+            ref={previewDialogRef}
             className="attachment-preview"
-            onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
             aria-label={`Preview ${previewFile.name}`}
+            tabIndex={-1}
           >
             <div className="attachment-preview__header">
               <h3>{previewFile.name}</h3>
               <button
+                type="button"
                 onClick={closePreview}
                 className="attachment-preview__close"
                 aria-label="Close preview"

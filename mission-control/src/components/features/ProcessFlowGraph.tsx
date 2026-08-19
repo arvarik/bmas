@@ -21,6 +21,7 @@ import {
   Check, Activity, XCircle, Clock, Info,
   Cpu, RotateCcw, Timer,
 } from "lucide-react";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -306,6 +307,7 @@ const RoundCard = forwardRef<HTMLButtonElement, RoundCardProps>(
 
     return (
       <button
+        type="button"
         ref={ref}
         className={`pfg-card ${isSelected ? "pfg-card--sel" : ""} ${isRunning ? "pfg-card--running" : ""}`}
         style={{ "--pfg-accent": pc } as React.CSSProperties}
@@ -331,6 +333,7 @@ const RoundCard = forwardRef<HTMLButtonElement, RoundCardProps>(
             {isRunning                   && <Activity size={11} style={{ color: "hsl(217,91%,60%)", animation: "pulse 2s infinite" }} />}
             {node.status === "failed"    && <XCircle  size={11} style={{ color: "hsl(0,84%,60%)" }} />}
             {node.status === "pending"   && <Clock    size={11} style={{ color: "hsl(220,15%,50%)" }} />}
+            <span>{node.status === "active" ? "running" : node.status}</span>
           </span>
         </div>
 
@@ -392,6 +395,8 @@ interface DetailOverlayProps {
 
 function DetailOverlay({ node, anchorPos, containerRect, onClose }: DetailOverlayProps) {
   const pc = phaseColor(node.phase);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap({ active: true, containerRef: dialogRef, onEscape: onClose });
 
   // Compute top position based on anchor card bottom
   const topOffset = anchorPos && containerRect
@@ -401,16 +406,20 @@ function DetailOverlay({ node, anchorPos, containerRect, onClose }: DetailOverla
   return (
     <>
       {/* Invisible backdrop to dismiss */}
-      <div
+      <button
+        type="button"
         className="pfg-overlay-backdrop"
         onClick={onClose}
-        aria-hidden
+        aria-label="Close round details"
       />
       <div
+        ref={dialogRef}
         className="pfg-detail"
         style={{ top: topOffset }}
         role="dialog"
+        aria-modal="true"
         aria-label={`Round ${node.round} details`}
+        tabIndex={-1}
       >
         <div className="pfg-detail__header" style={{ borderLeftColor: pc }}>
           <div>
@@ -419,7 +428,7 @@ function DetailOverlay({ node, anchorPos, containerRect, onClose }: DetailOverla
               {prettyPhase(node.phase)}
             </span>
           </div>
-          <button className="pfg-detail__close" onClick={onClose} aria-label="Close">✕</button>
+          <button type="button" className="pfg-detail__close" onClick={onClose} aria-label="Close">✕</button>
         </div>
 
         <div className="pfg-detail__body">
@@ -560,6 +569,8 @@ export function ProcessFlowGraph({
     return () => { cancelAnimationFrame(raf1); ro.disconnect(); };
   }, [measure, layout.nodes.length]);
 
+  const closeDetails = useCallback(() => setSelectedIdx(null), []);
+
   if (layout.nodes.length === 0) {
     return (
       <div className="pfg-empty">
@@ -608,13 +619,35 @@ export function ProcessFlowGraph({
             node={selected}
             anchorPos={selectedPos}
             containerRect={containerRect}
-            onClose={() => setSelectedIdx(null)}
+            onClose={closeDetails}
           />
         )}
       </div>
 
       {/* Legend */}
       <GraphLegend hasCycles={hasCycles} />
+      <details className="task-detail-data-alternative">
+        <summary>View execution rounds as a table</summary>
+        <div className="task-detail-table-wrap">
+          <table className="task-detail-table">
+            <caption>Execution rounds and routing details</caption>
+            <thead><tr><th>Round</th><th>Phase</th><th>Status</th><th>Agents</th><th>Turns</th><th>Duration</th><th>Rationale</th></tr></thead>
+            <tbody>
+              {layout.nodes.map((node) => (
+                <tr key={node.round}>
+                  <td>{node.round}</td>
+                  <td>{prettyPhase(node.phase)}</td>
+                  <td>{node.status === "active" ? "running" : node.status}</td>
+                  <td>{node.actors.map(prettyActor).join(", ") || "None recorded"}</td>
+                  <td>{node.turnCount}</td>
+                  <td>{node.durationMs == null ? "Not recorded" : fmtMs(node.durationMs)}</td>
+                  <td>{node.rationale || "Not recorded"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </div>
   );
 }

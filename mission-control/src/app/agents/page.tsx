@@ -30,7 +30,7 @@ export default function AgentsPage() {
         display: "flex", alignItems: "center", gap: "var(--space-2)",
         paddingBottom: "var(--space-2)",
       }}>
-        <Link href="/" style={{
+        <Link href="/" className="view-breadcrumb__link" style={{
           display: "flex", alignItems: "center", gap: "var(--space-1)",
           color: "var(--text-tertiary)", fontSize: "var(--text-sm)",
           textDecoration: "none",

@@ -149,7 +149,8 @@ function BlackboardEntryNode({ data }: { data: { entry: BoardEntry; isRemoved: b
   const color = authorColor(entry.author);
 
   return (
-    <div
+    <button
+      type="button"
       className={`bb-graph-node ${isRemoved ? "entry-remove" : "entry-appear"} ${isSolution ? "success-bloom" : ""}`}
       style={{
         background: "var(--surface-overlay)",
@@ -199,7 +200,7 @@ function BlackboardEntryNode({ data }: { data: { entry: BoardEntry; isRemoved: b
             fontFamily: "var(--font-mono)",
           }}
         >
-          {entry.author}
+          {entry.author} · {entry.type} · {entry.status ?? (isRemoved ? "removed" : "open")}
         </span>
       </div>
 
@@ -216,7 +217,7 @@ function BlackboardEntryNode({ data }: { data: { entry: BoardEntry; isRemoved: b
           transition: "width 500ms ease-out",
         }}
       />
-    </div>
+    </button>
   );
 }
 
@@ -240,6 +241,7 @@ export function BlackboardGraph({
   onNodeClick,
 }: BlackboardGraphProps) {
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"graph" | "table">("graph");
   const removedSet = useMemo(() => new Set(removedEntryIds), [removedEntryIds]);
   const nodes = useMemo(() => layoutNodes(entries, removedSet), [entries, removedSet]);
   const edges = useMemo(() => buildEdges(entries, variant), [entries, variant]);
@@ -275,7 +277,56 @@ export function BlackboardGraph({
   }
 
   return (
-    <div style={{ width: "100%", height: "100%", minHeight: 400 }}>
+    <div style={{ width: "100%", height: "100%", minHeight: 400, display: "flex", flexDirection: "column" }}>
+      <div className="task-detail-tabs" role="tablist" aria-label="Blackboard relationship view">
+        {(["graph", "table"] as const).map((mode, index, modes) => (
+          <button
+            key={mode}
+            type="button"
+            id={`blackboard-${mode}-tab`}
+            role="tab"
+            aria-selected={viewMode === mode}
+            aria-controls={`blackboard-${mode}-panel`}
+            tabIndex={viewMode === mode ? 0 : -1}
+            onClick={() => setViewMode(mode)}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
+              event.preventDefault();
+              const nextIndex = event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? modes.length - 1
+                  : (index + (event.key === "ArrowRight" ? 1 : -1) + modes.length) % modes.length;
+              setViewMode(modes[nextIndex]);
+              event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("button")[nextIndex]?.focus();
+            }}
+          >
+            {mode === "graph" ? "Graph" : "Accessible table"}
+          </button>
+        ))}
+      </div>
+      {viewMode === "table" ? (
+        <div id="blackboard-table-panel" role="tabpanel" aria-labelledby="blackboard-table-tab" className="task-detail-table-wrap">
+          <table className="task-detail-table">
+            <caption>Blackboard entries and their relationships</caption>
+            <thead><tr><th>Entry</th><th>Type</th><th>Author</th><th>Status</th><th>Salience</th><th>Confidence</th><th>References</th></tr></thead>
+            <tbody>
+              {entries.map((entry) => (
+                <tr key={entry.id}>
+                  <td><button type="button" onClick={() => onNodeClick?.(entry.id)}>{entry.title || entry.id}</button></td>
+                  <td>{entry.type}</td>
+                  <td>{entry.author}</td>
+                  <td>{removedSet.has(entry.id) ? "removed" : entry.status ?? "open"}</td>
+                  <td>{Math.round(entry.salience * 100)}%</td>
+                  <td>{Math.round(entry.confidence * 100)}%</td>
+                  <td>{entry.refs.length > 0 ? entry.refs.join(", ") : "None"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+      <div id="blackboard-graph-panel" role="tabpanel" aria-labelledby="blackboard-graph-tab" style={{ flex: 1, minHeight: 0 }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -301,6 +352,8 @@ export function BlackboardGraph({
           }}
         />
       </ReactFlow>
+      </div>
+      )}
     </div>
   );
 }

@@ -150,10 +150,18 @@ export function AgentMindCard({
       : tokenCount > 0
         ? CheckCircle2
         : Circle;
+  const statusLabel = pendingApproval
+    ? "Approval required"
+    : isActive
+      ? "Active"
+      : tokenCount > 0
+        ? "Complete"
+        : "Pending";
 
   if (compact) {
     return (
       <button
+        type="button"
         className="agent-mind-pill"
         onClick={onClick}
         style={{
@@ -164,17 +172,22 @@ export function AgentMindCard({
       >
         <span
           className="agent-mind-pill__dot"
+          aria-hidden="true"
           style={{ background: statusColor }}
         />
         <span className="agent-mind-pill__name">{displayName}</span>
+        <span className="sr-only">, {statusLabel}</span>
       </button>
     );
   }
 
   return (
-    <div
+    <button
+      type="button"
       className="agent-mind-card"
       onClick={onClick}
+      disabled={!onClick}
+      aria-label={`${displayName}, ${statusLabel}`}
       style={{
         borderLeft: `3px solid ${color}`,
         cursor: onClick ? "pointer" : "default",
@@ -256,6 +269,6 @@ export function AgentMindCard({
           ⏸ Approval required: {pendingApproval.description || "Action pending"}
         </div>
       )}
-    </div>
+    </button>
   );
 }

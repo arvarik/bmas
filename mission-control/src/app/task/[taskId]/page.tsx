@@ -4,22 +4,21 @@
  * Task Overview Page — /task/[taskId]
  *
  * Three rendering modes:
- * - Running: live progress + HITL controls (pause/abort/hint)
+ * - Running: live progress. The persistent task layout owns operator controls.
  * - Completed: result hero + process pipeline + stats + CTAs
  * - Failed: error card + retry button
  *
  */
 
-import { useState, useCallback, useRef, useEffect, Fragment, useMemo } from "react";
+import { useState, useEffect, Fragment, useMemo } from "react";
 import type { ComponentType } from "react";
-import { useParams } from "next/navigation";
 
 import { useTaskData } from "./TaskStreamContext";
 import { Panel } from "@/components/ui/Panel";
 import { MetricCard } from "@/components/ui/MetricCard";
 import {
-  Activity, Pause, Play, XCircle,
-  Send, ChevronDown, Clock, Users,
+  Activity, Pause, XCircle,
+  ChevronDown, Clock, Users,
   Layers, Zap, Radio, MessageSquare, Cpu, Cloud,
 } from "lucide-react";
 import { authorColor } from "@/lib/design-tokens";
@@ -206,9 +205,12 @@ function CostDisplay({ cost }: { cost: CostData | null }) {
   return (
     <div>
       <div className="overview__stats">
-        <div
+        <button
+          type="button"
           className={`overview__metric-toggle ${expanded === "cost" ? "overview__metric-toggle--active" : ""}`}
           onClick={() => setExpanded(expanded === "cost" ? null : "cost")}
+          aria-expanded={expanded === "cost"}
+          aria-controls="cost-breakdown"
         >
           <MetricCard
             label={
@@ -227,10 +229,13 @@ function CostDisplay({ cost }: { cost: CostData | null }) {
             value={cost.total_cost}
             format="currency"
           />
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           className={`overview__metric-toggle ${expanded === "tokens" ? "overview__metric-toggle--active" : ""}`}
           onClick={() => setExpanded(expanded === "tokens" ? null : "tokens")}
+          aria-expanded={expanded === "tokens"}
+          aria-controls="cost-breakdown"
         >
           <MetricCard
             label={
@@ -249,11 +254,12 @@ function CostDisplay({ cost }: { cost: CostData | null }) {
             value={cost.total_tokens}
             format="number"
           />
-        </div>
+        </button>
       </div>
 
       {expanded && (
         <div
+          id="cost-breakdown"
           className="overview__breakdown-panel"
           style={{
             padding: "var(--space-3)",
@@ -439,9 +445,12 @@ function TimeDisplay({
   return (
     <div style={{ marginTop: "var(--space-2)" }}>
       <div className="overview__stats">
-        <div
+        <button
+          type="button"
           className={`overview__metric-toggle ${expanded ? "overview__metric-toggle--active" : ""}`}
           onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          aria-controls="duration-breakdown"
         >
           <MetricCard
             label={
@@ -460,7 +469,7 @@ function TimeDisplay({
             }
             value={totalMs ? fmtDuration(totalMs) : "—"}
           />
-        </div>
+        </button>
         <MetricCard
             label="Peak Parallelism"
             value={`${maxConcurrent} agent${maxConcurrent !== 1 ? "s" : ""}`}
@@ -469,6 +478,7 @@ function TimeDisplay({
 
       {expanded && timeline.length > 0 && (
         <div
+          id="duration-breakdown"
           className="overview__breakdown-panel"
           style={{
             padding: "var(--space-3)",
@@ -609,27 +619,23 @@ function useElapsed(startIso: string | undefined, isLive: boolean): string {
 interface LiveRunningViewProps {
   taskMeta: ReturnType<typeof useTaskData>["taskMeta"];
   cost: CostData | null;
-  taskId: string;
   completedTurns: TurnRecord[];
   activeTurns: TurnRecord[];
   boardEntries: ReturnType<typeof useTaskData>["boardEntries"];
   coordinatorNarrations: CoordinatorNarration[];
   consensus: ReturnType<typeof useTaskData>["consensus"];
   progressLabel: string;
-  controls: readonly string[];
 }
 
 function LiveRunningView({
   taskMeta,
   cost,
-  taskId,
   completedTurns,
   activeTurns,
   boardEntries,
   coordinatorNarrations,
   consensus,
   progressLabel,
-  controls,
 }: LiveRunningViewProps) {
   const allTurns = useMemo(() => [...completedTurns, ...activeTurns], [completedTurns, activeTurns]);
   const elapsed = useElapsed(taskMeta?.created_at, true);
@@ -758,9 +764,6 @@ function LiveRunningView({
         </div>
       )}
 
-      {/* HITL Controls */}
-      <HITLControls taskId={taskId} controls={controls} />
-
       {/* Running cost breakdown */}
       <CostDisplay cost={cost} />
     </div>
@@ -803,7 +806,6 @@ function LiveStat({
 
 
 export default function TaskOverviewPage() {
-  const { taskId } = useParams();
   const streamData = useTaskData();
   const {
     result, error, isLive, taskMeta, cost,
@@ -841,14 +843,12 @@ export default function TaskOverviewPage() {
       <LiveRunningView
         taskMeta={patchedTaskMeta}
         cost={cost}
-        taskId={taskId as string}
         completedTurns={completedTurns}
         activeTurns={activeTurns}
         boardEntries={boardEntries}
         coordinatorNarrations={coordinatorNarrations}
         consensus={consensus}
         progressLabel={progressLabel}
-        controls={runtime.capability?.features.controls ?? []}
       />
     );
   }
@@ -961,129 +961,6 @@ function CompletedView({
       {/* Stats bar — interactive breakdown on click */}
       <CostDisplay cost={cost} />
       <TimeDisplay turns={completedTurns} totalMs={taskMeta?.duration_ms} />
-    </div>
-  );
-}
-
-// ── HITL Controls ─────────────────────────────────────────────────────
-
-function HITLControls({
-  taskId,
-  controls,
-}: {
-  taskId: string;
-  controls: readonly string[];
-}) {
-  const [isPaused, setIsPaused] = useState(false);
-  const [isAborting, setIsAborting] = useState(false);
-  const [hintText, setHintText] = useState("");
-  const [hintSending, setHintSending] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const canTogglePause = isPaused
-    ? controls.includes("resume")
-    : controls.includes("pause");
-  const canAbort = controls.includes("abort");
-  const canSendDirective = controls.includes("directive");
-
-  // Check current pause state on mount
-  useEffect(() => {
-    if (!controls.includes("pause") && !controls.includes("resume")) return;
-    fetch(`/api/hitl?task_id=${encodeURIComponent(taskId)}`)
-      .then((r) => r.json())
-      .then((d) => setIsPaused(d.paused ?? false))
-      .catch(() => {});
-  }, [controls, taskId]);
-
-  const handlePauseToggle = useCallback(async () => {
-    const action = isPaused ? "resume" : "pause";
-    try {
-      const res = await fetch("/api/hitl", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, task_id: taskId }),
-      });
-      if (res.ok) setIsPaused(!isPaused);
-    } catch {}
-  }, [isPaused, taskId]);
-
-  const handleAbort = useCallback(async () => {
-    if (!confirm("Stop this task? Any progress will be lost.")) return;
-    setIsAborting(true);
-    try {
-      await fetch("/api/hitl", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "abort", task_id: taskId }),
-      });
-    } catch {}
-  }, [taskId]);
-
-  const handleSendHint = useCallback(async () => {
-    if (!hintText.trim()) return;
-    setHintSending(true);
-    try {
-      await fetch("/api/hitl", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "inject-hint",
-          task_id: taskId,
-          hint_text: hintText.trim(),
-        }),
-      });
-      setHintText("");
-    } catch {}
-    finally { setHintSending(false); }
-  }, [taskId, hintText]);
-
-  if (!canTogglePause && !canAbort && !canSendDirective) return null;
-
-  return (
-    <div className="overview__hitl">
-      <h4 className="overview__section-label">Operator Controls</h4>
-      <div className="overview__hitl-buttons">
-        {canTogglePause ? <button
-          className={`overview__hitl-btn ${isPaused ? "overview__hitl-btn--resume" : "overview__hitl-btn--pause"}`}
-          onClick={handlePauseToggle}
-        >
-          {isPaused ? <Play size={14} /> : <Pause size={14} />}
-          {isPaused ? "Resume Swarm" : "Pause Swarm"}
-        </button> : null}
-        {canAbort ? <button
-          className="overview__hitl-btn overview__hitl-btn--abort"
-          onClick={handleAbort}
-          disabled={isAborting}
-        >
-          <XCircle size={14} />
-          {isAborting ? "Aborting…" : "Abort Task"}
-        </button> : null}
-      </div>
-
-      {/* Hint injection */}
-      {canSendDirective ? <div className="overview__hint">
-        <label className="overview__hint-label" htmlFor="hint-input">
-          Inject Hint
-        </label>
-        <div className="overview__hint-row">
-          <textarea
-            id="hint-input"
-            ref={textareaRef}
-            className="overview__hint-input"
-            placeholder="Enter guidance for the swarm…"
-            value={hintText}
-            onChange={(e) => setHintText(e.target.value)}
-            rows={2}
-            disabled={hintSending}
-          />
-          <button
-            className="overview__hint-send"
-            onClick={handleSendHint}
-            disabled={!hintText.trim() || hintSending}
-          >
-            <Send size={14} />
-          </button>
-        </div>
-      </div> : null}
     </div>
   );
 }

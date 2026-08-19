@@ -30,6 +30,10 @@ import {
   Hash,
   User,
 } from "lucide-react";
+import {
+  SettingsChangeDialog,
+  type SettingsChange,
+} from "@/components/ui/SettingsChangeDialog";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -300,6 +304,7 @@ export function RoleRegistryEditor({
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [showConfirmation, setShowConfirmation] = useState(false);
 
   // Sync when parent registry changes (after global reset / server refresh)
   useEffect(() => {
@@ -316,6 +321,53 @@ export function RoleRegistryEditor({
     [localRegistry, roleRegistry]
   );
   const dirtyCount = dirtyRoles.length;
+  const pendingPatch = useMemo(() => {
+    const patch: Record<string, Partial<RegistryEntry>> = {};
+
+    for (const [role, entry] of Object.entries(localRegistry)) {
+      const server = roleRegistry[role];
+      const rolePatch: Partial<RegistryEntry> = {};
+      if (!server || entry.preferred_host !== server.preferred_host) {
+        rolePatch.preferred_host = entry.preferred_host;
+      }
+      if (!server || entry.profile !== server.profile) rolePatch.profile = entry.profile;
+      if (!server || entry.dispatch_port !== server.dispatch_port) {
+        rolePatch.dispatch_port = entry.dispatch_port;
+      }
+      if (Object.keys(rolePatch).length > 0) patch[role] = rolePatch;
+    }
+
+    return patch;
+  }, [localRegistry, roleRegistry]);
+
+  const proposedChanges = useMemo<SettingsChange[]>(() => {
+    const changes: SettingsChange[] = [];
+    for (const [role, patch] of Object.entries(pendingPatch)) {
+      const server = roleRegistry[role];
+      if (Object.hasOwn(patch, "preferred_host")) {
+        changes.push({
+          label: `${role} preferred host`,
+          before: server?.preferred_host ?? "Any host",
+          after: patch.preferred_host ?? "Any host",
+        });
+      }
+      if (Object.hasOwn(patch, "profile")) {
+        changes.push({
+          label: `${role} profile`,
+          before: server?.profile ?? "Not set",
+          after: patch.profile ?? "Not set",
+        });
+      }
+      if (Object.hasOwn(patch, "dispatch_port")) {
+        changes.push({
+          label: `${role} dispatch port`,
+          before: String(server?.dispatch_port ?? "Not set"),
+          after: String(patch.dispatch_port ?? "Not set"),
+        });
+      }
+    }
+    return changes;
+  }, [pendingPatch, roleRegistry]);
 
   useEffect(() => {
     onDirtyChange?.(dirtyCount);
@@ -333,30 +385,19 @@ export function RoleRegistryEditor({
     setSaving(true);
     setErrorMsg("");
 
-    // Build minimal patch (only changed fields per role)
-    const patch: Record<string, Partial<RegistryEntry>> = {};
-    for (const [role, entry] of Object.entries(localRegistry)) {
-      const server = roleRegistry[role];
-      const rolePatch: Partial<RegistryEntry> = {};
-      if (!server || entry.preferred_host !== server.preferred_host)
-        rolePatch.preferred_host = entry.preferred_host;
-      if (!server || entry.profile !== server.profile) rolePatch.profile = entry.profile;
-      if (!server || entry.dispatch_port !== server.dispatch_port)
-        rolePatch.dispatch_port = entry.dispatch_port;
-      if (Object.keys(rolePatch).length > 0) patch[role] = rolePatch;
-    }
-
     try {
-      await onSave(patch);
+      await onSave(pendingPatch);
+      setShowConfirmation(false);
       setSaveStatus("success");
       setTimeout(() => setSaveStatus("idle"), 2500);
     } catch (e) {
+      setShowConfirmation(false);
       setSaveStatus("error");
       setErrorMsg(e instanceof Error ? e.message : "Save failed");
     } finally {
       setSaving(false);
     }
-  }, [localRegistry, roleRegistry, onSave]);
+  }, [onSave, pendingPatch]);
 
   const handleResetToDefaults = useCallback(() => {
     setLocalRegistry({ ...defaultRegistry });
@@ -411,7 +452,7 @@ export function RoleRegistryEditor({
             <span>Reset to defaults</span>
           </button>
           <button
-            onClick={() => void handleSave()}
+            onClick={() => setShowConfirmation(true)}
             className={`settings-btn ${
               saveStatus === "success" ? "settings-btn--success" : "settings-btn--primary"
             } ${saving ? "settings-btn--loading" : ""}`}
@@ -473,6 +514,17 @@ export function RoleRegistryEditor({
           </span>
         </div>
       </div>
+
+      <SettingsChangeDialog
+        open={showConfirmation}
+        title="Apply role registry changes?"
+        description={`Review ${proposedChanges.length} field change${proposedChanges.length === 1 ? "" : "s"} before you apply them.`}
+        changes={proposedChanges}
+        confirmLabel="Apply role changes"
+        busy={saving}
+        onCancel={() => setShowConfirmation(false)}
+        onConfirm={() => void handleSave()}
+      />
     </div>
   );
 }
