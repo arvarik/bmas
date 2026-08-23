@@ -9,57 +9,66 @@
 
 /* ── Design Tokens ─────────────────────────────────────────────────── */
 :root {
-  /* ── Surface Hierarchy (§2.1) ──────────────────────────────────── */
-  --surface-base: hsl(222 47% 6%);
-  --surface-raised: hsl(222 44% 9%);
-  --surface-overlay: hsl(222 40% 12%);
-  --surface-hover: hsl(222 36% 16%);
-  --surface-active: hsl(222 32% 20%);
+  /* ── Surface ladder (page → canvas → surface → hover → active) ──
+     Neutral dark with a faint cool hue. Each step is about 3% lighter. */
+  --surface-base: oklch(20.5% 0.008 262);
+  --surface-raised: oklch(23.5% 0.008 262);
+  --surface-overlay: oklch(26.5% 0.008 264);
+  --surface-hover: oklch(29.5% 0.008 266);
+  --surface-active: oklch(32.5% 0.008 268);
 
-  /* ── Text Hierarchy (§2.2) ─────────────────────────────────────── */
-  --text-primary: hsl(210 20% 96%);
-  --text-secondary: hsl(215 15% 72%);
-  --text-tertiary: hsl(218 12% 64%);
-  --text-inverse: hsl(222 47% 6%);
+  /* ── Ink ──────────────────────────────────────────────────────── */
+  --text-primary: oklch(96.4% 0.002 248);
+  --text-secondary: oklch(75% 0.008 260);
+  --text-tertiary: oklch(60% 0.01 264);
+  --text-inverse: oklch(20.5% 0.008 262);
 
-  /* ── Semantic Status Colors (§2.3) ─────────────────────────────── */
-  --status-pending: hsl(220 15% 64%);
-  --status-running: hsl(213 90% 68%);
-  --status-success: hsl(142 65% 62%);
-  --status-error: hsl(0 86% 72%);
-  --status-paused: hsl(38 92% 50%);
+  /* ── Semantic status ──────────────────────────────────────────── */
+  --status-pending: oklch(62% 0.012 262);
+  --status-running: oklch(68% 0.173 253);
+  --status-success: oklch(70.5% 0.154 154);
+  --status-error: oklch(68% 0.18 22);
+  --status-paused: oklch(74.6% 0.156 56);
+  --status-warning: oklch(74.6% 0.156 56);
 
-  /* ── Accent & Interactive (§2.4) ───────────────────────────────── */
-  --accent-primary: hsl(213 90% 68%);
-  --accent-primary-hover: hsl(213 90% 74%);
-  --accent-subtle: hsl(213 90% 68% / 0.12);
-  --border-default: hsl(222 20% 22%);
-  --border-subtle: hsl(222 20% 18%);
-  --border-focus: hsl(213 90% 72%);
+  /* ── Accent and lines ─────────────────────────────────────────── */
+  --accent-primary: oklch(68% 0.173 253);
+  --accent-primary-hover: oklch(74% 0.16 253);
+  --accent-ink: oklch(78.8% 0.113 248);
+  --accent-subtle: oklch(68% 0.173 253 / 0.16);
+  --border-default: oklch(33% 0.008 264);
+  --border-subtle: oklch(29% 0.007 262);
+  --border-strong: oklch(38% 0.008 264);
+  --border-focus: oklch(72% 0.16 253);
+  --focus-ring: oklch(68% 0.173 253 / 0.35);
 
-  /* ── Agent Identity Colors (§2.5) ──────────────────────────────── */
-  --agent-planner: hsl(265 50% 60%);
-  --agent-executor: hsl(175 60% 45%);
-  --agent-auditor: hsl(32 80% 55%);
-  --agent-critic: hsl(350 60% 58%);
-  --agent-conflict-resolver: hsl(280 45% 58%);
-  --agent-cleaner: hsl(200 25% 55%);
-  --agent-decider: hsl(150 45% 50%);
+  /* ── Tints for badges and rows ────────────────────────────────── */
+  --tint-accent: oklch(68% 0.173 253 / 0.14);
+  --tint-success: oklch(70.5% 0.154 154 / 0.14);
+  --tint-error: oklch(66.6% 0.18 21 / 0.14);
+  --tint-warning: oklch(74.6% 0.156 56 / 0.14);
 
-  /* ── Typography (§3) ───────────────────────────────────────────── */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* ── Agent identity ───────────────────────────────────────────── */
+  --agent-planner: oklch(66% 0.17 295);
+  --agent-executor: oklch(72% 0.12 180);
+  --agent-auditor: oklch(74% 0.15 60);
+  --agent-critic: oklch(66% 0.17 10);
+  --agent-conflict-resolver: oklch(66% 0.14 310);
+  --agent-cleaner: oklch(66% 0.05 230);
+  --agent-decider: oklch(68% 0.14 150);
+
+  /* ── Typography ───────────────────────────────────────────────── */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 
-  /* Type Scale */
-  --text-xs: 0.6875rem;
-  --text-sm: 0.8125rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
   --text-base: 0.9375rem;
   --text-lg: 1.125rem;
   --text-xl: 1.5rem;
   --text-metric: 1.75rem;
   --text-mono: 0.8125rem;
 
-  /* Line Heights */
   --leading-xs: 1.45;
   --leading-sm: 1.5;
   --leading-base: 1.5;
@@ -67,13 +76,14 @@
   --leading-xl: 1.3;
   --leading-metric: 1.2;
   --leading-mono: 1.6;
+  --leading-relaxed: 1.6;
 
-  /* Font Weights */
   --weight-regular: 400;
   --weight-medium: 500;
   --weight-semibold: 600;
+  --weight-bold: 700;
 
-  /* ── Spacing (§4.1) ────────────────────────────────────────────── */
+  /* ── Spacing ──────────────────────────────────────────────────── */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -84,22 +94,34 @@
   --space-10: 40px;
   --space-12: 48px;
 
-  /* ── Border Radius (§4.2) ──────────────────────────────────────── */
+  /* ── Radius (chip 6 · control 8 · card 10 · sheet 14) ─────────── */
   --radius-sm: 6px;
   --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
   --radius-full: 9999px;
 
-  /* ── Elevation / Shadows (§4.3) ────────────────────────────────── */
-  --shadow-sm: 0 1px 2px hsl(222 47% 4% / 0.3);
-  --shadow-md: 0 4px 12px hsl(222 47% 4% / 0.4);
-  --shadow-lg: 0 8px 24px hsl(222 47% 4% / 0.5);
+  /* ── Elevation: hairline rings plus soft shadows ──────────────── */
+  --shadow-hairline: 0 0 0 1px var(--border-default);
+  --shadow-btn: 0 0 0 1px oklch(100% 0 0 / 0.08), 0 1px 2px oklch(0% 0 0 / 0.3);
+  --shadow-card: 0 0 0 1px oklch(100% 0 0 / 0.09), 0 1px 2px oklch(0% 0 0 / 0.2), 0 2px 6px oklch(0% 0 0 / 0.2);
+  --shadow-raised: 0 0 0 1px oklch(100% 0 0 / 0.11), 0 2px 10px oklch(0% 0 0 / 0.22);
+  --shadow-overlay: 0 0 0 1px oklch(100% 0 0 / 0.13), 0 8px 28px oklch(0% 0 0 / 0.34);
+  --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.3);
+  --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.3);
+  --shadow-lg: var(--shadow-overlay);
 
-  /* ── Layout Constants ──────────────────────────────────────────── */
+  /* ── Motion ───────────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+
+  /* ── Layout ───────────────────────────────────────────────────── */
   --topbar-height: 48px;
-  --sidebar-width: 240px;
-  --sidebar-collapsed-width: 48px;
+  --sidebar-width: 232px;
+  --sidebar-collapsed-width: 52px;
   --toast-width: 360px;
 }
 
@@ -123,6 +145,7 @@ body {
   font-weight: var(--weight-regular);
   font-size: var(--text-sm);
   line-height: var(--leading-sm);
+  font-variant-numeric: tabular-nums;
   color: var(--text-primary);
   background: var(--surface-base);
   overflow: hidden;

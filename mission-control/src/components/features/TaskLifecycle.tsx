@@ -373,7 +373,7 @@ export function TaskLifecycle({
             onRetry={() => void copyTask("retry")}
             compact
           />
-          <div><Link href={`/task/${task.task_id}/logs?log_q=${encodeURIComponent(task.error_message)}`}>Open related logs</Link><Link href={`/task/${task.task_id}/logs?mode=trace&trace_q=${encodeURIComponent(task.error_message)}`}>Open related traces</Link></div>
+          <div><Link href={`/task/${task.task_id}?tab=logs&log_q=${encodeURIComponent(task.error_message)}`}>Open related logs</Link><Link href={`/task/${task.task_id}?tab=logs&mode=trace&trace_q=${encodeURIComponent(task.error_message)}`}>Open related traces</Link></div>
         </div>
       ) : null}
       {operatorAction.status === "error" ? (

@@ -10,6 +10,7 @@ import { TaskSidebar } from "@/components/ui/TaskSidebar";
 import { useSystemStream } from "@/hooks/useSystemStream";
 import { useTaskHistory } from "@/hooks/useTaskHistory";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
+import { usePreferences } from "@/lib/preferences";
 
 // ── Route → breadcrumb label mapping ─────────────────────────────────
 
@@ -38,7 +39,6 @@ function getBreadcrumb(pathname: string): string {
   if (pathname === "/infra") return "Infrastructure";
   if (pathname === "/agents" || pathname === "/skills") return "Agents";
   if (pathname.startsWith("/agents/")) return "Agent detail";
-  if (pathname === "/sessions") return "Hermes Sessions";
   if (pathname === "/settings") return "Settings";
   return "Overview";
 }
@@ -60,7 +60,9 @@ function getBreadcrumb(pathname: string): string {
 export function ClientShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
+  const [preferences] = usePreferences();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarPreferenceApplied, setSidebarPreferenceApplied] = useState(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState(false);
   const drawerRef = useRef<HTMLElement>(null);
@@ -112,6 +114,19 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- sync UI state to pathname change
     setMobileDrawerOpen(false);
   }, [pathname]);
+
+  // ── Browser preferences: sidebar start state and reduced motion ───
+  useEffect(() => {
+    if (sidebarPreferenceApplied) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- apply the saved start state once
+    setSidebarPreferenceApplied(true);
+    if (preferences.sidebarCollapsed && !window.matchMedia("(max-width: 1023px)").matches) {
+      setSidebarCollapsed(true);
+    }
+  }, [preferences.sidebarCollapsed, sidebarPreferenceApplied]);
+  useEffect(() => {
+    document.body.dataset.reducedMotion = preferences.reducedMotion ? "true" : "false";
+  }, [preferences.reducedMotion]);
 
   // ── Responsive: auto-collapse sidebar at <1024px ──────────────────
   useEffect(() => {

@@ -46,6 +46,23 @@ MOCK_RAW_CONFIG = {
 }
 
 
+MOCK_CLASSIC_CONFIG = {
+    "max_rounds": 4,
+    "max_duration_s": 1800,
+    "budget_ceiling_usd": 0.5,
+    "max_concurrent_activations": 3,
+    "experts_per_tier": {"simple": 0, "light": 1, "medium": 2, "complex": 4},
+    "cleaner_entry_threshold": 12,
+    "cleaner_token_threshold": 8000,
+    "cleaner_retention_weights": {"salience": 2.0, "confidence": 1.0, "recency": 0.1, "size_penalty": 0.01},
+    "stall_rounds": 2,
+    "max_replans": 2,
+    "cu_mode": "llm",
+    "coordinator_narration": False,
+    "sole_similarity": "auto",
+}
+
+
 @pytest.fixture(autouse=True)
 def mock_config():
     """Patch config module so settings_store seeds from mocks."""
@@ -56,6 +73,9 @@ def mock_config():
             RAW_CONFIG=MOCK_RAW_CONFIG,
             EDGE_NODE_MODELS=["edge-node-1"],
             NODES_BY_ROLE={},
+            CLASSIC_CONFIG=copy.deepcopy(MOCK_CLASSIC_CONFIG),
+            ROUND_EXECUTION="concurrent",
+            VIEW_BUDGET_TOKENS=12000,
         )
     }):
         # Reset singleton between tests
@@ -194,3 +214,67 @@ async def test_concurrent_patch_is_safe():
     routing = await store.get_routing()
     # Final value is one of the patched values — exact value is non-deterministic
     assert routing["simple"] in {"gemini-pro", "gemini-flash", "gemini-flash-lite"}
+
+
+# ── Classic runtime limits ───────────────────────────────────────────────
+
+
+
+@pytest.fixture
+def classic_store():
+    """A fresh store seeded from the mocked config."""
+    return get_fresh_store()
+
+
+def test_classic_seeds_from_config(classic_store):
+    classic = asyncio.run(classic_store.get_classic())
+    assert classic["max_rounds"] == 4
+    assert classic["round_execution"] == "concurrent"
+    assert classic["view_budget_tokens"] == 12000
+
+
+def test_patch_classic_merges_and_validates(classic_store):
+    updated = asyncio.run(classic_store.patch_classic({
+        "max_rounds": 6,
+        "experts_per_tier": {"complex": 5},
+        "round_execution": "sequential",
+    }))
+    assert updated["max_rounds"] == 6
+    assert updated["experts_per_tier"] == {"simple": 0, "light": 1, "medium": 2, "complex": 5}
+    assert updated["round_execution"] == "sequential"
+    assert updated["budget_ceiling_usd"] == 0.5
+
+
+@pytest.mark.parametrize("patch_body", [
+    {"max_rounds": 0},
+    {"budget_ceiling_usd": 0},
+    {"cu_mode": "random"},
+    {"round_execution": "parallel"},
+    {"view_budget_tokens": 100},
+    {"experts_per_tier": {"huge": 3}},
+    {"unknown_key": 1},
+])
+def test_patch_classic_rejects_invalid_values(classic_store, patch_body):
+    with pytest.raises(ValueError):
+        asyncio.run(classic_store.patch_classic(patch_body))
+    assert asyncio.run(classic_store.get_classic()) == asyncio.run(classic_store.get_defaults_classic())
+
+
+def test_reset_restores_classic_defaults(classic_store):
+    asyncio.run(classic_store.patch_classic({"max_rounds": 9}))
+    restored = asyncio.run(classic_store.reset_to_defaults())
+    assert restored["classic"]["max_rounds"] == 4
+    assert asyncio.run(classic_store.get_classic())["max_rounds"] == 4
+
+
+def test_role_registry_patch_accepts_enabled(classic_store):
+    updated = asyncio.run(classic_store.patch_role_registry({"expert": {"enabled": False}}))
+    assert updated["expert"]["enabled"] is False
+    with pytest.raises(ValueError):
+        asyncio.run(classic_store.patch_role_registry({"expert": {"enabled": "no"}}))
+
+
+def test_schema_lists_classic_fields(classic_store):
+    schema = asyncio.run(classic_store.get_schema())
+    keys = [field["key"] for field in schema["classic_fields"]]
+    assert "max_rounds" in keys and "round_execution" in keys

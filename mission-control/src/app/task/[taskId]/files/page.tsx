@@ -1,17 +1,22 @@
-"use client";
+/**
+ * /task/[taskId]/files → /task/[taskId]?tab=files
+ *
+ * Task tabs live on one page. Old deep links keep working.
+ */
+import { redirect } from "next/navigation";
 
-import { useParams } from "next/navigation";
-import { FilesWorkspace } from "@/components/features/FilesWorkspace";
-import { useTaskData } from "../TaskStreamContext";
-
-export default function FilesPage() {
-  const { taskId } = useParams();
-  const { liveArtifacts, liveFiles } = useTaskData();
-  return (
-    <FilesWorkspace
-      taskId={taskId as string}
-      liveFiles={liveFiles}
-      liveArtifacts={liveArtifacts}
-    />
-  );
+export default async function LegacyTabRedirect({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ taskId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const { taskId } = await params;
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(await searchParams)) {
+    if (typeof value === "string") query.set(key, value);
+  }
+  query.set("tab", "files");
+  redirect(`/task/${encodeURIComponent(taskId)}?${query.toString()}`);
 }

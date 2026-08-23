@@ -1,145 +1,22 @@
-"use client";
-
 /**
- * Cockpit — the flagship Phase 5 live command center (doc 13).
+ * /task/[taskId]/mission → /task/[taskId]?tab=mission
  *
- * A dense, multi-panel command center with four synchronized regions:
- *   1. Blackboard Graph (center) — live board visualization
- *   2. Agent Minds (right rail) — per-agent live cards
- *   3. Global Firehose (far right, toggleable) — all trace events
- *   4. Convergence Strip (bottom) — sparklines over rounds
- *
- * Cross-linking: clicking graph nodes highlights agent cards,
- * clicking agent cards opens TurnInspector.
+ * Task tabs live on one page. Old deep links keep working.
  */
+import { redirect } from "next/navigation";
 
-import { useMemo, useState } from "react";
-import { useTaskData } from "../TaskStreamContext";
-import { BlackboardBoard } from "@/components/features/BlackboardBoard";
-import { AgentMindCard } from "@/components/features/AgentMindCard";
-import { TurnInspector } from "@/components/features/TurnInspector";
-
-export default function MissionPage() {
-  const {
-    taskMeta,
-    boardEntries,
-    removedEntryIds,
-    activeTurns,
-    completedTurns,
-    traceEvents,
-    approvalRequests,
-    isLive,
-    consensus,
-    phase,
-    runtime,
-  } = useTaskData();
-
-
-  const [selectedActor, setSelectedActor] = useState<string | null>(null);
-
-  const taskId = taskMeta?.task_id ?? "";
-  const controls = runtime.capability?.features.controls ?? [];
-
-  // Unique actors from board entries and turns
-  const actors = useMemo(() => {
-    const set = new Set<string>();
-    for (const entry of boardEntries) {
-      if (entry.author) set.add(entry.author);
-    }
-    for (const turn of [...activeTurns, ...completedTurns]) {
-      if (turn.actor) set.add(turn.actor);
-    }
-    // Remove system actors
-    set.delete("control_unit");
-    set.delete("operator");
-    return Array.from(set).sort();
-  }, [boardEntries, activeTurns, completedTurns]);
-
-  // Selected actor's latest turn for TurnInspector
-  const selectedTurn = useMemo(() => {
-    if (!selectedActor) return null;
-    const actorTurns = [...activeTurns, ...completedTurns].filter(
-      (t) => t.actor === selectedActor,
-    );
-    return actorTurns[actorTurns.length - 1] ?? null;
-  }, [selectedActor, activeTurns, completedTurns]);
-
-  return (
-    <div className="mission-cockpit">
-
-      {isLive ? (
-        <div className="mission-cockpit__topbar">
-          <div className="mission-cockpit__topbar-left">
-            <span className="mission-cockpit__status">
-              {runtime.capability?.label ?? "Coordination runtime"}
-            </span>
-          </div>
-        </div>
-      ) : null}
-
-      {/* ── Main Content ────────────────────────────────────────── */}
-      <div className="mission-cockpit__scroll-area">
-        <div
-          className="mission-cockpit__body"
-        >
-          {/* Center: Blackboard command center */}
-          <div className="mission-cockpit__center" style={{ padding: "var(--space-2) var(--space-4)" }}>
-            <BlackboardBoard
-              taskId={taskId}
-              liveEntries={boardEntries}
-              removedEntryIds={removedEntryIds}
-              isLive={isLive}
-              phase={phase}
-              consensus={consensus}
-              allTurns={[...activeTurns, ...completedTurns]}
-              controls={controls}
-            />
-          </div>
-
-          {/* Right Rail: Agent Minds */}
-          <div className="mission-cockpit__agents">
-            <div className="mission-cockpit__agents-header">
-              <span>Agent Minds</span>
-              <span className="mission-cockpit__agents-count">
-                {actors.length}
-              </span>
-            </div>
-            <div className="mission-cockpit__agents-list">
-              {actors.map((actor) => (
-                <AgentMindCard
-                  key={actor}
-                  actor={actor}
-                  traceEvents={traceEvents}
-                  activeTurns={activeTurns}
-                  completedTurns={completedTurns}
-                  approvalRequests={approvalRequests}
-                  boardEntries={boardEntries}
-                  onClick={() =>
-                    setSelectedActor(
-                      selectedActor === actor ? null : actor,
-                    )
-                  }
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-
-
-      {/* ── Turn Inspector Modal ──────────────────────────────────── */}
-      {selectedActor && (
-        <TurnInspector
-          turnId={selectedTurn?.turn_id ?? null}
-          activeTurns={activeTurns}
-          completedTurns={completedTurns}
-          traceEvents={traceEvents}
-          boardEntries={boardEntries}
-          rejectedEntries={[]}
-          onClose={() => setSelectedActor(null)}
-        />
-      )}
-    </div>
-  );
+export default async function LegacyTabRedirect({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ taskId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const { taskId } = await params;
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(await searchParams)) {
+    if (typeof value === "string") query.set(key, value);
+  }
+  query.set("tab", "mission");
+  redirect(`/task/${encodeURIComponent(taskId)}?${query.toString()}`);
 }

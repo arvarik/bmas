@@ -106,7 +106,7 @@ export function SettingsChangeDialog({
         <button
           ref={cancelRef}
           type="button"
-          className="settings-btn settings-btn--ghost"
+          className="button"
           onClick={onCancel}
           disabled={busy}
         >
@@ -114,7 +114,7 @@ export function SettingsChangeDialog({
         </button>
         <button
           type="button"
-          className={`settings-btn ${danger ? "settings-btn--danger" : "settings-btn--primary"}`}
+          className={`button ${danger ? "button--danger" : "button--primary"}`}
           onClick={onConfirm}
           disabled={busy}
         >

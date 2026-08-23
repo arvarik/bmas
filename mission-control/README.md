@@ -8,14 +8,14 @@ The default Compose stack publishes it at [http://localhost:9321](http://localho
 
 | View | Data |
 |:---|:---|
-| Landing page | Readiness, task submission, recent tasks, and summary counts |
+| Home | One composer: objective, attachments, runtime, send |
 | Task overview | Status, phase, process summary, and final result |
 | Execution graph | Classic rounds, role turns, and control-unit narration |
 | Logs | Daemon logs and agent traces |
 | Blackboard | Durable board entries, references, and debate threads |
 | Mission | Live board, role activity, events, and convergence |
-| Hermes sessions | Profile-aware session browsing, messages, and forks |
-| Skills | Read-only active skills and toolsets for each Hermes node profile |
+| Agents | One card per execution node; a detail page with Overview, Skills, and Toolsets tabs |
+| Settings | Models, roles, runtime limits, blackboard, browser workspace, and system facts |
 | Task header | Uploaded files, extracted-text previews, and original downloads |
 | Artifacts | Agent-created task outputs and immutable version downloads |
 | Infrastructure | Agent health and optional Beszel telemetry |
@@ -97,8 +97,7 @@ Docker Compose mounts `bmas.yaml` at `/etc/bmas/bmas.yaml`. Local tools can set 
 | `/api/profiles` | Lists the active Hermes profile for each configured agent. |
 | `/api/skills` | Reads the active profile's Hermes skills. |
 | `/api/toolsets` | Reads enabled and configured Hermes toolsets. |
-| `/api/sessions/*` | Lists, reads, and forks Hermes sessions. |
-| `/api/settings/*` | Reads and changes supported runtime settings. |
+| `/api/settings/*` | Reads and changes session settings: routing, role registry, and classic runtime limits. |
 | `/api/datasets/*` | Imports and reads immutable benchmark datasets. |
 | `/api/benchmarks/*` | Proxies benchmark authoring, execution, analysis, and review. |
 | `/api/telemetry` | Proxies optional Beszel telemetry. |

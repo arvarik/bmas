@@ -18,7 +18,6 @@ import {
   ShieldCheck,
   Settings,
   X,
-  MessagesSquare,
 } from "lucide-react";
 
 export interface TaskSidebarProps {
@@ -56,13 +55,7 @@ const GROUPS = [
     links: [
       { href: "/infra", label: "Operations", icon: Server },
       { href: "/agents", label: "Agents", icon: Bot },
-    ],
-  },
-  {
-    label: "Analyze",
-    links: [
       { href: "/analytics", label: "Analytics", icon: BarChart3 },
-      { href: "/sessions", label: "Sessions", icon: MessagesSquare },
     ],
   },
   {
