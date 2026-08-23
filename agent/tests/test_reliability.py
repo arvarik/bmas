@@ -1372,3 +1372,122 @@ def test_cli_spools_bounded_trace_without_truncating_result(monkeypatch, tmp_pat
     assert spool["traces"][0]["data"]["round"] == 4
     final_trace = next(trace for trace in spool["traces"] if trace["type"] == "final")
     assert final_trace["data"]["truncated"] is True
+
+
+# ── Task output workspace and artifact delivery ─────────────────────────
+
+def test_runs_api_adds_output_instructions_and_syncs_new_files(monkeypatch, tmp_path):
+    """The run tells the agent where to write files, then delivers them once."""
+    monkeypatch.setattr(api_server, "DAEMON_INGEST_URL", "http://daemon")
+    monkeypatch.setattr(api_server, "OUTPUTS_ROOT", tmp_path / "outputs-root")
+    completed = FakeStream([
+        "event: run.completed",
+        'data: {"output":"Saved report.md","usage":{"input_tokens":2,"output_tokens":1}}',
+        "",
+    ])
+    client = FakeRunsClient(completed)
+    uploads = []
+
+    async def fake_sync(task_id, turn_id, author, outputs_dir, request_id):
+        uploads.append({"task_id": task_id, "turn_id": turn_id, "author": author, "dir": outputs_dir})
+        return [{"rel_path": "report.md", "version": 1, "bytes": 12, "sha256": "x", "artifact_id": "a-1"}]
+
+    monkeypatch.setattr(api_server, "_sync_artifacts", fake_sync)
+
+    status, output, _, _, _ = run_api(client, role_prompt="Be the planner.")
+
+    assert status == api_server.TaskStatus.completed
+    instructions = client.posts[0]["json"]["instructions"]
+    expected_dir = tmp_path / "outputs-root" / "task-1" / "outputs"
+    assert instructions.startswith("Be the planner.")
+    assert str(expected_dir) in instructions
+    assert expected_dir.is_dir()
+    assert uploads == [{"task_id": "task-1", "turn_id": "turn-1", "author": "planner", "dir": expected_dir}]
+
+
+def test_runs_api_skips_output_directory_without_ingest(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "DAEMON_INGEST_URL", None)
+    monkeypatch.setattr(api_server, "OUTPUTS_ROOT", tmp_path / "outputs-root")
+    completed = FakeStream(["event: run.completed", 'data: {"output":"done"}', ""])
+    client = FakeRunsClient(completed)
+
+    run_api(client, role_prompt="Role")
+
+    assert client.posts[0]["json"]["instructions"] == "Role"
+    assert not (tmp_path / "outputs-root").exists()
+
+
+def test_task_outputs_dir_rejects_unsafe_task_ids(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "OUTPUTS_ROOT", tmp_path)
+    safe = api_server._task_outputs_dir("task-abc_1")
+    assert safe == tmp_path / "task-abc_1" / "outputs"
+    escaped = api_server._task_outputs_dir("../../etc")
+    assert escaped.parent.parent == tmp_path
+    assert escaped.parent.name.startswith("task-")
+
+
+def test_sync_artifacts_delivers_changed_files_once(monkeypatch, tmp_path):
+    """Unchanged files are not delivered again; hidden, empty, and oversized files are skipped."""
+    monkeypatch.setattr(api_server, "DAEMON_INGEST_URL", "http://daemon")
+    monkeypatch.setattr(api_server, "BMAS_NODE_KEY", "node-key")
+    monkeypatch.setattr(api_server, "ARTIFACT_MAX_BYTES", 1024)
+    calls = []
+
+    class SyncClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, url, **kwargs):
+            calls.append({"url": url, **kwargs})
+            return FakeResponse(data={"version": len(calls), "artifact_id": f"a-{len(calls)}"})
+
+    monkeypatch.setattr(api_server.httpx, "AsyncClient", SyncClient)
+    outputs = tmp_path / "task-1" / "outputs"
+    (outputs / "docs").mkdir(parents=True)
+    (outputs / "report.md").write_text("# Report")
+    (outputs / "docs" / "plan.txt").write_text("plan")
+    (outputs / ".hidden").write_text("secret")
+    (outputs / "empty.txt").write_text("")
+    (outputs / "big.bin").write_bytes(b"x" * 2048)
+
+    first = asyncio.run(api_server._sync_artifacts("task-1", "turn-1", "expert", outputs, "req-1"))
+    assert sorted(item["rel_path"] for item in first) == ["docs/plan.txt", "report.md"]
+    assert all(call["headers"]["Authorization"] == "Bearer node-key" for call in calls)
+    assert all(call["data"]["author"] == "expert" for call in calls)
+
+    # Nothing changed: no new uploads.
+    second = asyncio.run(api_server._sync_artifacts("task-1", "turn-2", "expert", outputs, "req-2"))
+    assert second == []
+    assert len(calls) == 2
+
+    # One file changed: only that file is delivered, as a new version.
+    (outputs / "report.md").write_text("# Report v2")
+    third = asyncio.run(api_server._sync_artifacts("task-1", "turn-3", "critic", outputs, "req-3"))
+    assert [item["rel_path"] for item in third] == ["report.md"]
+    assert len(calls) == 3
+
+
+def test_sweep_removes_only_stale_task_outputs(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "OUTPUTS_ROOT", tmp_path)
+    monkeypatch.setattr(api_server, "OUTPUTS_TTL_SECONDS", 3600)
+    old = tmp_path / "task-old" / "outputs"
+    fresh = tmp_path / "task-fresh" / "outputs"
+    old.mkdir(parents=True)
+    fresh.mkdir(parents=True)
+    (old / "a.txt").write_text("a")
+    (fresh / "b.txt").write_text("b")
+    stale_time = time.time() - 7200
+    for path in (old, old / "a.txt", old.parent):
+        os.utime(path, (stale_time, stale_time))
+
+    removed = api_server.sweep_stale_outputs()
+
+    assert removed == 1
+    assert not old.exists()
+    assert fresh.exists()

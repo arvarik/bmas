@@ -109,6 +109,7 @@ BMAS_NODE_KEY=replace-with-control-plane-node-key
 BMAS_EXECUTE_KEY=replace-with-control-plane-execute-key
 TRACE_SPOOL_DIR=/var/lib/bmas-agent/traces
 ACTIVATION_CACHE_DIR=/var/lib/bmas-agent/activations
+BMAS_OUTPUTS_ROOT=/var/lib/bmas-agent/outputs
 ```
 
 Add one Hermes execution method.

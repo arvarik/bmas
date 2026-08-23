@@ -12,6 +12,8 @@
 
 import { useState, useEffect, Fragment, useMemo } from "react";
 import type { ComponentType } from "react";
+import Link from "next/link";
+import { useParams, useSearchParams } from "next/navigation";
 
 import { useTaskData } from "../TaskStreamContext";
 import { Panel } from "@/components/ui/Panel";
@@ -19,10 +21,10 @@ import { MetricCard } from "@/components/ui/MetricCard";
 import {
   Activity, Pause, XCircle,
   ChevronDown, Clock, Users,
-  Layers, Zap, Radio, MessageSquare, Cpu, Cloud,
+  Layers, Zap, Radio, MessageSquare, Cpu, Cloud, FileText,
 } from "lucide-react";
 import { authorColor } from "@/lib/design-tokens";
-import type { CostData, TurnRecord, CoordinatorNarration } from "@/hooks/useTaskStream";
+import type { CostData, TaskArtifact, TurnRecord, CoordinatorNarration } from "@/hooks/useTaskStream";
 import { ProcessFlowGraph } from "@/components/features/ProcessFlowGraph";
 import { getActiveAdapter } from "@/lib/variants";
 import { UnsupportedVariantState } from "@/components/features/UnsupportedVariantState";
@@ -614,10 +616,49 @@ function useElapsed(startIso: string | undefined, isLive: boolean): string {
   return elapsed || "—";
 }
 
+// ── Output files strip ───────────────────────────────────────────────
+
+/** Newest version of every produced file, linking to the Files tab. */
+function OutputFilesStrip({ artifacts, live = false }: { artifacts: readonly TaskArtifact[]; live?: boolean }) {
+  const { taskId } = useParams();
+  const searchParams = useSearchParams();
+  const newest = useMemo(() => {
+    const byPath = new Map<string, TaskArtifact>();
+    for (const artifact of artifacts) {
+      const current = byPath.get(artifact.rel_path);
+      if (!current || artifact.version > current.version) byPath.set(artifact.rel_path, artifact);
+    }
+    return [...byPath.values()].sort((left, right) => left.rel_path.localeCompare(right.rel_path));
+  }, [artifacts]);
+  if (newest.length === 0) return null;
+  const params = new URLSearchParams(searchParams.toString());
+  params.set("tab", "files");
+  const filesHref = `/task/${taskId}?${params.toString()}`;
+  return (
+    <section className="output-files" aria-label="Output files">
+      <div className="output-files__head">
+        <h4 className="overview__section-label">Output files</h4>
+        <Link href={filesHref}>Open Files</Link>
+      </div>
+      <div className="output-files__chips">
+        {newest.map((artifact) => (
+          <Link key={artifact.rel_path} href={filesHref} className="output-files__chip" title={`${artifact.rel_path} · version ${artifact.version}`}>
+            <FileText size={13} aria-hidden="true" />
+            <span className="output-files__name">{artifact.rel_path}</span>
+            {artifact.version > 1 ? <span className="output-files__version">v{artifact.version}</span> : null}
+          </Link>
+        ))}
+        {live ? <span className="output-files__live">updating live</span> : null}
+      </div>
+    </section>
+  );
+}
+
 // ── Live Running View ─────────────────────────────────────────────────
 
 interface LiveRunningViewProps {
   taskMeta: ReturnType<typeof useTaskData>["taskMeta"];
+  artifacts: readonly TaskArtifact[];
   cost: CostData | null;
   completedTurns: TurnRecord[];
   activeTurns: TurnRecord[];
@@ -629,6 +670,7 @@ interface LiveRunningViewProps {
 
 function LiveRunningView({
   taskMeta,
+  artifacts,
   cost,
   completedTurns,
   activeTurns,
@@ -764,6 +806,8 @@ function LiveRunningView({
         </div>
       )}
 
+      <OutputFilesStrip artifacts={artifacts} live />
+
       {/* Running cost breakdown */}
       <CostDisplay cost={cost} />
     </div>
@@ -810,7 +854,7 @@ export function SummaryPanel() {
   const {
     result, error, isLive, taskMeta, cost,
     completedTurns, activeTurns, boardEntries, coordinatorNarrations, consensus,
-    runtime,
+    liveArtifacts, runtime,
   } = streamData;
   const adapter = getActiveAdapter(runtime.adapterId);
   const progressLabel = adapter
@@ -842,6 +886,7 @@ export function SummaryPanel() {
     return (
       <LiveRunningView
         taskMeta={patchedTaskMeta}
+        artifacts={liveArtifacts}
         cost={cost}
         completedTurns={completedTurns}
         activeTurns={activeTurns}
@@ -858,6 +903,7 @@ export function SummaryPanel() {
     return <CompletedView
       result={result}
       taskMeta={patchedTaskMeta}
+      artifacts={liveArtifacts}
       cost={cost}
       completedTurns={completedTurns}
       coordinatorNarrations={coordinatorNarrations}
@@ -916,6 +962,7 @@ export function SummaryPanel() {
 function CompletedView({
   result,
   taskMeta,
+  artifacts,
   cost,
   completedTurns,
   coordinatorNarrations = [],
@@ -924,6 +971,7 @@ function CompletedView({
 }: {
   result: string;
   taskMeta: ReturnType<typeof useTaskData>["taskMeta"];
+  artifacts: readonly TaskArtifact[];
   cost: CostData | null;
   completedTurns: TurnRecord[];
   coordinatorNarrations?: CoordinatorNarration[];
@@ -940,6 +988,8 @@ function CompletedView({
           <AdapterResultRenderer content={result} formats={resultFormats} />
         </div>
       </div>
+
+      <OutputFilesStrip artifacts={artifacts} />
 
       {/* Model badge */}
       {taskMeta?.model && (

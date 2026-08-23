@@ -50,6 +50,27 @@ The agent returns HTTP 409 when a running record has no known Hermes run identif
 
 The direct backend also uses the same activation cache. A daemon retry does not create a second provider request after a saved terminal result.
 
+## Output files (artifacts)
+
+The Hermes Runs API has no per-run working directory, so the adapter manages one.
+
+1. The adapter creates one directory per task under `BMAS_OUTPUTS_ROOT`.
+2. Every run's instructions tell the agent to write file deliverables into that directory.
+3. After each run, the adapter delivers new or changed files to the daemon at `POST /ingest/artifacts/{task_id}/{turn_id}`.
+4. A manifest records delivered checksums, so an unchanged file is not delivered again in a later round. A changed file becomes a new artifact version.
+5. A task cancellation removes the task directory. A background sweep removes directories that no run touched within `BMAS_OUTPUTS_TTL_SECONDS`.
+
+Failed runs still deliver the files they wrote. Hidden files, empty files, and files over `ARTIFACT_MAX_BYTES` are skipped.
+
+| Variable | Default | Purpose |
+|:---|:---|:---|
+| `BMAS_OUTPUTS_ROOT` | `/tmp/bmas-outputs` | Stores per-task output directories. Use a persistent path on a deployed node. |
+| `BMAS_OUTPUTS_TTL_SECONDS` | `86400` | Retains a task directory after its last run. |
+| `ARTIFACT_MAX_BYTES` | `52428800` | Limits one delivered file. |
+| `ARTIFACT_MAX_FILES` | `200` | Limits files delivered per run. |
+
+Artifact delivery requires `DAEMON_INGEST_URL` and `BMAS_NODE_KEY`. The daemon enforces its own path, checksum, and quota rules and versions every delivery.
+
 ## Logs and traces
 
 Set both `DAEMON_INGEST_URL` and `BMAS_NODE_KEY` to send records to the daemon.
