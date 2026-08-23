@@ -6,12 +6,9 @@ from typing import Any, Protocol, cast
 
 from config import (
     AGENT_ENDPOINTS,
-    CLASSIC_CONFIG,
     EDGE_NODE_MODELS,
     MODEL_POOLS,
     MODEL_PRICING,
-    ROUND_EXECUTION,
-    VIEW_BUDGET_TOKENS,
 )
 from core.protocol import LEGACY_EVENT_NAMES, V2_EVENT_NAMES
 from core.variants import (
@@ -102,6 +99,9 @@ class ClassicVariantRuntime:
         store = get_store()
         routing = await store.get_routing()
         registry = await store.get_role_registry()
+        classic_settings = await store.get_classic()
+        if overrides and isinstance(overrides.get("classic"), dict):
+            classic_settings.update(copy.deepcopy(overrides["classic"]))
         if overrides and isinstance(overrides.get("routing"), dict):
             routing.update(overrides["routing"])
         if overrides and isinstance(overrides.get("role_registry"), dict):
@@ -114,11 +114,7 @@ class ClassicVariantRuntime:
             "variant_contract_version": cls.descriptor.contract_version,
             "configuration_schema_version": "1",
             "settings": {
-                "classic": {
-                    **copy.deepcopy(dict(CLASSIC_CONFIG)),
-                    "round_execution": ROUND_EXECUTION,
-                    "view_budget_tokens": VIEW_BUDGET_TOKENS,
-                },
+                "classic": classic_settings,
                 "model_pools": copy.deepcopy(MODEL_POOLS),
                 "model_pricing": copy.deepcopy(MODEL_PRICING),
                 "edge_node_models": copy.deepcopy(EDGE_NODE_MODELS),

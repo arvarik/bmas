@@ -14,6 +14,7 @@ import Image from "next/image";
 import { ArrowUp, Paperclip, X } from "lucide-react";
 import { usePendingTask } from "@/contexts/PendingTaskContext";
 import { useReadiness } from "@/contexts/ReadinessContext";
+import { usePreferences } from "@/lib/preferences";
 import { useToast } from "@/hooks/useToast";
 import { VariantSelect } from "@/components/features/VariantSelect";
 import {
@@ -40,8 +41,9 @@ export function LandingPageClient({
   maxUploadMb: number;
   allowedUploadTypes: string[];
 }) {
+  const [preferences] = usePreferences();
   const [task, setTask] = useState("");
-  const [variant, setVariant] = useState("classic");
+  const [variant, setVariant] = useState(preferences.defaultRuntime);
   const [variantAvailable, setVariantAvailable] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
@@ -199,10 +201,12 @@ export function LandingPageClient({
             value={task}
             onChange={(event) => setTask(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                void handleSubmit();
-              }
+              if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+              const modifier = event.metaKey || event.ctrlKey;
+              const sends = preferences.sendKey === "mod-enter" ? modifier : (!event.shiftKey && !event.altKey) || modifier;
+              if (!sends) return;
+              event.preventDefault();
+              void handleSubmit();
             }}
             onPaste={(event) => {
               const files = Array.from(event.clipboardData.items)
@@ -256,7 +260,7 @@ export function LandingPageClient({
               onClick={() => void handleSubmit()}
               disabled={!canSubmit}
               aria-label={submitting ? "Submitting task" : "Send task"}
-              title={blocker || "Send (Enter)"}
+              title={blocker || (preferences.sendKey === "mod-enter" ? "Send (⌘ Enter)" : "Send (Enter)")}
             >
               {submitting ? <span className="composer__spinner" aria-hidden="true" /> : <ArrowUp size={18} aria-hidden="true" />}
             </button>

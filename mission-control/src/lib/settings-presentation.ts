@@ -1,16 +1,47 @@
+/**
+ * Settings model — the daemon's session-override snapshot, the draft the
+ * operator edits, the diff between them, and the YAML patch that makes a
+ * session override permanent in bmas.yaml.
+ */
+
 export interface SettingsRegistryEntry {
   preferred_host: string | null;
   profile: string;
   dispatch_port: number;
+  enabled?: boolean;
+  endpoints?: string[];
 }
+
+export type ClassicSettings = Record<string, unknown>;
 
 export interface SettingsSnapshot {
   routing: Record<string, string>;
   role_registry: Record<string, SettingsRegistryEntry>;
+  classic?: ClassicSettings;
   defaults: {
     routing: Record<string, string>;
     role_registry: Record<string, SettingsRegistryEntry>;
+    classic?: ClassicSettings;
   };
+}
+
+export interface SettingsDraft {
+  routing: Record<string, string>;
+  role_registry: Record<string, SettingsRegistryEntry>;
+  classic: ClassicSettings;
+}
+
+export interface ClassicFieldMeta {
+  key: string;
+  label: string;
+  type: "integer" | "number" | "boolean" | "enum" | "tier_map" | "weight_map";
+  group: "limits" | "roster" | "control" | "board";
+  description: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
+  options?: string[];
 }
 
 export interface SettingsPresentationChange {
@@ -19,43 +50,211 @@ export interface SettingsPresentationChange {
   after: string;
 }
 
-function yamlValue(value: string | number | null): string {
-  if (value === null) return "null";
-  if (typeof value === "number") return String(value);
+export interface SettingsChange extends SettingsPresentationChange {
+  section: "routing" | "role_registry" | "classic";
+  key: string;
+}
+
+export interface SettingsSavePayload {
+  routing: Record<string, string> | null;
+  role_registry: Record<string, Partial<SettingsRegistryEntry>> | null;
+  classic: ClassicSettings | null;
+}
+
+const ROLE_FIELDS = ["preferred_host", "profile", "dispatch_port", "enabled"] as const;
+
+export function formatValue(value: unknown): string {
+  if (value === null || value === undefined) return "Any";
+  if (typeof value === "boolean") return value ? "On" : "Off";
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, entry]) => `${key} ${String(entry)}`)
+      .join(", ");
+  }
+  return String(value);
+}
+
+export function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+export function draftFromSnapshot(snapshot: SettingsSnapshot): SettingsDraft {
+  return {
+    routing: { ...snapshot.routing },
+    role_registry: Object.fromEntries(
+      Object.entries(snapshot.role_registry).map(([role, entry]) => [role, { ...entry }]),
+    ),
+    classic: JSON.parse(JSON.stringify(snapshot.classic ?? {})) as ClassicSettings,
+  };
+}
+
+function humanKey(key: string): string {
+  return key.replace(/_/g, " ").replace(/^\w/, (letter) => letter.toUpperCase());
+}
+
+/** Differences between the editable draft and the saved snapshot. */
+export function diffDraft(
+  snapshot: SettingsSnapshot,
+  draft: SettingsDraft,
+  classicFields: readonly ClassicFieldMeta[] = [],
+): SettingsChange[] {
+  const changes: SettingsChange[] = [];
+  for (const [tier, model] of Object.entries(draft.routing)) {
+    if (snapshot.routing[tier] !== model) {
+      changes.push({
+        section: "routing",
+        key: tier,
+        label: `${humanKey(tier)} tier model`,
+        before: snapshot.routing[tier] ?? "Not set",
+        after: model,
+      });
+    }
+  }
+  for (const [role, entry] of Object.entries(draft.role_registry)) {
+    const saved = snapshot.role_registry[role];
+    for (const field of ROLE_FIELDS) {
+      const before = saved?.[field];
+      const after = entry[field];
+      if (!sameValue(before ?? (field === "enabled" ? true : null), after ?? (field === "enabled" ? true : null))) {
+        changes.push({
+          section: "role_registry",
+          key: `${role}.${field}`,
+          label: `${humanKey(role)} ${humanKey(field).toLowerCase()}`,
+          before: formatValue(before ?? (field === "enabled" ? true : null)),
+          after: formatValue(after ?? (field === "enabled" ? true : null)),
+        });
+      }
+    }
+  }
+  const labels = new Map(classicFields.map((field) => [field.key, field.label]));
+  for (const [key, value] of Object.entries(draft.classic)) {
+    const before = snapshot.classic?.[key];
+    if (!sameValue(before, value)) {
+      changes.push({
+        section: "classic",
+        key,
+        label: labels.get(key) ?? humanKey(key),
+        before: formatValue(before),
+        after: formatValue(value),
+      });
+    }
+  }
+  return changes;
+}
+
+/** Build the PATCH bodies for every section that changed. */
+export function buildSavePayload(snapshot: SettingsSnapshot, draft: SettingsDraft): SettingsSavePayload {
+  const routing: Record<string, string> = {};
+  for (const [tier, model] of Object.entries(draft.routing)) {
+    if (snapshot.routing[tier] !== model) routing[tier] = model;
+  }
+  const roles: Record<string, Partial<SettingsRegistryEntry>> = {};
+  for (const [role, entry] of Object.entries(draft.role_registry)) {
+    const saved = snapshot.role_registry[role];
+    const patch: Partial<SettingsRegistryEntry> = {};
+    for (const field of ROLE_FIELDS) {
+      const before = saved?.[field] ?? (field === "enabled" ? true : null);
+      const after = entry[field] ?? (field === "enabled" ? true : null);
+      if (!sameValue(before, after)) {
+        (patch as Record<string, unknown>)[field] = entry[field] ?? (field === "enabled" ? true : null);
+      }
+    }
+    if (Object.keys(patch).length) roles[role] = patch;
+  }
+  const classic: ClassicSettings = {};
+  for (const [key, value] of Object.entries(draft.classic)) {
+    if (!sameValue(snapshot.classic?.[key], value)) classic[key] = value;
+  }
+  return {
+    routing: Object.keys(routing).length ? routing : null,
+    role_registry: Object.keys(roles).length ? roles : null,
+    classic: Object.keys(classic).length ? classic : null,
+  };
+}
+
+/** Keys whose saved value differs from bmas.yaml (session overrides). */
+export function sessionOverrideKeys(snapshot: SettingsSnapshot): Set<string> {
+  const keys = new Set<string>();
+  for (const [tier, model] of Object.entries(snapshot.routing)) {
+    if (snapshot.defaults.routing[tier] !== model) keys.add(`routing.${tier}`);
+  }
+  for (const [role, entry] of Object.entries(snapshot.role_registry)) {
+    const base = snapshot.defaults.role_registry[role];
+    for (const field of ROLE_FIELDS) {
+      const before = base?.[field] ?? (field === "enabled" ? true : null);
+      const after = entry[field] ?? (field === "enabled" ? true : null);
+      if (!sameValue(before, after)) keys.add(`role_registry.${role}.${field}`);
+    }
+  }
+  for (const [key, value] of Object.entries(snapshot.classic ?? {})) {
+    if (!sameValue(snapshot.defaults.classic?.[key], value)) keys.add(`classic.${key}`);
+  }
+  return keys;
+}
+
+function yamlValue(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
   return JSON.stringify(value);
+}
+
+function yamlMapping(indent: string, value: Record<string, unknown>): string[] {
+  return Object.entries(value).map(([key, entry]) => `${indent}${key}: ${yamlValue(entry)}`);
 }
 
 export function buildYamlPatch(settings: SettingsSnapshot): string {
   const lines = ["# Merge these session overrides into bmas.yaml, then restart bMAS."];
   const routingChanges = Object.entries(settings.routing).filter(
-    ([tier, model]) => settings.defaults.routing[tier] !== model
+    ([tier, model]) => settings.defaults.routing[tier] !== model,
   );
   const roleChanges = Object.entries(settings.role_registry).filter(([role, entry]) => {
     const defaultEntry = settings.defaults.role_registry[role];
     return (
-      !defaultEntry ||
-      entry.preferred_host !== defaultEntry.preferred_host ||
-      entry.profile !== defaultEntry.profile ||
-      entry.dispatch_port !== defaultEntry.dispatch_port
+      !defaultEntry
+      || entry.preferred_host !== defaultEntry.preferred_host
+      || entry.profile !== defaultEntry.profile
+      || entry.dispatch_port !== defaultEntry.dispatch_port
+      || (entry.enabled ?? true) !== (defaultEntry.enabled ?? true)
     );
   });
+  const classicChanges = Object.entries(settings.classic ?? {}).filter(
+    ([key, value]) => !sameValue(settings.defaults.classic?.[key], value),
+  );
 
   if (routingChanges.length > 0) {
     lines.push("routing:");
     for (const [tier, model] of routingChanges) lines.push(`  ${tier}: ${yamlValue(model)}`);
   }
 
+  const coordinationLines: string[] = [];
+  const topLevelClassic = classicChanges.filter(([key]) => key === "round_execution" || key === "view_budget_tokens");
+  const nestedClassic = classicChanges.filter(([key]) => key !== "round_execution" && key !== "view_budget_tokens");
+  for (const [key, value] of topLevelClassic) coordinationLines.push(`  ${key}: ${yamlValue(value)}`);
+  if (nestedClassic.length > 0) {
+    coordinationLines.push("  classic:");
+    for (const [key, value] of nestedClassic) {
+      if (value && typeof value === "object") {
+        coordinationLines.push(`    ${key}:`, ...yamlMapping("      ", value as Record<string, unknown>));
+      } else {
+        coordinationLines.push(`    ${key}: ${yamlValue(value)}`);
+      }
+    }
+  }
   if (roleChanges.length > 0) {
-    lines.push("coordination:", "  role_registry:");
+    coordinationLines.push("  role_registry:");
     for (const [role, entry] of roleChanges) {
-      lines.push(
+      coordinationLines.push(
         `    ${role}:`,
         `      preferred_host: ${yamlValue(entry.preferred_host)}`,
         `      profile: ${yamlValue(entry.profile)}`,
-        `      dispatch_port: ${yamlValue(entry.dispatch_port)}`
+        `      dispatch_port: ${yamlValue(entry.dispatch_port)}`,
       );
+      if ((entry.enabled ?? true) !== (settings.defaults.role_registry[role]?.enabled ?? true)) {
+        coordinationLines.push(`      enabled: ${yamlValue(entry.enabled ?? true)}`);
+      }
     }
   }
+  if (coordinationLines.length > 0) lines.push("coordination:", ...coordinationLines);
 
   return lines.join("\n");
 }
@@ -92,11 +291,7 @@ export function getResetChanges(settings: SettingsSnapshot): SettingsPresentatio
       });
     }
     if (entry.profile !== defaultEntry.profile) {
-      changes.push({
-        label: `${role} profile`,
-        before: entry.profile,
-        after: defaultEntry.profile,
-      });
+      changes.push({ label: `${role} profile`, before: entry.profile, after: defaultEntry.profile });
     }
     if (entry.dispatch_port !== defaultEntry.dispatch_port) {
       changes.push({
@@ -104,6 +299,20 @@ export function getResetChanges(settings: SettingsSnapshot): SettingsPresentatio
         before: String(entry.dispatch_port),
         after: String(defaultEntry.dispatch_port),
       });
+    }
+    if ((entry.enabled ?? true) !== (defaultEntry.enabled ?? true)) {
+      changes.push({
+        label: `${role} enabled`,
+        before: formatValue(entry.enabled ?? true),
+        after: formatValue(defaultEntry.enabled ?? true),
+      });
+    }
+  }
+
+  for (const [key, value] of Object.entries(settings.classic ?? {})) {
+    const defaultValue = settings.defaults.classic?.[key];
+    if (!sameValue(value, defaultValue)) {
+      changes.push({ label: humanKey(key), before: formatValue(value), after: formatValue(defaultValue) });
     }
   }
 

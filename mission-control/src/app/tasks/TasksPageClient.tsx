@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   Archive,
   ArchiveRestore,
@@ -130,9 +130,12 @@ function viewSearchParams(view: SavedTaskView): URLSearchParams {
 }
 
 export function TasksPageClient() {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  // Shallow URL updates: the page keeps its state and no server round trip runs.
+  const replaceQuery = useCallback((next: URLSearchParams) => {
+    window.history.replaceState(null, "", `${pathname}${next.size ? `?${next.toString()}` : ""}`);
+  }, [pathname]);
   const filters = useMemo<TaskHistoryFilters>(() => ({
     search: searchParams.get("q") ?? "",
     status: searchParams.get("status") ?? "",
@@ -182,8 +185,8 @@ export function TasksPageClient() {
       if (value) next.set(key, value);
       else next.delete(key);
     }
-    router.replace(`${pathname}${next.size ? `?${next.toString()}` : ""}`);
-  }, [pathname, router, searchParams]);
+    replaceQuery(next);
+  }, [replaceQuery, searchParams]);
 
   // Debounce the search field into the URL.
   useEffect(() => {
@@ -256,8 +259,7 @@ export function TasksPageClient() {
   };
 
   const applyView = (view: SavedTaskView) => {
-    const next = viewSearchParams(view);
-    router.replace(`${pathname}${next.size ? `?${next.toString()}` : ""}`);
+    replaceQuery(viewSearchParams(view));
   };
 
   const exportTasks = () => {
@@ -444,7 +446,7 @@ export function TasksPageClient() {
           <SlidersHorizontal size={15} aria-hidden="true" /> Filters{advancedCount ? <span className="tasks-chip__count">{advancedCount}</span> : null}
         </button>
         {hasAnyFilter ? (
-          <button type="button" className="tasks-toolbar__clear" onClick={() => router.replace(pathname)}>Clear</button>
+          <button type="button" className="tasks-toolbar__clear" onClick={() => replaceQuery(new URLSearchParams())}>Clear</button>
         ) : null}
       </section>
 
@@ -572,7 +574,7 @@ export function TasksPageClient() {
           <div className="tasks-empty">
             <h3>{hasAnyFilter ? "No tasks match these filters" : "No tasks yet"}</h3>
             <p>{hasAnyFilter ? "Change the filters or clear them." : "Submit a task from the home page to start."}</p>
-            {hasAnyFilter ? <button type="button" className="button" onClick={() => router.replace(pathname)}>Clear filters</button> : null}
+            {hasAnyFilter ? <button type="button" className="button" onClick={() => replaceQuery(new URLSearchParams())}>Clear filters</button> : null}
           </div>
         ) : null}
       </div>

@@ -1,16 +1,15 @@
 "use client";
 
 /**
- * Task Detail Layout — wraps all /task/[taskId]/* pages.
+ * TaskDetailClient — /task/[taskId]
  *
- * This layout owns the SSE stream connection via useTaskStream() and
- * distributes data to child tab pages through TaskStreamContext. This
- * ensures tab switches are instantaneous DOM swaps — no SSE reconnection.
- *
+ * One page owns the SSE stream (useTaskStream) and renders the active tab
+ * from the `tab` query parameter. Tab switches update the URL with
+ * history.pushState, so no server round trip and no panel flicker.
  */
 
-import React, { useEffect, useRef, useState } from "react";
-import { useParams, useRouter, useSelectedLayoutSegment } from "next/navigation";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useTaskStream } from "@/hooks/useTaskStream";
 import type { TaskStreamData, CostData } from "@/hooks/useTaskStream";
@@ -23,10 +22,29 @@ import type { StatusType } from "@/lib/design-tokens";
 import { ArrowLeft } from "lucide-react";
 import { UnsupportedVariantState } from "@/components/features/UnsupportedVariantState";
 import { getActiveAdapter, visibleNavigationPanels } from "@/lib/variants";
+import { SummaryPanel } from "./panels/SummaryPanel";
+import { BlackboardPanel } from "./panels/BlackboardPanel";
+import { ExecutionPanel } from "./panels/ExecutionPanel";
+import { LogsPanel } from "./panels/LogsPanel";
+import { FilesPanel } from "./panels/FilesPanel";
 
-// Re-export useTaskData for convenience (child pages should import
-// from TaskStreamContext.tsx directly, but this keeps backward compat).
-export { useTaskData } from "./TaskStreamContext";
+/** Map a navigation panel segment to its component. */
+const PANELS: Record<string, React.ComponentType> = {
+  overview: SummaryPanel,
+  mission: BlackboardPanel,
+  dag: ExecutionPanel,
+  logs: LogsPanel,
+  files: FilesPanel,
+};
+
+/** Accept old segment names and aliases in the `tab` parameter. */
+function normalizeTab(value: string | null): string | null {
+  if (!value || value === "overview" || value === "summary") return null;
+  if (value === "blackboard") return "mission";
+  if (value === "execution" || value === "graph") return "dag";
+  if (value === "artifacts") return "files";
+  return value;
+}
 
 // ── Status mapping ───────────────────────────────────────────────────
 
@@ -150,16 +168,25 @@ function fmtDuration(ms: number): string {
 
 // ── Layout ───────────────────────────────────────────────────────────
 
-export default function TaskLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const { taskId } = useParams();
-  const router = useRouter();
-  const segment = useSelectedLayoutSegment();
+export function TaskDetailClient({ taskId }: { taskId: string }) {
+  const searchParams = useSearchParams();
+  const segment = normalizeTab(searchParams.get("tab"));
   const basePath = `/task/${taskId}`;
-  const tabRefs = useRef<Map<number, HTMLAnchorElement>>(new Map());
+  const tabRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
+
+  const tabHref = useCallback((tabSegment: string | null) => {
+    const params = new URLSearchParams(searchParams.toString());
+    // Tab-specific parameters (log filters, selections) do not carry over.
+    for (const key of [...params.keys()]) if (key !== "tab") params.delete(key);
+    if (tabSegment) params.set("tab", tabSegment);
+    else params.delete("tab");
+    return `${basePath}${params.size ? `?${params.toString()}` : ""}`;
+  }, [basePath, searchParams]);
+
+  const goToTab = useCallback((tabSegment: string | null) => {
+    if (tabSegment === segment) return;
+    window.history.pushState(null, "", tabHref(tabSegment));
+  }, [segment, tabHref]);
 
   // ── Optimistic state from PendingTaskContext ──────────────────────
   const { consumePending } = usePendingTask();
@@ -169,31 +196,28 @@ export default function TaskLayout({
   useEffect(() => {
     if (!consumed.current) {
       consumed.current = true;
-      const p = consumePending(taskId as string);
+      const p = consumePending(taskId);
       // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time consumption on mount
       if (p) setPending(p);
     }
   }, [taskId, consumePending]);
 
   // ── SSE stream lives here (layout persists across tab switches) ──
-  const streamData = useTaskStream(taskId as string);
+  const streamData = useTaskStream(taskId);
   const adapter = getActiveAdapter(streamData.runtime.adapterId);
   const capability = streamData.runtime.capability;
   const tabs = adapter && capability
     ? visibleNavigationPanels(adapter, capability)
     : [];
-  const requestedPanel = adapter?.navigationPanels.find((panel) => (
-    panel.segment === segment || (segment === "artifacts" && panel.segment === "files")
-  ));
-  const panelAvailable = tabs.some((panel) => (
-    panel.segment === segment || (segment === "artifacts" && panel.segment === "files")
-  ));
+  const requestedPanel = adapter?.navigationPanels.find((panel) => panel.segment === segment);
+  const panelAvailable = tabs.some((panel) => panel.segment === segment);
   const activeTabIndex = Math.max(0, tabs.findIndex((tab) => tab.segment === segment));
+  const ActivePanel = PANELS[segment ?? "overview"] ?? SummaryPanel;
   const selectTab = (index: number) => {
     const tab = tabs[index];
     if (!tab) return;
     tabRefs.current.get(index)?.focus();
-    router.push(tab.segment ? `${basePath}/${tab.segment}` : basePath);
+    goToTab(tab.segment);
   };
 
   // Clear optimistic state when real data arrives
@@ -224,9 +248,9 @@ export default function TaskLayout({
         />
         {tabs.length > 0 ? <nav className="task-tabs" role="tablist" aria-label="Task detail views">
           {tabs.map((tab, index) => (
-            <Link
+            <button
               key={tab.label}
-              href={tab.segment ? `${basePath}/${tab.segment}` : basePath}
+              type="button"
               className={`task-tabs__tab ${segment === tab.segment ? "task-tabs__tab--active" : ""}`}
               role="tab"
               aria-selected={segment === tab.segment}
@@ -237,6 +261,7 @@ export default function TaskLayout({
                 if (element) tabRefs.current.set(index, element);
                 else tabRefs.current.delete(index);
               }}
+              onClick={() => goToTab(tab.segment)}
               onKeyDown={(event) => {
                 if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
                 event.preventDefault();
@@ -249,7 +274,7 @@ export default function TaskLayout({
               }}
             >
               {tab.label}
-            </Link>
+            </button>
           ))}
         </nav> : null}
         <div
@@ -267,7 +292,7 @@ export default function TaskLayout({
           ) : null}
           {streamData.runtime.status !== "ready" ? (
             <UnsupportedVariantState runtime={streamData.runtime} />
-          ) : panelAvailable ? children : (
+          ) : panelAvailable ? <ActivePanel /> : (
             <UnsupportedVariantState
               runtime={streamData.runtime}
               feature={requestedPanel?.label ?? String(segment ?? "overview")}

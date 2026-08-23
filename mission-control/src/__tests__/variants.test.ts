@@ -420,3 +420,27 @@ describe("live status projection", () => {
     expect(state.isLive).toBe(false);
   });
 });
+
+describe("terminal replay hydration", () => {
+  it("fills missing live fields from the saved row after a complete event", () => {
+    const completed = CLASSIC_ADAPTER.projectEvent(INITIAL_STREAM_DATA, {
+      name: "complete",
+      taskId: "task-1",
+      payload: { answer: "Done", variant: "classic" },
+    });
+    expect(completed.taskMeta?.status).toBe("completed");
+    expect(completed.taskMeta?.label).toBe("");
+    const state = CLASSIC_ADAPTER.projectHydration(completed, {
+      detail: { task: { id: "task-1", label: "Saved label", status: "completed", created_at: "2026-01-01T00:00:00Z", variant: "classic" } },
+      board: null,
+      turns: null,
+      cost: null,
+      logs: null,
+      traces: null,
+    }, "task-1");
+    expect(state.taskMeta?.label).toBe("Saved label");
+    expect(state.taskMeta?.created_at).toBe("2026-01-01T00:00:00Z");
+    expect(state.taskMeta?.status).toBe("completed");
+    expect(state.isLive).toBe(false);
+  });
+});

@@ -345,6 +345,21 @@ function promoteStartedTask(meta: TaskMeta): TaskMeta {
   return started ? { ...meta, status: "running" } : meta;
 }
 
+/**
+ * Keep the live terminal status, but take every empty field from the saved
+ * row. A journal replay can end with a `complete` event before any task
+ * metadata arrived, so the live record may lack the label and timestamps.
+ */
+function fillTaskMeta(live: TaskMeta | null, saved: TaskMeta | null): TaskMeta | null {
+  if (!live) return saved;
+  if (!saved) return live;
+  const merged: Record<string, unknown> = { ...saved };
+  for (const [key, value] of Object.entries(live)) {
+    if (value !== undefined && value !== null && value !== "") merged[key] = value;
+  }
+  return merged as unknown as TaskMeta;
+}
+
 /** Event names that prove the runtime is executing the task. */
 const ACTIVITY_EVENTS = new Set([
   "phase", "subtask", "debate", "log", "cost", "board_entry", "entry_removed",
@@ -634,7 +649,7 @@ function projectClassicHydration(
   // A saved "pending" row must not demote a task that the live stream already
   // shows as running; the saved row can predate triage.
   const mergedMeta = liveTerminal
-    ? state.taskMeta
+    ? fillTaskMeta(state.taskMeta, hydratedMeta)
     : hydratedMeta && hydratedMeta.status === "pending" && state.taskMeta?.status === "running"
       ? { ...hydratedMeta, status: "running" as const }
       : hydratedMeta ?? state.taskMeta;

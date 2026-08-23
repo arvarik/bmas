@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { ArrowLeft, Bot, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { ResourceState } from "@/components/ui/ResourceState";
@@ -42,7 +42,6 @@ function readTab(value: string | null): Tab {
 }
 
 export function AgentDetailClient({ role }: { role: string }) {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const tab = readTab(searchParams.get("tab"));
@@ -94,7 +93,7 @@ export function AgentDetailClient({ role }: { role: string }) {
     const params = new URLSearchParams(searchParams.toString());
     if (next === "overview") params.delete("tab");
     else params.set("tab", next);
-    router.replace(`${pathname}${params.size ? `?${params.toString()}` : ""}`);
+    window.history.replaceState(null, "", `${pathname}${params.size ? `?${params.toString()}` : ""}`);
     setQuery("");
   };
 

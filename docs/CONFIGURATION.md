@@ -212,6 +212,8 @@ Set `variant: classic` for the deployment default. Mission Control can select an
 
 Use lower limits during initial provider tests. Increase one limit at a time and run `./scripts/bmas smoke` after each change.
 
+Mission Control **Settings → Runtime** and **Settings → Blackboard** change these values for the running daemon session. New tasks use the changed values at once. The values return to `bmas.yaml` when the daemon restarts. Use **Settings → System → Copy YAML patch** to keep them.
+
 ### `coordination.role_registry`
 
 Each key names one classic role. The starter includes `planner`, `expert`, `critic`, `conflict_resolver`, `cleaner`, and `decider`.
