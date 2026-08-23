@@ -25,6 +25,15 @@
     "ClassicConfig": {
       "additionalProperties": false,
       "properties": {
+        "actor_context": {
+          "default": "chained",
+          "enum": [
+            "chained",
+            "fresh"
+          ],
+          "title": "Actor Context",
+          "type": "string"
+        },
         "budget_ceiling_usd": {
           "default": 0.5,
           "exclusiveMinimum": 0,
@@ -66,6 +75,11 @@
           },
           "title": "Experts Per Tier",
           "type": "object"
+        },
+        "grace_verification": {
+          "default": true,
+          "title": "Grace Verification",
+          "type": "boolean"
         },
         "max_concurrent_activations": {
           "default": 3,

@@ -543,6 +543,8 @@ CLASSIC_CONFIG: dict[str, object] = {
     "cu_mode": _trad_cu_mode,
     "coordinator_narration": bool(_trad.get("coordinator_narration", False)),
     "sole_similarity": _trad_sole_sim,
+    "grace_verification": bool(_trad.get("grace_verification", True)),
+    "actor_context": str(_trad.get("actor_context", "chained")),
 }
 
 # The internal engine and older integrations still import this name.

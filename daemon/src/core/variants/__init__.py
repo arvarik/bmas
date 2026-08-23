@@ -92,10 +92,11 @@ class VariantDescriptor:
     supports_recovery: bool = False
     required_agent_features: tuple[str, ...] = ()
     benchmark: VariantBenchmarkContract = field(default_factory=VariantBenchmarkContract)
+    effort_profiles: Any = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the authoritative public capability record."""
-        return {
+        record = {
             "id": self.id,
             "label": self.label,
             "available": True,
@@ -107,6 +108,9 @@ class VariantDescriptor:
             "required_agent_features": list(self.required_agent_features),
             "benchmark": self.benchmark.to_dict(),
         }
+        if self.effort_profiles:
+            record["effort_profiles"] = dict(self.effort_profiles)
+        return record
 
 
 @dataclass(frozen=True)

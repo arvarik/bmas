@@ -42,7 +42,7 @@ logger = logging.getLogger("bmas.response_parser")
 _VALID_TYPES: frozenset[str] = frozenset({
     "objective", "attachment", "plan", "finding",
     "critique", "rebuttal", "conflict", "directive",
-    "solution", "artifact",
+    "solution", "artifact", "ledger",
 })
 
 # Regex: board entry IDs (e-1, e-12, …)

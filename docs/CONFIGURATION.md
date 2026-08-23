@@ -209,10 +209,25 @@ Set `variant: classic` for the deployment default. Mission Control can select an
 | `cu_mode` | `llm` | Selects `llm` or `heuristic_first`. |
 | `coordinator_narration` | `false` | Adds control-unit reasons to the event stream. |
 | `sole_similarity` | `auto` | Selects `auto`, `exact`, `embedding`, or `judge`. |
+| `grace_verification` | `true` | Adds one critic round before a limit stop, so the final answer gets a review. |
+| `actor_context` | `chained` | Selects the agent model-session mode. `chained` keeps each agent's session across rounds. `fresh` sends only the board view each turn. |
 
 Use lower limits during initial provider tests. Increase one limit at a time and run `./scripts/bmas smoke` after each change.
 
 Mission Control **Settings → Runtime** and **Settings → Blackboard** change these values for the running daemon session. New tasks use the changed values at once. The values return to `bmas.yaml` when the daemon restarts. Use **Settings → System → Copy YAML patch** to keep them.
+
+### Effort profiles
+
+A task can select an effort level at submission. The composer on the Home page shows the levels the runtime advertises. The daemon applies the level on top of the session settings. Explicit per-task `overrides.classic` values win over the level.
+
+| Level | Purpose |
+|:---|:---|
+| `quick` | One pass and a fast answer. 2 rounds, $0.25 ceiling, no extra verification round. |
+| `standard` | The session settings as configured. This level changes nothing. |
+| `thorough` | 12 rounds, $2.00 ceiling, `grace_verification: true`, `actor_context: fresh`. |
+| `exhaustive` | 32 rounds, 3 hours, $10.00 ceiling, strict verification, `actor_context: fresh`. |
+
+The API accepts the level in the `effort` field of `POST /submit`. The effective task configuration records the level in `effective_configuration.effort`.
 
 ### `coordination.role_registry`
 

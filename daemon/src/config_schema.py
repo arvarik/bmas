@@ -101,6 +101,8 @@ class ClassicConfig(StrictModel):
     cu_mode: Literal["llm", "heuristic_first"] = "llm"
     coordinator_narration: bool = False
     sole_similarity: Literal["auto", "exact", "embedding", "judge"] = "auto"
+    grace_verification: bool = True
+    actor_context: Literal["chained", "fresh"] = "chained"
 
 
 class RoleConfig(StrictModel):

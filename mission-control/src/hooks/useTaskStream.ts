@@ -181,6 +181,9 @@ export interface TaskMeta {
   started_at?: string;
   last_heartbeat_at?: string;
   error_message?: string;
+  terminated_by?: string;
+  answer_source?: string;
+  effort?: string;
   terminal_kind?: "completed" | "failed" | "cancelled";
   failure_category?: string;
   cancel_requested_at?: string;

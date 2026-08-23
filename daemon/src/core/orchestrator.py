@@ -1090,7 +1090,7 @@ class Orchestrator:
                 start_round = int(active_round.get("round", loop_meta.get("round", 0)))
             else:
                 start_round = int(loop_meta.get("round", 0)) + 1
-            for round_no in range(start_round, variant.max_rounds + 2):
+            for round_no in range(start_round, variant.max_rounds + 4):
                 await self._check_abort(task_id)
 
                 # Phase 5: Inject operator directives (doc 05 §6)

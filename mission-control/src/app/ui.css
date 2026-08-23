@@ -433,3 +433,16 @@ body[data-reduced-motion="true"] *,body[data-reduced-motion="true"] *::before,bo
 .output-files__name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .output-files__version{color:var(--text-tertiary)}
 .output-files__live{color:var(--text-tertiary);font-size:var(--text-xs);font-style:italic}
+
+/* ── Composer: exhaustive confirmation ─────────────────────────────── */
+.composer__confirm{display:flex;width:100%;align-items:center;gap:var(--space-3);margin-top:var(--space-2);padding:var(--space-3) var(--space-4);border-radius:var(--radius-lg);background:var(--tint-warning);color:var(--text-secondary);font-size:var(--text-sm);animation:fadeOnly 140ms ease-out}
+.composer__confirm span{flex:1;min-width:0}
+
+/* ── Stop reason and effort chips ──────────────────────────────────── */
+.effort-chip{background:var(--tint-accent);color:var(--accent-ink);text-transform:capitalize}
+.task-header__stop{display:inline-flex;align-items:center;padding:2px 9px;border-radius:var(--radius-full);font-size:var(--text-xs);font-weight:var(--weight-medium)}
+.task-header__stop--verified{background:var(--tint-success);color:var(--status-success)}
+.task-header__stop--unverified{background:var(--tint-warning);color:var(--status-paused)}
+.task-header__stop--limit{background:var(--surface-hover);color:var(--text-secondary)}
+.task-header__stop--cancelled{background:var(--surface-hover);color:var(--text-tertiary)}
+.overview__result-head{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3)}

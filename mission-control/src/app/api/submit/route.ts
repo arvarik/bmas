@@ -17,11 +17,13 @@ interface TaskRoleEntryOverride {
 interface TaskOverrides {
   routing?: TaskRoutingOverride;
   role_registry?: Record<string, TaskRoleEntryOverride>;
+  classic?: Record<string, unknown>;
 }
 
 interface SubmitPayload {
   task: string;
   variant?: string;
+  effort?: string;
   overrides?: TaskOverrides;
 }
 
@@ -74,6 +76,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       body: JSON.stringify({
         task: body.task.trim(),
         ...(body.variant ? { variant: body.variant } : {}),
+        ...(typeof body.effort === "string" && body.effort ? { effort: body.effort } : {}),
         ...(body.overrides ? { overrides: body.overrides } : {}),
       }),
       signal: AbortSignal.timeout(5_000), // daemon responds immediately (HTTP 202)

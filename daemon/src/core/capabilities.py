@@ -20,6 +20,7 @@ from core.protocol import (
     ENTRY_TYPE_CRITIQUE,
     ENTRY_TYPE_DIRECTIVE,
     ENTRY_TYPE_FINDING,
+    ENTRY_TYPE_LEDGER,
     ENTRY_TYPE_OBJECTIVE,
     ENTRY_TYPE_PLAN,
     ENTRY_TYPE_REBUTTAL,
@@ -39,7 +40,7 @@ class CapabilityProfile:
 # Table from doc 04 §4
 CAPABILITY_PROFILES: dict[str, CapabilityProfile] = {
     "plan_writer": CapabilityProfile(
-        may_post=frozenset({ENTRY_TYPE_PLAN}),
+        may_post=frozenset({ENTRY_TYPE_PLAN, ENTRY_TYPE_LEDGER}),
         may_remove=frozenset(),
         may_never=frozenset({ENTRY_TYPE_SOLUTION}),
     ),

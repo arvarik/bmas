@@ -11,6 +11,12 @@ export interface VariantFeatures {
   result: string[];
 }
 
+export interface EffortProfile {
+  label: string;
+  description: string;
+  settings: Record<string, unknown>;
+}
+
 export interface VariantCapability {
   id: string;
   label: string;
@@ -21,6 +27,7 @@ export interface VariantCapability {
   supports_recovery: boolean;
   required_agent_features: string[];
   features: VariantFeatures;
+  effort_profiles?: Record<string, EffortProfile>;
   reason?: string;
 }
 
@@ -123,8 +130,25 @@ function parseVariant(value: unknown, index: number): VariantCapability {
       true,
     ),
     features: parseFeatures(value.features, `${path}.features`),
+    ...(isRecord(value.effort_profiles)
+      ? { effort_profiles: parseEffortProfiles(value.effort_profiles) }
+      : {}),
     ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
   };
+}
+
+/** Effort profiles are optional and lenient: a bad entry is dropped. */
+function parseEffortProfiles(value: Record<string, unknown>): Record<string, EffortProfile> {
+  const profiles: Record<string, EffortProfile> = {};
+  for (const [level, raw] of Object.entries(value)) {
+    if (!isRecord(raw)) continue;
+    profiles[level] = {
+      label: typeof raw.label === "string" && raw.label ? raw.label : level,
+      description: typeof raw.description === "string" ? raw.description : "",
+      settings: isRecord(raw.settings) ? raw.settings : {},
+    };
+  }
+  return profiles;
 }
 
 export function parseCapabilities(value: unknown): CapabilitiesDocument {

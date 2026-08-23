@@ -17,6 +17,7 @@ import { useReadiness } from "@/contexts/ReadinessContext";
 import { usePreferences } from "@/lib/preferences";
 import { useToast } from "@/hooks/useToast";
 import { VariantSelect } from "@/components/features/VariantSelect";
+import { EffortSelect } from "@/components/features/EffortSelect";
 import {
   addAttachments,
   createTaskSubmissionRequest,
@@ -41,9 +42,11 @@ export function LandingPageClient({
   maxUploadMb: number;
   allowedUploadTypes: string[];
 }) {
-  const [preferences] = usePreferences();
+  const [preferences, setPreferences] = usePreferences();
   const [task, setTask] = useState("");
   const [variant, setVariant] = useState(preferences.defaultRuntime);
+  const [effort, setEffort] = useState(preferences.defaultEffort);
+  const [confirmEffort, setConfirmEffort] = useState("");
   const [variantAvailable, setVariantAvailable] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
@@ -73,11 +76,17 @@ export function LandingPageClient({
   const handleSubmit = useCallback(async () => {
     const input = task.trim();
     if (!input || submitting || !variantAvailable || !stackReady) return;
+    // A long-horizon run costs real money and time: ask once.
+    if (effort === "exhaustive" && confirmEffort !== "exhaustive") {
+      setConfirmEffort("exhaustive");
+      return;
+    }
+    setConfirmEffort("");
     setSubmitting(true);
     try {
       const res = await fetch(
         "/api/submit",
-        createTaskSubmissionRequest(input, variant, attachedFiles),
+        createTaskSubmissionRequest(input, variant, attachedFiles, effort),
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -96,7 +105,7 @@ export function LandingPageClient({
     } finally {
       setSubmitting(false);
     }
-  }, [attachedFiles, router, setPending, stackReady, submitting, task, toast, variant, variantAvailable]);
+  }, [attachedFiles, confirmEffort, effort, router, setPending, stackReady, submitting, task, toast, variant, variantAvailable]);
 
   const acceptAttachments = useCallback((candidates: readonly File[]) => {
     if (candidates.length === 0) return;
@@ -253,6 +262,15 @@ export function LandingPageClient({
                 onChange={setVariant}
                 onAvailabilityChange={setVariantAvailable}
               />
+              <EffortSelect
+                variant={variant}
+                value={effort}
+                onChange={(next) => {
+                  setEffort(next);
+                  setConfirmEffort("");
+                  setPreferences({ defaultEffort: next });
+                }}
+              />
             </div>
             <button
               type="button"
@@ -267,6 +285,15 @@ export function LandingPageClient({
           </div>
         </div>
 
+        {confirmEffort ? (
+          <div className="composer__confirm" role="alertdialog" aria-label="Confirm exhaustive run">
+            <span>
+              Exhaustive runs many rounds under a high budget ceiling and can
+              take an hour. Press send again to start, or pick a lower effort.
+            </span>
+            <button type="button" className="button" onClick={() => setConfirmEffort("")}>Cancel</button>
+          </div>
+        ) : null}
         <p id="composer-notice" className={`composer__notice ${attachmentNotice ? "composer__notice--error" : ""}`} aria-live="polite">
           {attachmentNotice || (hasInput ? blocker : "")}
         </p>
