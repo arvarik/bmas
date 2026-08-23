@@ -46,7 +46,6 @@ function TaskHeader({
   cost,
   phase,
   activeAgent,
-  latestEvent,
 }: {
   taskMeta: TaskStreamData["taskMeta"];
   isLive: boolean;
@@ -54,7 +53,6 @@ function TaskHeader({
   cost: CostData | null;
   phase: string | null;
   activeAgent: string | null;
-  latestEvent: string | null;
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -83,9 +81,9 @@ function TaskHeader({
 
   return (
     <div className="task-header">
-      <Link href="/" className="task-header__back">
+      <Link href="/tasks" className="task-header__back">
         <ArrowLeft size={16} />
-        <span>Back</span>
+        <span>Tasks</span>
       </Link>
       <h2 className="task-header__title">{label}</h2>
       <div className="task-header__meta">
@@ -136,7 +134,6 @@ function TaskHeader({
         )}
         <span className="task-header__phase">Phase {phase || taskMeta?.run_state || "Queued"}</span>
         <span className="task-header__agent">Active agent {activeAgent || "None"}</span>
-        <span className="task-header__event" title={latestEvent || "No event received"}>Latest event {latestEvent || "None"}</span>
       </div>
     </div>
   );
@@ -218,15 +215,12 @@ export default function TaskLayout({
             cost={streamData.cost}
             phase={streamData.phase}
             activeAgent={streamData.activeTurns.at(-1)?.actor ?? null}
-            latestEvent={streamData.logs.at(-1)?.message ?? streamData.traceEvents.at(-1)?.content ?? null}
           />}
           task={streamData.taskMeta}
           cost={streamData.cost}
           isLive={streamData.isLive}
           isPaused={streamData.isPaused}
           controls={capability?.features.controls ?? []}
-          logs={streamData.logs}
-          traceEvents={streamData.traceEvents}
         />
         {tabs.length > 0 ? <nav className="task-tabs" role="tablist" aria-label="Task detail views">
           {tabs.map((tab, index) => (

@@ -5,6 +5,7 @@
 
 @import "tailwindcss";
 @import "./views.css";
+@import "./ui.css";
 
 /* ── Design Tokens ─────────────────────────────────────────────────── */
 :root {

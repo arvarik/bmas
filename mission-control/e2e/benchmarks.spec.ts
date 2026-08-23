@@ -247,7 +247,8 @@ test("starts a benchmark run with the selected queue priority", async ({ page })
   await page.route("**/api/benchmarks/runs/run-priority-e2e", async (route) => route.fulfill({ status: 404, json: { detail: "Not needed for this navigation test" } }));
 
   await page.goto("/tests/test-e2e");
-  await page.getByLabel("Queue priority").selectOption("100");
+  await page.getByLabel("Queue priority").click();
+  await page.getByRole("option", { name: "Urgent" }).click();
   await page.getByRole("button", { name: "Start run" }).click();
   await expect(page).toHaveURL(/\/runs\/run-priority-e2e$/);
 });

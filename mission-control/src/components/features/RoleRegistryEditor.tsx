@@ -25,7 +25,6 @@ import {
   CheckCircle,
   AlertCircle,
   Info,
-  ChevronDown,
   Server as ServerIcon,
   Hash,
   User,
@@ -34,6 +33,7 @@ import {
   SettingsChangeDialog,
   type SettingsChange,
 } from "@/components/ui/SettingsChangeDialog";
+import { Select } from "@/components/ui/Select";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -109,12 +109,11 @@ function HostSelect({
 }) {
   return (
     <div className="settings-model-select-wrapper">
-      <select
+      <Select
         id={id}
         value={value ?? "any"}
         onChange={(e) => onChange(e.target.value === "any" ? null : e.target.value)}
         disabled={disabled}
-        className="settings-model-select"
       >
         <option value="any">any — load-balanced</option>
         {hosts.map((h) => (
@@ -122,8 +121,7 @@ function HostSelect({
             {h.name ? `${h.name} · ${h.host}` : h.host}
           </option>
         ))}
-      </select>
-      <ChevronDown size={14} className="settings-model-select-arrow" />
+      </Select>
     </div>
   );
 }

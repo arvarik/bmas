@@ -103,7 +103,7 @@ The `/health` endpoint reports service state for monitoring tools. It returns HT
 
 The `/readiness` endpoint reports whether the complete stack can accept a task. Each failed check includes one repair command.
 
-Mission Control uses readiness to disable task submission until the stack can execute the request. Its setup center also shows provider credentials, storage access, queue capacity, and one real test-task action.
+Mission Control uses readiness to disable task submission until the stack can execute the request. The system status button in the top bar also shows provider credentials, storage access, queue capacity, and one real test-task action.
 
 The Files workspace separates user Inputs from agent Outputs. It keeps every output version and supports side-by-side comparisons.
 

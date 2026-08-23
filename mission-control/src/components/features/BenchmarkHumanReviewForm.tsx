@@ -3,6 +3,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { ActionButton } from "@/components/ui/ActionButton";
 import type { BenchmarkHumanReview } from "@/lib/benchmarks";
+import { Select } from "@/components/ui/Select";
 
 interface BenchmarkHumanReviewFormProps {
   attemptId: string;
@@ -63,7 +64,7 @@ export function BenchmarkHumanReviewForm({
   return (
     <form className="benchmark-human-review" onSubmit={submit}>
       <strong>Human review</strong>
-      <label>Outcome<select value={passed ? "pass" : "fail"} onChange={(event) => setPassed(event.target.value === "pass")}><option value="pass">Pass</option><option value="fail">Fail</option></select></label>
+      <label>Outcome<Select value={passed ? "pass" : "fail"} onChange={(event) => setPassed(event.target.value === "pass")}><option value="pass">Pass</option><option value="fail">Fail</option></Select></label>
       <label>Score from 0 to 1<input required type="number" min="0" max="1" step="0.01" value={score} onChange={(event) => setScore(event.target.value)} /></label>
       <label>Review note<textarea rows={2} value={note} onChange={(event) => setNote(event.target.value)} /></label>
       {error ? <p role="alert">{error}</p> : null}

@@ -4,6 +4,7 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { ToastProvider } from "@/components/ui/Toast";
 import { PendingTaskProvider } from "@/contexts/PendingTaskContext";
+import { ReadinessProvider } from "@/contexts/ReadinessContext";
 import { TopBar } from "@/components/layout/TopBar";
 import { TaskSidebar } from "@/components/ui/TaskSidebar";
 import { useSystemStream } from "@/hooks/useSystemStream";
@@ -15,7 +16,6 @@ import { useFocusTrap } from "@/hooks/useFocusTrap";
 function getBreadcrumb(pathname: string): string {
   if (pathname === "/") return "Home";
   if (pathname === "/tasks") return "Tasks";
-  if (pathname === "/activity") return "Live activity";
   if (pathname === "/analytics") return "Analytics";
   if (pathname === "/datasets") return "Datasets";
   if (pathname.startsWith("/datasets/")) return "Dataset detail";
@@ -37,6 +37,7 @@ function getBreadcrumb(pathname: string): string {
   }
   if (pathname === "/infra") return "Infrastructure";
   if (pathname === "/agents" || pathname === "/skills") return "Agents";
+  if (pathname.startsWith("/agents/")) return "Agent detail";
   if (pathname === "/sessions") return "Hermes Sessions";
   if (pathname === "/settings") return "Settings";
   return "Overview";
@@ -67,23 +68,17 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
   // ── System health (replaces useBlackboard.startPolling) ───────────
   const system = useSystemStream();
 
-  // ── Task history (feeds sidebar and landing page stats) ───────────
-  const taskHistory = useTaskHistory({ sort: "activity-desc" });
+  // ── Task history (feeds the tab title and sidebar badges) ─────────
+  const runningHistory = useTaskHistory({ status: "running" });
   const attentionHistory = useTaskHistory({ status: "attention" });
 
-  // ── Re-fetch task list when system stream emits lifecycle events ──
+  // ── Re-fetch task lists when system stream emits lifecycle events ─
   useEffect(() => {
     if (system.eventSequence > 0) {
-      void Promise.all([taskHistory.refetch(), attentionHistory.refetch()]);
+      void Promise.all([runningHistory.refetch(), attentionHistory.refetch()]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [system.eventSequence]);
-
-  // Compute total cost from task history
-  const totalCost = taskHistory.tasks.reduce(
-    (sum, t) => sum + (t.total_cost_usd ?? 0),
-    0
-  );
 
   const handleToggleCollapse = useCallback(() => {
     setSidebarCollapsed((prev) => !prev);
@@ -132,7 +127,7 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   // ── Dynamic Tab Title (running tasks) ─────────────────────────────
-  const runningTasks = taskHistory.tasks.filter((t) => t.status === "running").length;
+  const runningTasks = runningHistory.total;
   useEffect(() => {
     const defaultTitle = "Stigmergic — Mission Control";
     if (runningTasks > 0) {
@@ -189,17 +184,15 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
   return (
     <ToastProvider>
       <PendingTaskProvider>
+      <ReadinessProvider>
         <div className="app-shell">
           <a className="skip-link" href="#main-content">Skip to main content</a>
           <TopBar
             systemState={system.connectionState}
-            lastSuccessfulEventAt={system.lastSuccessfulEventAt}
             systemStateStale={system.isStale}
             failedDependencies={system.failedDependencies}
             affectedFeatures={system.affectedFeatures}
             onSystemRetry={system.reconnect}
-            swarmPhase={undefined}
-            totalCost={totalCost}
             currentView={currentView}
             onMenuToggle={handleToggleMobileDrawer}
             menuOpen={mobileDrawerOpen}
@@ -228,6 +221,7 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
             <TaskSidebar
               agentHealth={system.agentHealth}
               attentionCount={attentionHistory.total}
+              runningCount={runningHistory.total}
               collapsed={sidebarCollapsed}
               onToggleCollapse={handleToggleCollapse}
               mobileOpen={mobileDrawerOpen}
@@ -246,6 +240,7 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
             </main>
           </div>
         </div>
+      </ReadinessProvider>
       </PendingTaskProvider>
     </ToastProvider>
   );

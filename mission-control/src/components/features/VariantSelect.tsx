@@ -1,6 +1,15 @@
 "use client";
 
+/**
+ * VariantSelect — the runtime picker inside the task composer.
+ *
+ * It reads the daemon capability document and offers every runtime that
+ * Mission Control can render. A runtime that the daemon reports as
+ * unavailable stays visible but disabled, with the daemon's reason.
+ */
+
 import { useEffect, useState } from "react";
+import { Layers } from "lucide-react";
 import {
   CapabilityContractError,
   parseCapabilities,
@@ -10,7 +19,7 @@ import {
   hasMissionControlAdapter,
   supportsMissionControlVariant,
 } from "@/lib/variant-support";
-import { describeRuntime } from "@/lib/runtime-presentation";
+import { SelectMenu, type SelectOption } from "@/components/ui/SelectMenu";
 
 interface VariantSelectProps {
   value: string;
@@ -20,19 +29,21 @@ interface VariantSelectProps {
 
 type LoadState = "loading" | "ready" | "error";
 
+const RUNTIME_SUMMARY: Record<string, string> = {
+  classic: "Control unit routes roles over a shared blackboard",
+  patchboard: "Independent contributions merged in one integration turn",
+  stigmergic: "Workers revise one shared artifact in order",
+};
+
 function isSelectable(variant: VariantCapability): boolean {
   return supportsMissionControlVariant(variant);
 }
 
-function RuntimeDetails({ variant }: { variant: VariantCapability }) {
-  const details = describeRuntime(variant);
-  return (
-    <dl className="variant-details" aria-label={`${variant.label} runtime effects`}>
-      <div><dt>Runtime class</dt><dd>{details.speed}</dd></div>
-      <div><dt>Cost class</dt><dd>{details.cost}</dd></div>
-      <div><dt>Estimated tool access</dt><dd>{details.tools}</dd></div>
-    </dl>
-  );
+function optionDescription(variant: VariantCapability): string | undefined {
+  if (!variant.available && variant.reason) return variant.reason;
+  if (!hasMissionControlAdapter(variant.id)) return "Interface unavailable";
+  if (!isSelectable(variant)) return "Unsupported contract";
+  return RUNTIME_SUMMARY[variant.id];
 }
 
 export function VariantSelect({
@@ -82,13 +93,8 @@ export function VariantSelect({
     if (selected && selected.id !== value) onChange(selected.id);
   }, [loadState, onAvailabilityChange, onChange, value, variants]);
 
-  const selectableVariants = variants.filter(isSelectable);
-  const selectedVariant = selectableVariants.find(
-    (variant) => variant.id === value || variant.aliases.includes(value),
-  ) ?? selectableVariants[0];
-
   if (loadState === "loading") {
-    return <span className="variant-status">Checking available runtimes…</span>;
+    return <span className="variant-status">Checking runtimes…</span>;
   }
 
   if (loadState === "error") {
@@ -99,54 +105,42 @@ export function VariantSelect({
     );
   }
 
-  if (selectableVariants.length === 1) {
+  const selectableVariants = variants.filter(isSelectable);
+  const selectedVariant = selectableVariants.find(
+    (variant) => variant.id === value || variant.aliases.includes(value),
+  ) ?? selectableVariants[0];
+
+  if (selectableVariants.length <= 1) {
     return (
-      <div className="variant-picker">
-        <span className="variant-picker__label">Runtime</span>
-        <strong className="variant-status">{selectableVariants[0].label}</strong>
-        <RuntimeDetails variant={selectableVariants[0]} />
-      </div>
+      <span className="variant-status variant-status--fixed" title="Only one runtime is available">
+        <Layers size={14} aria-hidden="true" />
+        {selectableVariants[0]?.label ?? "No runtime available"}
+      </span>
     );
   }
 
+  const options: SelectOption[] = variants.map((variant) => ({
+    value: variant.id,
+    label: variant.label,
+    description: optionDescription(variant),
+    disabled: !isSelectable(variant),
+  }));
+
   return (
-    <div className="variant-picker">
-      <label className="variant-picker__label" htmlFor="variant-select">Runtime</label>
-      <select
-        id="variant-select"
-        className="variant-select"
-        value={selectedVariant?.id ?? value}
-        onChange={(event) => {
-          const next = event.target.value;
-          onChange(next);
-          onAvailabilityChange?.(
-            variants.some((variant) => variant.id === next && isSelectable(variant)),
-          );
-        }}
-        aria-describedby="variant-runtime-effects"
-      >
-        {variants.map((variant) => (
-          <option
-            key={variant.id}
-            value={variant.id}
-            disabled={!isSelectable(variant)}
-            title={variant.reason ? `${variant.label}: ${variant.reason}` : variant.label}
-          >
-            {variant.label}
-            {!variant.available && variant.reason ? ` (${variant.reason})` : ""}
-            {!hasMissionControlAdapter(variant.id) ? " (interface unavailable)" : ""}
-            {hasMissionControlAdapter(variant.id) && !isSelectable(variant)
-              ? " (unsupported contract)"
-              : ""}
-          </option>
-        ))}
-      </select>
-      {selectedVariant ? (
-        <div id="variant-runtime-effects">
-          <RuntimeDetails variant={selectedVariant} />
-        </div>
-      ) : null}
-    </div>
+    <SelectMenu
+      aria-label="Runtime"
+      variant="pill"
+      size="sm"
+      value={selectedVariant?.id ?? value}
+      options={options}
+      prefix={<Layers size={14} aria-hidden="true" />}
+      onChange={(next) => {
+        onChange(next);
+        onAvailabilityChange?.(
+          variants.some((variant) => variant.id === next && isSelectable(variant)),
+        );
+      }}
+    />
   );
 }
 

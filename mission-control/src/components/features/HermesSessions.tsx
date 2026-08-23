@@ -32,6 +32,7 @@ import {
   type HermesSessionRecord,
 } from "@/lib/hermes-session-presentation";
 import styles from "./HermesSessions.module.css";
+import { Select } from "@/components/ui/Select";
 
 interface NodeData {
   role: string;
@@ -331,7 +332,7 @@ export function HermesSessions() {
             <div className="hermes-sessions__toolbar">
               <label>
                 <span>Agent profile</span>
-                <select
+                <Select
                   value={selectedNode}
                   onChange={(event) => {
                     listRequest.current += 1;
@@ -349,7 +350,7 @@ export function HermesSessions() {
                       {node.name} · {node.profiles[0]?.name ?? node.role}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <label className={styles.searchField}>
                 <span>Search sessions</span>

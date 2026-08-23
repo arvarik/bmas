@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseReadiness } from "@/components/features/ReadinessPanel";
+import { parseReadiness } from "@/lib/readiness";
 
 describe("readiness contract", () => {
   it("accepts an actionable readiness document", () => {

@@ -50,6 +50,7 @@ import { BoardEntryDetail } from "./board/BoardEntryDetail";
 import { RichContent } from "@/components/ui/RichContent";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { updateUrlParams } from "@/lib/task-detail-tools";
+import { Select } from "@/components/ui/Select";
 
 
 interface BlackboardBoardProps {
@@ -386,13 +387,13 @@ export function BlackboardBoard({
 
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>
             Sort
-            <select value={sort} onChange={(event) => setSort(event.target.value as BoardSort)}>
+            <Select value={sort} onChange={(event) => setSort(event.target.value as BoardSort)}>
               <option value="sequence-asc">Oldest first</option>
               <option value="sequence-desc">Newest first</option>
               <option value="salience">Highest salience</option>
               <option value="confidence">Highest confidence</option>
               <option value="backlinks">Most backlinks</option>
-            </select>
+            </Select>
           </label>
 
           <button type="button" onClick={exportBoard} disabled={filtered.length === 0}>

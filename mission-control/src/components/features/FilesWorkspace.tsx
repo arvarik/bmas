@@ -20,6 +20,7 @@ import type { TaskArtifact, TaskFile } from "@/hooks/useTaskStream";
 import { mergeTaskFiles } from "@/components/features/AttachmentRail";
 import { mergeTaskArtifacts } from "@/components/features/ArtifactBrowser";
 import { ActionableError } from "@/components/ui/ActionableError";
+import { Select } from "@/components/ui/Select";
 
 const EMPTY_FILES: readonly TaskFile[] = [];
 const EMPTY_ARTIFACTS: readonly TaskArtifact[] = [];
@@ -453,15 +454,15 @@ function FileDetail({
             <Columns2 size={14} />
             <label>
               Left
-              <select value={effectiveLeftId} onChange={(event) => setLeftId(event.target.value)}>
+              <Select value={effectiveLeftId} onChange={(event) => setLeftId(event.target.value)}>
                 {versions.map((artifact) => <option key={artifact.id} value={artifact.id}>v{artifact.version}</option>)}
-              </select>
+              </Select>
             </label>
             <label>
               Right
-              <select value={effectiveRightId} onChange={(event) => setRightId(event.target.value)}>
+              <Select value={effectiveRightId} onChange={(event) => setRightId(event.target.value)}>
                 {versions.map((artifact) => <option key={artifact.id} value={artifact.id}>v{artifact.version}</option>)}
-              </select>
+              </Select>
             </label>
           </div>
           <div className="files-compare__panes">
