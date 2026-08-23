@@ -22,6 +22,7 @@ import type { StatusType } from "@/lib/design-tokens";
 import { ArrowLeft } from "lucide-react";
 import { UnsupportedVariantState } from "@/components/features/UnsupportedVariantState";
 import { getActiveAdapter, visibleNavigationPanels } from "@/lib/variants";
+import { describeStopReason } from "@/lib/runtime-presentation";
 import { SummaryPanel } from "./panels/SummaryPanel";
 import { BlackboardPanel } from "./panels/BlackboardPanel";
 import { ExecutionPanel } from "./panels/ExecutionPanel";
@@ -91,6 +92,7 @@ function TaskHeader({
       : "Loading…";
 
   // Duration display
+  const stopReason = taskMeta && !isLive ? describeStopReason(taskMeta) : null;
   const durationText = taskMeta?.duration_ms
     ? fmtDuration(taskMeta.duration_ms)
     : taskMeta?.started_at
@@ -139,6 +141,14 @@ function TaskHeader({
             {taskMeta.variant}
           </span>
         )}
+        {taskMeta?.effort && taskMeta.effort !== "standard" && (
+          <span
+            className="task-header__badge effort-chip"
+            title={`Effort level: ${taskMeta.effort}`}
+          >
+            {taskMeta.effort}
+          </span>
+        )}
         {taskMeta?.model && (
           <span className="task-header__model">{taskMeta.model}</span>
         )}
@@ -152,6 +162,14 @@ function TaskHeader({
         )}
         <span className="task-header__phase">Phase {phase || taskMeta?.run_state || "Queued"}</span>
         <span className="task-header__agent">Active agent {activeAgent || "None"}</span>
+        {stopReason ? (
+          <span
+            className={`task-header__stop task-header__stop--${stopReason.tone}`}
+            title={stopReason.detail}
+          >
+            {stopReason.label}
+          </span>
+        ) : null}
       </div>
     </div>
   );

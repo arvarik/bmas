@@ -84,18 +84,21 @@ export function createTaskSubmissionRequest(
   task: string,
   variant: string,
   files: readonly File[],
+  effort?: string,
 ): RequestInit {
+  const effortValue = effort && effort !== "standard" ? effort : undefined;
   if (files.length === 0) {
     return {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task, variant }),
+      body: JSON.stringify({ task, variant, ...(effortValue ? { effort: effortValue } : {}) }),
     };
   }
 
   const body = new FormData();
   body.append("task", task);
   body.append("variant", variant);
+  if (effortValue) body.append("effort", effortValue);
   for (const file of files) body.append("files", file, file.name);
   return { method: "POST", body };
 }

@@ -56,6 +56,10 @@ CLASSIC_FIELD_METADATA: list[dict[str, Any]] = [
     {"key": "sole_similarity", "label": "Sole-answer check", "type": "enum",
      "options": ["auto", "exact", "embedding", "judge"],
      "group": "control", "description": "How the decider verifies a single unchallenged answer."},
+    {"key": "grace_verification", "label": "Grace verification", "type": "boolean",
+     "group": "control", "description": "Before a limit stop, spend one extra round so the critic can review the answer."},
+    {"key": "actor_context", "label": "Agent context", "type": "enum", "options": ["chained", "fresh"],
+     "group": "board", "description": "Chained keeps each agent's model session across rounds. Fresh sends only the board view each turn, which keeps long runs affordable."},
     {"key": "round_execution", "label": "Round execution", "type": "enum", "options": ["concurrent", "sequential"],
      "group": "control", "description": "Run the selected agents of one round together or one after another."},
     {"key": "view_budget_tokens", "label": "Board view budget", "type": "integer", "min": 512, "max": 200000,
@@ -82,6 +86,8 @@ def _seed_classic_defaults() -> dict[str, Any]:
         **copy.deepcopy(dict(CLASSIC_CONFIG)),
         "round_execution": ROUND_EXECUTION,
         "view_budget_tokens": VIEW_BUDGET_TOKENS,
+        "grace_verification": bool(CLASSIC_CONFIG.get("grace_verification", True)),
+        "actor_context": str(CLASSIC_CONFIG.get("actor_context", "chained")),
     }
 
 
@@ -92,8 +98,14 @@ def _validate_classic(candidate: dict[str, Any]) -> dict[str, Any]:
     data = copy.deepcopy(candidate)
     round_execution = data.pop("round_execution", "concurrent")
     view_budget = data.pop("view_budget_tokens", 12000)
+    grace_verification = data.pop("grace_verification", True)
+    actor_context = data.pop("actor_context", "chained")
     if round_execution not in ("concurrent", "sequential"):
         raise ValueError("round_execution must be 'concurrent' or 'sequential'")
+    if not isinstance(grace_verification, bool):
+        raise ValueError("grace_verification must be true or false")
+    if actor_context not in ("chained", "fresh"):
+        raise ValueError("actor_context must be 'chained' or 'fresh'")
     if isinstance(view_budget, bool) or not isinstance(view_budget, int) or view_budget < 512:
         raise ValueError("view_budget_tokens must be an integer of at least 512")
 
@@ -121,6 +133,8 @@ def _validate_classic(candidate: dict[str, Any]) -> dict[str, Any]:
     validated = model.model_dump()
     validated["round_execution"] = round_execution
     validated["view_budget_tokens"] = int(view_budget)
+    validated["grace_verification"] = grace_verification
+    validated["actor_context"] = actor_context
     return validated
 
 

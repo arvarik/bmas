@@ -83,6 +83,9 @@ class TaskOverrides(BaseModel):
 
     routing: TaskRoutingOverride | None = None
     role_registry: dict[str, TaskRoleRegistryOverride] | None = None
+    # Runtime limit overrides for this one task. The runtime validates the
+    # merged result at capture time (classic: validate_classic_settings).
+    classic: dict[str, Any] | None = None
 
     def routing_dict(self) -> dict[str, str] | None:
         if self.routing is None:
@@ -113,6 +116,10 @@ class TaskSubmission(BaseModel):
 
     task: str
     variant: str | None = None
+    effort: str | None = Field(
+        default=None, pattern=r"^[a-z]{1,32}$",
+        description="Named effort level from the runtime's effort profiles",
+    )
     overrides: TaskOverrides | None = None
     benchmark: BenchmarkContext | None = None
 
@@ -578,14 +585,19 @@ async def _admit_task(
     # Always stamp the active variant — never rely on schema default.
     # Build per-task overrides dict (None if no overrides provided)
     task_overrides: dict | None = None
-    if req.overrides is not None:
+    if req.overrides is not None or req.effort is not None:
         task_overrides = {}
-        routing_dict = req.overrides.routing_dict()
-        if routing_dict:
-            task_overrides["routing"] = routing_dict
-        rr_dict = req.overrides.role_registry_dict()
-        if rr_dict:
-            task_overrides["role_registry"] = rr_dict
+        if req.overrides is not None:
+            routing_dict = req.overrides.routing_dict()
+            if routing_dict:
+                task_overrides["routing"] = routing_dict
+            rr_dict = req.overrides.role_registry_dict()
+            if rr_dict:
+                task_overrides["role_registry"] = rr_dict
+            if req.overrides.classic:
+                task_overrides["classic"] = dict(req.overrides.classic)
+        if req.effort is not None:
+            task_overrides["effort"] = req.effort
         if not task_overrides:
             task_overrides = None
 
@@ -722,12 +734,13 @@ async def submit_task_with_files(
     request: Request,
     task: str = Form(...),
     variant: str | None = Form(None),
+    effort: str | None = Form(None),
     files: list[UploadFile] | None = File(None),
 ):
     """Store initial files before one task can enter the execution queue."""
     require_api_key(request, BMAS_API_KEY)
     return await _admit_task(
-        TaskSubmission(task=task, variant=variant or None),
+        TaskSubmission(task=task, variant=variant or None, effort=effort or None),
         list(files or []),
     )
 

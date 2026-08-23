@@ -76,12 +76,12 @@ class TestEntryTypes:
     }
 
     def test_all_spec_types_registered(self):
-        """All 10 entry types from doc 04 §1 are registered."""
-        assert ENTRY_TYPES == self.SPEC_TYPES
+        """All 11 entry types (doc 04 §1 plus the task ledger) are registered."""
+        assert self.SPEC_TYPES | {"ledger"} == ENTRY_TYPES
 
     def test_entry_count(self):
-        """Exactly 10 entry types (matches the spec table)."""
-        assert len(ENTRY_TYPES) == 10
+        """Exactly 11 entry types (the spec table plus the task ledger)."""
+        assert len(ENTRY_TYPES) == 11
 
     def test_constants_match_set(self):
         """Each constant matches its string in the frozenset."""

@@ -674,6 +674,19 @@ function projectClassicHydration(
   };
 }
 
+/** "/N" suffix for the round display, from the captured configuration. */
+function classicMaxRounds(state: TaskStreamData): string | null {
+  const configuration = state.taskMeta?.effective_configuration;
+  if (typeof configuration !== "object" || configuration === null) return null;
+  const settings = (configuration as Record<string, unknown>).settings;
+  if (typeof settings !== "object" || settings === null) return null;
+  const classic = (settings as Record<string, unknown>).classic
+    ?? (settings as Record<string, unknown>).traditional;
+  if (typeof classic !== "object" || classic === null) return null;
+  const maxRounds = (classic as Record<string, unknown>).max_rounds;
+  return typeof maxRounds === "number" && maxRounds > 0 ? `/${maxRounds}` : null;
+}
+
 export const CLASSIC_ADAPTER: VariantUIAdapter = {
   id: "classic",
   label: "Classic blackboard",
@@ -698,8 +711,12 @@ export const CLASSIC_ADAPTER: VariantUIAdapter = {
   progressLabel(state, advertisedFeatures) {
     const parts: string[] = [];
     if (advertisedFeatures.includes("round")) {
-      const round = Math.max(0, ...state.activeTurns.map((turn) => turn.round_no));
-      if (round > 0) parts.push(`Round ${round}`);
+      const round = Math.max(
+        0,
+        ...state.activeTurns.map((turn) => turn.round_no),
+        ...state.completedTurns.map((turn) => turn.round_no),
+      );
+      if (round > 0) parts.push(`Round ${round}${classicMaxRounds(state) ?? ""}`);
     }
     if (advertisedFeatures.includes("phase") && state.phase) parts.push(state.phase);
     if (advertisedFeatures.includes("effective_actions")) {

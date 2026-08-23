@@ -105,6 +105,16 @@ export function mapTaskMeta(task: Record<string, unknown>): TaskMeta {
     started_at: task.started_at as string | undefined,
     last_heartbeat_at: task.last_heartbeat_at as string | undefined,
     error_message: task.error_message as string | undefined,
+    terminated_by: task.terminated_by as string | undefined,
+    answer_source: task.answer_source as string | undefined,
+    effort: (() => {
+      const configuration = task.effective_configuration;
+      if (typeof configuration === "object" && configuration !== null) {
+        const effort = (configuration as Record<string, unknown>).effort;
+        if (typeof effort === "string") return effort;
+      }
+      return undefined;
+    })(),
     terminal_kind: task.terminal_kind as TaskMeta["terminal_kind"],
     failure_category: task.failure_category as string | undefined,
     cancel_requested_at: task.cancel_requested_at as string | undefined,

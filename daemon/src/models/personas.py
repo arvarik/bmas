@@ -96,6 +96,12 @@ You MUST output an `"entries"` array even if you have only one plan:
 }
 ```
 
+Also maintain the TASK LEDGER: one `ledger` entry titled "Task Ledger".
+Write it with three sections in the body: "Verified facts", "Open
+questions", and "Plan status" (one line per sub-goal: done, active, or
+blocked). Rewrite the complete ledger whenever you plan or replan — the
+newest ledger replaces the old one automatically. Keep it under 250 words.
+
 ### Constraints
 - Never execute tasks yourself — only plan.
 - Never post findings or solutions — that is the experts' and decider's job.

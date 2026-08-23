@@ -13,6 +13,8 @@ import { useCallback, useSyncExternalStore } from "react";
 export interface Preferences {
   /** Runtime the composer selects on load. */
   defaultRuntime: string;
+  /** Effort level the composer selects on load. */
+  defaultEffort: string;
   /** Key that sends a task from the composer. */
   sendKey: "enter" | "mod-enter";
   /** Sidebar starts collapsed on wide screens. */
@@ -23,6 +25,7 @@ export interface Preferences {
 
 export const PREFERENCE_DEFAULTS: Preferences = {
   defaultRuntime: "classic",
+  defaultEffort: "standard",
   sendKey: "enter",
   sidebarCollapsed: false,
   reducedMotion: false,
@@ -53,6 +56,9 @@ export function parsePreferences(raw: string): Preferences {
       defaultRuntime: typeof parsed.defaultRuntime === "string" && parsed.defaultRuntime
         ? parsed.defaultRuntime
         : PREFERENCE_DEFAULTS.defaultRuntime,
+      defaultEffort: typeof parsed.defaultEffort === "string" && parsed.defaultEffort
+        ? parsed.defaultEffort
+        : PREFERENCE_DEFAULTS.defaultEffort,
       sendKey: parsed.sendKey === "mod-enter" ? "mod-enter" : "enter",
       sidebarCollapsed: parsed.sidebarCollapsed === true,
       reducedMotion: parsed.reducedMotion === true,

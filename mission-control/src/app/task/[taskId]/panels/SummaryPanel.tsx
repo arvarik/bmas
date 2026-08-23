@@ -27,6 +27,7 @@ import { authorColor } from "@/lib/design-tokens";
 import type { CostData, TaskArtifact, TurnRecord, CoordinatorNarration } from "@/hooks/useTaskStream";
 import { ProcessFlowGraph } from "@/components/features/ProcessFlowGraph";
 import { getActiveAdapter } from "@/lib/variants";
+import { describeStopReason } from "@/lib/runtime-presentation";
 import { UnsupportedVariantState } from "@/components/features/UnsupportedVariantState";
 
 
@@ -978,12 +979,20 @@ function CompletedView({
   ResultRenderer: ComponentType<{ content: string; formats: readonly string[] }>;
   resultFormats: readonly string[];
 }) {
+  const stopReason = taskMeta ? describeStopReason(taskMeta) : null;
   return (
     <div className="view-container overview">
       <InputPromptBox prompt={taskMeta?.full_input} />
       {/* Result hero */}
       <div className="overview__result-card">
-        <h3 className="overview__result-title">Result</h3>
+        <div className="overview__result-head">
+          <h3 className="overview__result-title">Result</h3>
+          {stopReason ? (
+            <span className={`task-header__stop task-header__stop--${stopReason.tone}`} title={stopReason.detail}>
+              {stopReason.label}
+            </span>
+          ) : null}
+        </div>
         <div className="overview__result-body">
           <AdapterResultRenderer content={result} formats={resultFormats} />
         </div>

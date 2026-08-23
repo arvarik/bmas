@@ -144,7 +144,7 @@ async def _reconcile() -> None:
                 lease_token,
             )
             continue
-        timeout = int(configuration.get("timeout_seconds", 3600))
+        timeout = _attempt_timeout_seconds(configuration)
         if attempt.get("task_id") and _age_seconds(attempt.get("started_at")) >= timeout:
             await abort_scheduled_task(str(attempt["task_id"]), "benchmark_timeout")
             await repository.fail_active_attempt(
@@ -153,6 +153,38 @@ async def _reconcile() -> None:
                 f"The attempt exceeded {timeout} seconds",
                 lease_token,
             )
+
+
+def _attempt_timeout_seconds(configuration: dict) -> int:
+    """Give an attempt at least the runtime's own duration limit.
+
+    A test can raise an arm's `classic.max_duration_s` or select a long
+    effort level. The reaper must not abort an attempt that its runtime
+    still allows, so the timeout grows to cover the longest arm plus a
+    margin for queueing and finalize work.
+    """
+    timeout = int(configuration.get("timeout_seconds", 3600))
+    from core.variants.effort import CLASSIC_EFFORT_PROFILES
+
+    for arm in configuration.get("arms") or []:
+        settings = arm.get("configuration") if isinstance(arm, dict) else None
+        if not isinstance(settings, dict):
+            continue
+        duration = None
+        classic = settings.get("classic")
+        if isinstance(classic, dict) and isinstance(
+            classic.get("max_duration_s"), (int, float)
+        ):
+            duration = int(classic["max_duration_s"])
+        effort = settings.get("effort")
+        if duration is None and isinstance(effort, str):
+            profile = CLASSIC_EFFORT_PROFILES.get(effort.lower()) or {}
+            profile_duration = (profile.get("settings") or {}).get("max_duration_s")
+            if isinstance(profile_duration, (int, float)):
+                duration = int(profile_duration)
+        if duration is not None:
+            timeout = max(timeout, duration + 300)
+    return timeout
 
 
 async def _tick() -> None:

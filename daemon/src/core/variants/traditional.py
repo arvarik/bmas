@@ -21,6 +21,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -159,6 +160,14 @@ class TraditionalVariant:
         self.view_budget_tokens: int = max(
             512, int(config.get("view_budget_tokens", 12000))
         )
+        self.grace_verification: bool = bool(config.get("grace_verification", True))
+        self.actor_context: str = str(config.get("actor_context", "chained"))
+        # Reserve the tail of the duration budget for the forced decider and
+        # the grace verification round, so those turns never dispatch with a
+        # guaranteed-timeout window.
+        self._duration_reserve_s: int = min(
+            180, max(45, int(self.max_duration_s * 0.08))
+        )
 
         # External services
         self.litellm_url = litellm_url
@@ -194,6 +203,7 @@ class TraditionalVariant:
         self._stall_counter: int = 0
         self._replan_count: int = 0
         self._round_hashes: list[str] = []
+        self._round_token_sets: list[frozenset[str]] = []
         self._tier: str = "medium"
 
         # Phase 5: stateful turn response IDs (doc 12 §5.2)
@@ -393,6 +403,11 @@ class TraditionalVariant:
         self._round_hashes = [
             str(value) for value in meta.get("round_hashes", [])
         ]
+        self._round_token_sets = [
+            frozenset(str(token) for token in tokens)
+            for tokens in meta.get("round_token_sets", [])
+            if isinstance(tokens, (list, tuple, set, frozenset))
+        ]
         self._edge_rr_counter = int(meta.get("edge_rr_counter", 0))
         self.genesis_started_at = float(meta.get("genesis_started_at", time.time()))
         elapsed = max(0.0, time.time() - self.genesis_started_at)
@@ -412,6 +427,9 @@ class TraditionalVariant:
             stall_counter=self._stall_counter,
             replan_count=self._replan_count,
             round_hashes=list(self._round_hashes),
+            round_token_sets=[
+                sorted(tokens) for tokens in self._round_token_sets
+            ],
             edge_rr_counter=self._edge_rr_counter,
             genesis_started_at=self.genesis_started_at,
             roster={
@@ -587,12 +605,36 @@ class TraditionalVariant:
         if solution:
             return StepResult(terminal=True, reason="solution")
 
-        # If decider was forced last round, terminate now
+        # If decider was forced last round, terminate now — unless grace
+        # verification still owes the answer one independent critic review.
+        grace_candidate = None
         if meta.get("decider_forced"):
-            return StepResult(
-                terminal=True,
-                reason=meta.get("terminal_reason", "forced_decider_finished")
+            critic_enabled = (
+                self.role_registry.get("critic", {}).get("enabled") is not False
             )
+            if (
+                self.grace_verification
+                and critic_enabled
+                and not meta.get("grace_verification_done")
+            ):
+                open_solutions = sorted(
+                    (
+                        entry for entry in snapshot.values()
+                        if entry.type == "solution" and entry.status == "open"
+                    ),
+                    key=lambda entry: (entry.round, entry.id),
+                    reverse=True,
+                )
+                if (
+                    open_solutions
+                    and open_solutions[0].id != meta.get("solution_reviewed_id")
+                ):
+                    grace_candidate = open_solutions[0]
+            if grace_candidate is None:
+                return StepResult(
+                    terminal=True,
+                    reason=meta.get("terminal_reason", "forced_decider_finished")
+                )
 
         force_decider = False
         force_replan = False
@@ -609,9 +651,10 @@ class TraditionalVariant:
             force_decider = True
             term_reason = "budget"
 
-        # Guard: duration cap
+        # Guard: duration cap. The reserve keeps enough wall clock for the
+        # forced decider (and one grace verification round) to actually run.
         elapsed = time.monotonic() - self.genesis_time
-        if not force_decider and elapsed >= self.max_duration_s:
+        if not force_decider and elapsed >= self.max_duration_s - self._duration_reserve_s:
             force_decider = True
             term_reason = "duration"
 
@@ -645,7 +688,19 @@ class TraditionalVariant:
             else None
         )
         
-        if force_decider:
+        if grace_candidate is not None:
+            selected = ["critic"]
+            rationale = (
+                f"Grace verification: solution {grace_candidate.id} receives "
+                "one independent critic review before the task stops."
+            )
+            source = "grace_verification"
+            await self.gateway.set_meta(
+                task_id,
+                grace_verification_done=True,
+                solution_candidate_id=grace_candidate.id,
+            )
+        elif force_decider:
             selected = ["decider"]
             rationale = f"Task termination reached ({term_reason}) — forcing decider to synthesize final solution."
             source = "heuristic"
@@ -1054,14 +1109,14 @@ class TraditionalVariant:
             protected_context = [
                 entry
                 for entry in board.values()
-                if getattr(entry, "type", None) in {"objective", "directive"}
+                if getattr(entry, "type", None) in {"objective", "directive", "ledger"}
             ]
             subset = [*protected_context, *eviction_candidates]
             board_data = {"mode": "condense", "entries": [entry_to_dict(e) for e in subset]}
         else:
             board_data = self._serialize_board(board, actor=actor)
 
-        return {
+        payload = {
             "task_id": task_id,
             "turn_id": f"turn-{uuid.uuid4().hex[:8]}",
             "round": board.get("round", 0) if isinstance(board, dict) else 0,
@@ -1071,10 +1126,25 @@ class TraditionalVariant:
             "board": board_data,
             "response_contract": "entries_v1",
             "budget_remaining_usd": max(0, self.budget_ceiling - self.budget_spent),
-            # Phase 5: stateful turns (doc 12 §5.2)
+            # Phase 5: stateful turns (doc 12 §5.2). In fresh context mode the
+            # bounded board view is the whole memory: the model conversation
+            # does not chain, so per-round cost stays flat over long runs.
             "session_id": f"{task_id}:{actor}",
-            "previous_response_id": self.get_response_id(actor),
+            "previous_response_id": (
+                self.get_response_id(actor)
+                if self.actor_context == "chained"
+                else None
+            ),
         }
+        if (
+            self.budget_ceiling > 0
+            and self.budget_spent / self.budget_ceiling >= 0.8
+        ):
+            payload["budget_status"] = (
+                "Over 80% of the task budget is spent. Converge now: "
+                "verify or finalize existing work instead of opening new work."
+            )
+        return payload
 
     # ── Parse Agent Response ─────────────────────────────────────────
 
@@ -1222,6 +1292,24 @@ class TraditionalVariant:
                 round_no=mutation.get("round", 0),
             )
             events.extend(committed)
+            # The newest task ledger replaces every earlier one. A single
+            # authoritative ledger keeps the plan from drifting across
+            # long runs.
+            new_ledgers = [
+                entry for entry in committed if entry.type == "ledger"
+            ]
+            if new_ledgers:
+                keep_id = new_ledgers[-1].id
+                snapshot = await self.store.get_snapshot(task_id)
+                for entry in snapshot.values():
+                    if (
+                        entry.type == "ledger"
+                        and entry.status == "open"
+                        and entry.id != keep_id
+                    ):
+                        await self.gateway.set_status(
+                            task_id, entry.id, "superseded", actor,
+                        )
         return events
 
     # ── Is Terminal ──────────────────────────────────────────────────
@@ -1239,6 +1327,64 @@ class TraditionalVariant:
         return (False, None)
 
     # ── CU Selection (doc 05 §1.1) ───────────────────────────────────
+
+    def _cu_prompt(
+        self,
+        query: str,
+        board_text: str,
+        roster_text: str,
+        current_round: int,
+        snapshot: dict[str, BoardEntry],
+        meta: dict[str, Any],
+    ) -> str:
+        """Build the control-unit prompt with an explicit progress block.
+
+        The CU sees how the task is trending — budget pressure, new entries
+        last round, unresolved critiques, and the stall state — so it can
+        prefer verification and convergence when returns diminish.
+        """
+        budget_remaining = max(0.0, self.budget_ceiling - self.budget_spent)
+        budget_pct = (
+            min(100, int(100 * self.budget_spent / self.budget_ceiling))
+            if self.budget_ceiling > 0 else 0
+        )
+        ledger_rows = list(meta.get("progress_ledger") or [])
+        last = ledger_rows[-1] if ledger_rows else {}
+        entries_last_round = int(last.get("entries_added", 0) or 0)
+        open_critiques = sum(
+            1 for entry in snapshot.values()
+            if entry.status == "open" and entry.type == "critique"
+        )
+        open_conflicts = sum(
+            1 for entry in snapshot.values()
+            if entry.status == "open" and entry.type == "conflict"
+        )
+        pressure_line = ""
+        if budget_pct >= 80:
+            pressure_line = (
+                "- BUDGET PRESSURE: over 80% of the budget is spent. "
+                "Select agents that converge (critic, decider). "
+                "Do not open new lines of work.\n"
+            )
+        return (
+            f"## Objective\n{query}\n\n"
+            f"## Current Board (round {current_round})\n{board_text}\n\n"
+            f"## Available Agents\n{roster_text}\n\n"
+            f"## Progress\n"
+            f"- Budget: ${self.budget_spent:.4f} spent of "
+            f"${self.budget_ceiling:.2f} ({budget_pct}%)\n"
+            f"- Last round added {entries_last_round} entries; "
+            f"{open_critiques} unresolved critiques; "
+            f"{open_conflicts} open conflicts\n"
+            f"- Stall counter: {self._stall_counter}/{self.stall_rounds}; "
+            f"replans used: {self._replan_count}/{self.max_replans}\n"
+            f"- A round that only restates existing content counts as a stall.\n"
+            f"{pressure_line}\n"
+            f"## Constraints\n"
+            f"- Round: {current_round}/{self.max_rounds}\n"
+            f"- Budget remaining: ${budget_remaining:.4f}\n"
+            f"- Select 1-{self.max_concurrent} agents\n"
+        )
 
     async def _cu_select(
         self,
@@ -1265,15 +1411,8 @@ class TraditionalVariant:
             for actor, desc in self.roster.all_actors()
         )
 
-        budget_remaining = max(0, self.budget_ceiling - self.budget_spent)
-        prompt = (
-            f"## Objective\n{query}\n\n"
-            f"## Current Board (round {current_round})\n{board_text}\n\n"
-            f"## Available Agents\n{roster_text}\n\n"
-            f"## Constraints\n"
-            f"- Round: {current_round}/{self.max_rounds}\n"
-            f"- Budget remaining: ${budget_remaining:.4f}\n"
-            f"- Select 1-{self.max_concurrent} agents\n"
+        prompt = self._cu_prompt(
+            query, board_text, roster_text, current_round, snapshot, meta,
         )
 
         system = CU_SYSTEM_PROMPT.format(max_concurrent=self.max_concurrent)
@@ -1365,7 +1504,7 @@ class TraditionalVariant:
             )
         return f"Heuristic routing for round {current_round}: activated {names}."
 
-    def _get_eviction_candidates(self, snapshot: dict[str, BoardEntry] | dict[str, Any], max_candidates: int = 5) -> list[BoardEntry]:
+    def _get_eviction_candidates(self, snapshot: dict[str, BoardEntry] | dict[str, Any], max_candidates: int = 12) -> list[BoardEntry]:
         """Calculate Retention Value and return the bottom N eviction candidates."""
         open_entries = []
         for e in snapshot.values():
@@ -1375,10 +1514,23 @@ class TraditionalVariant:
                 
         protected_ids = set()
         
-        # 1. Protect critical entries
+        # 1. Protect critical entries. Structural types stay protected
+        # always; plans and critiques stay protected only while recent, so
+        # a long run can condense its own history instead of hoarding it.
+        latest_round = max(
+            (
+                int((getattr(e, "round", e.get("round", 0)) if isinstance(e, dict) else getattr(e, "round", 0)) or 0)
+                for e in open_entries
+            ),
+            default=0,
+        )
+        recent_floor = latest_round - CLEANER_RECENT_ROUNDS
         for e in open_entries:
             etype = getattr(e, "type", e.get("type", "")) if isinstance(e, dict) else getattr(e, "type", "")
-            if etype in ("objective", "directive", "plan", "critique", "conflict", "solution"):
+            round_no = int((getattr(e, "round", e.get("round", 0)) if isinstance(e, dict) else getattr(e, "round", 0)) or 0)
+            always = etype in ("objective", "directive", "ledger", "conflict", "solution")
+            recent = etype in ("plan", "critique") and round_no >= recent_floor
+            if always or recent:
                 eid = getattr(e, "id", e.get("id")) if isinstance(e, dict) else getattr(e, "id", None)
                 protected_ids.add(eid)
                 refs = getattr(e, "refs", e.get("refs", [])) if isinstance(e, dict) else getattr(e, "refs", [])
@@ -1400,12 +1552,12 @@ class TraditionalVariant:
             body = getattr(e, "body", e.get("body", "")) if isinstance(e, dict) else getattr(e, "body", "")
             salience = getattr(e, "salience", e.get("salience", 0.0)) if isinstance(e, dict) else getattr(e, "salience", 0.0)
             confidence = getattr(e, "confidence", e.get("confidence", 0.5)) if isinstance(e, dict) else getattr(e, "confidence", 0.5)
-            round_no = getattr(e, "round", e.get("round", 0)) if isinstance(e, dict) else getattr(e, "round", 0)
+            round_raw = getattr(e, "round", e.get("round", 0)) if isinstance(e, dict) else getattr(e, "round", 0)
             
             body_str = str(body) if body is not None else ""
             sal_val = float(salience) if salience is not None else 0.0
             conf_val = float(confidence) if confidence is not None else 0.5
-            round_val = int(round_no) if round_no is not None else 0
+            round_val = int(round_raw) if round_raw is not None else 0
             
             # RV = (Salience * W_sal) + (Confidence * W_conf) + (Round * W_rec) - (Tokens * W_size)
             tokens = len(body_str) // 4
@@ -1647,7 +1799,8 @@ class TraditionalVariant:
     ) -> bool:
         """Check if the board is stalled (doc 05 §5).
 
-        Stall = rounds with no accepted entries or near-duplicate bodies.
+        Stall = rounds with no accepted entries, exact-duplicate bodies, or
+        paraphrased near-duplicates of a recent round (token-set overlap).
         """
         # Get entries from the previous round
         prev_round = current_round - 1
@@ -1661,13 +1814,27 @@ class TraditionalVariant:
             self._stall_counter += 1
             return self._stall_counter >= self.stall_rounds
 
-        # Check for near-duplicate bodies (normalized hash)
+        # Exact repetition: normalized hash of the round's bodies.
         round_hash = _entries_hash(prev_entries)
+        round_tokens = _round_token_set(prev_entries)
         if round_hash in self._round_hashes:
+            self._stall_counter += 1
+        elif any(
+            _token_jaccard(round_tokens, seen) >= STALL_SIMILARITY
+            for seen in self._round_token_sets[-STALL_HISTORY_ROUNDS:]
+        ):
+            # Paraphrased repetition: the round restates recent content in
+            # new words without adding new information.
             self._stall_counter += 1
         else:
             self._stall_counter = 0
             self._round_hashes.append(round_hash)
+        if (
+            not self._round_token_sets
+            or round_tokens != self._round_token_sets[-1]
+        ):
+            self._round_token_sets.append(round_tokens)
+            del self._round_token_sets[:-STALL_HISTORY_ROUNDS]
 
         return self._stall_counter >= self.stall_rounds
 
@@ -2198,15 +2365,15 @@ class TraditionalVariant:
                     entries.append(dict(entry))
 
         relevant_types = {
-            "planner": {"objective", "directive", "plan", "finding", "critique", "conflict"},
-            "critic": {"objective", "directive", "plan", "finding", "solution", "conflict"},
-            "decider": {"objective", "directive", "plan", "finding", "critique", "conflict", "solution"},
-            "conflict_resolver": {"objective", "directive", "finding", "critique", "conflict", "solution"},
+            "planner": {"objective", "directive", "ledger", "plan", "finding", "critique", "conflict"},
+            "critic": {"objective", "directive", "ledger", "plan", "finding", "solution", "conflict"},
+            "decider": {"objective", "directive", "ledger", "plan", "finding", "critique", "conflict", "solution"},
+            "conflict_resolver": {"objective", "directive", "ledger", "finding", "critique", "conflict", "solution"},
         }
         base_role = (actor or "").split(".", 1)[0]
         preferred = relevant_types.get(base_role)
 
-        pinned_types = {"objective", "directive"}
+        pinned_types = {"objective", "directive", "ledger"}
         pinned = [entry for entry in entries if entry.get("type") in pinned_types]
         candidates = [entry for entry in entries if entry not in pinned]
         referenced_ids = {
@@ -2358,7 +2525,7 @@ class TraditionalVariant:
         for entry in sorted(
             snapshot.values(),
             key=lambda e: (
-                e.type in ("objective", "directive"),
+                e.type in ("objective", "directive", "ledger"),
                 e.status == "open",
                 e.salience,
                 e.round,
@@ -2700,6 +2867,30 @@ def _evidence_similarity(answer: str, evidence: str) -> float:
     if len(answer_tokens) <= 4 and answer_tokens.issubset(evidence_tokens):
         return 1.0
     return _fuzzy_similarity(answer, evidence)
+
+
+STALL_SIMILARITY = 0.9
+STALL_HISTORY_ROUNDS = 6
+CLEANER_RECENT_ROUNDS = 2
+
+
+def _round_token_set(entries: list[BoardEntry]) -> frozenset[str]:
+    """Return the normalized word set of one round's open entry bodies."""
+    words: set[str] = set()
+    for entry in entries:
+        body = (entry.body or "").lower()
+        words.update(
+            token for token in re.findall(r"[a-z0-9]+", body) if len(token) > 2
+        )
+    return frozenset(words)
+
+
+def _token_jaccard(left: frozenset[str], right: frozenset[str]) -> float:
+    """Jaccard overlap of two word sets; 0.0 when either side is empty."""
+    if not left or not right:
+        return 0.0
+    union = len(left | right)
+    return len(left & right) / union if union else 0.0
 
 
 def _entries_hash(entries: list[BoardEntry]) -> str:

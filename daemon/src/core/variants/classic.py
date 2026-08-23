@@ -22,6 +22,12 @@ from core.variants import (
     VariantOutcome,
     register_variant,
 )
+from core.variants.effort import (
+    CLASSIC_EFFORT_PROFILES,
+    apply_effort_profile,
+    public_effort_profiles,
+    resolve_effort,
+)
 from core.variants.traditional import StepResult, TraditionalVariant
 from settings_store import get_store, validate_classic_settings
 
@@ -89,6 +95,7 @@ class ClassicVariantRuntime:
                 "budget_spent",
             ),
         ),
+        effort_profiles=public_effort_profiles(CLASSIC_EFFORT_PROFILES),
     )
 
     @classmethod
@@ -100,8 +107,16 @@ class ClassicVariantRuntime:
         routing = await store.get_routing()
         registry = await store.get_role_registry()
         classic_settings = await store.get_classic()
+        try:
+            effort = resolve_effort((overrides or {}).get("effort"))
+        except ValueError as exc:
+            raise VariantConfigurationError(str(exc)) from exc
+        classic_settings = apply_effort_profile(
+            classic_settings, CLASSIC_EFFORT_PROFILES, effort,
+        )
         if overrides and isinstance(overrides.get("classic"), dict):
             classic_settings.update(copy.deepcopy(overrides["classic"]))
+        if effort != "standard" or (overrides and overrides.get("classic")):
             try:
                 classic_settings = validate_classic_settings(classic_settings)
             except ValueError as exc:
@@ -119,6 +134,7 @@ class ClassicVariantRuntime:
             "variant": cls.descriptor.id,
             "variant_contract_version": cls.descriptor.contract_version,
             "configuration_schema_version": "1",
+            "effort": effort,
             "settings": {
                 "classic": classic_settings,
                 "model_pools": copy.deepcopy(MODEL_POOLS),
