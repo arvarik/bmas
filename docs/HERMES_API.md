@@ -89,7 +89,7 @@ The adapter sends this shape to `POST /v1/runs`:
 | Field | Source | Purpose |
 |:---|:---|:---|
 | `input` | Task and context | Supplies the current role work. |
-| `instructions` | Role prompt | Adds role behavior to the Hermes system prompt. |
+| `instructions` | Role prompt plus the output-files section | Adds role behavior and the task's output directory to the Hermes system prompt. |
 | `model` | Daemon routing | Selects the model for this Hermes run. |
 | `session_id` | Daemon activation context | Preserves actor session state. |
 | `previous_response_id` | Saved turn context | Continues state when Hermes retains the response. |

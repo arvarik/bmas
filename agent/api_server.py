@@ -13,6 +13,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -54,6 +55,17 @@ HERMES_GATEWAY_KEY = os.getenv("HERMES_GATEWAY_KEY", os.getenv("API_SERVER_KEY",
 DAEMON_INGEST_URL = os.getenv("DAEMON_INGEST_URL")    # e.g. http://192.168.4.240:9000
 BMAS_NODE_KEY = os.getenv("BMAS_NODE_KEY", "")
 BMAS_EXECUTE_KEY = os.getenv("BMAS_EXECUTE_KEY", "")
+
+# ── Task output workspace (artifacts) ─────────────────────────────────────
+# The Hermes Runs API has no per-run working directory. The adapter gives
+# each task one directory on this node, tells the agent to write file
+# deliverables there, and syncs new or changed files to the daemon after
+# every run. Use a persistent directory outside /tmp on a deployed node.
+OUTPUTS_ROOT = Path(os.getenv("BMAS_OUTPUTS_ROOT", "/tmp/bmas-outputs"))
+OUTPUTS_TTL_SECONDS = max(600, int(os.getenv("BMAS_OUTPUTS_TTL_SECONDS", str(24 * 3600))))
+ARTIFACT_MAX_BYTES = max(1024, int(os.getenv("ARTIFACT_MAX_BYTES", str(50 * 1024 * 1024))))
+ARTIFACT_MAX_FILES = max(1, int(os.getenv("ARTIFACT_MAX_FILES", "200")))
+_SYNC_MANIFEST_NAME = ".bmas-synced.json"
 
 # SSE consume timeout — how long to wait for the next SSE event before
 # considering the connection stalled (seconds).  Hermes runs can take
@@ -1181,8 +1193,27 @@ async def lifespan(app: FastAPI):
         logger.info(f"  Gateway: {HERMES_GATEWAY_URL}")
         logger.info(f"  Daemon ingest: {DAEMON_INGEST_URL or 'DISABLED'}")
     _recover_trace_spool_claims()
+    try:
+        OUTPUTS_ROOT.mkdir(mode=0o750, parents=True, exist_ok=True)
+        logger.info(f"  Task outputs: {OUTPUTS_ROOT} (ttl {OUTPUTS_TTL_SECONDS}s)")
+    except OSError as exc:
+        logger.warning(f"  Task outputs directory unavailable: {exc}")
+    sweeper = asyncio.create_task(_sweep_outputs_forever())
     yield
+    sweeper.cancel()
     logger.info("bMAS Agent API shutting down")
+
+
+async def _sweep_outputs_forever() -> None:
+    """Remove stale task output directories once per hour."""
+    while True:
+        try:
+            removed = await asyncio.to_thread(sweep_stale_outputs)
+            if removed:
+                logger.info(f"Removed {removed} stale task output director{'y' if removed == 1 else 'ies'}")
+        except Exception as exc:
+            logger.warning(f"Output sweep failed: {exc}")
+        await asyncio.sleep(3600)
 
 
 app = FastAPI(
@@ -1416,8 +1447,17 @@ async def _run_via_api(
         "model": model,
         "session_id": actor_session_id,
     }
-    if role_prompt:
-        run_payload["instructions"] = role_prompt
+    outputs_dir: Optional[Path] = None
+    if DAEMON_INGEST_URL:
+        try:
+            outputs_dir = _task_outputs_dir(task_id)
+        except OSError as exc:
+            logger.warning(f"[{request_id}] Output directory unavailable: {exc}")
+    instructions = (role_prompt or "").rstrip()
+    if outputs_dir is not None:
+        instructions = f"{instructions}\n\n{_output_instructions(outputs_dir)}".strip()
+    if instructions:
+        run_payload["instructions"] = instructions
 
     # Phase 5: Stateful turns — include previous_response_id for
     # cross-round memory via the Responses API (doc 12 §5.2)
@@ -1817,9 +1857,35 @@ async def _run_via_api(
             delivery_timeout=min(TRACE_DRAIN_TIMEOUT_SECONDS, remaining)
         )
 
+        # Deliver files the agent wrote, even after a failed run: partial
+        # deliverables still help the operator.
+        delivered: list[dict] = []
+        if outputs_dir is not None:
+            try:
+                delivered = await _sync_artifacts(
+                    task_id=task_id,
+                    turn_id=turn_id,
+                    author=role,
+                    outputs_dir=outputs_dir,
+                    request_id=request_id,
+                )
+            except Exception as exc:
+                logger.warning(f"[{request_id}] Artifact sync failed: {exc}")
+            if delivered:
+                names = ", ".join(item["rel_path"] for item in delivered)
+                log.log(
+                    f"Delivered {len(delivered)} artifact"
+                    f"{'' if len(delivered) == 1 else 's'}: {names}",
+                    level="info",
+                    event="artifacts_delivered",
+                    run_id=run_id,
+                    artifacts=delivered,
+                )
+
         logger.info(
             f"[{request_id}] Run {run_id} {status.value} | "
-            f"traces={emitter.trace_count} output_len={len(final_output)}"
+            f"traces={emitter.trace_count} output_len={len(final_output)} "
+            f"artifacts={len(delivered)}"
         )
         log.log(
             f"Run {status.value} | {len(final_output)} chars, "
@@ -1832,6 +1898,7 @@ async def _run_via_api(
             output_chars=len(final_output),
             usage=final_usage,
             trace_count=emitter.trace_count,
+            artifacts=delivered,
         )
         remaining = max(0.0, deadline - asyncio.get_running_loop().time())
         if remaining > 0:
@@ -2210,31 +2277,137 @@ async def _stage_attachments(
                 logger.warning(f"[{request_id}] Error staging file {fid}: {e}")
 
 
+_SAFE_TASK_DIR = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
+
+
+def _task_outputs_dir(task_id: str) -> Path:
+    """Return this node's outputs directory for one task and create it."""
+    name = task_id if _SAFE_TASK_DIR.match(task_id) and ".." not in task_id else (
+        "task-" + hashlib.sha256(task_id.encode("utf-8")).hexdigest()[:16]
+    )
+    outputs_dir = OUTPUTS_ROOT / name / "outputs"
+    outputs_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
+    return outputs_dir
+
+
+def _output_instructions(outputs_dir: Path) -> str:
+    """Tell the agent where file deliverables must go."""
+    return (
+        "## Output files\n"
+        f"Write every file deliverable under this directory: {outputs_dir}\n"
+        "Use absolute paths inside that directory. Files saved there become task "
+        "artifacts that the operator can open and download. Files saved anywhere "
+        "else are discarded. Use short descriptive file names. When you save a "
+        "file, name it in your response."
+    )
+
+
+def _read_sync_manifest(outputs_dir: Path) -> dict[str, str]:
+    """Return rel_path → sha256 of files this node already delivered."""
+    manifest_path = outputs_dir.parent / _SYNC_MANIFEST_NAME
+    try:
+        data = json.loads(manifest_path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {
+        str(key): str(value)
+        for key, value in (data.items() if isinstance(data, dict) else [])
+        if isinstance(value, str)
+    }
+
+
+def _write_sync_manifest(outputs_dir: Path, manifest: dict[str, str]) -> None:
+    manifest_path = outputs_dir.parent / _SYNC_MANIFEST_NAME
+    try:
+        tmp = manifest_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(manifest, sort_keys=True), "utf-8")
+        os.replace(tmp, manifest_path)
+    except OSError as exc:
+        logger.warning(f"Could not save the artifact sync manifest: {exc}")
+
+
+def _collect_output_files(outputs_dir: Path) -> list[Path]:
+    """List regular files under outputs/, oldest first, ignoring hidden entries."""
+    files: list[Path] = []
+    for path in sorted(outputs_dir.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        relative = path.relative_to(outputs_dir)
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        files.append(path)
+    files.sort(key=lambda candidate: candidate.stat().st_mtime)
+    return files
+
+
+def sweep_stale_outputs(now: Optional[float] = None) -> int:
+    """Delete task output directories that no run touched within the TTL."""
+    if not OUTPUTS_ROOT.is_dir():
+        return 0
+    cutoff = (now or time.time()) - OUTPUTS_TTL_SECONDS
+    removed = 0
+    for task_dir in OUTPUTS_ROOT.iterdir():
+        if not task_dir.is_dir():
+            continue
+        try:
+            newest = max(
+                (path.stat().st_mtime for path in task_dir.rglob("*")),
+                default=task_dir.stat().st_mtime,
+            )
+            if newest < cutoff:
+                shutil.rmtree(task_dir, ignore_errors=True)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 async def _sync_artifacts(
     task_id: str,
     turn_id: str,
     author: str,
     outputs_dir: Path,
     request_id: str,
-) -> None:
-    """Sync files in outputs/ back to daemon as artifacts (doc 17 §6).
+) -> list[dict]:
+    """Deliver new or changed files under outputs/ to the daemon as artifacts.
 
-    Walks the outputs directory and POSTs each file to
-    /ingest/artifacts/{task_id}/{turn_id}.
+    Each file is POSTed to /ingest/artifacts/{task_id}/{turn_id}. A manifest
+    beside the directory remembers delivered checksums, so an unchanged file
+    is not delivered again in a later round. Returns the delivered artifacts.
     """
-    import hashlib
-
+    manifest = _read_sync_manifest(outputs_dir)
+    delivered: list[dict] = []
     headers = {}
     if BMAS_NODE_KEY:
         headers["Authorization"] = f"Bearer {BMAS_NODE_KEY}"
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for file_path in outputs_dir.rglob("*"):
-            if not file_path.is_file():
+    files = _collect_output_files(outputs_dir)
+    if len(files) > ARTIFACT_MAX_FILES:
+        logger.warning(
+            f"[{request_id}] {len(files)} output files exceed the limit of "
+            f"{ARTIFACT_MAX_FILES}; only the newest {ARTIFACT_MAX_FILES} are delivered"
+        )
+        files = files[-ARTIFACT_MAX_FILES:]
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for file_path in files:
+            rel_path = file_path.relative_to(outputs_dir).as_posix()
+            try:
+                size = file_path.stat().st_size
+            except OSError:
                 continue
-            rel_path = str(file_path.relative_to(outputs_dir))
+            if size == 0:
+                continue
+            if size > ARTIFACT_MAX_BYTES:
+                logger.warning(
+                    f"[{request_id}] Skipped {rel_path}: {size} bytes exceeds "
+                    f"ARTIFACT_MAX_BYTES={ARTIFACT_MAX_BYTES}"
+                )
+                continue
             content = file_path.read_bytes()
             sha256 = hashlib.sha256(content).hexdigest()
+            if manifest.get(rel_path) == sha256:
+                continue
 
             try:
                 resp = await client.post(
@@ -2249,6 +2422,14 @@ async def _sync_artifacts(
                 )
                 if resp.status_code == 200:
                     data = resp.json()
+                    manifest[rel_path] = sha256
+                    delivered.append({
+                        "rel_path": rel_path,
+                        "version": data.get("version"),
+                        "bytes": len(content),
+                        "sha256": sha256,
+                        "artifact_id": data.get("artifact_id"),
+                    })
                     logger.info(
                         f"[{request_id}] Synced artifact: {rel_path} "
                         f"v{data.get('version', '?')} ({len(content)} bytes)"
@@ -2260,6 +2441,9 @@ async def _sync_artifacts(
                     )
             except Exception as e:
                 logger.warning(f"[{request_id}] Error syncing {rel_path}: {e}")
+
+    _write_sync_manifest(outputs_dir, manifest)
+    return delivered
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
@@ -3361,6 +3545,12 @@ async def cancel_task_activations(task_id: str, request: Request):
                 _stop_remote_run(client, run_id, headers, "task-cancel")
                 for run_id in orphan_run_ids
             ))
+    # A cancelled task keeps nothing on this node.
+    try:
+        task_dir = _task_outputs_dir(task_id).parent
+        shutil.rmtree(task_dir, ignore_errors=True)
+    except OSError:
+        pass
     return {
         "task_id": task_id,
         "cancelled": len(matches) + len(orphan_run_ids),
