@@ -318,3 +318,96 @@ export function getResetChanges(settings: SettingsSnapshot): SettingsPresentatio
 
   return changes;
 }
+
+// ── Validation ───────────────────────────────────────────────────────
+
+export interface SettingsValidationIssue {
+  section: SettingsChange["section"];
+  key: string;
+  message: string;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function rangeMessage(field: ClassicFieldMeta): string {
+  const unit = field.unit ? ` ${field.unit}` : "";
+  if (field.min !== undefined && field.max !== undefined) return `Enter a value from ${field.min} to ${field.max}${unit}.`;
+  if (field.min !== undefined) return `Enter a value of at least ${field.min}${unit}.`;
+  if (field.max !== undefined) return `Enter a value of at most ${field.max}${unit}.`;
+  return "Enter a number.";
+}
+
+function checkNumber(value: unknown, field: ClassicFieldMeta): string | null {
+  if (!isFiniteNumber(value)) return "Enter a number.";
+  if (field.type === "integer" && !Number.isInteger(value)) return "Enter a whole number.";
+  if ((field.min !== undefined && value < field.min) || (field.max !== undefined && value > field.max)) {
+    return rangeMessage(field);
+  }
+  return null;
+}
+
+/** Every draft value that the daemon would reject, keyed for row display. */
+export function validateDraft(draft: SettingsDraft, classicFields: readonly ClassicFieldMeta[]): SettingsValidationIssue[] {
+  const issues: SettingsValidationIssue[] = [];
+  for (const [tier, model] of Object.entries(draft.routing)) {
+    if (!model) issues.push({ section: "routing", key: tier, message: "Select a model." });
+  }
+  for (const [role, entry] of Object.entries(draft.role_registry)) {
+    if (!entry.profile || !entry.profile.trim()) {
+      issues.push({ section: "role_registry", key: `${role}.profile`, message: "Enter the Hermes profile name." });
+    }
+    if (!Number.isInteger(entry.dispatch_port) || entry.dispatch_port < 1 || entry.dispatch_port > 65535) {
+      issues.push({ section: "role_registry", key: `${role}.dispatch_port`, message: "Enter a port from 1 to 65535." });
+    }
+  }
+  for (const field of classicFields) {
+    const value = draft.classic[field.key];
+    if (value === undefined) continue;
+    if (field.type === "integer" || field.type === "number") {
+      const message = checkNumber(value, field);
+      if (message) issues.push({ section: "classic", key: field.key, message });
+    } else if (field.type === "tier_map" || field.type === "weight_map") {
+      const elementField: ClassicFieldMeta = { ...field, type: field.type === "tier_map" ? "integer" : "number" };
+      const entries = value && typeof value === "object" ? Object.entries(value as Record<string, unknown>) : [];
+      for (const [name, entry] of entries) {
+        const message = checkNumber(entry, elementField);
+        if (message) {
+          issues.push({ section: "classic", key: field.key, message: `${name}: ${message}` });
+          break;
+        }
+      }
+    } else if (field.type === "enum" && field.options && !field.options.includes(String(value))) {
+      issues.push({ section: "classic", key: field.key, message: `Choose one of ${field.options.join(", ")}.` });
+    } else if (field.type === "boolean" && typeof value !== "boolean") {
+      issues.push({ section: "classic", key: field.key, message: "Choose on or off." });
+    }
+  }
+  return issues;
+}
+
+/** Re-apply the draft's changes onto a fresh snapshot (used by Refresh). */
+export function carryDraftChanges(
+  previousSnapshot: SettingsSnapshot,
+  previousDraft: SettingsDraft,
+  nextSnapshot: SettingsSnapshot,
+): SettingsDraft {
+  const next = draftFromSnapshot(nextSnapshot);
+  for (const [tier, model] of Object.entries(previousDraft.routing)) {
+    if (previousSnapshot.routing[tier] !== model && tier in next.routing) next.routing[tier] = model;
+  }
+  for (const [role, entry] of Object.entries(previousDraft.role_registry)) {
+    const saved = previousSnapshot.role_registry[role];
+    if (!next.role_registry[role]) continue;
+    for (const field of ROLE_FIELDS) {
+      if (!sameValue(saved?.[field], entry[field])) {
+        (next.role_registry[role] as unknown as Record<string, unknown>)[field] = entry[field];
+      }
+    }
+  }
+  for (const [key, value] of Object.entries(previousDraft.classic)) {
+    if (!sameValue(previousSnapshot.classic?.[key], value)) next.classic[key] = value;
+  }
+  return next;
+}

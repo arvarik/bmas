@@ -124,6 +124,14 @@ def _validate_classic(candidate: dict[str, Any]) -> dict[str, Any]:
     return validated
 
 
+def validate_classic_settings(candidate: dict[str, Any]) -> dict[str, Any]:
+    """Public wrapper: validate a complete classic settings mapping."""
+    unknown = set(candidate) - set(CLASSIC_FIELDS)
+    if unknown:
+        raise ValueError(f"Unknown classic setting(s): {', '.join(sorted(unknown))}")
+    return _validate_classic(candidate)
+
+
 def _first_validation_message(exc: Exception) -> str:
     errors = getattr(exc, "errors", None)
     if callable(errors):

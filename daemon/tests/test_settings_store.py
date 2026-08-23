@@ -278,3 +278,11 @@ def test_schema_lists_classic_fields(classic_store):
     schema = asyncio.run(classic_store.get_schema())
     keys = [field["key"] for field in schema["classic_fields"]]
     assert "max_rounds" in keys and "round_execution" in keys
+
+
+def test_validate_classic_settings_rejects_unknown_keys(classic_store):
+    from settings_store import validate_classic_settings
+    base = asyncio.run(classic_store.get_classic())
+    assert validate_classic_settings(base)["max_rounds"] == 4
+    with pytest.raises(ValueError):
+        validate_classic_settings({**base, "mystery": 1})

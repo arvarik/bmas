@@ -23,7 +23,7 @@ from core.variants import (
     register_variant,
 )
 from core.variants.traditional import StepResult, TraditionalVariant
-from settings_store import get_store
+from settings_store import get_store, validate_classic_settings
 
 
 class ClassicHost(VariantHost, Protocol):
@@ -102,6 +102,12 @@ class ClassicVariantRuntime:
         classic_settings = await store.get_classic()
         if overrides and isinstance(overrides.get("classic"), dict):
             classic_settings.update(copy.deepcopy(overrides["classic"]))
+            try:
+                classic_settings = validate_classic_settings(classic_settings)
+            except ValueError as exc:
+                raise VariantConfigurationError(
+                    f"Invalid classic override: {exc}"
+                ) from exc
         if overrides and isinstance(overrides.get("routing"), dict):
             routing.update(overrides["routing"])
         if overrides and isinstance(overrides.get("role_registry"), dict):

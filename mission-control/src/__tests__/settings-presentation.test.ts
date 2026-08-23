@@ -89,3 +89,55 @@ describe("settings presentation", () => {
     });
   });
 });
+
+describe("settings draft validation", () => {
+  const fields = [
+    { key: "max_rounds", label: "Maximum rounds", type: "integer" as const, group: "limits" as const, description: "", min: 1, max: 50 },
+    { key: "budget_ceiling_usd", label: "Budget", type: "number" as const, group: "limits" as const, description: "", min: 0.01, max: 1000, unit: "USD" },
+    { key: "experts_per_tier", label: "Experts", type: "tier_map" as const, group: "roster" as const, description: "", min: 0, max: 12 },
+    { key: "cu_mode", label: "Mode", type: "enum" as const, group: "control" as const, description: "", options: ["llm", "heuristic_first"] },
+  ];
+  const snapshot = {
+    routing: { simple: "local" },
+    role_registry: { planner: { preferred_host: null, profile: "planner", dispatch_port: 8000 } },
+    classic: { max_rounds: 4, budget_ceiling_usd: 0.5, experts_per_tier: { simple: 0 }, cu_mode: "llm" },
+    defaults: { routing: { simple: "local" }, role_registry: { planner: { preferred_host: null, profile: "planner", dispatch_port: 8000 } }, classic: { max_rounds: 4 } },
+  };
+
+  it("accepts a valid draft", async () => {
+    const { draftFromSnapshot, validateDraft } = await import("@/lib/settings-presentation");
+    expect(validateDraft(draftFromSnapshot(snapshot), fields)).toEqual([]);
+  });
+
+  it("reports out-of-range, fractional, empty, and enum problems with row keys", async () => {
+    const { draftFromSnapshot, validateDraft } = await import("@/lib/settings-presentation");
+    const draft = draftFromSnapshot(snapshot);
+    draft.classic.max_rounds = 0;
+    draft.classic.experts_per_tier = { simple: 1.5 };
+    draft.classic.cu_mode = "random";
+    draft.role_registry.planner.profile = " ";
+    draft.role_registry.planner.dispatch_port = 70000;
+    draft.routing.simple = "";
+    const keys = validateDraft(draft, fields).map((issue) => `${issue.section}.${issue.key}`).sort();
+    expect(keys).toEqual([
+      "classic.cu_mode",
+      "classic.experts_per_tier",
+      "classic.max_rounds",
+      "role_registry.planner.dispatch_port",
+      "role_registry.planner.profile",
+      "routing.simple",
+    ]);
+  });
+
+  it("carries unsaved changes onto a refreshed snapshot", async () => {
+    const { carryDraftChanges, draftFromSnapshot } = await import("@/lib/settings-presentation");
+    const draft = draftFromSnapshot(snapshot);
+    draft.classic.max_rounds = 9;
+    draft.role_registry.planner.dispatch_port = 9000;
+    const refreshed = { ...snapshot, classic: { ...snapshot.classic, budget_ceiling_usd: 0.75 } };
+    const carried = carryDraftChanges(snapshot, draft, refreshed);
+    expect(carried.classic.max_rounds).toBe(9);
+    expect(carried.classic.budget_ceiling_usd).toBe(0.75);
+    expect(carried.role_registry.planner.dispatch_port).toBe(9000);
+  });
+});
