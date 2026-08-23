@@ -54,10 +54,13 @@ import { clearLocalData, LOCAL_DATA_KEYS, usePreferences } from "@/lib/preferenc
 import {
   buildSavePayload,
   buildYamlPatch,
+  carryDraftChanges,
   diffDraft,
   draftFromSnapshot,
+  formatValue,
   getResetChanges,
   sessionOverrideKeys,
+  validateDraft,
   type ClassicFieldMeta,
   type SettingsDraft,
   type SettingsRegistryEntry,
@@ -176,7 +179,7 @@ export function SettingsPageClient() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options: { keepDraft?: boolean } = {}) => {
     setLoading(true);
     setLoadError("");
     try {
@@ -189,9 +192,15 @@ export function SettingsPageClient() {
       if (!schemaRes.ok) throw new Error(await readError(schemaRes, "The daemon did not provide the settings schema"));
       const nextSnapshot = (await settingsRes.json()) as SettingsSnapshot;
       const nextSchema = (await schemaRes.json()) as SchemaData;
-      setSnapshot(nextSnapshot);
+      setSnapshot((previousSnapshot) => {
+        setDraft((previousDraft) => (
+          options.keepDraft && previousSnapshot && previousDraft
+            ? carryDraftChanges(previousSnapshot, previousDraft, nextSnapshot)
+            : draftFromSnapshot(nextSnapshot)
+        ));
+        return nextSnapshot;
+      });
       setSchema(nextSchema);
-      setDraft(draftFromSnapshot(nextSnapshot));
       if (capabilitiesRes.ok) {
         try {
           setVariants(parseCapabilities(await capabilitiesRes.json()).variants);
@@ -207,7 +216,7 @@ export function SettingsPageClient() {
   }, []);
 
   useEffect(() => {
-    void Promise.resolve().then(load);
+    void Promise.resolve().then(() => load());
   }, [load]);
 
   const classicFields = useMemo(() => schema?.classic_fields ?? [], [schema]);
@@ -216,6 +225,9 @@ export function SettingsPageClient() {
     [classicFields, draft, snapshot],
   );
   const overrides = useMemo(() => (snapshot ? sessionOverrideKeys(snapshot) : new Set<string>()), [snapshot]);
+  const issues = useMemo(() => (draft ? validateDraft(draft, classicFields) : []), [classicFields, draft]);
+  const issueByKey = useMemo(() => new Map(issues.map((issue) => [`${issue.section}.${issue.key}`, issue.message])), [issues]);
+  const dirty = changes.length > 0;
   const changedKeys = useMemo(() => new Set(changes.map((change) => `${change.section}.${change.key}`)), [changes]);
   const dirtySections = useMemo(() => {
     const set = new Set<SectionId>();
@@ -229,6 +241,15 @@ export function SettingsPageClient() {
     }
     return set;
   }, [changes, classicFields]);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   const selectSection = (next: SectionId) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -249,8 +270,8 @@ export function SettingsPageClient() {
     setReviewOpen(false);
   };
 
-  const save = async () => {
-    if (!snapshot || !draft || changes.length === 0) return;
+  const save = useCallback(async () => {
+    if (!snapshot || !draft || changes.length === 0 || issues.length > 0 || saving) return;
     setSaving(true);
     setSaveError("");
     const payload = buildSavePayload(snapshot, draft);
@@ -284,14 +305,23 @@ export function SettingsPageClient() {
       toast({ type: "success", message: `Saved ${changes.length} setting${changes.length === 1 ? "" : "s"}. New tasks use them now.` });
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "The save failed.");
-      // Keep the draft so the operator can correct it; refresh the saved state.
-      const current = draft;
-      await load();
-      setDraft(current);
+      // Keep the unsaved edits so the operator can correct them; refresh the saved state.
+      await load({ keepDraft: true });
     } finally {
       setSaving(false);
     }
-  };
+  }, [changes.length, draft, issues.length, load, saving, snapshot, toast]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        if (dirty) void save();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [dirty, save]);
 
   const resetAll = async () => {
     setResetting(true);
@@ -337,7 +367,13 @@ export function SettingsPageClient() {
               {overrides.size} session override{overrides.size === 1 ? "" : "s"}
             </span>
           ) : null}
-          <button type="button" className="button" onClick={() => void load()} disabled={loading}>
+          <button
+            type="button"
+            className="button"
+            onClick={() => void load({ keepDraft: true })}
+            disabled={loading}
+            title={dirty ? "Reloads saved values and keeps your unsaved edits" : "Reload saved values"}
+          >
             <RefreshCw size={14} className={loading ? "spin" : undefined} aria-hidden="true" /> Refresh
           </button>
         </div>
@@ -381,10 +417,10 @@ export function SettingsPageClient() {
           ) : snapshot && draft && schema ? (
             <>
               {section === "models" ? (
-                <ModelsSection snapshot={snapshot} draft={draft} schema={schema} overrides={overrides} changedKeys={changedKeys} onChange={updateDraft} />
+                <ModelsSection snapshot={snapshot} draft={draft} schema={schema} overrides={overrides} changedKeys={changedKeys} issues={issueByKey} onChange={updateDraft} />
               ) : null}
               {section === "agents" ? (
-                <AgentsSection snapshot={snapshot} draft={draft} schema={schema} overrides={overrides} changedKeys={changedKeys} onChange={updateDraft} />
+                <AgentsSection snapshot={snapshot} draft={draft} schema={schema} overrides={overrides} changedKeys={changedKeys} issues={issueByKey} onChange={updateDraft} />
               ) : null}
               {section === "runtime" ? (
                 <ClassicSection
@@ -400,6 +436,7 @@ export function SettingsPageClient() {
                   fields={classicFields}
                   overrides={overrides}
                   changedKeys={changedKeys}
+                  issues={issueByKey}
                   onChange={updateDraft}
                 />
               ) : null}
@@ -413,6 +450,7 @@ export function SettingsPageClient() {
                   fields={classicFields}
                   overrides={overrides}
                   changedKeys={changedKeys}
+                  issues={issueByKey}
                   onChange={updateDraft}
                 />
               ) : null}
@@ -423,6 +461,7 @@ export function SettingsPageClient() {
                   schema={schema}
                   variants={variants}
                   overrideCount={overrides.size}
+                  dirty={dirty}
                   onCopyYaml={() => void copyYaml()}
                   onReset={() => setResetOpen(true)}
                 />
@@ -447,16 +486,28 @@ export function SettingsPageClient() {
             </ul>
           ) : null}
           {saveError ? <p className="settings-savebar__error" role="alert">{saveError}</p> : null}
+          {issues.length > 0 ? (
+            <p className="settings-savebar__error" role="alert">
+              Fix {issues.length} invalid value{issues.length === 1 ? "" : "s"} before you save.
+            </p>
+          ) : null}
           <div className="settings-savebar__row">
             <button type="button" className="settings-savebar__toggle" onClick={() => setReviewOpen((open) => !open)} aria-expanded={reviewOpen}>
               <strong>{changes.length} unsaved change{changes.length === 1 ? "" : "s"}</strong>
               <ChevronDown size={14} aria-hidden="true" style={{ transform: reviewOpen ? "rotate(180deg)" : undefined }} />
             </button>
             <div className="settings-savebar__actions">
+              <kbd className="settings-savebar__kbd" aria-hidden="true">⌘S</kbd>
               <button type="button" className="button" onClick={discard} disabled={saving}>
                 <X size={14} aria-hidden="true" /> Discard
               </button>
-              <button type="button" className="button button--primary" onClick={() => void save()} disabled={saving}>
+              <button
+                type="button"
+                className="button button--primary"
+                onClick={() => void save()}
+                disabled={saving || issues.length > 0}
+                title={issues.length > 0 ? "Fix the invalid values first" : "Save (⌘S)"}
+              >
                 {saving ? <span className="spin settings-spinner" aria-hidden="true" /> : <Check size={14} aria-hidden="true" />}
                 {saving ? "Saving…" : "Save changes"}
               </button>
@@ -488,6 +539,7 @@ interface DaemonSectionProps {
   schema: SchemaData;
   overrides: Set<string>;
   changedKeys: Set<string>;
+  issues: Map<string, string>;
   onChange: (mutate: (current: SettingsDraft) => SettingsDraft) => void;
 }
 
@@ -501,8 +553,16 @@ function modelOptions(models: ModelInfo[]): SelectOption[] {
   }));
 }
 
-function ModelsSection({ snapshot, draft, schema, overrides, changedKeys, onChange }: DaemonSectionProps) {
-  const options = useMemo(() => modelOptions(schema.available_models), [schema.available_models]);
+function ModelsSection({ snapshot, draft, schema, overrides, changedKeys, issues, onChange }: DaemonSectionProps) {
+  const options = useMemo(() => {
+    const base = modelOptions(schema.available_models);
+    const known = new Set(base.map((option) => option.value));
+    // A routing value that bmas.yaml no longer lists (for example an edge-node alias) stays selectable.
+    const extra = [...new Set(Object.values(draft.routing))]
+      .filter((alias) => alias && !known.has(alias))
+      .map((alias) => ({ value: alias, label: alias, description: "Not listed in bmas.yaml models" }));
+    return [...base, ...extra];
+  }, [draft.routing, schema.available_models]);
   const tiers = TIER_ORDER.filter((tier) => schema.complexity_tiers.includes(tier));
   return (
     <>
@@ -519,6 +579,8 @@ function ModelsSection({ snapshot, draft, schema, overrides, changedKeys, onChan
               description={meta.description}
               overridden={overrides.has(`routing.${tier}`)}
               changed={changedKeys.has(`routing.${tier}`)}
+              error={issues.get(`routing.${tier}`)}
+              resetLabel={`Use bmas.yaml value (${snapshot.defaults.routing[tier] ?? "not set"})`}
               onReset={() => onChange((current) => ({ ...current, routing: { ...current.routing, [tier]: snapshot.defaults.routing[tier] ?? current.routing[tier] } }))}
               control={(
                 <div className="settings-stack">
@@ -572,7 +634,7 @@ function ModelsSection({ snapshot, draft, schema, overrides, changedKeys, onChan
 
 // ── Section: agents ───────────────────────────────────────────────────
 
-function AgentsSection({ snapshot, draft, schema, overrides, changedKeys, onChange }: DaemonSectionProps) {
+function AgentsSection({ snapshot, draft, schema, overrides, changedKeys, issues, onChange }: DaemonSectionProps) {
   const roles = useMemo(() => {
     const known = new Set([...schema.known_roles, ...Object.keys(draft.role_registry)]);
     return [...ROLE_ORDER.filter((role) => known.has(role)), ...[...known].filter((role) => !ROLE_ORDER.includes(role)).sort()];
@@ -591,6 +653,12 @@ function AgentsSection({ snapshot, draft, schema, overrides, changedKeys, onChan
     if (!base) return;
     setRole(role, { [field]: base[field] } as Partial<SettingsRegistryEntry>);
   };
+  const yamlLabel = (role: string, field: keyof SettingsRegistryEntry) => {
+    const base = snapshot.defaults.role_registry[role];
+    const value = base?.[field];
+    const shown = field === "preferred_host" ? (value ?? "any host") : field === "enabled" ? formatValue(value ?? true) : String(value ?? "not set");
+    return `Use bmas.yaml value (${shown})`;
+  };
 
   return (
     <>
@@ -606,9 +674,13 @@ function AgentsSection({ snapshot, draft, schema, overrides, changedKeys, onChan
             title={titleCase(role)}
             description={ROLE_META[role]?.description ?? "Custom role"}
             actions={(
-              <label className="settings-inline-toggle">
-                <span>{enabled ? "Enabled" : "Disabled"}</span>
-                <Toggle checked={enabled} onChange={(next) => setRole(role, { enabled: next })} label={`${titleCase(role)} enabled`} />
+              <label className="settings-inline-toggle" htmlFor={`role-${role}-enabled`}>
+                <span>
+                  {enabled ? "Enabled" : "Disabled"}
+                  {overrides.has(`role_registry.${role}.enabled`) ? <span className="settings-pill settings-pill--session">Session</span> : null}
+                  {changedKeys.has(`role_registry.${role}.enabled`) ? <span className="settings-pill settings-pill--changed">Unsaved</span> : null}
+                </span>
+                <Toggle id={`role-${role}-enabled`} checked={enabled} onChange={(next) => setRole(role, { enabled: next })} label={`${titleCase(role)} enabled`} />
               </label>
             )}
           >
@@ -618,6 +690,7 @@ function AgentsSection({ snapshot, draft, schema, overrides, changedKeys, onChan
               description="The node that runs this role when it is available."
               overridden={overrides.has(`role_registry.${role}.preferred_host`)}
               changed={changedKeys.has(`role_registry.${role}.preferred_host`)}
+              resetLabel={yamlLabel(role, "preferred_host")}
               onReset={() => resetField(role, "preferred_host")}
               control={(
                 <SelectMenu
@@ -636,8 +709,10 @@ function AgentsSection({ snapshot, draft, schema, overrides, changedKeys, onChan
               description="Profile directory name on the execution node."
               overridden={overrides.has(`role_registry.${role}.profile`)}
               changed={changedKeys.has(`role_registry.${role}.profile`)}
+              error={issues.get(`role_registry.${role}.profile`)}
+              resetLabel={yamlLabel(role, "profile")}
               onReset={() => resetField(role, "profile")}
-              control={<TextField id={`role-${role}-profile`} value={entry.profile} mono disabled={!enabled} onChange={(value) => setRole(role, { profile: value })} />}
+              control={<TextField id={`role-${role}-profile`} value={entry.profile} mono disabled={!enabled} invalid={issues.has(`role_registry.${role}.profile`)} onChange={(value) => setRole(role, { profile: value })} />}
             />
             <SettingsRow
               htmlFor={`role-${role}-port`}
@@ -645,8 +720,10 @@ function AgentsSection({ snapshot, draft, schema, overrides, changedKeys, onChan
               description="Agent API port on the node."
               overridden={overrides.has(`role_registry.${role}.dispatch_port`)}
               changed={changedKeys.has(`role_registry.${role}.dispatch_port`)}
+              error={issues.get(`role_registry.${role}.dispatch_port`)}
+              resetLabel={yamlLabel(role, "dispatch_port")}
               onReset={() => resetField(role, "dispatch_port")}
-              control={<NumberField id={`role-${role}-port`} value={entry.dispatch_port} min={1} max={65535} width="sm" disabled={!enabled} onChange={(value) => setRole(role, { dispatch_port: typeof value === "number" ? value : entry.dispatch_port })} />}
+              control={<NumberField id={`role-${role}-port`} value={entry.dispatch_port} min={1} max={65535} integer width="sm" disabled={!enabled} invalid={issues.has(`role_registry.${role}.dispatch_port`)} onChange={(value) => setRole(role, { dispatch_port: value })} />}
             />
             {entry.endpoints?.length ? (
               <div className="settings-endpoints">
@@ -672,6 +749,7 @@ function ClassicSection({
   fields,
   overrides,
   changedKeys,
+  issues,
   onChange,
 }: {
   title: string;
@@ -682,6 +760,7 @@ function ClassicSection({
   fields: ClassicFieldMeta[];
   overrides: Set<string>;
   changedKeys: Set<string>;
+  issues: Map<string, string>;
   onChange: (mutate: (current: SettingsDraft) => SettingsDraft) => void;
 }) {
   const setValue = (key: string, value: unknown) => onChange((current) => ({
@@ -707,15 +786,18 @@ function ClassicSection({
           {fields.filter((field) => field.group === group.id).map((field) => {
             const value = draft.classic[field.key];
             const id = `classic-${field.key}`;
+            const invalid = issues.has(`classic.${field.key}`);
             const common = {
               label: field.label,
               description: `${field.description}${field.min !== undefined && field.max !== undefined && (field.type === "integer" || field.type === "number") ? ` Range ${field.min}–${field.max}${field.unit ? ` ${field.unit}` : ""}.` : ""}`,
               overridden: overrides.has(`classic.${field.key}`),
               changed: changedKeys.has(`classic.${field.key}`),
+              error: issues.get(`classic.${field.key}`),
+              resetLabel: `Use bmas.yaml value (${formatValue(snapshot.defaults.classic?.[field.key])})`,
               onReset: () => resetKey(field.key),
             };
             if (field.type === "boolean") {
-              return <SettingsRow key={field.key} {...common} control={<Toggle id={id} checked={value === true} onChange={(next) => setValue(field.key, next)} label={field.label} />} />;
+              return <SettingsRow key={field.key} {...common} htmlFor={id} control={<Toggle id={id} checked={value === true} onChange={(next) => setValue(field.key, next)} label={field.label} />} />;
             }
             if (field.type === "enum" && field.options) {
               const options = field.options.map((option) => ({ value: option, label: titleCase(option) }));
@@ -743,13 +825,15 @@ function ClassicSection({
                         <label key={entry} className="settings-map__cell">
                           <span>{titleCase(entry)}</span>
                           <NumberField
-                            value={typeof map[entry] === "number" ? map[entry] : ""}
+                            value={typeof map[entry] === "number" ? map[entry] : 0}
                             min={field.min}
                             max={field.max}
                             step={field.step ?? 1}
+                            integer={field.type === "tier_map"}
+                            invalid={invalid}
                             width="sm"
                             aria-label={`${field.label} ${entry}`}
-                            onChange={(next) => setValue(field.key, { ...map, [entry]: typeof next === "number" ? next : 0 })}
+                            onChange={(next) => setValue(field.key, { ...map, [entry]: next })}
                           />
                         </label>
                       ))}
@@ -766,12 +850,14 @@ function ClassicSection({
                 control={(
                   <NumberField
                     id={id}
-                    value={typeof value === "number" ? value : ""}
+                    value={typeof value === "number" ? value : 0}
                     min={field.min}
                     max={field.max}
                     step={field.step ?? (field.type === "number" ? 0.01 : 1)}
+                    integer={field.type === "integer"}
                     unit={field.unit}
-                    onChange={(next) => setValue(field.key, typeof next === "number" ? next : snapshot.classic?.[field.key])}
+                    invalid={invalid}
+                    onChange={(next) => setValue(field.key, next)}
                   />
                 )}
               />
@@ -856,14 +942,16 @@ function WorkspaceSection({ variants }: { variants: VariantCapability[] }) {
       </SettingsCard>
       <SettingsCard title="Display">
         <SettingsRow
+          htmlFor="pref-sidebar"
           label="Start with the sidebar collapsed"
           description="Applies on wide screens. Use the Collapse control to change it at any time."
-          control={<Toggle checked={preferences.sidebarCollapsed} onChange={(value) => setPreferences({ sidebarCollapsed: value })} label="Start with the sidebar collapsed" />}
+          control={<Toggle id="pref-sidebar" checked={preferences.sidebarCollapsed} onChange={(value) => setPreferences({ sidebarCollapsed: value })} label="Start with the sidebar collapsed" />}
         />
         <SettingsRow
+          htmlFor="pref-motion"
           label="Reduce motion"
           description="Turns off decorative animation such as pulses and floating icons."
-          control={<Toggle checked={preferences.reducedMotion} onChange={(value) => setPreferences({ reducedMotion: value })} label="Reduce motion" />}
+          control={<Toggle id="pref-motion" checked={preferences.reducedMotion} onChange={(value) => setPreferences({ reducedMotion: value })} label="Reduce motion" />}
         />
       </SettingsCard>
       <SettingsCard title="Saved views" description="Filter sets saved from the Tasks page.">
@@ -915,6 +1003,7 @@ function SystemSection({
   schema,
   variants,
   overrideCount,
+  dirty,
   onCopyYaml,
   onReset,
 }: {
@@ -922,6 +1011,7 @@ function SystemSection({
   schema: SchemaData;
   variants: VariantCapability[];
   overrideCount: number;
+  dirty: boolean;
   onCopyYaml: () => void;
   onReset: () => void;
 }) {
@@ -940,7 +1030,15 @@ function SystemSection({
         actions={(
           <>
             <button type="button" className="button" onClick={onCopyYaml} disabled={!overrideCount}><Copy size={14} aria-hidden="true" /> Copy YAML patch</button>
-            <button type="button" className="button button--danger-ghost" onClick={onReset} disabled={!overrideCount}><RotateCcw size={14} aria-hidden="true" /> Reset all</button>
+            <button
+              type="button"
+              className="button button--danger-ghost"
+              onClick={onReset}
+              disabled={!overrideCount || dirty}
+              title={dirty ? "Save or discard your unsaved changes first" : overrideCount ? "Return every daemon setting to bmas.yaml" : "No session overrides"}
+            >
+              <RotateCcw size={14} aria-hidden="true" /> Reset all
+            </button>
           </>
         )}
       >

@@ -1,12 +1,13 @@
 "use client";
 
 /**
- * Settings controls — the small set of form primitives the Settings page
- * composes: a row, a toggle, a number field, a text field, and a segmented
- * control. Each control is a plain labelled input with app styling.
+ * Settings controls — the form primitives the Settings page composes:
+ * a row, a toggle, a number field, a text field, a segmented control,
+ * and a card. Every control keeps a 36px hit target; the visible shape can
+ * be smaller (the toggle track is 40×22 inside a 36px-tall button).
  */
 
-import { useId, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { RotateCcw } from "lucide-react";
 
 export function SettingsRow({
@@ -16,6 +17,7 @@ export function SettingsRow({
   htmlFor,
   overridden = false,
   changed = false,
+  error,
   onReset,
   resetLabel = "Use bmas.yaml value",
   align = "center",
@@ -28,13 +30,18 @@ export function SettingsRow({
   overridden?: boolean;
   /** Draft value differs from the saved value. */
   changed?: boolean;
+  /** Validation message for the current draft value. */
+  error?: string;
   onReset?: () => void;
   resetLabel?: string;
   align?: "center" | "start";
 }) {
   const Label = htmlFor ? "label" : "div";
   return (
-    <div className={`settings-row ${changed ? "settings-row--changed" : ""}`} data-align={align}>
+    <div
+      className={`settings-row ${changed ? "settings-row--changed" : ""} ${error ? "settings-row--invalid" : ""}`}
+      data-align={align}
+    >
       <div className="settings-row__text">
         <Label className="settings-row__label" {...(htmlFor ? { htmlFor } : {})}>
           {label}
@@ -42,6 +49,7 @@ export function SettingsRow({
           {changed ? <span className="settings-pill settings-pill--changed">Unsaved</span> : null}
         </Label>
         {description ? <p className="settings-row__description">{description}</p> : null}
+        {error ? <p className="settings-row__error" role="alert">{error}</p> : null}
         {onReset && overridden ? (
           <button type="button" className="settings-row__reset" onClick={onReset}>
             <RotateCcw size={12} aria-hidden="true" /> {resetLabel}
@@ -77,11 +85,19 @@ export function Toggle({
       disabled={disabled}
       onClick={() => onChange(!checked)}
     >
-      <span className="settings-toggle__thumb" aria-hidden="true" />
+      <span className="settings-toggle__track" aria-hidden="true">
+        <span className="settings-toggle__thumb" />
+      </span>
     </button>
   );
 }
 
+/**
+ * Number input with its own text state. The parent receives a number only
+ * when the text parses; clearing the field or typing a partial value does
+ * not reset the field. Integer fields round on blur. The mouse wheel never
+ * changes the value.
+ */
 export function NumberField({
   id,
   value,
@@ -89,43 +105,66 @@ export function NumberField({
   min,
   max,
   step = 1,
+  integer = false,
   unit,
   disabled = false,
+  invalid = false,
   width = "md",
   "aria-label": ariaLabel,
+  "aria-describedby": ariaDescribedBy,
 }: {
   id?: string;
-  value: number | "";
-  onChange: (value: number | "") => void;
+  value: number;
+  onChange: (value: number) => void;
   min?: number;
   max?: number;
   step?: number;
+  integer?: boolean;
   unit?: string;
   disabled?: boolean;
+  invalid?: boolean;
   width?: "sm" | "md" | "lg";
   "aria-label"?: string;
+  "aria-describedby"?: string;
 }) {
-  const invalid = typeof value === "number"
-    && ((min !== undefined && value < min) || (max !== undefined && value > max));
+  const [text, setText] = useState(String(value));
+  const [focused, setFocused] = useState(false);
+  const [syncedValue, setSyncedValue] = useState(value);
+  // Adopt a new outer value (reset, refresh, discard) while the field is not being edited.
+  if (!focused && syncedValue !== value) {
+    setSyncedValue(value);
+    setText(String(value));
+  }
+
+  const commit = (raw: string) => {
+    setText(raw);
+    if (raw.trim() === "" || raw === "-" || raw === ".") return;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return;
+    onChange(integer ? Math.trunc(parsed) : parsed);
+  };
+
   return (
     <span className={`settings-number settings-number--${width} ${invalid ? "settings-number--invalid" : ""}`}>
       <input
         id={id}
         type="number"
-        inputMode="decimal"
-        value={value}
+        inputMode={integer ? "numeric" : "decimal"}
+        value={text}
         min={min}
         max={max}
         step={step}
         disabled={disabled}
         aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
         aria-invalid={invalid || undefined}
-        onChange={(event) => {
-          const raw = event.target.value;
-          if (raw === "") { onChange(""); return; }
-          const next = Number(raw);
-          if (Number.isFinite(next)) onChange(next);
+        onFocus={() => setFocused(true)}
+        onBlur={() => {
+          setFocused(false);
+          setText(String(value));
         }}
+        onWheel={(event) => event.currentTarget.blur()}
+        onChange={(event) => commit(event.target.value)}
       />
       {unit ? <span className="settings-number__unit">{unit}</span> : null}
     </span>
@@ -138,6 +177,7 @@ export function TextField({
   onChange,
   placeholder,
   disabled = false,
+  invalid = false,
   mono = false,
   "aria-label": ariaLabel,
 }: {
@@ -146,6 +186,7 @@ export function TextField({
   onChange: (value: string) => void;
   placeholder?: string;
   disabled?: boolean;
+  invalid?: boolean;
   mono?: boolean;
   "aria-label"?: string;
 }) {
@@ -153,11 +194,12 @@ export function TextField({
     <input
       id={id}
       type="text"
-      className={`settings-text ${mono ? "settings-text--mono" : ""}`}
+      className={`settings-text ${mono ? "settings-text--mono" : ""} ${invalid ? "settings-text--invalid" : ""}`}
       value={value}
       placeholder={placeholder}
       disabled={disabled}
       aria-label={ariaLabel}
+      aria-invalid={invalid || undefined}
       onChange={(event) => onChange(event.target.value)}
     />
   );
@@ -177,23 +219,36 @@ export function SegmentedControl<T extends string>({
   disabled?: boolean;
 }) {
   const groupId = useId();
+  const move = (direction: 1 | -1) => {
+    const index = options.findIndex((option) => option.value === value);
+    const next = options[(index + direction + options.length) % options.length];
+    if (next) onChange(next.value);
+  };
   return (
     <div className="settings-segmented" role="radiogroup" aria-label={ariaLabel}>
-      {options.map((option) => (
-        <button
-          key={option.value}
-          id={`${groupId}-${option.value}`}
-          type="button"
-          role="radio"
-          aria-checked={value === option.value}
-          className={`settings-segmented__option ${value === option.value ? "settings-segmented__option--active" : ""}`}
-          title={option.description}
-          disabled={disabled}
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </button>
-      ))}
+      {options.map((option) => {
+        const active = value === option.value;
+        return (
+          <button
+            key={option.value}
+            id={`${groupId}-${option.value}`}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            tabIndex={active ? 0 : -1}
+            className={`settings-segmented__option ${active ? "settings-segmented__option--active" : ""}`}
+            title={option.description}
+            disabled={disabled}
+            onClick={() => onChange(option.value)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); move(1); }
+              if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); move(-1); }
+            }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
