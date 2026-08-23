@@ -26,7 +26,6 @@ import {
   CheckCircle,
   AlertCircle,
   Info,
-  ChevronDown,
   ArrowRight,
   Server,
   Cpu,
@@ -35,6 +34,7 @@ import {
   SettingsChangeDialog,
   type SettingsChange,
 } from "@/components/ui/SettingsChangeDialog";
+import { Select } from "@/components/ui/Select";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -106,12 +106,11 @@ function ModelSelect({
 }) {
   return (
     <div className="settings-model-select-wrapper">
-      <select
+      <Select
         id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        className="settings-model-select"
         aria-label="Model selection"
       >
         {models.map((m) => (
@@ -122,8 +121,7 @@ function ModelSelect({
               : ` — ${m.model}`}
           </option>
         ))}
-      </select>
-      <ChevronDown size={14} className="settings-model-select-arrow" />
+      </Select>
     </div>
   );
 }

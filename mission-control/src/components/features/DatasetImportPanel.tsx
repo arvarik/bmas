@@ -13,6 +13,7 @@ import {
   type DatasetMapping,
   type DatasetValidation,
 } from "@/lib/datasets";
+import { Select } from "@/components/ui/Select";
 
 const EMPTY_MAPPING: DatasetMapping = {
   id: "",
@@ -223,10 +224,10 @@ export function DatasetImportPanel({
               {MAPPING_LABELS.map(({ field, label, required }) => (
                 <label key={field}>
                   {label} <span>{required ? "Required" : "Optional"}</span>
-                  <select value={mapping[field]} onChange={(event) => setFieldMapping(field, event.target.value)}>
+                  <Select value={mapping[field]} onChange={(event) => setFieldMapping(field, event.target.value)}>
                     <option value="">{field === "id" ? "Generate IDs" : "Not mapped"}</option>
                     {columns.map((column) => <option key={column} value={column}>{column}</option>)}
-                  </select>
+                  </Select>
                 </label>
               ))}
             </div>

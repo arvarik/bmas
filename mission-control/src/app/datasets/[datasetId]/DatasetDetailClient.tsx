@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { useToast } from "@/hooks/useToast";
 import type { DatasetDetail, DatasetItem, DatasetVersion } from "@/lib/datasets";
 import { diagnosticsText, failureFromReason, failureFromResponse, type RequestFailure } from "@/lib/request-state";
+import { Select } from "@/components/ui/Select";
 
 export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
   const [dataset, setDataset] = useState<DatasetDetail | null>(null);
@@ -104,7 +105,7 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
       </section>
 
       <section className="dataset-version-bar" aria-label="Dataset version selection">
-        <label>Version<select value={version.id} onChange={(event) => setVersion(dataset.versions.find((candidate) => candidate.id === event.target.value) ?? version)}>{dataset.versions.map((candidate) => <option key={candidate.id} value={candidate.id}>v{candidate.version}, {candidate.item_count.toLocaleString()} items</option>)}</select></label>
+        <label>Version<Select value={version.id} onChange={(event) => setVersion(dataset.versions.find((candidate) => candidate.id === event.target.value) ?? version)}>{dataset.versions.map((candidate) => <option key={candidate.id} value={candidate.id}>v{candidate.version}, {candidate.item_count.toLocaleString()} items</option>)}</Select></label>
         <span className="dataset-status"><CheckCircle2 size={13} /> {version.status}</span>
         <span>{version.source_filename}</span>
         <a className="button button--secondary" href={`/api/datasets/${encodeURIComponent(dataset.id)}/versions/${encodeURIComponent(version.id)}/source`}><Download size={13} /> Source file</a>

@@ -22,6 +22,7 @@ import type {
   RosterEntry,
   TaskArtifact,
   TaskFile,
+  TaskMeta,
   TaskStreamData,
   TraceEvent,
   TurnRecord,
@@ -327,7 +328,50 @@ function finishTurn(
   };
 }
 
+const BLOCKED_RUN_STATES = ["blocked", "paused", "pause_requested"];
+
+function isBlockedRunState(runState: string | undefined): boolean {
+  return BLOCKED_RUN_STATES.includes(runState ?? "");
+}
+
+/**
+ * The daemon records `status: "running"` only after triage, and it streams no
+ * status-change event. A task whose lease is active (`run_state: "running"`)
+ * or that has started work is running from the operator's point of view.
+ */
+function promoteStartedTask(meta: TaskMeta): TaskMeta {
+  if (meta.status !== "pending") return meta;
+  const started = meta.run_state === "running" || meta.run_state === "recovering" || Boolean(meta.started_at);
+  return started ? { ...meta, status: "running" } : meta;
+}
+
+/** Event names that prove the runtime is executing the task. */
+const ACTIVITY_EVENTS = new Set([
+  "phase", "subtask", "debate", "log", "cost", "board_entry", "entry_removed",
+  "entry_status_changed", "consensus", "turn_start", "turn_end", "agent_turn",
+  "trace", "entry_rejected", "budget", "approval_request", "approval_response",
+  "coordinator_narration", "file", "artifact",
+]);
+
+/** Mark a queued task as running once live activity arrives for it. */
+function markRunning(state: TaskStreamData, eventName: string): TaskStreamData {
+  if (!ACTIVITY_EVENTS.has(eventName)) return state;
+  if (!state.taskMeta || state.taskMeta.status !== "pending") return state;
+  return {
+    ...state,
+    taskMeta: { ...state.taskMeta, status: "running" },
+    isLive: !isBlockedRunState(state.taskMeta.run_state),
+  };
+}
+
 function projectClassicEvent(
+  state: TaskStreamData,
+  event: DecodedVariantEvent,
+): TaskStreamData {
+  return projectClassicActivity(markRunning(state, event.name), event);
+}
+
+function projectClassicActivity(
   state: TaskStreamData,
   event: DecodedVariantEvent,
 ): TaskStreamData {
@@ -336,13 +380,15 @@ function projectClassicEvent(
     case "initial_state": {
       const task = asRecord(raw.task);
       const subTasks = arrayFromEnvelope(raw.sub_tasks, "sub_tasks").map(mapSubTask);
+      const taskMeta = task ? promoteStartedTask(mapTaskMeta(task)) : state.taskMeta;
+      const terminal = taskMeta?.status === "completed" || taskMeta?.status === "failed";
       return {
         ...state,
-        taskMeta: task ? mapTaskMeta(task) : state.taskMeta,
+        taskMeta,
         subTasks: subTasks.length ? mergeBy(state.subTasks, subTasks, (item) => item.id) : state.subTasks,
         result: typeof task?.result_summary === "string" ? task.result_summary : state.result,
         error: typeof task?.error_message === "string" ? task.error_message : state.error,
-        isLive: true,
+        isLive: !terminal && !isBlockedRunState(taskMeta?.run_state),
       };
     }
     case "phase":
@@ -449,7 +495,7 @@ function projectClassicEvent(
       const status = String(raw.status ?? "");
       return status === "completed" || status === "failed"
         ? finishTurn(state, raw, event.taskId)
-        : projectClassicEvent(state, { ...event, name: "turn_start" });
+        : projectClassicActivity(state, { ...event, name: "turn_start" });
     }
     case "trace": {
       const trace = mapTrace(raw);
@@ -581,13 +627,20 @@ function projectClassicHydration(
     mapLog({ ...log, timestamp: log.timestamp ?? log.created_at }, index),
   );
   const traces = arrayFromEnvelope(bundle.traces, "traces").map(mapTrace);
-  const hydratedMeta = task ? mapTaskMeta(task) : null;
+  const hydratedMeta = task ? promoteStartedTask(mapTaskMeta(task)) : null;
   const liveTerminal = state.taskMeta?.status === "completed" || state.taskMeta?.status === "failed";
   const hydratedCost = mapCost(bundle.cost);
   const terminalHydration = hydratedMeta?.status === "completed" || hydratedMeta?.status === "failed";
+  // A saved "pending" row must not demote a task that the live stream already
+  // shows as running; the saved row can predate triage.
+  const mergedMeta = liveTerminal
+    ? state.taskMeta
+    : hydratedMeta && hydratedMeta.status === "pending" && state.taskMeta?.status === "running"
+      ? { ...hydratedMeta, status: "running" as const }
+      : hydratedMeta ?? state.taskMeta;
   return {
     ...state,
-    taskMeta: liveTerminal ? state.taskMeta : hydratedMeta ?? state.taskMeta,
+    taskMeta: mergedMeta,
     subTasks: mergeBy(subTasks, state.subTasks, (item) => item.id),
     result: state.result ?? (typeof task?.result_summary === "string" ? task.result_summary : null),
     error: state.error ?? (typeof task?.error_message === "string" ? task.error_message : null),
@@ -600,10 +653,9 @@ function projectClassicHydration(
       MAX_TRACE_EVENTS,
     ),
     roster: state.roster.length ? state.roster : roster,
-    isLive: hydratedMeta?.status === "running"
-      && !["blocked", "paused", "pause_requested"].includes(hydratedMeta.run_state ?? "")
-      ? state.isLive
-      : false,
+    isLive: terminalHydration || (mergedMeta ? isBlockedRunState(mergedMeta.run_state) : false)
+      ? false
+      : state.isLive,
   };
 }
 

@@ -94,7 +94,7 @@ The browser requests a username and password. Enter any username. Use the `BMAS_
 
 Mission Control checks readiness before it enables task submission. A failed check includes one repair command.
 
-The setup center shows these checks in one place:
+Select the system status button in the top bar. The panel shows these checks in one place:
 
 - Provider credential variables and the model gateway
 - Agent availability
@@ -102,9 +102,11 @@ The setup center shows these checks in one place:
 - Redis access
 - Active and queued task capacity
 
-Select **Run one test task** after every required check passes. This action submits a real classic task. It verifies the browser, daemon, queue, agent, model provider, and event stream.
+Select **Run test task** after every required check passes. This action submits a real classic task. It verifies the browser, daemon, queue, agent, model provider, and event stream.
 
-The left task list shows failed tasks and pending operator actions first. Use its search, state, date, and cost filters to find older work. Pin a task to keep it at the top of the list.
+The home page shows one composer. Type the objective, attach files if you need them, select a runtime, and press Enter.
+
+The **Tasks** page lists every task. Select **Needs attention** to see failed tasks and pending operator actions. Use the search field, sort menu, and filters to find older work. Save a filter set as a view to reuse it. Pin a task to keep it at the top of the list.
 
 Each task page shows one lifecycle row. The row identifies queued, running, blocked, failed, and completed work. It also shows the queue, provider, agents, model, tokens, cost, and storage use.
 

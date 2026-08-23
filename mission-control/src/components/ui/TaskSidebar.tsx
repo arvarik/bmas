@@ -2,12 +2,10 @@
 
 import type { Ref } from "react";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
-  Activity,
   BarChart3,
   Bot,
-  CircleAlert,
   ClipboardList,
   Database,
   FlaskConical,
@@ -26,6 +24,7 @@ import {
 export interface TaskSidebarProps {
   agentHealth: Record<string, { alive: boolean }>;
   attentionCount: number;
+  runningCount?: number;
   collapsed: boolean;
   onToggleCollapse: () => void;
   mobileOpen: boolean;
@@ -39,8 +38,7 @@ const GROUPS = [
     label: "Work",
     links: [
       { href: "/", label: "New task", icon: Plus },
-      { href: "/tasks", label: "Tasks", icon: ClipboardList },
-      { href: "/tasks?status=attention", label: "Needs attention", icon: CircleAlert, attention: true },
+      { href: "/tasks", label: "Tasks", icon: ClipboardList, badge: true },
     ],
   },
   {
@@ -56,7 +54,6 @@ const GROUPS = [
   {
     label: "Observe",
     links: [
-      { href: "/activity", label: "Live activity", icon: Activity },
       { href: "/infra", label: "Operations", icon: Server },
       { href: "/agents", label: "Agents", icon: Bot },
     ],
@@ -77,6 +74,7 @@ const GROUPS = [
 export function TaskSidebar({
   agentHealth,
   attentionCount,
+  runningCount = 0,
   collapsed,
   onToggleCollapse,
   mobileOpen,
@@ -85,7 +83,6 @@ export function TaskSidebar({
   onRequestClose,
 }: TaskSidebarProps) {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const onlineAgents = Object.values(agentHealth).filter((agent) => agent.alive).length;
   const totalAgents = Object.keys(agentHealth).length;
 
@@ -110,14 +107,13 @@ export function TaskSidebar({
           <div className="task-sidebar__group" key={group.label}>
             {!collapsed ? <p className="task-sidebar__group-label">{group.label}</p> : null}
             {group.links.map((item) => {
-              const isAttentionLink = item.href.includes("status=attention");
               const active = item.href === "/"
                 ? pathname === "/"
-                : pathname === item.href.split("?")[0]
-                  && (isAttentionLink
-                    ? searchParams.get("status") === "attention"
-                    : item.href !== "/tasks" || searchParams.get("status") !== "attention");
+                : pathname === item.href || pathname.startsWith(`${item.href}/`)
+                  || (item.href === "/tasks" && pathname.startsWith("/task/"));
               const Icon = item.icon;
+              const showAttention = "badge" in item && item.badge && attentionCount > 0;
+              const showRunning = "badge" in item && item.badge && !showAttention && runningCount > 0;
               return (
                 <Link
                   key={item.href}
@@ -128,9 +124,14 @@ export function TaskSidebar({
                 >
                   <Icon size={18} aria-hidden="true" />
                   {!collapsed ? <span>{item.label}</span> : null}
-                  {"attention" in item && item.attention && attentionCount > 0 ? (
+                  {showAttention ? (
                     <span className="task-sidebar__count" aria-label={`${attentionCount} tasks need attention`}>
                       {attentionCount > 99 ? "99+" : attentionCount}
+                    </span>
+                  ) : null}
+                  {showRunning ? (
+                    <span className="task-sidebar__running" aria-label={`${runningCount} tasks running`}>
+                      <span className="status-dot status-dot--running pulse-dot" aria-hidden="true" />
                     </span>
                   ) : null}
                 </Link>

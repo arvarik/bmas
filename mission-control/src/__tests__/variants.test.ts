@@ -341,3 +341,82 @@ describe("variant adapter registry", () => {
     expect(state.cost).toMatchObject({ total_cost: 2, total_tokens: 200 });
   });
 });
+
+describe("live status projection", () => {
+  const queuedInitialState = {
+    name: "initial_state",
+    taskId: "task-1",
+    payload: {
+      task: {
+        id: "task-1",
+        label: "Task",
+        status: "pending",
+        run_state: "running",
+        variant: "classic",
+      },
+      sub_tasks: [],
+    },
+  };
+
+  it("treats a leased task as running before triage saves the status", () => {
+    const state = CLASSIC_ADAPTER.projectEvent(INITIAL_STREAM_DATA, queuedInitialState);
+    expect(state.taskMeta?.status).toBe("running");
+    expect(state.isLive).toBe(true);
+  });
+
+  it("keeps a queued task pending until activity arrives", () => {
+    const queued = CLASSIC_ADAPTER.projectEvent(INITIAL_STREAM_DATA, {
+      ...queuedInitialState,
+      payload: { task: { ...queuedInitialState.payload.task, run_state: "queued" }, sub_tasks: [] },
+    });
+    expect(queued.taskMeta?.status).toBe("pending");
+    const running = CLASSIC_ADAPTER.projectEvent(queued, {
+      name: "phase",
+      taskId: "task-1",
+      payload: { phase: "genesis" },
+    });
+    expect(running.taskMeta?.status).toBe("running");
+    expect(running.isLive).toBe(true);
+  });
+
+  it("does not let a stale saved row demote a live running task", () => {
+    const live = CLASSIC_ADAPTER.projectEvent(INITIAL_STREAM_DATA, queuedInitialState);
+    const state = CLASSIC_ADAPTER.projectHydration(live, {
+      detail: { task: { id: "task-1", label: "Task", status: "pending", run_state: "queued", variant: "classic" } },
+      board: null,
+      turns: null,
+      cost: null,
+      logs: null,
+      traces: null,
+    }, "task-1");
+    expect(state.taskMeta?.status).toBe("running");
+    expect(state.isLive).toBe(true);
+  });
+
+  it("ends the live view when hydration reports a terminal task", () => {
+    const live = CLASSIC_ADAPTER.projectEvent(INITIAL_STREAM_DATA, queuedInitialState);
+    const state = CLASSIC_ADAPTER.projectHydration(live, {
+      detail: { task: { id: "task-1", label: "Task", status: "completed", variant: "classic" } },
+      board: null,
+      turns: null,
+      cost: null,
+      logs: null,
+      traces: null,
+    }, "task-1");
+    expect(state.taskMeta?.status).toBe("completed");
+    expect(state.isLive).toBe(false);
+  });
+
+  it("ends the live view when the task is blocked", () => {
+    const live = CLASSIC_ADAPTER.projectEvent(INITIAL_STREAM_DATA, queuedInitialState);
+    const state = CLASSIC_ADAPTER.projectHydration(live, {
+      detail: { task: { id: "task-1", label: "Task", status: "running", run_state: "blocked", variant: "classic" } },
+      board: null,
+      turns: null,
+      cost: null,
+      logs: null,
+      traces: null,
+    }, "task-1");
+    expect(state.isLive).toBe(false);
+  });
+});

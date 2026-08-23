@@ -12,6 +12,7 @@ import {
   type BenchmarkRun,
   type BenchmarkRunReport,
 } from "@/lib/benchmarks";
+import { Select } from "@/components/ui/Select";
 
 const FILTER_NAMES = ["subject", "split", "tag", "scorer_id"] as const;
 
@@ -85,10 +86,10 @@ export function BenchmarkRunReportPanel({ run }: { run: BenchmarkRun }) {
         </div>
       </header>
       <div className="benchmark-report__filters" aria-label="Report filters">
-        <label>Subject<select value={searchParams.get("subject") ?? ""} onChange={(event) => setFilter("subject", event.target.value)}><option value="">All subjects</option>{options.subjects.map((value) => <option key={value}>{value}</option>)}</select></label>
-        <label>Split<select value={searchParams.get("split") ?? ""} onChange={(event) => setFilter("split", event.target.value)}><option value="">All splits</option>{options.splits.map((value) => <option key={value}>{value}</option>)}</select></label>
-        <label>Tag<select value={searchParams.get("tag") ?? ""} onChange={(event) => setFilter("tag", event.target.value)}><option value="">All tags</option>{options.tags.map((value) => <option key={value}>{value}</option>)}</select></label>
-        <label>Scorer<select value={searchParams.get("scorer_id") ?? ""} onChange={(event) => setFilter("scorer_id", event.target.value)}><option value="">All scorers</option>{options.scorers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
+        <label>Subject<Select value={searchParams.get("subject") ?? ""} onChange={(event) => setFilter("subject", event.target.value)}><option value="">All subjects</option>{options.subjects.map((value) => <option key={value}>{value}</option>)}</Select></label>
+        <label>Split<Select value={searchParams.get("split") ?? ""} onChange={(event) => setFilter("split", event.target.value)}><option value="">All splits</option>{options.splits.map((value) => <option key={value}>{value}</option>)}</Select></label>
+        <label>Tag<Select value={searchParams.get("tag") ?? ""} onChange={(event) => setFilter("tag", event.target.value)}><option value="">All tags</option>{options.tags.map((value) => <option key={value}>{value}</option>)}</Select></label>
+        <label>Scorer<Select value={searchParams.get("scorer_id") ?? ""} onChange={(event) => setFilter("scorer_id", event.target.value)}><option value="">All scorers</option>{options.scorers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</Select></label>
       </div>
       {error ? <ResourceState kind="unavailable" title="Comparison report unavailable" description={error} onRetry={load} /> : null}
       {!report && !error ? <div className="page-loading">Loading comparison report…</div> : null}

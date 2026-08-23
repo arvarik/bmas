@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Database, FileCheck2, Plus, RefreshCw, Search } from "lucide-react";
+import { Database, FileCheck2, Plus, RefreshCw, Search, X } from "lucide-react";
 import { DatasetImportPanel } from "@/components/features/DatasetImportPanel";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { ResourceState } from "@/components/ui/ResourceState";
@@ -68,8 +68,8 @@ export function DatasetsPageClient() {
           <ActionButton variant="secondary" onClick={() => void load()} loading={loading}>
             <RefreshCw size={15} /> Refresh
           </ActionButton>
-          <ActionButton onClick={() => setShowImport((current) => !current)}>
-            <Plus size={15} /> {showImport ? "Close import" : "Import dataset"}
+          <ActionButton variant={showImport ? "secondary" : "primary"} onClick={() => setShowImport((current) => !current)}>
+            {showImport ? <X size={15} /> : <Plus size={15} />} {showImport ? "Close" : "Import dataset"}
           </ActionButton>
         </div>
       </header>

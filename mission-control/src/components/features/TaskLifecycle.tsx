@@ -15,7 +15,7 @@ import {
   Settings2,
   X,
 } from "lucide-react";
-import type { CostData, LogEntry, TaskMeta, TraceEvent } from "@/hooks/useTaskStream";
+import type { CostData, TaskMeta } from "@/hooks/useTaskStream";
 import {
   type TaskOperatorAction,
   type TaskOperatorResult,
@@ -100,8 +100,6 @@ export function TaskLifecycle({
   isLive,
   isPaused,
   controls,
-  logs,
-  traceEvents,
 }: {
   header: ReactNode;
   task: TaskMeta | null;
@@ -109,8 +107,6 @@ export function TaskLifecycle({
   isLive: boolean;
   isPaused: boolean;
   controls: readonly string[];
-  logs: LogEntry[];
-  traceEvents: TraceEvent[];
 }) {
   const router = useRouter();
   const taskId = task?.task_id ?? "";
@@ -272,17 +268,6 @@ export function TaskLifecycle({
   }, [router, task]);
 
   const stage = useMemo(() => task ? currentStage(task) : "queued", [task]);
-  const timeline = useMemo(() => {
-    if (!task) return [];
-    const terminalBranch = branchState(task);
-    return [
-      { id: "created", timestamp: task.created_at, label: "System created the task", kind: "System" },
-      ...logs.map((entry) => ({ id: `log:${entry.id}`, timestamp: entry.timestamp, label: entry.message, kind: entry.agent_role || "System" })),
-      ...traceEvents.map((entry) => ({ id: `trace:${entry.id}`, timestamp: entry.timestamp, label: entry.content || entry.type, kind: entry.actor || "System" })),
-      ...operatorEvents.map((entry) => ({ id: `operator:${entry.cursor}`, timestamp: entry.created_at, label: operatorEventLabel(entry), kind: entry.data.actor || "Operator" })),
-      ...(task.completed_at ? [{ id: "terminal", timestamp: task.completed_at, label: terminalBranch === "cancelled" ? "Task cancelled" : task.status === "failed" ? "Task failed" : "Task completed", kind: "System" }] : []),
-    ].filter((entry) => entry.timestamp).sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
-  }, [logs, operatorEvents, task, traceEvents]);
   if (!task) return <div className="task-command-header">{header}</div>;
   const branch = branchState(task);
   const storageBytes = (task.storage?.input_bytes ?? 0) + (task.storage?.output_bytes ?? 0);
@@ -435,14 +420,6 @@ export function TaskLifecycle({
           </div>
         </details>
       ) : null}
-      <details className="task-lifecycle__history">
-        <summary>Operator and system event timeline ({timeline.length})</summary>
-        <div role="log" aria-label="Chronological operator and system events">
-          <ol>
-            {timeline.map((entry) => <li key={entry.id}><strong>{entry.kind}</strong> {entry.label} <time dateTime={entry.timestamp}>{new Date(entry.timestamp).toLocaleString()}</time></li>)}
-          </ol>
-        </div>
-      </details>
       {operationsError ? (
         <ActionableError
           component="Operations status"

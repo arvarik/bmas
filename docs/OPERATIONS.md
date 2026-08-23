@@ -41,9 +41,9 @@ The response checks Redis, SQLite, the model gateway, provider credentials, exec
 
 Mission Control uses the same response. It disables submission when one required check fails.
 
-File storage is optional. A storage failure does not block a text-only task. The setup center still shows the exact storage repair step.
+File storage is optional. A storage failure does not block a text-only task. The system status panel still shows the exact storage repair step.
 
-The readiness response also includes current task queue capacity. The setup center displays active and queued task counts.
+The readiness response also includes current task queue capacity. The system status panel displays active and queued task counts.
 
 ## Container state
 
