@@ -1049,3 +1049,54 @@ class TestUrlHarvest:
         assert len(urls) == 8
         assert urls[0] == "https://x.example/0"
         assert _harvest_urls("none here") == []
+
+
+# ── Durable board persistence of sources ─────────────────────────────
+
+class TestSourcesPersistence:
+
+    @pytest.mark.asyncio
+    async def test_sources_round_trip_through_sqlite(self, tmp_path, monkeypatch):
+        import database as db_module
+        monkeypatch.setattr(db_module, "DB_PATH", str(tmp_path / "test.db"))
+        await db_module.init_db()
+        async with db_module._connect() as conn:
+            await conn.execute(
+                "INSERT OR IGNORE INTO tasks (id, label, full_input, status)"
+                " VALUES (?, ?, ?, ?)",
+                ("task-src", "L", "Q", "running"),
+            )
+            await conn.commit()
+        entry = {
+            "id": "e-1",
+            "task_id": "task-src",
+            "type": "finding",
+            "author": "expert.a",
+            "body": "Grounded claim",
+            "refs": [],
+            "sources": ["https://example.org/report", "tool:web_search"],
+            "confidence": 0.8,
+        }
+        await db_module.upsert_board_entry(entry)
+        rows = await db_module.get_board_entries("task-src")
+        assert rows[0]["sources"] == ["https://example.org/report", "tool:web_search"]
+        assert rows[0]["refs"] == []
+
+    @pytest.mark.asyncio
+    async def test_v12_migration_adds_the_column(self, tmp_path, monkeypatch):
+        import aiosqlite
+
+        import database as db_module
+        path = str(tmp_path / "legacy.db")
+        monkeypatch.setattr(db_module, "DB_PATH", path)
+        # A legacy table without the sources column.
+        async with aiosqlite.connect(path) as conn:
+            await conn.execute(
+                "CREATE TABLE board_entries (id TEXT PRIMARY KEY, task_id TEXT,"
+                " type TEXT, author TEXT, body TEXT, refs TEXT)"
+            )
+            await conn.commit()
+            await db_module._migrate_to_v12(conn)
+            cursor = await conn.execute("PRAGMA table_info(board_entries)")
+            columns = {row[1] for row in await cursor.fetchall()}
+        assert "sources" in columns
