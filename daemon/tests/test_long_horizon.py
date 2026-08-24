@@ -451,7 +451,7 @@ class TestSchedulerTimeout:
             "timeout_seconds": 3600,
             "arms": [{"configuration": {"classic": {"max_duration_s": 7200}}}],
         }
-        assert _attempt_timeout_seconds(configuration) == 7500
+        assert _attempt_timeout_seconds(configuration) == 8100
 
     def test_effort_level_extends_timeout(self):
         from benchmarks.scheduler import _attempt_timeout_seconds
@@ -459,7 +459,7 @@ class TestSchedulerTimeout:
             "timeout_seconds": 3600,
             "arms": [{"configuration": {"effort": "exhaustive"}}],
         }
-        assert _attempt_timeout_seconds(configuration) == 11100
+        assert _attempt_timeout_seconds(configuration) == 11700
 
 
 # ── Submit models ────────────────────────────────────────────────────
@@ -914,3 +914,138 @@ class TestGraceRevision:
         snapshot = await harness.store.get_snapshot(TASK_ID)
         solutions = [e for e in snapshot.values() if e.type == "solution"]
         assert len(solutions) >= 2
+
+
+# ── Closing-sequence timeout window and adaptive duration reserve ────
+
+class TestClosingSequence:
+
+    def test_turn_durations_shape_the_closing_window(self):
+        v = _make_variant()
+        assert v.closing_turn_timeout_s() == 120  # floor without data
+        for _ in range(4):
+            v.note_turn_duration(270_000)  # 270 s per turn
+        assert v.closing_turn_timeout_s() == 540
+        v.note_turn_duration(10_000_000)
+        assert v.closing_turn_timeout_s() == 600  # cap
+        v.note_turn_duration(None)
+        v.note_turn_duration(-5)
+        assert len(v._turn_durations) <= 12
+
+    def test_adaptive_reserve_scales_with_slow_turns(self):
+        v = _make_variant(max_duration_s=900)
+        base = v._duration_reserve_s
+        assert v._current_duration_reserve_s() == base
+        for _ in range(3):
+            v.note_turn_duration(270_000)
+        assert v._current_duration_reserve_s() == 360.0  # capped at 40%
+
+    @pytest.mark.asyncio
+    async def test_slow_turns_force_the_decider_earlier(self):
+        v = _make_variant(max_duration_s=900)
+        task_id = "test-task"
+        for _ in range(3):
+            v.note_turn_duration(270_000)
+        # 620 s elapsed: inside the static reserve (fires at 828 s) but
+        # past the adaptive one (fires at 540 s).
+        v.genesis_time = time.monotonic() - 620
+        await v.store.set_meta(task_id, round=2, budget_spent=0.0)
+        _seed(v, task_id, [
+            _make_entry("e-1", "objective", "control_unit", "Objective"),
+            _make_entry("e-2", "finding", "expert.a", "One finding", round_no=1),
+        ])
+        result = await v.step({"task_id": task_id, "query": "Q"}, None)
+        assert result.terminal is False
+        assert [a.actor for a in result.activations] == ["decider"]
+        assert v.closing_sequence is True
+
+    @pytest.mark.asyncio
+    async def test_closing_flag_false_on_a_normal_round(self):
+        v = _make_variant(max_duration_s=1800)
+        v.closing_sequence = True  # stale from a previous task state
+        task_id = "test-task"
+        await v.store.set_meta(task_id, round=1, budget_spent=0.0)
+        _seed(v, task_id, [
+            _make_entry("e-1", "objective", "control_unit", "Objective"),
+        ])
+
+        async def schedule(task_id_, query, snapshot, current_round, meta):
+            return ["planner"], "normal round"
+
+        v._cu_select = schedule
+        result = await v.step({"task_id": task_id, "query": "Q"}, None)
+        assert result.terminal is False
+        assert v.closing_sequence is False
+
+    @pytest.mark.asyncio
+    async def test_grace_denied_past_the_overrun_limit(self):
+        v = _make_variant(max_duration_s=900)
+        task_id = "test-task"
+        v.genesis_time = time.monotonic() - (900 + v.closing_turn_timeout_s() + 60)
+        await v.store.set_meta(
+            task_id, round=5, decider_forced=True, terminal_reason="duration",
+        )
+        _seed(v, task_id, [
+            _make_entry("e-1", "objective", "control_unit", "Objective"),
+            _make_entry("e-9", "solution", "decider", "Late answer", round_no=5),
+        ])
+        result = await v.step({"task_id": task_id, "query": "Q"}, None)
+        assert result.terminal is True
+        assert result.reason == "duration"
+
+    @pytest.mark.asyncio
+    async def test_turn_durations_round_trip_through_checkpoint(self):
+        v = _make_variant()
+        task_id = "test-task"
+        v.note_turn_duration(120_000)
+        v.note_turn_duration(180_000)
+        await v.checkpoint(task_id)
+        saved = v.gateway.set_meta.call_args.kwargs
+        assert saved["turn_durations"] == [120.0, 180.0]
+
+
+class TestUrlHarvest:
+
+    def test_inline_citations_become_sources(self):
+        from core.response_parser import _clean_entry
+        cleaned = _clean_entry(
+            {
+                "type": "finding",
+                "title": "Grounded inline",
+                "body": (
+                    "Daikin invests 300M (see https://www.daikin.eu/press/2024, "
+                    "and https://ec.europa.eu/energy/report). "
+                    "Duplicate: https://www.daikin.eu/press/2024."
+                ),
+            },
+            "expert.alpha",
+            None,
+        )
+        assert cleaned is not None
+        assert cleaned["sources"] == [
+            "https://www.daikin.eu/press/2024",
+            "https://ec.europa.eu/energy/report",
+        ]
+
+    def test_explicit_sources_win_over_harvest(self):
+        from core.response_parser import _clean_entry
+        cleaned = _clean_entry(
+            {
+                "type": "finding",
+                "title": "Explicit",
+                "body": "Claim citing https://ignored.example inline.",
+                "sources": ["https://explicit.example"],
+            },
+            "expert.alpha",
+            None,
+        )
+        assert cleaned is not None
+        assert cleaned["sources"] == ["https://explicit.example"]
+
+    def test_harvest_caps_and_strips_punctuation(self):
+        from core.response_parser import _harvest_urls
+        body = " ".join(f"https://x.example/{i}," for i in range(12))
+        urls = _harvest_urls(body)
+        assert len(urls) == 8
+        assert urls[0] == "https://x.example/0"
+        assert _harvest_urls("none here") == []
