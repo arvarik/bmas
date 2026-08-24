@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -187,6 +187,7 @@ CREATE TABLE IF NOT EXISTS board_entries (
     title         TEXT,
     body          TEXT,
     refs          TEXT,
+    sources       TEXT,
     confidence    REAL,
     status        TEXT NOT NULL DEFAULT 'open',
     salience      REAL DEFAULT 0.0,
@@ -1205,6 +1206,16 @@ async def _migrate_to_v11(db: aiosqlite.Connection) -> None:
     logger.info("Migration v11 applied: fenced benchmark scheduling")
 
 
+async def _migrate_to_v12(db: aiosqlite.Connection) -> None:
+    """Add the sources column that carries external evidence citations."""
+    cursor = await db.execute("PRAGMA table_info(board_entries)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    if "sources" not in columns:
+        await db.execute("ALTER TABLE board_entries ADD COLUMN sources TEXT")
+    await db.commit()
+    logger.info("Migration v12 applied: board entry sources")
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -1218,6 +1229,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         9: _migrate_to_v9,
         10: _migrate_to_v10,
         11: _migrate_to_v11,
+        12: _migrate_to_v12,
     }
     fn = migrations.get(version)
     if fn is None:
@@ -2761,6 +2773,9 @@ async def upsert_board_entry(
     refs = entry.get("refs", [])
     if isinstance(refs, list):
         refs = json.dumps(refs)
+    sources = entry.get("sources", [])
+    if isinstance(sources, list):
+        sources = json.dumps(sources)
     async with _connect() as db:
         await db.execute("BEGIN IMMEDIATE")
         try:
@@ -2768,9 +2783,9 @@ async def upsert_board_entry(
             await db.execute(
                 "INSERT OR REPLACE INTO board_entries "
                 "(id, task_id, type, author, author_node, title, body, refs, "
-                "confidence, status, salience, round, space, created_by_turn, "
-                "created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "sources, confidence, status, salience, round, space, "
+                "created_by_turn, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     entry["id"],
                     entry["task_id"],
@@ -2780,6 +2795,7 @@ async def upsert_board_entry(
                     entry.get("title"),
                     entry.get("body"),
                     refs,
+                    sources,
                     entry.get("confidence", 0.5),
                     entry.get("status", "open"),
                     entry.get("salience", 0.0),
@@ -2806,13 +2822,14 @@ async def get_board_entries(task_id: str) -> list[dict]:
         result = []
         for r in rows:
             d = dict(r)
-            if d.get("refs"):
-                try:
-                    d["refs"] = json.loads(d["refs"])
-                except (json.JSONDecodeError, TypeError):
-                    d["refs"] = []
-            else:
-                d["refs"] = []
+            for field in ("refs", "sources"):
+                if d.get(field):
+                    try:
+                        d[field] = json.loads(d[field])
+                    except (json.JSONDecodeError, TypeError):
+                        d[field] = []
+                else:
+                    d[field] = []
             result.append(d)
         return result
 
@@ -2947,12 +2964,14 @@ async def import_legacy_board_snapshot(
             for entry in entries:
                 refs = entry.get("refs", [])
                 refs_json = refs if isinstance(refs, str) else json.dumps(refs)
+                sources = entry.get("sources", [])
+                sources_json = sources if isinstance(sources, str) else json.dumps(sources)
                 await db.execute(
                     "INSERT OR REPLACE INTO board_entries "
                     "(id, task_id, type, author, author_node, title, body, refs, "
-                    "confidence, status, salience, round, space, created_by_turn, "
-                    "created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "sources, confidence, status, salience, round, space, "
+                    "created_by_turn, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         entry["id"],
                         task_id,
@@ -2962,6 +2981,7 @@ async def import_legacy_board_snapshot(
                         entry.get("title"),
                         entry.get("body"),
                         refs_json,
+                        sources_json,
                         entry.get("confidence", 0.5),
                         entry.get("status", "open"),
                         entry.get("salience", 0.0),
