@@ -637,6 +637,24 @@ function projectClassicHydration(
   const turns = arrayFromEnvelope(bundle.turns, "turns").map((turn) =>
     mapTurnRecord({ ...turn, task_id: turn.task_id ?? taskId }),
   );
+  // Live-stream turn events can lack timing fields (the journal replay
+  // carries no started_at). When both sources know a turn, keep the live
+  // record but fill its gaps from the hydrated row so the agent timeline
+  // and token totals survive.
+  const hydratedTurnsById = new Map(turns.map((turn) => [turn.turn_id, turn]));
+  const fillTurn = (turn: TurnRecord): TurnRecord => {
+    const hydrated = hydratedTurnsById.get(turn.turn_id);
+    if (!hydrated) return turn;
+    return {
+      ...turn,
+      started_at: turn.started_at || hydrated.started_at,
+      ended_at: turn.ended_at || hydrated.ended_at,
+      tokens_in: turn.tokens_in ?? hydrated.tokens_in,
+      tokens_out: turn.tokens_out ?? hydrated.tokens_out,
+      cost_usd: turn.cost_usd ?? hydrated.cost_usd,
+      model: turn.model ?? hydrated.model,
+    };
+  };
   const roster = rosterFromBoard(bundle.board);
   const logs = arrayFromEnvelope(bundle.logs, "entries").map((log, index) =>
     mapLog({ ...log, timestamp: log.timestamp ?? log.created_at }, index),
@@ -661,7 +679,7 @@ function projectClassicHydration(
     error: state.error ?? (typeof task?.error_message === "string" ? task.error_message : null),
     cost: terminalHydration ? hydratedCost ?? state.cost : mergeCostSnapshots(state.cost, hydratedCost),
     boardEntries: mergeBy(boardEntries, state.boardEntries, (item) => item.id),
-    completedTurns: mergeBy(turns, state.completedTurns, (item) => item.turn_id),
+    completedTurns: mergeBy(turns, state.completedTurns, (item) => item.turn_id).map(fillTurn),
     logs: keepNewest(mergeBy(logs, state.logs, logIdentity), MAX_LIVE_LOGS),
     traceEvents: keepNewest(
       mergeBy(traces, state.traceEvents, (item) => item.id),

@@ -822,7 +822,7 @@ function Legend() {
     <div
       style={{
         position: "absolute",
-        bottom: 12,
+        top: 12,
         left: 12,
         zIndex: 5,
         background: "hsl(222 44% 9% / 0.9)",

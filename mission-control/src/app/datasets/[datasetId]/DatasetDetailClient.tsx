@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
-import { ArrowLeft, CheckCircle2, Copy, Download, Search } from "lucide-react";
+import { BackLink } from "@/components/ui/BackLink";
+import { CheckCircle2, Copy, Download, Search } from "lucide-react";
 import { DatasetImportPanel } from "@/components/features/DatasetImportPanel";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { ResourceState } from "@/components/ui/ResourceState";
@@ -85,7 +85,7 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
     <div className="dataset-detail-page">
       <header className="page-header dataset-detail-header">
         <div>
-          <Link href="/datasets" className="task-header__back"><ArrowLeft size={14} /> Datasets</Link>
+          <BackLink href="/datasets" label="Datasets" />
           <p className="page-eyebrow">Evaluate</p>
           <h2>{dataset.name}</h2>
           <p>{dataset.description || "No description was provided."}</p>

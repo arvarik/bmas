@@ -626,28 +626,6 @@ export function ProcessFlowGraph({
 
       {/* Legend */}
       <GraphLegend hasCycles={hasCycles} />
-      <details className="task-detail-data-alternative">
-        <summary>View execution rounds as a table</summary>
-        <div className="task-detail-table-wrap">
-          <table className="task-detail-table">
-            <caption>Execution rounds and routing details</caption>
-            <thead><tr><th>Round</th><th>Phase</th><th>Status</th><th>Agents</th><th>Turns</th><th>Duration</th><th>Rationale</th></tr></thead>
-            <tbody>
-              {layout.nodes.map((node) => (
-                <tr key={node.round}>
-                  <td>{node.round}</td>
-                  <td>{prettyPhase(node.phase)}</td>
-                  <td>{node.status === "active" ? "running" : node.status}</td>
-                  <td>{node.actors.map(prettyActor).join(", ") || "None recorded"}</td>
-                  <td>{node.turnCount}</td>
-                  <td>{node.durationMs == null ? "Not recorded" : fmtMs(node.durationMs)}</td>
-                  <td>{node.rationale || "Not recorded"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </details>
     </div>
   );
 }

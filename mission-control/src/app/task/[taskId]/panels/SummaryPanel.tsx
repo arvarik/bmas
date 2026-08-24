@@ -479,7 +479,7 @@ function TimeDisplay({
           />
       </div>
 
-      {expanded && timeline.length > 0 && (
+      {expanded && (
         <div
           id="duration-breakdown"
           className="overview__breakdown-panel"
@@ -492,6 +492,11 @@ function TimeDisplay({
             animation: "slide-down 200ms ease",
           }}
         >
+          {timeline.length === 0 ? (
+            <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>
+              No per-agent timing was recorded for this task.
+            </p>
+          ) : (<>
           {/* Gantt-style timeline */}
           <div
             style={{
@@ -595,6 +600,7 @@ function TimeDisplay({
             </div>
             <span />
           </div>
+          </>)}
         </div>
       )}
     </div>

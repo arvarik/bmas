@@ -9,8 +9,8 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { BackLink } from "@/components/ui/BackLink";
 import { useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { useTaskStream } from "@/hooks/useTaskStream";
 import type { TaskStreamData, CostData } from "@/hooks/useTaskStream";
 import { TaskStreamContext } from "./TaskStreamContext";
@@ -19,7 +19,6 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { TaskLifecycle } from "@/components/features/TaskLifecycle";
 import { ActionableError } from "@/components/ui/ActionableError";
 import type { StatusType } from "@/lib/design-tokens";
-import { ArrowLeft } from "lucide-react";
 import { UnsupportedVariantState } from "@/components/features/UnsupportedVariantState";
 import { getActiveAdapter, visibleNavigationPanels } from "@/lib/variants";
 import { classicBudgetCeiling, describeStopReason } from "@/lib/runtime-presentation";
@@ -98,6 +97,20 @@ function TaskHeader({
   const spentUsd = budgetState?.spent ?? cost?.total_cost ?? 0;
   const budgetCeiling = budgetState?.ceiling
     ?? classicBudgetCeiling(taskMeta?.effective_configuration);
+  // One muted line replaces the complexity/variant/effort pill row: the
+  // header keeps a single colored status chip (plus the stop reason) and
+  // states the run's shape as quiet text.
+  const contextParts = [
+    taskMeta?.variant,
+    taskMeta?.complexity,
+    taskMeta?.effort && taskMeta.effort !== "standard" ? taskMeta.effort : null,
+  ].filter((part): part is string => Boolean(part));
+  const contextLine = contextParts.join(" · ");
+  const contextTitle = [
+    taskMeta?.variant ? `Runtime: ${taskMeta.variant}` : null,
+    taskMeta?.complexity ? `Triage complexity: ${taskMeta.complexity}` : null,
+    taskMeta?.effort && taskMeta.effort !== "standard" ? `Effort: ${taskMeta.effort}` : null,
+  ].filter(Boolean).join(" — ");
   const durationText = taskMeta?.duration_ms
     ? fmtDuration(taskMeta.duration_ms)
     : taskMeta?.started_at
@@ -106,10 +119,7 @@ function TaskHeader({
 
   return (
     <div className="task-header">
-      <Link href="/tasks" className="task-header__back">
-        <ArrowLeft size={16} />
-        <span>Tasks</span>
-      </Link>
+      <BackLink href="/tasks" label="Tasks" />
       <h2 className="task-header__title">{label}</h2>
       <div className="task-header__meta">
         {!hasMeta && pending ? (
@@ -130,28 +140,17 @@ function TaskHeader({
             }
           />
         )}
-        {taskMeta?.complexity && (
+        {stopReason ? (
           <span
-            className="task-header__badge"
-            title={`Triage complexity: ${taskMeta.complexity} — The AI router classified this prompt's difficulty to select the appropriate model tier`}
+            className={`task-header__stop task-header__stop--${stopReason.tone}`}
+            title={stopReason.detail}
           >
-            {taskMeta.complexity}
+            {stopReason.label}
           </span>
-        )}
-        {taskMeta?.variant && (
-          <span
-            className="task-header__badge variant-chip"
-            title={`Coordination variant: ${taskMeta.variant}`}
-          >
-            {taskMeta.variant}
-          </span>
-        )}
-        {taskMeta?.effort && taskMeta.effort !== "standard" && (
-          <span
-            className="task-header__badge effort-chip"
-            title={`Effort level: ${taskMeta.effort}`}
-          >
-            {taskMeta.effort}
+        ) : null}
+        {contextLine && (
+          <span className="task-header__context" title={contextTitle}>
+            {contextLine}
           </span>
         )}
         {taskMeta?.model && (
@@ -176,14 +175,6 @@ function TaskHeader({
         )}
         <span className="task-header__phase">Phase {phase || taskMeta?.run_state || "Queued"}</span>
         <span className="task-header__agent">Active agent {activeAgent || "None"}</span>
-        {stopReason ? (
-          <span
-            className={`task-header__stop task-header__stop--${stopReason.tone}`}
-            title={stopReason.detail}
-          >
-            {stopReason.label}
-          </span>
-        ) : null}
       </div>
     </div>
   );
