@@ -22,7 +22,7 @@ import type { StatusType } from "@/lib/design-tokens";
 import { ArrowLeft } from "lucide-react";
 import { UnsupportedVariantState } from "@/components/features/UnsupportedVariantState";
 import { getActiveAdapter, visibleNavigationPanels } from "@/lib/variants";
-import { describeStopReason } from "@/lib/runtime-presentation";
+import { classicBudgetCeiling, describeStopReason } from "@/lib/runtime-presentation";
 import { SummaryPanel } from "./panels/SummaryPanel";
 import { BlackboardPanel } from "./panels/BlackboardPanel";
 import { ExecutionPanel } from "./panels/ExecutionPanel";
@@ -63,6 +63,7 @@ function TaskHeader({
   isLive,
   pending,
   cost,
+  budgetState,
   phase,
   activeAgent,
 }: {
@@ -70,6 +71,7 @@ function TaskHeader({
   isLive: boolean;
   pending: PendingTask | null;
   cost: CostData | null;
+  budgetState: TaskStreamData["budgetState"];
   phase: string | null;
   activeAgent: string | null;
 }) {
@@ -93,6 +95,9 @@ function TaskHeader({
 
   // Duration display
   const stopReason = taskMeta && !isLive ? describeStopReason(taskMeta) : null;
+  const spentUsd = budgetState?.spent ?? cost?.total_cost ?? 0;
+  const budgetCeiling = budgetState?.ceiling
+    ?? classicBudgetCeiling(taskMeta?.effective_configuration);
   const durationText = taskMeta?.duration_ms
     ? fmtDuration(taskMeta.duration_ms)
     : taskMeta?.started_at
@@ -153,8 +158,17 @@ function TaskHeader({
           <span className="task-header__model">{taskMeta.model}</span>
         )}
         {cost && (
-          <span className="task-header__cost">
-            ${cost.total_cost.toFixed(4)}
+          <span
+            className="task-header__cost"
+            title={
+              budgetCeiling
+                ? `Spent $${spentUsd.toFixed(4)} of the $${budgetCeiling.toFixed(2)} task budget ceiling`
+                : "Total task cost"
+            }
+          >
+            {budgetCeiling
+              ? `$${spentUsd.toFixed(2)} / $${budgetCeiling.toFixed(2)}`
+              : `$${cost.total_cost.toFixed(4)}`}
           </span>
         )}
         {durationText && (
@@ -255,6 +269,7 @@ export function TaskDetailClient({ taskId }: { taskId: string }) {
             isLive={streamData.isLive}
             pending={pending}
             cost={streamData.cost}
+            budgetState={streamData.budgetState}
             phase={streamData.phase}
             activeAgent={streamData.activeTurns.at(-1)?.actor ?? null}
           />}

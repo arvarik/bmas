@@ -38,7 +38,7 @@ CLASSIC_EFFORT_PROFILES: dict[str, dict[str, Any]] = {
     },
     "thorough": {
         "label": "Thorough",
-        "description": "More rounds with fresh agent context each turn. The answer must pass review before a limit stop.",
+        "description": "More rounds with fresh agent context each turn. New findings need sources, and the answer must pass review before a limit stop.",
         "settings": {
             "max_rounds": 12,
             "max_duration_s": 3600,
@@ -47,11 +47,12 @@ CLASSIC_EFFORT_PROFILES: dict[str, dict[str, Any]] = {
             "max_replans": 3,
             "grace_verification": True,
             "actor_context": "fresh",
+            "require_evidence": True,
         },
     },
     "exhaustive": {
         "label": "Exhaustive",
-        "description": "Long-horizon run: many rounds, a high budget ceiling, strict verification. Can take an hour.",
+        "description": "Long-horizon run: many rounds, a high budget ceiling, sourced evidence, strict verification. Can take an hour.",
         "settings": {
             "max_rounds": 32,
             "max_duration_s": 10800,
@@ -60,6 +61,7 @@ CLASSIC_EFFORT_PROFILES: dict[str, dict[str, Any]] = {
             "max_replans": 5,
             "grace_verification": True,
             "actor_context": "fresh",
+            "require_evidence": True,
         },
     },
 }

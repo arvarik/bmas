@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { parseCapabilities } from "@/lib/capabilities";
 import { createTaskSubmissionRequest } from "@/lib/task-submission";
-import { describeStopReason } from "@/lib/runtime-presentation";
+import { classicBudgetCeiling, describeStopReason } from "@/lib/runtime-presentation";
 import { parsePreferences } from "@/lib/preferences";
 import { CLASSIC_ADAPTER } from "@/lib/variants";
 import { INITIAL_STREAM_DATA } from "@/hooks/useTaskStream";
+import { mapBoardEntry } from "@/lib/mappers";
 
 const BASE_VARIANT = {
   id: "classic",
@@ -117,5 +118,70 @@ describe("preferences", () => {
     expect(parsePreferences("").defaultEffort).toBe("standard");
     expect(parsePreferences(JSON.stringify({ defaultEffort: "thorough" })).defaultEffort).toBe("thorough");
     expect(parsePreferences(JSON.stringify({ defaultEffort: 3 })).defaultEffort).toBe("standard");
+  });
+});
+
+// ── Phase 3: per-task limit overrides and budget display ─────────────
+
+describe("createTaskSubmissionRequest with classic overrides", () => {
+  it("includes overrides.classic in the JSON body when limits are set", () => {
+    const request = createTaskSubmissionRequest(
+      "Task", "classic", [], "exhaustive",
+      { max_rounds: 20, budget_ceiling_usd: 5 },
+    );
+    const body = JSON.parse(request.body as string);
+    expect(body.overrides).toEqual({
+      classic: { max_rounds: 20, budget_ceiling_usd: 5 },
+    });
+  });
+
+  it("omits overrides when the map is empty", () => {
+    const request = createTaskSubmissionRequest("Task", "classic", [], "thorough", {});
+    const body = JSON.parse(request.body as string);
+    expect(body.overrides).toBeUndefined();
+  });
+
+  it("appends overrides JSON to multipart bodies", () => {
+    const file = new File(["x"], "notes.txt", { type: "text/plain" });
+    const request = createTaskSubmissionRequest(
+      "Task", "classic", [file], "exhaustive", { max_rounds: 12 },
+    );
+    const form = request.body as FormData;
+    expect(JSON.parse(form.get("overrides") as string)).toEqual({
+      classic: { max_rounds: 12 },
+    });
+  });
+});
+
+describe("classicBudgetCeiling", () => {
+  it("reads the ceiling from the captured configuration", () => {
+    expect(classicBudgetCeiling({
+      settings: { classic: { budget_ceiling_usd: 2.5 } },
+    })).toBe(2.5);
+  });
+
+  it("returns null for missing or invalid shapes", () => {
+    expect(classicBudgetCeiling(undefined)).toBeNull();
+    expect(classicBudgetCeiling({})).toBeNull();
+    expect(classicBudgetCeiling({ settings: { classic: { budget_ceiling_usd: 0 } } })).toBeNull();
+  });
+});
+
+describe("board entry sources", () => {
+  it("maps string sources and drops junk", () => {
+    const entry = mapBoardEntry(
+      { id: "e-1", type: "finding", body: "b", author: "expert.a",
+        sources: ["https://a.example", 7, "tool:web_search"] },
+      0,
+    );
+    expect(entry.sources).toEqual(["https://a.example", "tool:web_search"]);
+  });
+
+  it("leaves sources undefined when absent", () => {
+    const entry = mapBoardEntry(
+      { id: "e-1", type: "finding", body: "b", author: "expert.a" },
+      0,
+    );
+    expect(entry.sources).toBeUndefined();
   });
 });

@@ -259,6 +259,21 @@ export function BoardEntryCard({ entry, selected, compact, onSelect, model }: Bo
           </span>
         )}
 
+        {/* external sources (evidence) */}
+        {entry.sources.length > 0 && (
+          <span
+            title={`${entry.sources.length} external source${entry.sources.length === 1 ? "" : "s"} — this entry cites evidence from outside the board`}
+            style={{
+              fontSize: "10px",
+              fontFamily: "var(--font-mono)",
+              color: "var(--accent-primary, var(--text-tertiary))",
+              flexShrink: 0,
+            }}
+          >
+            ⛁ {entry.sources.length} src
+          </span>
+        )}
+
         <span
           style={{
             fontSize: "10px",

@@ -148,6 +148,9 @@ export function mapBoardEntry(
     body: (raw.body ?? raw.content ?? "") as string,
     author: (raw.author ?? raw.actor ?? "unknown") as string,
     refs: (raw.refs ?? []) as string[],
+    sources: Array.isArray(raw.sources)
+      ? (raw.sources as unknown[]).filter((s): s is string => typeof s === "string")
+      : undefined,
     confidence: (raw.confidence ?? 0) as number,
     salience: (raw.salience ?? 0) as number,
     seq: (raw.seq ?? idx) as number,

@@ -122,6 +122,7 @@ Read ALL findings and plans on the board.  Look for:
 - Logical fallacies or contradictions between entries
 - Missing perspectives or blind spots
 - Overconfident assertions without evidence
+- Claims that need external grounding but list no `sources`
 
 ## What you write
 Post ONE `critique` entry per distinct issue.  Each critique targets ONE
@@ -317,13 +318,21 @@ critiques of your prior contributions.
       "title": "Short title of your key insight (max 10 words)",
       "body": "Detailed analysis with evidence, reasoning, and domain-specific depth.  Be specific — cite frameworks, mechanisms, or failure patterns.",
       "refs": ["e-1", "e-2"],
-      "confidence": 0.8
+      "confidence": 0.8,
+      "sources": ["https://example.org/spec", "tool:web_search"]
     }}
   ]
 }}
 ```
 
 `refs` must include the objective entry and any plan entries you are addressing.
+
+### Sources (external evidence)
+When a web search, tool call, or document informs your finding, list the
+URLs or tool citations in the `sources` array. Sources ground your work:
+a sourced finding counts as progress, and an unsourced restatement of the
+board does not. Omit `sources` only when the finding follows from pure
+reasoning over board content.
 
 ### When responding to a critique of your prior work:
 Use `"type": "rebuttal"` (NOT "finding") and reference the critique entry in `refs`:

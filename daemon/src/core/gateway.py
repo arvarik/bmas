@@ -536,6 +536,10 @@ class BoardGateway:
         if not isinstance(refs, list):
             refs = []
 
+        # Sources: external evidence (URLs, tool citations). Accept the
+        # common "citations" alias, keep strings only, cap count and size.
+        sources = _normalize_sources(raw.get("sources") or raw.get("citations"))
+
         # Assign gateway-controlled fields
         next_seq = await self._store.get_next_seq(task_id)
         entry_id = f"e-{next_seq}"
@@ -548,6 +552,7 @@ class BoardGateway:
             body=raw.get("body", ""),
             title=title,
             refs=refs,
+            sources=sources,
             confidence=confidence,
             status="open",
             salience=0.0,
@@ -797,3 +802,26 @@ async def salience_recompute_hook(
     }
     if changed:
         await store.set_salience_many(task_id, changed)
+
+
+MAX_SOURCES_PER_ENTRY = 8
+MAX_SOURCE_CHARS = 500
+
+
+def _normalize_sources(value) -> list[str]:
+    """Return a clean list of source strings from agent-supplied data."""
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    cleaned: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not text:
+            continue
+        cleaned.append(text[:MAX_SOURCE_CHARS])
+        if len(cleaned) >= MAX_SOURCES_PER_ENTRY:
+            break
+    return cleaned

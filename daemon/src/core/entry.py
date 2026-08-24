@@ -82,6 +82,7 @@ class ProposedEntry:
     title: str | None = None       # Short, indexable — agent-supplied
     refs: list[str] = field(default_factory=list)
     confidence: float | None = None  # 0..1, optional; default 0.5
+    sources: list[str] = field(default_factory=list)  # external evidence
 
 
 @dataclass
@@ -101,6 +102,7 @@ class BoardEntry:
     author_node: str | None = None
     title: str | None = None         # short, indexable
     refs: list[str] = field(default_factory=list)
+    sources: list[str] = field(default_factory=list)  # external evidence (URLs, tool citations)
     confidence: float = DEFAULT_CONFIDENCE
     status: str = "open"             # open | superseded | removed
     salience: float = 0.0            # gateway-computed (§7)
@@ -123,14 +125,19 @@ def entry_to_dict(entry: BoardEntry) -> dict[str, Any]:
 
 def entry_from_dict(d: dict[str, Any]) -> BoardEntry:
     """Deserialize a dict to a BoardEntry."""
-    # Parse refs from JSON string if needed
-    refs = d.get("refs", [])
-    if isinstance(refs, str):
-        import json
-        try:
-            refs = json.loads(refs)
-        except (json.JSONDecodeError, TypeError):
-            refs = []
+    # Parse refs/sources from JSON strings if needed
+    import json
+
+    def _parse_list(value: Any) -> list:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return []
+        return value if isinstance(value, list) else []
+
+    refs = _parse_list(d.get("refs", []))
+    sources = _parse_list(d.get("sources", []))
     return BoardEntry(
         id=d["id"],
         task_id=d["task_id"],
@@ -139,7 +146,8 @@ def entry_from_dict(d: dict[str, Any]) -> BoardEntry:
         body=d.get("body", ""),
         author_node=d.get("author_node"),
         title=d.get("title"),
-        refs=refs if isinstance(refs, list) else [],
+        refs=refs,
+        sources=sources,
         confidence=float(d.get("confidence", DEFAULT_CONFIDENCE)),
         status=d.get("status", "open"),
         salience=float(d.get("salience", 0.0)),

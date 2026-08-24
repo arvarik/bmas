@@ -64,6 +64,7 @@ export interface BoardEntry {
   body: string;
   author: string;
   refs: string[];
+  sources?: string[];
   confidence: number;
   salience: number;
   seq: number;

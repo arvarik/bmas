@@ -162,6 +162,7 @@ class TraditionalVariant:
         )
         self.grace_verification: bool = bool(config.get("grace_verification", True))
         self.actor_context: str = str(config.get("actor_context", "chained"))
+        self.require_evidence: bool = bool(config.get("require_evidence", False))
         # Reserve the tail of the duration budget for the forced decider and
         # the grace verification round, so those turns never dispatch with a
         # guaranteed-timeout window.
@@ -605,18 +606,16 @@ class TraditionalVariant:
         if solution:
             return StepResult(terminal=True, reason="solution")
 
-        # If decider was forced last round, terminate now — unless grace
-        # verification still owes the answer one independent critic review.
+        # If decider was forced last round, terminate now — unless the
+        # stop rule still owes work: a grace critic review of an unseen
+        # answer, or one decider revision after the critic rejected it.
         grace_candidate = None
+        grace_revision = False
         if meta.get("decider_forced"):
             critic_enabled = (
                 self.role_registry.get("critic", {}).get("enabled") is not False
             )
-            if (
-                self.grace_verification
-                and critic_enabled
-                and not meta.get("grace_verification_done")
-            ):
+            if self.grace_verification and critic_enabled:
                 open_solutions = sorted(
                     (
                         entry for entry in snapshot.values()
@@ -625,12 +624,27 @@ class TraditionalVariant:
                     key=lambda entry: (entry.round, entry.id),
                     reverse=True,
                 )
+                latest_solution = open_solutions[0] if open_solutions else None
                 if (
-                    open_solutions
-                    and open_solutions[0].id != meta.get("solution_reviewed_id")
+                    latest_solution is not None
+                    and latest_solution.id != meta.get("solution_reviewed_id")
                 ):
-                    grace_candidate = open_solutions[0]
-            if grace_candidate is None:
+                    if latest_solution.id != meta.get("solution_candidate_id"):
+                        # The critic has not seen this answer yet.
+                        grace_candidate = latest_solution
+                    elif not meta.get("grace_revision_done"):
+                        # The critic saw this answer and did not approve it.
+                        # If it posted a critique and resources remain, the
+                        # decider gets exactly one revision round.
+                        rejected = any(
+                            entry.type == "critique"
+                            and entry.status == "open"
+                            and latest_solution.id in (entry.refs or [])
+                            for entry in snapshot.values()
+                        )
+                        if rejected and self._revision_headroom(meta):
+                            grace_revision = True
+            if grace_candidate is None and not grace_revision:
                 return StepResult(
                     terminal=True,
                     reason=meta.get("terminal_reason", "forced_decider_finished")
@@ -700,6 +714,15 @@ class TraditionalVariant:
                 grace_verification_done=True,
                 solution_candidate_id=grace_candidate.id,
             )
+        elif grace_revision:
+            selected = ["decider"]
+            rationale = (
+                "Grace revision: the critic rejected the answer. The decider "
+                "posts one revised solution that resolves the critique, and "
+                "then the task stops."
+            )
+            source = "grace_revision"
+            await self.gateway.set_meta(task_id, grace_revision_done=True)
         elif force_decider:
             selected = ["decider"]
             rationale = f"Task termination reached ({term_reason}) — forcing decider to synthesize final solution."
@@ -1136,6 +1159,13 @@ class TraditionalVariant:
                 else None
             ),
         }
+        if self.require_evidence and base_role in ("expert", "planner"):
+            payload["evidence_status"] = (
+                "Evidence required: ground every new finding in an external "
+                "source. List the URLs or tool citations in the entry's "
+                "\"sources\" array. A round of unsourced restatement counts "
+                "as a stall."
+            )
         if (
             self.budget_ceiling > 0
             and self.budget_spent / self.budget_ceiling >= 0.8
@@ -1359,12 +1389,25 @@ class TraditionalVariant:
             1 for entry in snapshot.values()
             if entry.status == "open" and entry.type == "conflict"
         )
+        evidence_last_round = sum(
+            1 for entry in snapshot.values()
+            if entry.status == "open"
+            and entry.round == current_round - 1
+            and getattr(entry, "sources", None)
+        )
         pressure_line = ""
         if budget_pct >= 80:
             pressure_line = (
                 "- BUDGET PRESSURE: over 80% of the budget is spent. "
                 "Select agents that converge (critic, decider). "
                 "Do not open new lines of work.\n"
+            )
+        evidence_line = ""
+        if self.require_evidence:
+            evidence_line = (
+                "- EVIDENCE REQUIRED: this effort level treats a round of "
+                "unsourced findings as a stall. Prefer agents that can cite "
+                "tool or web sources.\n"
             )
         return (
             f"## Objective\n{query}\n\n"
@@ -1373,12 +1416,14 @@ class TraditionalVariant:
             f"## Progress\n"
             f"- Budget: ${self.budget_spent:.4f} spent of "
             f"${self.budget_ceiling:.2f} ({budget_pct}%)\n"
-            f"- Last round added {entries_last_round} entries; "
+            f"- Last round added {entries_last_round} entries "
+            f"({evidence_last_round} with external sources); "
             f"{open_critiques} unresolved critiques; "
             f"{open_conflicts} open conflicts\n"
             f"- Stall counter: {self._stall_counter}/{self.stall_rounds}; "
             f"replans used: {self._replan_count}/{self.max_replans}\n"
             f"- A round that only restates existing content counts as a stall.\n"
+            f"{evidence_line}"
             f"{pressure_line}\n"
             f"## Constraints\n"
             f"- Round: {current_round}/{self.max_rounds}\n"
@@ -1826,6 +1871,11 @@ class TraditionalVariant:
             # Paraphrased repetition: the round restates recent content in
             # new words without adding new information.
             self._stall_counter += 1
+        elif self.require_evidence and _round_lacks_evidence(prev_entries):
+            # Novel words without external grounding: at evidence-gated
+            # effort levels an unsourced contribution round is not progress.
+            self._stall_counter += 1
+            self._round_hashes.append(round_hash)
         else:
             self._stall_counter = 0
             self._round_hashes.append(round_hash)
@@ -1837,6 +1887,14 @@ class TraditionalVariant:
             del self._round_token_sets[:-STALL_HISTORY_ROUNDS]
 
         return self._stall_counter >= self.stall_rounds
+
+    def _revision_headroom(self, meta: dict[str, Any]) -> bool:
+        """True when budget and wall clock allow one revision round."""
+        budget_spent = float(meta.get("budget_spent", 0.0))
+        if self.budget_ceiling > 0 and budget_spent >= self.budget_ceiling:
+            return False
+        elapsed = time.monotonic() - self.genesis_time
+        return elapsed < self.max_duration_s - 30.0
 
     # ── Private Sub-board Conflict Resolution (doc 05 §4) ────────────
 
@@ -2898,3 +2956,17 @@ def _entries_hash(entries: list[BoardEntry]) -> str:
     bodies = sorted(e.body.strip().lower() for e in entries)
     combined = "|".join(bodies)
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
+
+
+_EVIDENCE_TYPES = frozenset({"finding", "rebuttal"})
+
+
+def _round_lacks_evidence(entries: list[BoardEntry]) -> bool:
+    """True when a round contributed findings but none carries a source."""
+    contributions = [
+        entry for entry in entries
+        if getattr(entry, "type", None) in _EVIDENCE_TYPES
+    ]
+    if not contributions:
+        return False
+    return not any(getattr(entry, "sources", None) for entry in contributions)
