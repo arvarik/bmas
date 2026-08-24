@@ -237,7 +237,7 @@ export function ClientShell({ children }: { children: React.ReactNode }) {
               agentHealth={system.agentHealth}
               attentionCount={attentionHistory.total}
               runningCount={runningHistory.total}
-              collapsed={sidebarCollapsed}
+              collapsed={sidebarCollapsed && !drawerMode}
               onToggleCollapse={handleToggleCollapse}
               mobileOpen={mobileDrawerOpen}
               drawerMode={drawerMode}

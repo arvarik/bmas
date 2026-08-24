@@ -40,8 +40,10 @@ models:
     api_key_env: GEMINI_API_KEY
     max_tokens: 65536
     pricing:
-      input_cost_per_token: 1.5e-7
-      output_cost_per_token: 6.0e-7
+      # Official Gemini API paid tier, verified 2026-08:
+      # https://ai.google.dev/gemini-api/docs/pricing ($1.50 / $9.00 per 1M)
+      input_cost_per_token: 1.5e-6
+      output_cost_per_token: 9.0e-6
 
 routing:
   simple: starter-model

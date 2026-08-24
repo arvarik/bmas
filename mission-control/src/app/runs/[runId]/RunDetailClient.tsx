@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { BackLink } from "@/components/ui/BackLink";
 import Link from "next/link";
 import { Ban, Pause, Play, RefreshCw, RotateCcw } from "lucide-react";
 import { ActionButton } from "@/components/ui/ActionButton";
@@ -60,6 +61,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
   const average = scoreSummary(run);
   return (
     <div className="benchmarks-page">
+      <BackLink href="/runs" label="Runs" />
       <header className="page-header benchmark-run-header">
         <div><p className="page-eyebrow">Benchmark run</p><h2>{run.test_name}</h2><p>Revision {run.revision} · {run.id}</p></div>
         <div className="page-header__actions">

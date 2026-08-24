@@ -70,8 +70,8 @@
 .select-menu__chevron{flex:0 0 auto;margin-left:auto;color:var(--text-tertiary);transition:transform 120ms ease}
 .select-menu--open .select-menu__chevron{transform:rotate(180deg)}
 .select-menu__icon{display:inline-flex;flex:0 0 auto;align-items:center;color:var(--text-tertiary)}
-.select-menu__list{position:fixed;z-index:700;display:flex;flex-direction:column;gap:2px;margin:0;padding:var(--space-1);overflow-y:auto;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-overlay);box-shadow:var(--shadow-lg);list-style:none;outline:0;animation:fadeIn 100ms ease-out}
-.select-menu__option{display:flex;align-items:center;gap:var(--space-2);min-height:34px;padding:6px var(--space-2) 6px var(--space-3);border-radius:var(--radius-sm);color:var(--text-secondary);font-size:var(--text-sm);cursor:pointer;user-select:none}
+.select-menu__list{position:fixed;z-index:700;max-width:min(340px,calc(100vw - 16px));display:flex;flex-direction:column;gap:2px;margin:0;padding:var(--space-1);overflow-y:auto;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-overlay);box-shadow:var(--shadow-lg);list-style:none;outline:0;animation:fadeIn 100ms ease-out}
+.select-menu__option{display:flex;flex-shrink:0;align-items:center;gap:var(--space-2);min-height:34px;padding:6px var(--space-2) 6px var(--space-3);border-radius:var(--radius-sm);color:var(--text-secondary);font-size:var(--text-sm);cursor:pointer;user-select:none}
 .select-menu__option--active{background:var(--surface-hover);color:var(--text-primary)}
 .select-menu__option[aria-selected="true"]{color:var(--text-primary)}
 .select-menu__option--disabled{cursor:not-allowed;opacity:.45}
@@ -460,3 +460,10 @@ body[data-reduced-motion="true"] *,body[data-reduced-motion="true"] *::before,bo
 .bb-detail__sources li{color:var(--text-tertiary);word-break:break-all}
 .bb-detail__sources a{color:var(--accent-primary);text-decoration:none}
 .bb-detail__sources a:hover{text-decoration:underline}
+
+/* Task header — context line (runtime · complexity · effort) */
+.task-header__context{color:var(--text-tertiary);font-size:var(--text-xs);letter-spacing:.02em;text-transform:capitalize;white-space:nowrap}
+@media (max-width: 640px){
+  .task-header__meta{row-gap:var(--space-1)}
+  .task-header__phase,.task-header__agent{display:none}
+}

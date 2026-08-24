@@ -55,6 +55,9 @@ function branchState(task: TaskMeta): BranchState {
 }
 
 function stageState(stage: StageId, current: StageId): "done" | "current" | "future" {
+  // "Completed" is a terminal state, not an in-progress one: when the
+  // task reaches it, the whole ladder is done and shows green.
+  if (stage === "completed" && current === "completed") return "done";
   if (stage === current) return "current";
   if (stage === "queued") return "done";
   if (stage === "running" && current === "completed") return "done";

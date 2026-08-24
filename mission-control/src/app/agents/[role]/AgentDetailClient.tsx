@@ -8,9 +8,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { BackLink } from "@/components/ui/BackLink";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { ArrowLeft, Bot, RefreshCw, Search, ShieldCheck } from "lucide-react";
+import { Bot, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { ResourceState } from "@/components/ui/ResourceState";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -109,10 +110,7 @@ export function AgentDetailClient({ role }: { role: string }) {
 
   return (
     <div className="agents-page agent-detail">
-      <Link href="/agents" className="task-header__back">
-        <ArrowLeft size={16} />
-        <span>Agents</span>
-      </Link>
+      <BackLink href="/agents" label="Agents" />
 
       {failure ? (
         <ResourceState
