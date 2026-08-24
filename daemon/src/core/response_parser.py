@@ -329,7 +329,7 @@ def _clean_entry(
     refs = _resolve_refs(raw, body, title, known_ids)
     confidence = _resolve_confidence(raw, body)
 
-    return {
+    cleaned = {
         "type": entry_type,
         "title": title,
         "body": body,
@@ -341,6 +341,13 @@ def _clean_entry(
                         "id", "status", "salience", "author", "author_node",
                         "created_at", "updated_at", "task_id", "round", "space")},
     }
+    # Models often cite inline instead of filling the sources array.
+    # Harvest URLs from the body so evidence gating still sees them.
+    if not cleaned.get("sources") and not cleaned.get("citations"):
+        harvested = _harvest_urls(body)
+        if harvested:
+            cleaned["sources"] = harvested
+    return cleaned
 
 
 def _extract_body(raw: dict[str, Any]) -> str:
@@ -591,3 +598,18 @@ def _dedupe(refs: list[str]) -> list[str]:
             seen.add(r)
             result.append(r)
     return result
+
+
+_URL_PATTERN = re.compile(r"https?://[^\s\)\]\}>\"']+", re.IGNORECASE)
+
+
+def _harvest_urls(body: str, limit: int = 8) -> list[str]:
+    """Extract unique http(s) URLs from free text, in order of appearance."""
+    urls: list[str] = []
+    for match in _URL_PATTERN.findall(body or ""):
+        url = match.rstrip(".,;:!?")
+        if url not in urls:
+            urls.append(url)
+        if len(urls) >= limit:
+            break
+    return urls

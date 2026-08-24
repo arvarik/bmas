@@ -183,7 +183,9 @@ def _attempt_timeout_seconds(configuration: dict) -> int:
             if isinstance(profile_duration, (int, float)):
                 duration = int(profile_duration)
         if duration is not None:
-            timeout = max(timeout, duration + 300)
+            # 600s closing-window overrun (forced decider + grace past the
+            # duration cap) plus queue and finalize margin.
+            timeout = max(timeout, duration + 900)
     return timeout
 
 

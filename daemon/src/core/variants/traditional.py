@@ -163,6 +163,12 @@ class TraditionalVariant:
         self.grace_verification: bool = bool(config.get("grace_verification", True))
         self.actor_context: str = str(config.get("actor_context", "chained"))
         self.require_evidence: bool = bool(config.get("require_evidence", False))
+        self._turn_durations: list[float] = []
+        # True while the current step dispatches the closing sequence
+        # (forced decider, grace review, grace revision). The orchestrator
+        # gives closing turns a full timeout window instead of the clamped
+        # remaining wall clock, so slow models can still land the answer.
+        self.closing_sequence: bool = False
         # Reserve the tail of the duration budget for the forced decider and
         # the grace verification round, so those turns never dispatch with a
         # guaranteed-timeout window.
@@ -409,6 +415,10 @@ class TraditionalVariant:
             for tokens in meta.get("round_token_sets", [])
             if isinstance(tokens, (list, tuple, set, frozenset))
         ]
+        self._turn_durations = [
+            float(value) for value in meta.get("turn_durations", [])
+            if isinstance(value, (int, float)) and value > 0
+        ]
         self._edge_rr_counter = int(meta.get("edge_rr_counter", 0))
         self.genesis_started_at = float(meta.get("genesis_started_at", time.time()))
         elapsed = max(0.0, time.time() - self.genesis_started_at)
@@ -431,6 +441,7 @@ class TraditionalVariant:
             round_token_sets=[
                 sorted(tokens) for tokens in self._round_token_sets
             ],
+            turn_durations=list(self._turn_durations),
             edge_rr_counter=self._edge_rr_counter,
             genesis_started_at=self.genesis_started_at,
             roster={
@@ -609,6 +620,7 @@ class TraditionalVariant:
         # If decider was forced last round, terminate now — unless the
         # stop rule still owes work: a grace critic review of an unseen
         # answer, or one decider revision after the critic rejected it.
+        self.closing_sequence = False
         grace_candidate = None
         grace_revision = False
         if meta.get("decider_forced"):
@@ -625,9 +637,12 @@ class TraditionalVariant:
                     reverse=True,
                 )
                 latest_solution = open_solutions[0] if open_solutions else None
+                elapsed_now = time.monotonic() - self.genesis_time
+                overrun_limit = self.max_duration_s + self.closing_turn_timeout_s()
                 if (
                     latest_solution is not None
                     and latest_solution.id != meta.get("solution_reviewed_id")
+                    and elapsed_now < overrun_limit
                 ):
                     if latest_solution.id != meta.get("solution_candidate_id"):
                         # The critic has not seen this answer yet.
@@ -666,9 +681,10 @@ class TraditionalVariant:
             term_reason = "budget"
 
         # Guard: duration cap. The reserve keeps enough wall clock for the
-        # forced decider (and one grace verification round) to actually run.
+        # forced decider (and one grace verification round) to actually run,
+        # scaled up when observed turns are slow.
         elapsed = time.monotonic() - self.genesis_time
-        if not force_decider and elapsed >= self.max_duration_s - self._duration_reserve_s:
+        if not force_decider and elapsed >= self.max_duration_s - self._current_duration_reserve_s():
             force_decider = True
             term_reason = "duration"
 
@@ -703,6 +719,7 @@ class TraditionalVariant:
         )
         
         if grace_candidate is not None:
+            self.closing_sequence = True
             selected = ["critic"]
             rationale = (
                 f"Grace verification: solution {grace_candidate.id} receives "
@@ -715,6 +732,7 @@ class TraditionalVariant:
                 solution_candidate_id=grace_candidate.id,
             )
         elif grace_revision:
+            self.closing_sequence = True
             selected = ["decider"]
             rationale = (
                 "Grace revision: the critic rejected the answer. The decider "
@@ -724,6 +742,7 @@ class TraditionalVariant:
             source = "grace_revision"
             await self.gateway.set_meta(task_id, grace_revision_done=True)
         elif force_decider:
+            self.closing_sequence = True
             selected = ["decider"]
             rationale = f"Task termination reached ({term_reason}) — forcing decider to synthesize final solution."
             source = "heuristic"
@@ -771,6 +790,7 @@ class TraditionalVariant:
                 # any worker starts so a control-plane call cannot authorize a
                 # new non-terminal activation after it exhausts the task budget.
                 if self.budget_spent >= self.budget_ceiling:
+                    self.closing_sequence = True
                     selected = ["decider"]
                     rationale = (
                         "The coordinator call exhausted the task budget. "
@@ -1896,6 +1916,38 @@ class TraditionalVariant:
         elapsed = time.monotonic() - self.genesis_time
         return elapsed < self.max_duration_s - 30.0
 
+    def note_turn_duration(self, duration_ms: Any) -> None:
+        """Record one completed turn's wall-clock duration."""
+        if not isinstance(duration_ms, (int, float)) or duration_ms <= 0:
+            return
+        self._turn_durations.append(float(duration_ms) / 1000.0)
+        del self._turn_durations[:-TURN_DURATION_HISTORY]
+
+    def _avg_turn_s(self) -> float:
+        if not self._turn_durations:
+            return 0.0
+        return sum(self._turn_durations) / len(self._turn_durations)
+
+    def closing_turn_timeout_s(self) -> int:
+        """Timeout floor for closing-sequence turns (decider, grace)."""
+        return int(min(
+            CLOSING_TURN_TIMEOUT_CAP_S,
+            max(CLOSING_TURN_TIMEOUT_FLOOR_S, 2.0 * self._avg_turn_s()),
+        ))
+
+    def _current_duration_reserve_s(self) -> float:
+        """Duration reserve scaled to observed turn latency.
+
+        The static reserve assumes fast API models. On a slow local tier
+        one turn can outlast the whole reserve, so the guard must fire
+        early enough that the closing sequence starts before the cap.
+        """
+        adaptive = 2.0 * self._avg_turn_s()
+        return min(
+            max(self._duration_reserve_s, adaptive),
+            0.4 * self.max_duration_s,
+        )
+
     # ── Private Sub-board Conflict Resolution (doc 05 §4) ────────────
 
     async def handle_conflict_resolution(
@@ -2928,6 +2980,9 @@ def _evidence_similarity(answer: str, evidence: str) -> float:
 
 
 STALL_SIMILARITY = 0.9
+TURN_DURATION_HISTORY = 12
+CLOSING_TURN_TIMEOUT_FLOOR_S = 120
+CLOSING_TURN_TIMEOUT_CAP_S = 600
 STALL_HISTORY_ROUNDS = 6
 CLEANER_RECENT_ROUNDS = 2
 

@@ -1603,6 +1603,16 @@ class Orchestrator:
                     ),
                 ),
             )
+        if getattr(variant, "closing_sequence", False):
+            # A closing turn (forced decider, grace review, revision) gets a
+            # full window even past the duration cap: clamping it to the
+            # remaining seconds guarantees a timeout and an unverified stop.
+            closing_floor = getattr(variant, "closing_turn_timeout_s", None)
+            if callable(closing_floor):
+                turn_timeout_s = max(
+                    turn_timeout_s,
+                    min(AGENT_TURN_TIMEOUT_S, int(closing_floor())),
+                )
         response = await self._dispatch_turn(
             role=activation.role,
             task_id=task_id,
@@ -1652,6 +1662,9 @@ class Orchestrator:
             ):
                 variant.clear_response_id(activation.actor)
                 variant.set_actor_node(activation.actor, str(actual_endpoint))
+            note_duration = getattr(variant, "note_turn_duration", None)
+            if callable(note_duration):
+                note_duration(response.get("duration_ms"))
             usage = response.get("usage")
             if usage:
                 variant.track_cost(self._compute_cost(
