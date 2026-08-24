@@ -3,6 +3,7 @@
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import random
@@ -11,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.datastructures import Headers
 
 import database as db
@@ -735,12 +736,34 @@ async def submit_task_with_files(
     task: str = Form(...),
     variant: str | None = Form(None),
     effort: str | None = Form(None),
+    overrides: str | None = Form(None),
     files: list[UploadFile] | None = File(None),
 ):
     """Store initial files before one task can enter the execution queue."""
     require_api_key(request, BMAS_API_KEY)
+    parsed_overrides: TaskOverrides | None = None
+    if overrides:
+        try:
+            decoded = json.loads(overrides)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"message": "overrides must contain valid JSON"},
+            ) from exc
+        try:
+            parsed_overrides = TaskOverrides.model_validate(decoded)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"message": f"overrides are invalid: {exc.errors()[0].get('msg', 'validation failed')}"},
+            ) from exc
     return await _admit_task(
-        TaskSubmission(task=task, variant=variant or None, effort=effort or None),
+        TaskSubmission(
+            task=task,
+            variant=variant or None,
+            effort=effort or None,
+            overrides=parsed_overrides,
+        ),
         list(files or []),
     )
 

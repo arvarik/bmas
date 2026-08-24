@@ -114,3 +114,26 @@ python scripts/benchmark-gate.py BASELINE_ID CANDIDATE_RUN_ID \
 - Read failures separately from score differences.
 - Add human reviews when an automatic scorer needs calibration.
 - Export the filtered CSV and preserve the report checksum.
+
+## The effort curve
+
+The effort-curve benchmark measures what deliberation buys: identical
+runtime, dataset, and scorers, with only the effort level changing per
+arm. The literature predicts that naive round-scaling flattens while
+contract-based scaling does not. This test shows the curve for your own
+deployment on the Runs page.
+
+Create the test with the seed script:
+
+```bash
+python scripts/seed-effort-curve.py \
+    --daemon-url http://localhost:9000 --api-key "$BMAS_API_KEY" \
+    --dataset-version <version-id> --scorer <scorer-id> --start-run
+```
+
+The script creates one test with a quick, a standard, and a thorough arm.
+Add `--include-exhaustive` for the full curve; the exhaustive arm runs up
+to 32 rounds per item and costs real money. Run the script without
+arguments to list the available dataset versions and scorers. The
+attempt reaper reads each arm's effort level, so long arms keep their
+full duration budget.

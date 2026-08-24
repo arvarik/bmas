@@ -20,6 +20,7 @@ const entry = (id: string, overrides: Partial<MergedBoardEntry> = {}): MergedBoa
   title: id,
   body: "",
   author: "expert.test",
+  sources: [],
   refs: [],
   confidence: 0.5,
   salience: 0.5,

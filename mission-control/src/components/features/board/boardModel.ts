@@ -48,6 +48,7 @@ export interface MergedBoardEntry {
   body: string;
   author: string;
   refs: string[];
+  sources: string[];
   confidence: number;
   salience: number;
   seq: number;
@@ -128,6 +129,7 @@ function normalizeLive(e: BoardEntry): MergedBoardEntry {
     body: e.body || "",
     author: e.author || "unknown",
     refs: Array.isArray(e.refs) ? e.refs : [],
+    sources: Array.isArray(e.sources) ? e.sources : [],
     confidence: e.confidence ?? 0,
     salience: e.salience ?? 0,
     seq: e.seq ?? seqFromId(e.id),
@@ -146,6 +148,9 @@ function normalizeSnapshot(raw: Record<string, unknown>): MergedBoardEntry {
     body: (raw.body ?? raw.content ?? "") as string,
     author: (raw.author ?? raw.actor ?? "unknown") as string,
     refs: (Array.isArray(raw.refs) ? raw.refs : []) as string[],
+    sources: (Array.isArray(raw.sources)
+      ? (raw.sources as unknown[]).filter((s) => typeof s === "string")
+      : []) as string[],
     confidence: (raw.confidence ?? 0) as number,
     salience: (raw.salience ?? 0) as number,
     seq: (raw.seq ?? seqFromId(id)) as number,

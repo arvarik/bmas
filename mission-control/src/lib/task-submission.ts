@@ -85,13 +85,22 @@ export function createTaskSubmissionRequest(
   variant: string,
   files: readonly File[],
   effort?: string,
+  classicOverrides?: Record<string, number>,
 ): RequestInit {
   const effortValue = effort && effort !== "standard" ? effort : undefined;
+  const overrides = classicOverrides && Object.keys(classicOverrides).length > 0
+    ? { classic: classicOverrides }
+    : undefined;
   if (files.length === 0) {
     return {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task, variant, ...(effortValue ? { effort: effortValue } : {}) }),
+      body: JSON.stringify({
+        task,
+        variant,
+        ...(effortValue ? { effort: effortValue } : {}),
+        ...(overrides ? { overrides } : {}),
+      }),
     };
   }
 
@@ -99,6 +108,7 @@ export function createTaskSubmissionRequest(
   body.append("task", task);
   body.append("variant", variant);
   if (effortValue) body.append("effort", effortValue);
+  if (overrides) body.append("overrides", JSON.stringify(overrides));
   for (const file of files) body.append("files", file, file.name);
   return { method: "POST", body };
 }

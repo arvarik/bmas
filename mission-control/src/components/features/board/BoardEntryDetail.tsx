@@ -238,6 +238,26 @@ export function BoardEntryDetail({
           forceMarkdown
         />
 
+        {/* External sources (evidence) */}
+        {entry.sources.length > 0 && (
+          <div className="bb-detail__sources">
+            <div className="bb-detail__sources-title">Sources</div>
+            <ul>
+              {entry.sources.map((source, index) => (
+                <li key={`${source}-${index}`}>
+                  {/^https?:\/\//i.test(source) ? (
+                    <a href={source} target="_blank" rel="noopener noreferrer">
+                      {source}
+                    </a>
+                  ) : (
+                    <span>{source}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* Refs out */}
         {refsOut.length > 0 && (
           <RefSection title="References" entries={refsOut} onSelect={onSelect} />

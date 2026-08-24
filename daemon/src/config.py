@@ -545,6 +545,7 @@ CLASSIC_CONFIG: dict[str, object] = {
     "sole_similarity": _trad_sole_sim,
     "grace_verification": bool(_trad.get("grace_verification", True)),
     "actor_context": str(_trad.get("actor_context", "chained")),
+    "require_evidence": bool(_trad.get("require_evidence", False)),
 }
 
 # The internal engine and older integrations still import this name.

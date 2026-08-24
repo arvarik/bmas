@@ -59,6 +59,7 @@ def _make_variant(**overrides) -> TraditionalVariant:
         "sole_similarity": "auto",
         "grace_verification": overrides.pop("grace_verification", True),
         "actor_context": overrides.pop("actor_context", "chained"),
+        "require_evidence": overrides.pop("require_evidence", False),
     }
     registry = overrides.pop("role_registry", {
         role: {"profile": role, "endpoints": ["http://node-a:8000"], "enabled": True}
@@ -182,11 +183,14 @@ class TestGraceVerification:
 
     @pytest.mark.asyncio
     async def test_unapproved_grace_terminates_with_original_reason(self):
+        # Once the review and the single revision chance are both spent,
+        # an unapproved answer stops with the original limit reason.
         v = _make_variant()
         task_id = "test-task"
         await v.store.set_meta(
             task_id, round=6, decider_forced=True,
             terminal_reason="max_rounds", grace_verification_done=True,
+            solution_candidate_id="e-9", grace_revision_done=True,
         )
         _seed(v, task_id, [
             _make_entry("e-9", "solution", "decider", "Final answer", round_no=5),
@@ -611,3 +615,302 @@ class TestLongHorizonLifecycle:
         ]
         assert len(open_ledgers) == 1
         assert len(superseded_ledgers) >= 1
+
+
+# ── Phase 3: evidence-gated rounds ───────────────────────────────────
+
+class TestEvidenceGating:
+
+    def test_round_lacks_evidence_only_for_unsourced_contributions(self):
+        from core.variants.traditional import _round_lacks_evidence
+        unsourced = _make_entry("e-1", "finding", "expert.a", "New unsourced claim about tariffs")
+        sourced = _make_entry("e-2", "finding", "expert.a", "Grounded claim about tariffs")
+        sourced.sources = ["https://example.org/report"]
+        plan = _make_entry("e-3", "plan", "planner", "Investigate tariffs")
+
+        assert _round_lacks_evidence([unsourced]) is True
+        assert _round_lacks_evidence([unsourced, sourced]) is False
+        assert _round_lacks_evidence([plan]) is False
+        assert _round_lacks_evidence([]) is False
+
+    def test_unsourced_novel_round_counts_toward_stall(self):
+        v = _make_variant(require_evidence=True, stall_rounds=2)
+        snapshot = {
+            "e-1": _make_entry(
+                "e-1", "finding", "expert.a",
+                "A completely novel unsourced statement about currency flows",
+                round_no=3,
+            ),
+        }
+        assert v._is_stalled(snapshot, 4) is False
+        assert v._stall_counter == 1
+
+    def test_sourced_novel_round_resets_the_counter(self):
+        v = _make_variant(require_evidence=True, stall_rounds=2)
+        v._stall_counter = 1
+        entry = _make_entry(
+            "e-1", "finding", "expert.a",
+            "A completely novel grounded statement about currency flows",
+            round_no=3,
+        )
+        entry.sources = ["https://example.org/data"]
+        assert v._is_stalled({"e-1": entry}, 4) is False
+        assert v._stall_counter == 0
+
+    def test_without_the_setting_unsourced_novelty_still_resets(self):
+        v = _make_variant(require_evidence=False, stall_rounds=2)
+        v._stall_counter = 1
+        snapshot = {
+            "e-1": _make_entry(
+                "e-1", "finding", "expert.a",
+                "A completely novel unsourced statement about currency flows",
+                round_no=3,
+            ),
+        }
+        assert v._is_stalled(snapshot, 4) is False
+        assert v._stall_counter == 0
+
+    def test_high_effort_profiles_require_evidence(self):
+        for level in ("thorough", "exhaustive"):
+            settings = CLASSIC_EFFORT_PROFILES[level]["settings"]
+            assert settings["require_evidence"] is True
+        assert "require_evidence" not in CLASSIC_EFFORT_PROFILES["quick"]["settings"]
+
+    def test_cu_prompt_reports_evidence_and_requirement(self):
+        v = _make_variant(require_evidence=True)
+        sourced = _make_entry("e-2", "finding", "expert.a", "Grounded claim", round_no=3)
+        sourced.sources = ["https://example.org"]
+        snapshot = {
+            "e-1": _make_entry("e-1", "finding", "expert.a", "Plain claim", round_no=3),
+            "e-2": sourced,
+        }
+        prompt = v._cu_prompt("Q", "board", "roster", 4, snapshot, {})
+        assert "(1 with external sources)" in prompt
+        assert "EVIDENCE REQUIRED" in prompt
+        relaxed = _make_variant(require_evidence=False)
+        assert "EVIDENCE REQUIRED" not in relaxed._cu_prompt("Q", "b", "r", 4, snapshot, {})
+
+    def test_payload_carries_evidence_notice_for_contributors(self):
+        v = _make_variant(require_evidence=True)
+        task = {"task_id": "test-task", "query": "Q"}
+        board = {}
+        assert "sources" in v.build_turn_payload(task, "expert.alpha", board)["evidence_status"]
+        assert "evidence_status" in v.build_turn_payload(task, "planner", board)
+        assert "evidence_status" not in v.build_turn_payload(task, "critic", board)
+        relaxed = _make_variant(require_evidence=False)
+        assert "evidence_status" not in relaxed.build_turn_payload(task, "expert.alpha", board)
+
+    def test_settings_validator_accepts_and_rejects_require_evidence(self):
+        from settings_store import validate_classic_settings
+        base = {
+            "max_rounds": 4, "max_duration_s": 1800, "budget_ceiling_usd": 0.5,
+            "max_concurrent_activations": 3,
+            "experts_per_tier": {"simple": 0, "light": 1, "medium": 2, "complex": 3},
+            "stall_rounds": 2, "max_replans": 2, "cu_mode": "llm",
+            "coordinator_narration": False, "sole_similarity": "auto",
+        }
+        validated = validate_classic_settings({**base, "require_evidence": True})
+        assert validated["require_evidence"] is True
+        assert validate_classic_settings(dict(base))["require_evidence"] is False
+        with pytest.raises(ValueError, match="require_evidence"):
+            validate_classic_settings({**base, "require_evidence": "yes"})
+
+    def test_expert_persona_documents_the_sources_contract(self):
+        from models.personas import generate_expert_persona
+        persona = generate_expert_persona("Analyst", "Finds facts", "Q")
+        assert '"sources"' in persona or "`sources`" in persona
+
+
+class TestSourcesPipeline:
+
+    def test_gateway_source_normalization(self):
+        from core.gateway import _normalize_sources
+        assert _normalize_sources(None) == []
+        assert _normalize_sources("https://a.example") == ["https://a.example"]
+        assert _normalize_sources([" https://a.example ", "", 7, "tool:web_search"]) == [
+            "https://a.example", "tool:web_search",
+        ]
+        many = _normalize_sources([f"https://x.example/{i}" for i in range(20)])
+        assert len(many) == 8
+        assert len(_normalize_sources(["y" * 2000])[0]) == 500
+
+    def test_parser_preserves_sources_extras(self):
+        from core.response_parser import _clean_entry
+        cleaned = _clean_entry(
+            {
+                "type": "finding",
+                "title": "Grounded",
+                "body": "Claim with citation",
+                "sources": ["https://example.org/paper"],
+            },
+            "expert.alpha",
+            None,
+        )
+        assert cleaned is not None
+        assert cleaned["sources"] == ["https://example.org/paper"]
+
+    def test_entry_round_trips_sources(self):
+        from core.entry import entry_from_dict, entry_to_dict
+        entry = _make_entry("e-1", "finding", "expert.a", "Body")
+        entry.sources = ["https://example.org"]
+        restored = entry_from_dict(entry_to_dict(entry))
+        assert restored.sources == ["https://example.org"]
+        assert entry_from_dict({
+            "id": "e-2", "task_id": "t", "type": "finding",
+            "author": "a", "body": "b", "sources": '["https://x.example"]',
+        }).sources == ["https://x.example"]
+
+
+# ── Phase 3: grace revision (verified-stop as the primary rule) ──────
+
+class TestGraceRevision:
+
+    def _rejected_state(self, v, task_id="test-task", budget_spent=0.05):
+        return [
+            _make_entry("e-1", "objective", "control_unit", "Objective"),
+            _make_entry("e-9", "solution", "decider", "Final answer", round_no=5),
+            _make_entry(
+                "e-10", "critique", "critic",
+                "The answer skips the second constraint",
+                refs=["e-9"], round_no=6,
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_rejected_answer_gets_one_decider_revision(self):
+        v = _make_variant()
+        task_id = "test-task"
+        await v.store.set_meta(
+            task_id, round=7, decider_forced=True, terminal_reason="max_rounds",
+            grace_verification_done=True, solution_candidate_id="e-9",
+            budget_spent=0.05,
+        )
+        _seed(v, task_id, self._rejected_state(v))
+        result = await v.step({"task_id": task_id, "query": "Q"}, None)
+        assert result.terminal is False
+        assert [a.actor for a in result.activations] == ["decider"]
+        assert result.selection_source == "grace_revision"
+        v.gateway.set_meta.assert_any_call(task_id, grace_revision_done=True)
+
+    @pytest.mark.asyncio
+    async def test_revision_happens_at_most_once(self):
+        v = _make_variant()
+        task_id = "test-task"
+        await v.store.set_meta(
+            task_id, round=8, decider_forced=True, terminal_reason="max_rounds",
+            grace_verification_done=True, solution_candidate_id="e-9",
+            grace_revision_done=True, budget_spent=0.05,
+        )
+        _seed(v, task_id, self._rejected_state(v))
+        result = await v.step({"task_id": task_id, "query": "Q"}, None)
+        assert result.terminal is True
+        assert result.reason == "max_rounds"
+
+    @pytest.mark.asyncio
+    async def test_no_revision_without_budget_headroom(self):
+        v = _make_variant()
+        task_id = "test-task"
+        await v.store.set_meta(
+            task_id, round=7, decider_forced=True, terminal_reason="budget",
+            grace_verification_done=True, solution_candidate_id="e-9",
+            budget_spent=0.50,
+        )
+        _seed(v, task_id, self._rejected_state(v))
+        result = await v.step({"task_id": task_id, "query": "Q"}, None)
+        assert result.terminal is True
+        assert result.reason == "budget"
+
+    @pytest.mark.asyncio
+    async def test_no_revision_without_a_rejecting_critique(self):
+        v = _make_variant()
+        task_id = "test-task"
+        await v.store.set_meta(
+            task_id, round=7, decider_forced=True, terminal_reason="max_rounds",
+            grace_verification_done=True, solution_candidate_id="e-9",
+            budget_spent=0.05,
+        )
+        _seed(v, task_id, [
+            _make_entry("e-1", "objective", "control_unit", "Objective"),
+            _make_entry("e-9", "solution", "decider", "Final answer", round_no=5),
+        ])
+        result = await v.step({"task_id": task_id, "query": "Q"}, None)
+        assert result.terminal is True
+        assert result.reason == "max_rounds"
+
+    @pytest.mark.asyncio
+    async def test_revised_solution_gets_a_fresh_grace_review(self):
+        v = _make_variant()
+        task_id = "test-task"
+        await v.store.set_meta(
+            task_id, round=8, decider_forced=True, terminal_reason="max_rounds",
+            grace_verification_done=True, solution_candidate_id="e-9",
+            grace_revision_done=True, budget_spent=0.05,
+        )
+        entries = self._rejected_state(v)
+        entries.append(
+            _make_entry("e-11", "solution", "decider", "Revised answer", round_no=8),
+        )
+        _seed(v, task_id, entries)
+        result = await v.step({"task_id": task_id, "query": "Q"}, None)
+        assert result.terminal is False
+        assert [a.actor for a in result.activations] == ["critic"]
+        assert result.selection_source == "grace_verification"
+        v.gateway.set_meta.assert_any_call(
+            task_id, grace_verification_done=True, solution_candidate_id="e-11",
+        )
+
+    @pytest.mark.asyncio
+    async def test_full_loop_rejection_revision_then_verified(self):
+        """The critic rejects the forced answer, the decider revises once,
+        and the second grace review verifies the revision."""
+        import json as json_module
+
+        from classic_harness import TASK_ID, ClassicLifecycleHarness
+        harness = ClassicLifecycleHarness("concurrent")
+        harness.variant.max_rounds = 2
+        harness.variant.grace_verification = True
+        original_response = harness.worker._response
+        critic_calls = {"n": 0}
+
+        def scripted_response(actor, board, private):
+            if actor == "critic":
+                solution = harness.worker._entry(board, entry_type="solution")
+                if solution is not None:
+                    critic_calls["n"] += 1
+                    if critic_calls["n"] == 1:
+                        return {
+                            "status": "completed",
+                            "result": json_module.dumps({"entries": [{
+                                "type": "critique",
+                                "title": "Answer skips the beta constraint",
+                                "body": "The solution never reconciles beta's claim.",
+                                "refs": [solution["id"]],
+                                "confidence": 0.9,
+                            }]}),
+                            "usage": {"model": "m", "prompt_tokens": 40, "completion_tokens": 12},
+                            "response_id": "r-critic-reject",
+                            "node_id": "deterministic-node",
+                            "duration_ms": 5,
+                        }
+            return original_response(actor, board, private)
+
+        harness.worker._response = scripted_response
+
+        async def schedule(task_id_, query, snapshot, current_round, meta):
+            return {
+                1: ["planner", "expert.alpha"],
+                2: ["expert.beta"],
+            }.get(current_round, ["decider"]), "revision schedule"
+
+        harness.variant._cu_select = schedule
+        run = await harness.run()
+
+        assert critic_calls["n"] >= 2
+        assert run.result["terminated_by"] == "solution"
+        assert run.result["answer_source"] == "decider"
+        assert run.result["verification_status"] == "critic_reviewed"
+        meta = await harness.store.get_meta(TASK_ID)
+        assert meta.get("grace_revision_done") is True
+        snapshot = await harness.store.get_snapshot(TASK_ID)
+        solutions = [e for e in snapshot.values() if e.type == "solution"]
+        assert len(solutions) >= 2

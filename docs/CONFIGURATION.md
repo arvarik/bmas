@@ -209,7 +209,8 @@ Set `variant: classic` for the deployment default. Mission Control can select an
 | `cu_mode` | `llm` | Selects `llm` or `heuristic_first`. |
 | `coordinator_narration` | `false` | Adds control-unit reasons to the event stream. |
 | `sole_similarity` | `auto` | Selects `auto`, `exact`, `embedding`, or `judge`. |
-| `grace_verification` | `true` | Adds one critic round before a limit stop, so the final answer gets a review. |
+| `grace_verification` | `true` | Adds one critic round before a limit stop, so the final answer gets a review. If the critic rejects the answer and budget remains, the decider gets one revision round. |
+| `require_evidence` | `false` | Treats a round of unsourced findings as a stall. Agents ground findings with a `sources` list (URLs or tool citations). |
 | `actor_context` | `chained` | Selects the agent model-session mode. `chained` keeps each agent's session across rounds. `fresh` sends only the board view each turn. |
 
 Use lower limits during initial provider tests. Increase one limit at a time and run `./scripts/bmas smoke` after each change.
@@ -224,10 +225,10 @@ A task can select an effort level at submission. The composer on the Home page s
 |:---|:---|
 | `quick` | One pass and a fast answer. 2 rounds, $0.25 ceiling, no extra verification round. |
 | `standard` | The session settings as configured. This level changes nothing. |
-| `thorough` | 12 rounds, $2.00 ceiling, `grace_verification: true`, `actor_context: fresh`. |
-| `exhaustive` | 32 rounds, 3 hours, $10.00 ceiling, strict verification, `actor_context: fresh`. |
+| `thorough` | 12 rounds, $2.00 ceiling, `grace_verification: true`, `actor_context: fresh`, `require_evidence: true`. |
+| `exhaustive` | 32 rounds, 3 hours, $10.00 ceiling, strict verification, `actor_context: fresh`, `require_evidence: true`. |
 
-The API accepts the level in the `effort` field of `POST /submit`. The effective task configuration records the level in `effective_configuration.effort`.
+The API accepts the level in the `effort` field of `POST /submit`. The effective task configuration records the level in `effective_configuration.effort`. A submission can also carry per-task limits in `overrides.classic` (for example `max_rounds` and `budget_ceiling_usd`); explicit overrides win over the effort profile. The composer exposes these limits behind **Adjust limits** on the exhaustive confirmation step.
 
 ### `coordination.role_registry`
 

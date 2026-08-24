@@ -47,6 +47,9 @@ export function LandingPageClient({
   const [variant, setVariant] = useState(preferences.defaultRuntime);
   const [effort, setEffort] = useState(preferences.defaultEffort);
   const [confirmEffort, setConfirmEffort] = useState("");
+  const [showLimits, setShowLimits] = useState(false);
+  const [limitRounds, setLimitRounds] = useState("");
+  const [limitBudget, setLimitBudget] = useState("");
   const [variantAvailable, setVariantAvailable] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
@@ -84,9 +87,18 @@ export function LandingPageClient({
     setConfirmEffort("");
     setSubmitting(true);
     try {
+      const classicOverrides: Record<string, number> = {};
+      const rounds = Number.parseInt(limitRounds, 10);
+      const budget = Number.parseFloat(limitBudget);
+      if (showLimits && Number.isFinite(rounds) && rounds > 0) {
+        classicOverrides.max_rounds = rounds;
+      }
+      if (showLimits && Number.isFinite(budget) && budget > 0) {
+        classicOverrides.budget_ceiling_usd = budget;
+      }
       const res = await fetch(
         "/api/submit",
-        createTaskSubmissionRequest(input, variant, attachedFiles, effort),
+        createTaskSubmissionRequest(input, variant, attachedFiles, effort, classicOverrides),
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -98,6 +110,9 @@ export function LandingPageClient({
         setTask("");
         setAttachedFiles([]);
         setAttachmentNotice("");
+        setShowLimits(false);
+        setLimitRounds("");
+        setLimitBudget("");
         router.push(`/task/${data.task_id}`);
       }
     } catch (err) {
@@ -105,7 +120,7 @@ export function LandingPageClient({
     } finally {
       setSubmitting(false);
     }
-  }, [attachedFiles, confirmEffort, effort, router, setPending, stackReady, submitting, task, toast, variant, variantAvailable]);
+  }, [attachedFiles, confirmEffort, effort, limitBudget, limitRounds, router, setPending, showLimits, stackReady, submitting, task, toast, variant, variantAvailable]);
 
   const acceptAttachments = useCallback((candidates: readonly File[]) => {
     if (candidates.length === 0) return;
@@ -287,11 +302,52 @@ export function LandingPageClient({
 
         {confirmEffort ? (
           <div className="composer__confirm" role="alertdialog" aria-label="Confirm exhaustive run">
-            <span>
-              Exhaustive runs many rounds under a high budget ceiling and can
-              take an hour. Press send again to start, or pick a lower effort.
-            </span>
-            <button type="button" className="button" onClick={() => setConfirmEffort("")}>Cancel</button>
+            <div className="composer__confirm-row">
+              <span>
+                Exhaustive runs many rounds under a high budget ceiling and can
+                take an hour. Press send again to start, or pick a lower effort.
+              </span>
+              <button
+                type="button"
+                className="button"
+                aria-expanded={showLimits}
+                onClick={() => setShowLimits((open) => !open)}
+              >
+                Adjust limits
+              </button>
+              <button type="button" className="button" onClick={() => setConfirmEffort("")}>Cancel</button>
+            </div>
+            {showLimits ? (
+              <div className="composer__limits">
+                <label className="composer__limit">
+                  <span>Max rounds</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={64}
+                    placeholder="32"
+                    value={limitRounds}
+                    onChange={(event) => setLimitRounds(event.target.value)}
+                  />
+                </label>
+                <label className="composer__limit">
+                  <span>Budget ceiling ($)</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={0.05}
+                    step={0.5}
+                    placeholder="10.00"
+                    value={limitBudget}
+                    onChange={(event) => setLimitBudget(event.target.value)}
+                  />
+                </label>
+                <span className="composer__limits-note">
+                  Blank fields keep the effort level&apos;s limits.
+                </span>
+              </div>
+            ) : null}
           </div>
         ) : null}
         <p id="composer-notice" className={`composer__notice ${attachmentNotice ? "composer__notice--error" : ""}`} aria-live="polite">

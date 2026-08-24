@@ -58,6 +58,8 @@ CLASSIC_FIELD_METADATA: list[dict[str, Any]] = [
      "group": "control", "description": "How the decider verifies a single unchallenged answer."},
     {"key": "grace_verification", "label": "Grace verification", "type": "boolean",
      "group": "control", "description": "Before a limit stop, spend one extra round so the critic can review the answer."},
+    {"key": "require_evidence", "label": "Require evidence", "type": "boolean",
+     "group": "control", "description": "Treat a round of unsourced findings as a stall. High effort levels turn this on."},
     {"key": "actor_context", "label": "Agent context", "type": "enum", "options": ["chained", "fresh"],
      "group": "board", "description": "Chained keeps each agent's model session across rounds. Fresh sends only the board view each turn, which keeps long runs affordable."},
     {"key": "round_execution", "label": "Round execution", "type": "enum", "options": ["concurrent", "sequential"],
@@ -88,6 +90,7 @@ def _seed_classic_defaults() -> dict[str, Any]:
         "view_budget_tokens": VIEW_BUDGET_TOKENS,
         "grace_verification": bool(CLASSIC_CONFIG.get("grace_verification", True)),
         "actor_context": str(CLASSIC_CONFIG.get("actor_context", "chained")),
+        "require_evidence": bool(CLASSIC_CONFIG.get("require_evidence", False)),
     }
 
 
@@ -100,10 +103,13 @@ def _validate_classic(candidate: dict[str, Any]) -> dict[str, Any]:
     view_budget = data.pop("view_budget_tokens", 12000)
     grace_verification = data.pop("grace_verification", True)
     actor_context = data.pop("actor_context", "chained")
+    require_evidence = data.pop("require_evidence", False)
     if round_execution not in ("concurrent", "sequential"):
         raise ValueError("round_execution must be 'concurrent' or 'sequential'")
     if not isinstance(grace_verification, bool):
         raise ValueError("grace_verification must be true or false")
+    if not isinstance(require_evidence, bool):
+        raise ValueError("require_evidence must be true or false")
     if actor_context not in ("chained", "fresh"):
         raise ValueError("actor_context must be 'chained' or 'fresh'")
     if isinstance(view_budget, bool) or not isinstance(view_budget, int) or view_budget < 512:
@@ -135,6 +141,7 @@ def _validate_classic(candidate: dict[str, Any]) -> dict[str, Any]:
     validated["view_budget_tokens"] = int(view_budget)
     validated["grace_verification"] = grace_verification
     validated["actor_context"] = actor_context
+    validated["require_evidence"] = require_evidence
     return validated
 
 

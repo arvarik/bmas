@@ -87,3 +87,16 @@ export function describeStopReason(meta: {
   }
   return null;
 }
+
+
+/** Budget ceiling in USD from a task's captured configuration, or null. */
+export function classicBudgetCeiling(configuration: unknown): number | null {
+  if (typeof configuration !== "object" || configuration === null) return null;
+  const settings = (configuration as Record<string, unknown>).settings;
+  if (typeof settings !== "object" || settings === null) return null;
+  const classic = (settings as Record<string, unknown>).classic
+    ?? (settings as Record<string, unknown>).traditional;
+  if (typeof classic !== "object" || classic === null) return null;
+  const ceiling = (classic as Record<string, unknown>).budget_ceiling_usd;
+  return typeof ceiling === "number" && ceiling > 0 ? ceiling : null;
+}

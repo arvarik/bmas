@@ -105,6 +105,11 @@
           "title": "Max Rounds",
           "type": "integer"
         },
+        "require_evidence": {
+          "default": false,
+          "title": "Require Evidence",
+          "type": "boolean"
+        },
         "sole_similarity": {
           "default": "auto",
           "enum": [

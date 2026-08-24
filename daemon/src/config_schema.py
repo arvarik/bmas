@@ -103,6 +103,7 @@ class ClassicConfig(StrictModel):
     sole_similarity: Literal["auto", "exact", "embedding", "judge"] = "auto"
     grace_verification: bool = True
     actor_context: Literal["chained", "fresh"] = "chained"
+    require_evidence: bool = False
 
 
 class RoleConfig(StrictModel):
