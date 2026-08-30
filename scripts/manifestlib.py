@@ -39,6 +39,7 @@ RESULT_SCHEMA_ID = "bmas.test_manifest_result"
 RESULT_FILE_NAME = "test-manifest-result.json"
 COMPLETE_PROFILE_ID = "complete"
 CI_PROFILE_PREFIX = "ci."
+TARGETED_GROUP_PREFIX = "group:"
 
 GROUP_STATES = ("reserved", "active_optional", "active_required", "retired")
 ACTIVE_STATES = ("active_optional", "active_required")
@@ -378,7 +379,22 @@ def _resolve_profile_groups(manifest: dict[str, Any], profile_id: str) -> list[d
 
 
 def resolve_profile(manifest: dict[str, Any], profile_id: str) -> list[dict[str, Any]]:
-    """Resolve a profile into its ordered executable group list."""
+    """Resolve a profile, or one targeted group, into an ordered group list.
+
+    A profile identifier with the ``group:`` prefix names one executable
+    group directly. A targeted group run assumes that its dependencies
+    already passed.
+    """
+    if profile_id.startswith(TARGETED_GROUP_PREFIX):
+        group_id = profile_id[len(TARGETED_GROUP_PREFIX):]
+        group = next(
+            (g for g in manifest.get("groups", []) if g.get("id") == group_id), None
+        )
+        if group is None:
+            raise ManifestError(f"unknown group: {group_id}")
+        if group.get("state") not in ACTIVE_STATES:
+            raise ManifestError(f"group {group_id} is not executable")
+        return [group]
     groups = _resolve_profile_groups(manifest, profile_id)
     for group in groups:
         if group.get("state") not in ACTIVE_STATES:

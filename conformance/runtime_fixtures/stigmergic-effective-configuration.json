@@ -1,0 +1,50 @@
+{
+  "fixture_id": "stigmergic-effective-configuration",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "record": {
+    "configuration_schema_version": "1",
+    "model_routing": {
+      "complex": "test-pro",
+      "light": "test-light",
+      "medium": "test-medium",
+      "simple": "local"
+    },
+    "role_registry": {
+      "critic": {
+        "endpoints": [
+          "http://agent.fixture"
+        ],
+        "profile": "critic"
+      },
+      "decider": {
+        "endpoints": [
+          "http://agent.fixture"
+        ],
+        "profile": "decider"
+      },
+      "planner": {
+        "endpoints": [
+          "http://agent.fixture"
+        ],
+        "profile": "planner"
+      }
+    },
+    "settings": {
+      "model_pools": {},
+      "model_pricing": {},
+      "node_endpoints": [],
+      "stigmergic": {
+        "integrator_role": "decider",
+        "rounds": 2,
+        "worker_roles": [
+          "planner",
+          "critic"
+        ]
+      }
+    },
+    "variant": "stigmergic",
+    "variant_contract_version": "1"
+  }
+}

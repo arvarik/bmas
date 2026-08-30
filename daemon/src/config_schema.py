@@ -141,6 +141,24 @@ class CoordinationConfig(StrictModel):
     board: BoardConfig = Field(default_factory=BoardConfig)
 
 
+class FoundationGatesConfig(StrictModel):
+    """Gates for the planned shared Foundation writers.
+
+    Every gate stays disabled by default. No current runtime consults a
+    gate, so the default deployment keeps existing behavior unchanged.
+    """
+
+    runtime_registry: bool = False
+    run_context: bool = False
+    runtime_unit_of_work: bool = False
+    activation_ledger: bool = False
+    effect_ledger: bool = False
+    budget_reservations: bool = False
+    trace_envelope: bool = False
+    evidence_index: bool = False
+    goal_index: bool = False
+
+
 class StorageConfig(StrictModel):
     enabled: bool = False
     user_media_dir: str = "/data/uploads"
@@ -174,6 +192,7 @@ class BmasConfig(StrictModel):
     model_pools: ModelPools | None = None
     routing: RoutingConfig
     coordination: CoordinationConfig = Field(default_factory=CoordinationConfig)
+    foundation_gates: FoundationGatesConfig = Field(default_factory=FoundationGatesConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     monitoring: MonitoringConfig | None = None
 

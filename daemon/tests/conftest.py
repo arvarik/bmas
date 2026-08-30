@@ -58,6 +58,8 @@ _fake_config.STORAGE_CONFIG = {  # type: ignore
 # Phase 3b: Traditional variant config values (needed by orchestrator imports)
 _fake_config.COORDINATION_VARIANT = "traditional"  # type: ignore
 _fake_config.BLACKBOARD_V2 = False  # type: ignore
+# Foundation Stage 0A: planned shared-writer gates stay disabled by default.
+_fake_config.FOUNDATION_GATES = {}  # type: ignore
 _fake_config.TRADITIONAL_CONFIG = {  # type: ignore
     "max_rounds": 4,
     "max_duration_s": 1800,

@@ -1,0 +1,235 @@
+{
+  "fixture_id": "patchboard-lifecycle",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "record": {
+    "contract_version": "1",
+    "fresh_run": {
+      "checkpoints": [
+        {
+          "contract_version": "1",
+          "patches": [
+            "agent-output-1-planner",
+            "agent-output-2-critic"
+          ],
+          "schema_version": "1",
+          "step": "integrate"
+        },
+        {
+          "answer": "agent-output-3-decider",
+          "contract_version": "1",
+          "patches": [
+            "agent-output-1-planner",
+            "agent-output-2-critic"
+          ],
+          "schema_version": "1",
+          "step": "complete"
+        }
+      ],
+      "dispatches": [
+        {
+          "activation_id": "activation-01089266f92d5f7b97e3c3db7f6b37cb",
+          "actor": "patchboard.planner",
+          "context": {
+            "coordination": "patchboard",
+            "objective": "Produce the frozen fixture answer.",
+            "patch_index": 0
+          },
+          "description": "Produce the frozen fixture answer.",
+          "endpoint": "http://agent.fixture",
+          "endpoints": [
+            "http://agent.fixture"
+          ],
+          "model": "model-medium",
+          "persona": "Create one independent solution patch. State assumptions, evidence, risks, and the proposed answer. Do not imitate other roles.",
+          "phase": "collect_patches",
+          "profile": "planner",
+          "rationale": "Patchboard step patch:0:planner",
+          "role": "planner",
+          "round_no": 1,
+          "session_id": "session-fixture",
+          "task_id": "task-fixture"
+        },
+        {
+          "activation_id": "activation-ee4f7548eaf4517db39314f0e4855422",
+          "actor": "patchboard.critic",
+          "context": {
+            "coordination": "patchboard",
+            "objective": "Produce the frozen fixture answer.",
+            "patch_index": 1
+          },
+          "description": "Produce the frozen fixture answer.",
+          "endpoint": "http://agent.fixture",
+          "endpoints": [
+            "http://agent.fixture"
+          ],
+          "model": "model-medium",
+          "persona": "Create one independent solution patch. State assumptions, evidence, risks, and the proposed answer. Do not imitate other roles.",
+          "phase": "collect_patches",
+          "profile": "critic",
+          "rationale": "Patchboard step patch:1:critic",
+          "role": "critic",
+          "round_no": 1,
+          "session_id": "session-fixture",
+          "task_id": "task-fixture"
+        },
+        {
+          "activation_id": "activation-5f8040f479fd5ca38f6d5dd750c47813",
+          "actor": "patchboard.decider",
+          "context": {
+            "coordination": "patchboard",
+            "objective": "Produce the frozen fixture answer.",
+            "patches": [
+              "agent-output-1-planner",
+              "agent-output-2-critic"
+            ]
+          },
+          "description": "Produce the frozen fixture answer.",
+          "endpoint": "http://agent.fixture",
+          "endpoints": [
+            "http://agent.fixture"
+          ],
+          "model": "model-medium",
+          "persona": "Integrate the independent patches into one accurate final answer. Resolve conflicts explicitly. Return only the complete answer.",
+          "phase": "integrate",
+          "profile": "decider",
+          "rationale": "Patchboard step integrate:decider",
+          "role": "decider",
+          "round_no": 2,
+          "session_id": "session-fixture",
+          "task_id": "task-fixture"
+        }
+      ],
+      "outcome": {
+        "answer": "agent-output-3-decider",
+        "completed_subtasks": [
+          {
+            "agent_role": "planner",
+            "depends_on": [],
+            "id": "task-fixture-patch-0",
+            "label": "Independent patch from planner",
+            "status": "completed"
+          },
+          {
+            "agent_role": "critic",
+            "depends_on": [],
+            "id": "task-fixture-patch-1",
+            "label": "Independent patch from critic",
+            "status": "completed"
+          }
+        ],
+        "cost_usd": 0.0,
+        "public_result": {
+          "answer": "agent-output-3-decider",
+          "contributors": [
+            "planner",
+            "critic"
+          ],
+          "coordination": "independent_patches_then_integration",
+          "integrator": "decider",
+          "runtime_id": "patchboard",
+          "steps": 3,
+          "task_id": "task-fixture"
+        },
+        "result": {
+          "answer": "agent-output-3-decider",
+          "contributors": [
+            "planner",
+            "critic"
+          ],
+          "coordination": "independent_patches_then_integration",
+          "integrator": "decider",
+          "runtime_id": "patchboard",
+          "steps": 3
+        },
+        "variant_id": "patchboard"
+      },
+      "phases": [
+        {
+          "iteration": 1,
+          "phase": "collect_patches"
+        },
+        {
+          "iteration": 1,
+          "phase": "integrate"
+        }
+      ],
+      "progress": [
+        [
+          {
+            "agent_role": "planner",
+            "depends_on": [],
+            "id": "task-fixture-patch-0",
+            "label": "Independent patch from planner",
+            "status": "running"
+          },
+          {
+            "agent_role": "critic",
+            "depends_on": [],
+            "id": "task-fixture-patch-1",
+            "label": "Independent patch from critic",
+            "status": "running"
+          }
+        ]
+      ]
+    },
+    "resumed_run": {
+      "checkpoint_writes": 0,
+      "dispatch_count": 0,
+      "outcome": {
+        "answer": "agent-output-3-decider",
+        "completed_subtasks": [
+          {
+            "agent_role": "planner",
+            "depends_on": [],
+            "id": "task-fixture-patch-0",
+            "label": "Independent patch from planner",
+            "status": "completed"
+          },
+          {
+            "agent_role": "critic",
+            "depends_on": [],
+            "id": "task-fixture-patch-1",
+            "label": "Independent patch from critic",
+            "status": "completed"
+          }
+        ],
+        "cost_usd": 0.0,
+        "public_result": {
+          "answer": "agent-output-3-decider",
+          "contributors": [
+            "planner",
+            "critic"
+          ],
+          "coordination": "independent_patches_then_integration",
+          "integrator": "decider",
+          "runtime_id": "patchboard",
+          "steps": 3,
+          "task_id": "task-fixture"
+        },
+        "result": {
+          "answer": "agent-output-3-decider",
+          "contributors": [
+            "planner",
+            "critic"
+          ],
+          "coordination": "independent_patches_then_integration",
+          "integrator": "decider",
+          "runtime_id": "patchboard",
+          "steps": 3
+        },
+        "variant_id": "patchboard"
+      }
+    },
+    "runtime_id": "patchboard",
+    "settings": {
+      "contributor_roles": [
+        "planner",
+        "critic"
+      ],
+      "integrator_role": "decider",
+      "rounds": 1
+    }
+  }
+}

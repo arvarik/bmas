@@ -1,0 +1,253 @@
+{
+  "fixture_id": "classic-lifecycle",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "record": {
+    "board": [
+      [
+        "conflict",
+        "conflict_resolver",
+        "Conflicting values",
+        "Alpha states forty-two while beta states forty-one.",
+        "superseded",
+        "public"
+      ],
+      [
+        "critique",
+        "critic",
+        "Beta lacks evidence",
+        "The value forty-one conflicts with the stronger alpha constraint.",
+        "open",
+        "public"
+      ],
+      [
+        "critique",
+        "critic",
+        "Verification passed",
+        "The independent critic found no blocking issue in solution e-22.",
+        "superseded",
+        "public"
+      ],
+      [
+        "finding",
+        "expert.alpha",
+        "Alpha constraint",
+        "Alpha requires the final value to equal forty-two.",
+        "superseded",
+        "public"
+      ],
+      [
+        "finding",
+        "expert.alpha",
+        "Alpha constraint",
+        "Private review confirms that alpha remains required.",
+        "open",
+        "public"
+      ],
+      [
+        "finding",
+        "expert.alpha",
+        "Alpha constraint",
+        "Private review confirms that alpha remains required.",
+        "open",
+        "public"
+      ],
+      [
+        "finding",
+        "expert.beta",
+        "Beta constraint",
+        "Beta initially claims that the value equals forty-one.",
+        "superseded",
+        "public"
+      ],
+      [
+        "finding",
+        "expert.beta",
+        "Beta reconciliation",
+        "Beta accepts forty-two after reviewing alpha evidence.",
+        "open",
+        "public"
+      ],
+      [
+        "finding",
+        "expert.beta",
+        "Beta reconciliation",
+        "Beta accepts forty-two after reviewing alpha evidence.",
+        "removed",
+        "public"
+      ],
+      [
+        "objective",
+        "control_unit",
+        "Resolve the two constraints and return the verified conclusion.",
+        "Resolve the two constraints and return the verified conclusion.",
+        "open",
+        "public"
+      ],
+      [
+        "plan",
+        "planner",
+        "Resolve both constraints",
+        "Compare both claims, resolve conflicts, and verify the result.",
+        "open",
+        "public"
+      ],
+      [
+        "rebuttal",
+        "expert.beta",
+        "Beta correction",
+        "The critique is correct. Beta withdraws forty-one.",
+        "open",
+        "public"
+      ],
+      [
+        "solution",
+        "decider",
+        "Verified conclusion",
+        "The final value is 42.",
+        "open",
+        "public"
+      ]
+    ],
+    "contract_version": "1",
+    "event_type_counts": {
+      "entry_added": 18,
+      "entry_removed": 1,
+      "entry_status_changed": 4,
+      "space_archived": 1
+    },
+    "external_actions": [
+      {
+        "action": "activation-0f0bb5b2c3f05892bc1aee0db71ed3f7",
+        "count": 1
+      },
+      {
+        "action": "activation-1a65be26b2d75833aee6d83f021b087b",
+        "count": 1
+      },
+      {
+        "action": "activation-257bbefdbef25296aff746d517d6ac31",
+        "count": 1
+      },
+      {
+        "action": "activation-402b799b21f45eae8e24b30654950d29",
+        "count": 1
+      },
+      {
+        "action": "activation-4c8e4fdc9bf557858b8d1dbc2595a09c",
+        "count": 1
+      },
+      {
+        "action": "activation-5d56b9a25aa854419283adfd566d00a2",
+        "count": 1
+      },
+      {
+        "action": "activation-5e9db521991d54a190ffa363fab84917",
+        "count": 1
+      },
+      {
+        "action": "activation-770b7727599a53689ffda4754be7260e",
+        "count": 1
+      },
+      {
+        "action": "activation-7d2730e4a63456bfa6c5526a717e369d",
+        "count": 1
+      },
+      {
+        "action": "activation-cc4eed289532555b84c4650d9022ca96",
+        "count": 1
+      },
+      {
+        "action": "activation-ccd546453d56584f9662825db5eba562",
+        "count": 1
+      },
+      {
+        "action": "activation-e7ecf9c9315852ea8d8bd6f4e696d52f",
+        "count": 1
+      },
+      {
+        "action": "activation-f1ba09bad32f5e1eaf12e889ebe4c2cc",
+        "count": 1
+      }
+    ],
+    "mode": "sequential",
+    "mutation_checks": 24,
+    "runtime_id": "classic",
+    "terminal_result": {
+      "answer": "The final value is 42.",
+      "answer_source": "decider",
+      "budget_spent": 0.0016250000000000006,
+      "rounds_completed": 8,
+      "terminated_by": "solution",
+      "verification_status": "critic_reviewed"
+    },
+    "worker_calls": [
+      {
+        "actor": "planner",
+        "role": "planner",
+        "round_no": 1
+      },
+      {
+        "actor": "expert.alpha",
+        "role": "expert",
+        "round_no": 1
+      },
+      {
+        "actor": "expert.beta",
+        "role": "expert",
+        "round_no": 1
+      },
+      {
+        "actor": "critic",
+        "role": "critic",
+        "round_no": 2
+      },
+      {
+        "actor": "expert.beta",
+        "role": "expert",
+        "round_no": 3
+      },
+      {
+        "actor": "conflict_resolver",
+        "role": "conflict_resolver",
+        "round_no": 4
+      },
+      {
+        "actor": "expert.alpha",
+        "role": "expert",
+        "round_no": 1
+      },
+      {
+        "actor": "expert.beta",
+        "role": "expert",
+        "round_no": 1
+      },
+      {
+        "actor": "expert.alpha",
+        "role": "expert",
+        "round_no": 2
+      },
+      {
+        "actor": "expert.beta",
+        "role": "expert",
+        "round_no": 2
+      },
+      {
+        "actor": "cleaner",
+        "role": "cleaner",
+        "round_no": 6
+      },
+      {
+        "actor": "decider",
+        "role": "decider",
+        "round_no": 7
+      },
+      {
+        "actor": "critic",
+        "role": "critic",
+        "round_no": 8
+      }
+    ]
+  }
+}

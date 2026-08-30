@@ -1,0 +1,50 @@
+{
+  "fixture_id": "classic-effective-configuration",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "record": {
+    "configuration_schema_version": "1",
+    "effort": "standard",
+    "model_routing": {
+      "complex": "test-pro",
+      "light": "test-light",
+      "medium": "test-medium",
+      "simple": "local"
+    },
+    "role_registry": {},
+    "settings": {
+      "classic": {
+        "actor_context": "chained",
+        "budget_ceiling_usd": 0.5,
+        "cleaner_entry_threshold": 12,
+        "coordinator_narration": false,
+        "cu_mode": "llm",
+        "experts_per_tier": {
+          "complex": 3,
+          "light": 1,
+          "medium": 2,
+          "simple": 0
+        },
+        "grace_verification": true,
+        "max_concurrent_activations": 3,
+        "max_duration_s": 1800,
+        "max_replans": 2,
+        "max_rounds": 4,
+        "require_evidence": false,
+        "round_execution": "concurrent",
+        "sole_similarity": "auto",
+        "stall_rounds": 2,
+        "view_budget_tokens": 12000
+      },
+      "edge_node_models": [
+        "edge-node-1"
+      ],
+      "model_pools": {},
+      "model_pricing": {},
+      "node_endpoints": []
+    },
+    "variant": "classic",
+    "variant_contract_version": "1"
+  }
+}

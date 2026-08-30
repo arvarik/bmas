@@ -1,0 +1,76 @@
+{
+  "fixture_id": "protocol-vocabulary",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "record": {
+    "board_event_names": [
+      "approval_request",
+      "approval_response",
+      "artifact_created",
+      "board_entry",
+      "budget",
+      "consensus",
+      "coordinator_narration",
+      "entry_rejected",
+      "entry_removed",
+      "entry_status_changed",
+      "file_added",
+      "paused",
+      "resumed",
+      "trace",
+      "turn_end",
+      "turn_start"
+    ],
+    "key_patterns": [
+      {
+        "pattern": "bmas:board:{task}:entries",
+        "purpose": "Snapshot: entry_id \u2192 entry JSON (live, non-removed)",
+        "type": "Hash"
+      },
+      {
+        "pattern": "bmas:board:{task}:events",
+        "purpose": "Append-only committed event log (live transport; SQLite is durable truth)",
+        "type": "Stream"
+      },
+      {
+        "pattern": "bmas:board:{task}:meta",
+        "purpose": "phase, round, budget_spent, variant, decider_state",
+        "type": "Hash"
+      },
+      {
+        "pattern": "bmas:board:{task}:private:{topic}",
+        "purpose": "Transient private sub-board (conflict debates)",
+        "type": "Hash"
+      },
+      {
+        "pattern": "bmas:board:{task}:salience",
+        "purpose": "entry_id scored by salience (fast top-N for budgeted views)",
+        "type": "ZSet"
+      },
+      {
+        "pattern": "bmas:events:{task}",
+        "purpose": "SSE bridge \u2014 extended with v2 event names",
+        "type": "Channel"
+      },
+      {
+        "pattern": "bmas:files:{task}",
+        "purpose": "Uploaded file metadata (doc 17)",
+        "type": "Hash"
+      },
+      {
+        "pattern": "bmas:traces:{task}:{turn}",
+        "purpose": "Agent trace events for a turn (doc 06)",
+        "type": "Stream"
+      }
+    ],
+    "legacy_event_names": [
+      "complete",
+      "cost",
+      "debate",
+      "log",
+      "phase",
+      "subtask"
+    ]
+  }
+}

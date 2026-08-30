@@ -1,0 +1,327 @@
+{
+  "fixture_id": "capability-document",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "record": {
+    "api_version": "1",
+    "variants": [
+      {
+        "aliases": [
+          "traditional"
+        ],
+        "available": true,
+        "benchmark": {
+          "configuration_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "submission_overrides": {
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "required_snapshot_fields": [
+            "runtime_id",
+            "runtime_configuration",
+            "random_seed"
+          ],
+          "seed_strategy": "recorded",
+          "supported": true,
+          "supports_repetitions": true
+        },
+        "configuration_schema_version": "1",
+        "contract_version": "1",
+        "effort_profiles": {
+          "exhaustive": {
+            "description": "Long-horizon run: many rounds, a high budget ceiling, sourced evidence, strict verification. Can take an hour.",
+            "label": "Exhaustive",
+            "settings": {
+              "actor_context": "fresh",
+              "budget_ceiling_usd": 10.0,
+              "grace_verification": true,
+              "max_duration_s": 10800,
+              "max_replans": 5,
+              "max_rounds": 32,
+              "require_evidence": true,
+              "stall_rounds": 3
+            }
+          },
+          "quick": {
+            "description": "One pass and a fast answer. Skips the extra verification round.",
+            "label": "Quick",
+            "settings": {
+              "budget_ceiling_usd": 0.25,
+              "grace_verification": false,
+              "max_duration_s": 900,
+              "max_replans": 1,
+              "max_rounds": 2,
+              "stall_rounds": 1
+            }
+          },
+          "standard": {
+            "description": "The session settings as configured. Verified when possible.",
+            "label": "Standard",
+            "settings": {}
+          },
+          "thorough": {
+            "description": "More rounds with fresh agent context each turn. New findings need sources, and the answer must pass review before a limit stop.",
+            "label": "Thorough",
+            "settings": {
+              "actor_context": "fresh",
+              "budget_ceiling_usd": 2.0,
+              "grace_verification": true,
+              "max_duration_s": 3600,
+              "max_replans": 3,
+              "max_rounds": 12,
+              "require_evidence": true,
+              "stall_rounds": 2
+            }
+          }
+        },
+        "features": {
+          "controls": [
+            "pause",
+            "resume",
+            "abort",
+            "directive",
+            "boost",
+            "retract"
+          ],
+          "events": [
+            "ag_fallback",
+            "approval_request",
+            "approval_response",
+            "artifact_created",
+            "board_entry",
+            "budget",
+            "complete",
+            "consensus",
+            "coordinator_narration",
+            "cost",
+            "debate",
+            "entry_rejected",
+            "entry_removed",
+            "entry_status_changed",
+            "error",
+            "file_added",
+            "initial_state",
+            "log",
+            "paused",
+            "phase",
+            "resumed",
+            "subtask",
+            "trace",
+            "turn_end",
+            "turn_start"
+          ],
+          "graphs": [
+            "turns",
+            "entry_references"
+          ],
+          "panels": [
+            "mission",
+            "blackboard",
+            "agents",
+            "logs",
+            "artifacts"
+          ],
+          "progress": [
+            "phase",
+            "round",
+            "effective_actions",
+            "budget"
+          ],
+          "result": [
+            "answer",
+            "terminated_by",
+            "answer_source",
+            "verification_status",
+            "rounds",
+            "budget_spent"
+          ]
+        },
+        "id": "classic",
+        "label": "Classic blackboard",
+        "required_agent_features": [
+          "execute",
+          "activation_idempotency",
+          "task_cancellation"
+        ],
+        "supports_recovery": true
+      },
+      {
+        "aliases": [],
+        "available": true,
+        "benchmark": {
+          "configuration_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "contributor_roles": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 6,
+                "minItems": 1,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "integrator_role": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "rounds": {
+                "default": 1,
+                "maximum": 1,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "submission_overrides": {
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "required_snapshot_fields": [
+            "runtime_id",
+            "runtime_configuration",
+            "random_seed"
+          ],
+          "seed_strategy": "recorded",
+          "supported": true,
+          "supports_repetitions": true
+        },
+        "configuration_schema_version": "1",
+        "contract_version": "1",
+        "features": {
+          "controls": [
+            "abort"
+          ],
+          "events": [
+            "complete",
+            "error",
+            "initial_state",
+            "log",
+            "phase",
+            "subtask",
+            "turn_end",
+            "turn_start"
+          ],
+          "graphs": [
+            "turns"
+          ],
+          "panels": [
+            "mission",
+            "logs",
+            "artifacts"
+          ],
+          "progress": [
+            "phase",
+            "effective_actions"
+          ],
+          "result": [
+            "answer",
+            "coordination",
+            "steps",
+            "runtime_id"
+          ]
+        },
+        "id": "patchboard",
+        "label": "Patchboard",
+        "required_agent_features": [
+          "execute",
+          "activation_idempotency",
+          "task_cancellation"
+        ],
+        "supports_recovery": true
+      },
+      {
+        "aliases": [],
+        "available": true,
+        "benchmark": {
+          "configuration_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "integrator_role": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "rounds": {
+                "default": 2,
+                "maximum": 6,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "submission_overrides": {
+                "type": "object"
+              },
+              "worker_roles": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 6,
+                "minItems": 1,
+                "type": "array",
+                "uniqueItems": true
+              }
+            },
+            "type": "object"
+          },
+          "required_snapshot_fields": [
+            "runtime_id",
+            "runtime_configuration",
+            "random_seed"
+          ],
+          "seed_strategy": "recorded",
+          "supported": true,
+          "supports_repetitions": true
+        },
+        "configuration_schema_version": "1",
+        "contract_version": "1",
+        "features": {
+          "controls": [
+            "abort"
+          ],
+          "events": [
+            "complete",
+            "error",
+            "initial_state",
+            "log",
+            "phase",
+            "subtask",
+            "turn_end",
+            "turn_start"
+          ],
+          "graphs": [
+            "turns"
+          ],
+          "panels": [
+            "mission",
+            "logs",
+            "artifacts"
+          ],
+          "progress": [
+            "phase",
+            "effective_actions"
+          ],
+          "result": [
+            "answer",
+            "coordination",
+            "steps",
+            "runtime_id"
+          ]
+        },
+        "id": "stigmergic",
+        "label": "Stigmergic workspace",
+        "required_agent_features": [
+          "execute",
+          "activation_idempotency",
+          "task_cancellation"
+        ],
+        "supports_recovery": true
+      }
+    ]
+  }
+}

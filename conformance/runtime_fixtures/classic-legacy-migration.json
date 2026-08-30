@@ -1,0 +1,53 @@
+{
+  "fixture_id": "classic-legacy-migration",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "record": {
+    "metadata": {
+      "effective_registry": {
+        "planner": {
+          "endpoints": [
+            "http://agent.fixture"
+          ],
+          "profile": "planner"
+        }
+      },
+      "effective_routing": {
+        "medium": "model-medium"
+      },
+      "effective_task_config": {
+        "model_pools": {},
+        "traditional": {
+          "budget_ceiling_usd": 0.5,
+          "max_rounds": 4,
+          "stall_rounds": 2
+        }
+      }
+    },
+    "migrated": {
+      "configuration_schema_version": "1",
+      "model_routing": {
+        "medium": "model-medium"
+      },
+      "role_registry": {
+        "planner": {
+          "endpoints": [
+            "http://agent.fixture"
+          ],
+          "profile": "planner"
+        }
+      },
+      "settings": {
+        "classic": {
+          "budget_ceiling_usd": 0.5,
+          "max_rounds": 4,
+          "stall_rounds": 2
+        },
+        "model_pools": {}
+      },
+      "variant": "classic",
+      "variant_contract_version": "1"
+    }
+  }
+}
