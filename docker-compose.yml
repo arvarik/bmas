@@ -137,6 +137,9 @@ services:
       - BMAS_CONFIG=/etc/bmas/bmas.yaml
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - BMAS_REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - BMAS_LITELLM_URL=http://litellm:4000/v1
       - BMAS_TRIAGE_URL=http://triage:8000/v1

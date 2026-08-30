@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema_id": "bmas.test_manifest_result",
+  "title": "Test manifest runner result record",
+  "description": "The durable record of one test-manifest run. Only scripts/run-test-manifest.py produces this record. Every consumer reads it without mutation. The record keeps every failed attempt; a retry never replaces a failed first attempt.",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_id",
+    "run_id",
+    "state",
+    "started_at_utc",
+    "ended_at_utc",
+    "duration_nanos",
+    "manifest_schema_version",
+    "manifest_digest",
+    "profile_id",
+    "resolved_group_ids",
+    "repository",
+    "host",
+    "summary",
+    "groups"
+  ],
+  "properties": {
+    "schema_id": { "const": "bmas.test_manifest_result" },
+    "run_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "state": { "$ref": "#/$defs/runState" },
+    "started_at_utc": { "$ref": "#/$defs/utcTimestamp" },
+    "ended_at_utc": { "$ref": "#/$defs/utcTimestamp" },
+    "duration_nanos": { "$ref": "#/$defs/nonNegativeInteger" },
+    "manifest_schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "manifest_digest": { "$ref": "#/$defs/sha256" },
+    "profile_id": { "type": "string", "minLength": 1 },
+    "resolved_group_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "branch", "dirty", "tracked_diff_sha256", "untracked_files"],
+      "properties": {
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "branch": { "type": ["string", "null"], "minLength": 1 },
+        "dirty": { "type": "boolean" },
+        "tracked_diff_sha256": { "$ref": "#/$defs/sha256" },
+        "untracked_files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "size_bytes", "sha256"],
+            "properties": {
+              "path": { "$ref": "#/$defs/relativePath" },
+              "size_bytes": { "$ref": "#/$defs/nonNegativeInteger" },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "architecture",
+        "image_digest",
+        "kernel_version",
+        "utc_clock_source",
+        "monotonic_clock",
+        "tool_versions"
+      ],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "architecture": { "type": "string", "minLength": 1 },
+        "image_digest": { "type": ["string", "null"], "minLength": 1 },
+        "kernel_version": { "type": "string", "minLength": 1 },
+        "utc_clock_source": { "type": "string", "minLength": 1 },
+        "monotonic_clock": { "type": "string", "minLength": 1 },
+        "tool_versions": { "$ref": "#/$defs/versionMap" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passed",
+        "failed",
+        "skipped",
+        "cancelled",
+        "timed_out",
+        "infrastructure_error",
+        "attempt_count",
+        "retry_count"
+      ],
+      "properties": {
+        "passed": { "$ref": "#/$defs/nonNegativeInteger" },
+        "failed": { "$ref": "#/$defs/nonNegativeInteger" },
+        "skipped": { "$ref": "#/$defs/nonNegativeInteger" },
+        "cancelled": { "$ref": "#/$defs/nonNegativeInteger" },
+        "timed_out": { "$ref": "#/$defs/nonNegativeInteger" },
+        "infrastructure_error": { "$ref": "#/$defs/nonNegativeInteger" },
+        "attempt_count": { "$ref": "#/$defs/nonNegativeInteger" },
+        "retry_count": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "groups": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/groupResult" }
+    }
+  },
+  "$defs": {
+    "runState": {
+      "enum": ["passed", "failed", "skipped", "cancelled", "timed_out", "infrastructure_error"]
+    },
+    "attemptState": {
+      "enum": ["passed", "failed", "cancelled", "timed_out", "infrastructure_error"]
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{9}Z$"
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "nonNegativeInteger": { "type": "integer", "minimum": 0 },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!\\.\\.(/|$))(?!.*/\\.\\.(/|$))[^\\\\]+$"
+    },
+    "versionMap": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "fileRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "media_type", "size_bytes", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "media_type": { "type": "string", "minLength": 1 },
+        "size_bytes": { "$ref": "#/$defs/nonNegativeInteger" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failed", "skipped"],
+      "properties": {
+        "passed": { "$ref": "#/$defs/nonNegativeInteger" },
+        "failed": { "$ref": "#/$defs/nonNegativeInteger" },
+        "skipped": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "groupResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "group_id",
+        "manifest_entry_digest",
+        "argv",
+        "working_directory",
+        "environment_profile_digest",
+        "dependency_versions",
+        "tool_versions",
+        "timeout_nanos",
+        "started_at_utc",
+        "ended_at_utc",
+        "duration_nanos",
+        "state",
+        "skip_reason",
+        "attempts",
+        "artifacts"
+      ],
+      "properties": {
+        "group_id": { "type": "string", "minLength": 1 },
+        "manifest_entry_digest": { "$ref": "#/$defs/sha256" },
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "working_directory": { "$ref": "#/$defs/relativePath" },
+        "environment_profile_digest": { "$ref": "#/$defs/sha256" },
+        "dependency_versions": { "$ref": "#/$defs/versionMap" },
+        "tool_versions": { "$ref": "#/$defs/versionMap" },
+        "timeout_nanos": { "$ref": "#/$defs/nonNegativeInteger" },
+        "started_at_utc": { "$ref": "#/$defs/utcTimestamp" },
+        "ended_at_utc": { "$ref": "#/$defs/utcTimestamp" },
+        "duration_nanos": { "$ref": "#/$defs/nonNegativeInteger" },
+        "state": { "$ref": "#/$defs/runState" },
+        "skip_reason": { "type": ["string", "null"], "minLength": 1 },
+        "attempts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/attemptResult" }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/fileRecord" }
+        }
+      }
+    },
+    "attemptResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt_index",
+        "state",
+        "exit_code",
+        "signal",
+        "retry_reason",
+        "started_at_utc",
+        "ended_at_utc",
+        "duration_nanos",
+        "counts",
+        "stdout_sha256",
+        "stderr_sha256",
+        "logs",
+        "artifacts"
+      ],
+      "properties": {
+        "attempt_index": { "$ref": "#/$defs/nonNegativeInteger" },
+        "state": { "$ref": "#/$defs/attemptState" },
+        "exit_code": { "type": ["integer", "null"] },
+        "signal": { "type": ["string", "null"], "minLength": 1 },
+        "retry_reason": { "type": ["string", "null"], "minLength": 1 },
+        "started_at_utc": { "$ref": "#/$defs/utcTimestamp" },
+        "ended_at_utc": { "$ref": "#/$defs/utcTimestamp" },
+        "duration_nanos": { "$ref": "#/$defs/nonNegativeInteger" },
+        "counts": { "$ref": "#/$defs/counts" },
+        "stdout_sha256": { "$ref": "#/$defs/sha256" },
+        "stderr_sha256": { "$ref": "#/$defs/sha256" },
+        "logs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/fileRecord" }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/fileRecord" }
+        }
+      }
+    }
+  }
+}
