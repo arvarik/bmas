@@ -446,6 +446,17 @@ if ROUND_EXECUTION not in _VALID_ROUND_EXECUTION:
         f"Must be one of: {', '.join(sorted(_VALID_ROUND_EXECUTION))}.",
     )
 
+# Gates for the planned shared Foundation writers. Every gate stays
+# disabled by default. No current writer consults a gate yet, so the
+# default deployment keeps existing runtime behavior unchanged.
+# core/foundation_gates.py owns the canonical gate names.
+_foundation_gates = _cfg.get("foundation_gates", {}) or {}
+if not isinstance(_foundation_gates, dict):
+    _fatal("foundation_gates must be a mapping of gate names to booleans")
+FOUNDATION_GATES: dict[str, bool] = {
+    str(name): bool(value) for name, value in _foundation_gates.items()
+}
+
 # Classic variant sub-config. The traditional key remains a legacy alias.
 _classic_config = _coordination.get("classic")
 _legacy_classic_config = _coordination.get("traditional")

@@ -1,0 +1,33 @@
+{
+  "fixture_id": "runtime-labels",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "record": {
+    "labels": [
+      {
+        "aliases": [
+          "traditional"
+        ],
+        "contract_version": "1",
+        "historical_label": "Classic blackboard",
+        "runtime_id": "classic",
+        "study_label": "Classic blackboard"
+      },
+      {
+        "aliases": [],
+        "contract_version": "1",
+        "historical_label": "Patchboard",
+        "runtime_id": "patchboard",
+        "study_label": "Parallel synthesis"
+      },
+      {
+        "aliases": [],
+        "contract_version": "1",
+        "historical_label": "Stigmergic workspace",
+        "runtime_id": "stigmergic",
+        "study_label": "Stigmergic workspace"
+      }
+    ]
+  }
+}

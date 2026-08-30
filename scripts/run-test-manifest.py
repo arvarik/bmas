@@ -37,7 +37,15 @@ import manifestlib
 
 def parse_arguments(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", required=True, help="The manifest profile to execute.")
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--profile", help="The manifest profile to execute.")
+    selection.add_argument(
+        "--group",
+        help=(
+            "Execute exactly one manifest group. A targeted group run "
+            "assumes that its dependencies already passed."
+        ),
+    )
     parser.add_argument(
         "--manifest",
         default=manifestlib.MANIFEST_FILE_NAME,
@@ -316,10 +324,15 @@ def main(argv: list[str]) -> int:
         else Path(__file__).resolve().parent.parent
     )
     manifest_path = repo_root / arguments.manifest
+    if arguments.group:
+        profile_id = manifestlib.TARGETED_GROUP_PREFIX + arguments.group
+    else:
+        profile_id = arguments.profile
+    targeted = arguments.group is not None
 
     try:
         manifest, manifest_bytes = manifestlib.load_manifest(repo_root, manifest_path)
-        resolved = manifestlib.resolve_profile(manifest, arguments.profile)
+        resolved = manifestlib.resolve_profile(manifest, profile_id)
     except manifestlib.ManifestError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
@@ -355,7 +368,7 @@ def main(argv: list[str]) -> int:
             (
                 dependency
                 for dependency in group.get("depends_on", [])
-                if outcome_by_id.get(dependency) != "passed"
+                if not targeted and outcome_by_id.get(dependency) != "passed"
             ),
             None,
         )
@@ -384,7 +397,7 @@ def main(argv: list[str]) -> int:
         "duration_nanos": time.monotonic_ns() - started_monotonic,
         "manifest_schema_version": manifest["metadata"]["contract_version"],
         "manifest_digest": manifestlib.sha256_hex(manifest_bytes),
-        "profile_id": arguments.profile,
+        "profile_id": profile_id,
         "resolved_group_ids": [group["id"] for group in resolved],
         "repository": repository,
         "host": host,
@@ -404,7 +417,7 @@ def main(argv: list[str]) -> int:
 
     summary = record["summary"]
     print(
-        f"\n{record['state'].upper()}: profile {arguments.profile} — "
+        f"\n{record['state'].upper()}: profile {profile_id} — "
         f"{summary['passed']} passed, {summary['failed']} failed, "
         f"{summary['skipped']} skipped, {summary['timed_out']} timed out, "
         f"{summary['cancelled']} cancelled, "

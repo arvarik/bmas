@@ -290,6 +290,18 @@
         "token": "BLACKBOARD_V2 (version-token)"
       }
     ],
+    "daemon/tests/runtime_fixture_capture.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "V2_KEY_PATTERNS (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "all_v2_event_names (version-token)"
+      }
+    ],
     "daemon/tests/test_artifacts.py": [
       {
         "count": 2,
@@ -477,6 +489,13 @@
         "count": 29,
         "kind": "identifier",
         "token": "v2_db (version-token)"
+      }
+    ],
+    "daemon/tests/test_durable_authority_map.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "V2_KEY_PATTERNS (version-token)"
       }
     ],
     "daemon/tests/test_file_utils.py": [

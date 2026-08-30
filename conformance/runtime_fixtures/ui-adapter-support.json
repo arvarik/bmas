@@ -1,0 +1,75 @@
+{
+  "fixture_id": "ui-adapter-support",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "record": {
+    "variants": [
+      {
+        "contract_versions": [
+          "1"
+        ],
+        "graphs": [
+          "turns",
+          "entry_references"
+        ],
+        "id": "classic",
+        "panels": [
+          "mission",
+          "blackboard",
+          "agents",
+          "logs",
+          "artifacts"
+        ],
+        "result_fields": [
+          "answer",
+          "terminated_by",
+          "answer_source",
+          "verification_status",
+          "rounds",
+          "budget_spent"
+        ]
+      },
+      {
+        "contract_versions": [
+          "1"
+        ],
+        "graphs": [
+          "turns"
+        ],
+        "id": "patchboard",
+        "panels": [
+          "mission",
+          "logs",
+          "artifacts"
+        ],
+        "result_fields": [
+          "answer",
+          "coordination",
+          "steps",
+          "runtime_id"
+        ]
+      },
+      {
+        "contract_versions": [
+          "1"
+        ],
+        "graphs": [
+          "turns"
+        ],
+        "id": "stigmergic",
+        "panels": [
+          "mission",
+          "logs",
+          "artifacts"
+        ],
+        "result_fields": [
+          "answer",
+          "coordination",
+          "steps",
+          "runtime_id"
+        ]
+      }
+    ]
+  }
+}

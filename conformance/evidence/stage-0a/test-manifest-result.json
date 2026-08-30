@@ -1,0 +1,1285 @@
+{
+  "schema_id": "bmas.test_manifest_result",
+  "run_id": "20260830T201339Z-62d24a3a",
+  "state": "passed",
+  "started_at_utc": "2026-08-30T20:13:39.135151000Z",
+  "ended_at_utc": "2026-08-30T20:14:31.324521000Z",
+  "duration_nanos": 52189006875,
+  "manifest_schema_version": "1.0.0",
+  "manifest_digest": "96e1ef192c75ee344a49fe68908bf1eadd05866d8b6420031f43dc933b0d1a28",
+  "profile_id": "complete",
+  "resolved_group_ids": [
+    "manifest.validate",
+    "repo.source-naming",
+    "repo.config-examples",
+    "repo.config-schema",
+    "repo.docs-links",
+    "repo.compose-render",
+    "scripts.tests",
+    "conformance.reference-scorer",
+    "daemon.lint",
+    "daemon.typecheck",
+    "daemon.tests",
+    "agent.tests",
+    "evaluation.tests",
+    "mission-control.install",
+    "mission-control.audit",
+    "mission-control.lint",
+    "mission-control.typecheck",
+    "mission-control.tests",
+    "mission-control.build",
+    "mission-control.browser-install",
+    "mission-control.e2e"
+  ],
+  "repository": {
+    "commit": "513c59cbd3e3d7f3e26ba3f00dccc890bc2b483b",
+    "branch": "foundation-stage-0a-freeze",
+    "dirty": false,
+    "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "untracked_files": []
+  },
+  "host": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "image_digest": null,
+    "kernel_version": "25.6.0",
+    "utc_clock_source": "python.time.time_ns",
+    "monotonic_clock": "python.time.monotonic_ns/mach_absolute_time()",
+    "tool_versions": {
+      "docker": "Docker version 29.4.0, build 9d7ad9f",
+      "git": "git version 2.50.1 (Apple Git-155)",
+      "mypy": "mypy 2.3.1 (compiled: yes)",
+      "node": "v26.3.0",
+      "npm": "11.16.0",
+      "playwright": "unavailable",
+      "pytest": "pytest 9.1.1",
+      "python": "Python 3.13.14",
+      "ruff": "ruff 0.16.5"
+    }
+  },
+  "summary": {
+    "passed": 21,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "timed_out": 0,
+    "infrastructure_error": 0,
+    "attempt_count": 21,
+    "retry_count": 0
+  },
+  "groups": [
+    {
+      "group_id": "manifest.validate",
+      "manifest_entry_digest": "24b1b5e98480cd07a131de02686de04f4e6a5de5a94e7f516337e8e625f48467",
+      "argv": [
+        "python3",
+        "scripts/validate-test-manifest.py"
+      ],
+      "working_directory": ".",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "python": "Python 3.13.14"
+      },
+      "timeout_nanos": 300000000000,
+      "started_at_utc": "2026-08-30T20:13:40.026265000Z",
+      "ended_at_utc": "2026-08-30T20:13:40.166719000Z",
+      "duration_nanos": 140338375,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:13:40.034010000Z",
+          "ended_at_utc": "2026-08-30T20:13:40.166011000Z",
+          "duration_nanos": 131982291,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "5a83faca8b6c7c48db7dc8a19eac34f93ce6bafbb687e1e68e2c5f7515c1ec98",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/manifest.validate/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 262,
+              "sha256": "5a83faca8b6c7c48db7dc8a19eac34f93ce6bafbb687e1e68e2c5f7515c1ec98"
+            },
+            {
+              "path": "groups/manifest.validate/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "repo.source-naming",
+      "manifest_entry_digest": "0b49afca4a0e5cf36ad12953841b6d03642783d695873eb3540e17666d8fc7e5",
+      "argv": [
+        "python3",
+        "scripts/check-source-naming.py"
+      ],
+      "working_directory": ".",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "python": "Python 3.13.14"
+      },
+      "timeout_nanos": 300000000000,
+      "started_at_utc": "2026-08-30T20:13:40.166740000Z",
+      "ended_at_utc": "2026-08-30T20:13:40.902112000Z",
+      "duration_nanos": 735301125,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:13:40.175780000Z",
+          "ended_at_utc": "2026-08-30T20:13:40.901551000Z",
+          "duration_nanos": 725748542,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "36c6a05946cf1a54fa6b6cee7db40366afeaacc49cc09a1c74fbd5214d37dcaa",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/repo.source-naming/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 108,
+              "sha256": "36c6a05946cf1a54fa6b6cee7db40366afeaacc49cc09a1c74fbd5214d37dcaa"
+            },
+            {
+              "path": "groups/repo.source-naming/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "repo.config-examples",
+      "manifest_entry_digest": "ae9dbf333faa8d301725563f9414e58f7098b66c3a4acf7bccdcbb74e663c3a5",
+      "argv": [
+        "python3",
+        "scripts/validate_configs.py"
+      ],
+      "working_directory": ".",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "python": "Python 3.13.14"
+      },
+      "timeout_nanos": 300000000000,
+      "started_at_utc": "2026-08-30T20:13:40.902125000Z",
+      "ended_at_utc": "2026-08-30T20:13:41.534932000Z",
+      "duration_nanos": 632736750,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:13:40.910991000Z",
+          "ended_at_utc": "2026-08-30T20:13:41.534533000Z",
+          "duration_nanos": 623523083,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "8354c2b900eba1b50e98bd34943d5c3446ed1ef9026897dc62c412ce053ebb85",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/repo.config-examples/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 191,
+              "sha256": "8354c2b900eba1b50e98bd34943d5c3446ed1ef9026897dc62c412ce053ebb85"
+            },
+            {
+              "path": "groups/repo.config-examples/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "repo.config-schema",
+      "manifest_entry_digest": "f665aa6ed7d0fa2e1e75073a4ee85245be4185d5092db4e0546c079cfc1d43fd",
+      "argv": [
+        "python3",
+        "scripts/generate_config_schema.py",
+        "--check"
+      ],
+      "working_directory": ".",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "python": "Python 3.13.14"
+      },
+      "timeout_nanos": 300000000000,
+      "started_at_utc": "2026-08-30T20:13:41.534951000Z",
+      "ended_at_utc": "2026-08-30T20:13:41.676596000Z",
+      "duration_nanos": 141578083,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:13:41.543816000Z",
+          "ended_at_utc": "2026-08-30T20:13:41.675896000Z",
+          "duration_nanos": 132062792,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "b4f8e7185b72bbf3b58d88cd143f3b0b3f0d97c3e4b46e2bc96531477b7c2450",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/repo.config-schema/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 53,
+              "sha256": "b4f8e7185b72bbf3b58d88cd143f3b0b3f0d97c3e4b46e2bc96531477b7c2450"
+            },
+            {
+              "path": "groups/repo.config-schema/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "repo.docs-links",
+      "manifest_entry_digest": "b1f6f4da9fa5e7e83736a0892bb18ea73dc9cd23112ce2770b38fa2e8dce171b",
+      "argv": [
+        "python3",
+        "scripts/validate_docs.py"
+      ],
+      "working_directory": ".",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "python": "Python 3.13.14"
+      },
+      "timeout_nanos": 300000000000,
+      "started_at_utc": "2026-08-30T20:13:41.676611000Z",
+      "ended_at_utc": "2026-08-30T20:13:41.763547000Z",
+      "duration_nanos": 86885458,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:13:41.686414000Z",
+          "ended_at_utc": "2026-08-30T20:13:41.763275000Z",
+          "duration_nanos": 76843500,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "dfde6d26a194e3b1a6836bb7a653150780a7723d135b4c3f33b823baf66f0def",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/repo.docs-links/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 48,
+              "sha256": "dfde6d26a194e3b1a6836bb7a653150780a7723d135b4c3f33b823baf66f0def"
+            },
+            {
+              "path": "groups/repo.docs-links/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "repo.compose-render",
+      "manifest_entry_digest": "475fde5be0eea8a1d7b1cfa5bb1d5328c7d165984e12e79c46f2aa2bfbe78850",
+      "argv": [
+        "docker",
+        "compose",
+        "--env-file",
+        ".env.example",
+        "config",
+        "--quiet"
+      ],
+      "working_directory": ".",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "docker": "Docker version 29.4.0, build 9d7ad9f"
+      },
+      "timeout_nanos": 300000000000,
+      "started_at_utc": "2026-08-30T20:13:41.763563000Z",
+      "ended_at_utc": "2026-08-30T20:13:41.855001000Z",
+      "duration_nanos": 91370333,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:13:41.778913000Z",
+          "ended_at_utc": "2026-08-30T20:13:41.854650000Z",
+          "duration_nanos": 75714375,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/repo.compose-render/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            {
+              "path": "groups/repo.compose-render/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "scripts.tests",
+      "manifest_entry_digest": "8ec80888eda165c5e0f279db222c226a17715cb4ac93931d26a16cdcfeccf3f5",
+      "argv": [
+        "python3",
+        "-m",
+        "pytest",
+        "scripts/tests/",
+        "-q",
+        "--tb=short"
+      ],
+      "working_directory": ".",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "python": "Python 3.13.14",
+        "pytest": "pytest 9.1.1"
+      },
+      "timeout_nanos": 1200000000000,
+      "started_at_utc": "2026-08-30T20:13:41.855015000Z",
+      "ended_at_utc": "2026-08-30T20:13:47.763364000Z",
+      "duration_nanos": 5908235167,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:13:41.934280000Z",
+          "ended_at_utc": "2026-08-30T20:13:47.762508000Z",
+          "duration_nanos": 5828163250,
+          "counts": {
+            "passed": 57,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "00e7873c1df400a1b6406b46bfc7adb3a4b4ebe89c273dd31e9136b8ee835c7a",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/scripts.tests/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 99,
+              "sha256": "00e7873c1df400a1b6406b46bfc7adb3a4b4ebe89c273dd31e9136b8ee835c7a"
+            },
+            {
+              "path": "groups/scripts.tests/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "conformance.reference-scorer",
+      "manifest_entry_digest": "8eed401987104b49f682f0167f1cdc1e89896d02d21beca6e4d725b1830640dd",
+      "argv": [
+        "python3",
+        "-m",
+        "pytest",
+        "conformance/reference_scorer/tests/",
+        "-q",
+        "--tb=short"
+      ],
+      "working_directory": ".",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "python": "Python 3.13.14",
+        "pytest": "pytest 9.1.1"
+      },
+      "timeout_nanos": 600000000000,
+      "started_at_utc": "2026-08-30T20:13:47.763385000Z",
+      "ended_at_utc": "2026-08-30T20:13:48.254406000Z",
+      "duration_nanos": 490949666,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:13:47.846506000Z",
+          "ended_at_utc": "2026-08-30T20:13:48.253805000Z",
+          "duration_nanos": 407269000,
+          "counts": {
+            "passed": 40,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "b4ccacdd4d798baeb63b8a5b8f0a2e6a16de6254762b299724368bd3cf85a75b",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/conformance.reference-scorer/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 99,
+              "sha256": "b4ccacdd4d798baeb63b8a5b8f0a2e6a16de6254762b299724368bd3cf85a75b"
+            },
+            {
+              "path": "groups/conformance.reference-scorer/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "daemon.lint",
+      "manifest_entry_digest": "9cfa4ff3be09d207f0d36d56038076ce1d43961e8e7b102d8f549c1ea3f40477",
+      "argv": [
+        "python3",
+        "-m",
+        "ruff",
+        "check",
+        "src/",
+        "tests/"
+      ],
+      "working_directory": "daemon",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "python": "Python 3.13.14",
+        "ruff": "ruff 0.16.5"
+      },
+      "timeout_nanos": 300000000000,
+      "started_at_utc": "2026-08-30T20:13:48.254420000Z",
+      "ended_at_utc": "2026-08-30T20:13:48.324353000Z",
+      "duration_nanos": 69833250,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:13:48.283920000Z",
+          "ended_at_utc": "2026-08-30T20:13:48.323932000Z",
+          "duration_nanos": 39996708,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/daemon.lint/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 19,
+              "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+            },
+            {
+              "path": "groups/daemon.lint/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "daemon.typecheck",
+      "manifest_entry_digest": "20d1e6d26ea2ccee71151fe4340d987d3fc31530443b7f7c0eabd35c26fdc05b",
+      "argv": [
+        "python3",
+        "-m",
+        "mypy",
+        "src/",
+        "--ignore-missing-imports"
+      ],
+      "working_directory": "daemon",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "python": "Python 3.13.14",
+        "mypy": "mypy 2.3.1 (compiled: yes)"
+      },
+      "timeout_nanos": 600000000000,
+      "started_at_utc": "2026-08-30T20:13:48.324368000Z",
+      "ended_at_utc": "2026-08-30T20:13:48.536858000Z",
+      "duration_nanos": 212431542,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:13:48.404309000Z",
+          "ended_at_utc": "2026-08-30T20:13:48.536537000Z",
+          "duration_nanos": 132202917,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "fa98c96cdac9194e72fbb7807a4b6b06c394edf19d8297a88609548d7764034c",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/daemon.typecheck/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 980,
+              "sha256": "fa98c96cdac9194e72fbb7807a4b6b06c394edf19d8297a88609548d7764034c"
+            },
+            {
+              "path": "groups/daemon.typecheck/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "daemon.tests",
+      "manifest_entry_digest": "8ca5aedfb2c8080d1a24abc3ad7ee9e9caf8c9e9d105b153c38a9106b2526b5c",
+      "argv": [
+        "python3",
+        "-m",
+        "pytest",
+        "tests/",
+        "-q",
+        "--tb=short"
+      ],
+      "working_directory": "daemon",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "python": "Python 3.13.14",
+        "pytest": "pytest 9.1.1"
+      },
+      "timeout_nanos": 1800000000000,
+      "started_at_utc": "2026-08-30T20:13:48.536873000Z",
+      "ended_at_utc": "2026-08-30T20:13:57.650713000Z",
+      "duration_nanos": 9113712583,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:13:48.617034000Z",
+          "ended_at_utc": "2026-08-30T20:13:57.650030000Z",
+          "duration_nanos": 9032911625,
+          "counts": {
+            "passed": 833,
+            "failed": 0,
+            "skipped": 1
+          },
+          "stdout_sha256": "c6613629d3e8cc1d8c113b42462178f8e3900d3f97e4a89a5d5972b75bd2ca6b",
+          "stderr_sha256": "ee649220d15160ba4535a7786250af6d7977bbefe63aade254a3850aee272f43",
+          "logs": [
+            {
+              "path": "groups/daemon.tests/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 991,
+              "sha256": "c6613629d3e8cc1d8c113b42462178f8e3900d3f97e4a89a5d5972b75bd2ca6b"
+            },
+            {
+              "path": "groups/daemon.tests/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 82,
+              "sha256": "ee649220d15160ba4535a7786250af6d7977bbefe63aade254a3850aee272f43"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "agent.tests",
+      "manifest_entry_digest": "84f779a544ba4bd39a2cd6db11087ff0580c7b4e6c88bbaa201f53526e2b52e2",
+      "argv": [
+        "python3",
+        "-m",
+        "pytest",
+        "tests/",
+        "-q",
+        "--tb=short"
+      ],
+      "working_directory": "agent",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "python": "Python 3.13.14",
+        "pytest": "pytest 9.1.1"
+      },
+      "timeout_nanos": 900000000000,
+      "started_at_utc": "2026-08-30T20:13:57.650729000Z",
+      "ended_at_utc": "2026-08-30T20:13:58.189666000Z",
+      "duration_nanos": 538872541,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:13:57.731936000Z",
+          "ended_at_utc": "2026-08-30T20:13:58.189039000Z",
+          "duration_nanos": 457082291,
+          "counts": {
+            "passed": 92,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "0f8d496e2ea53721e67a1e31f4ac033e103212ac00db8a6bd68835a93da952db",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/agent.tests/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 179,
+              "sha256": "0f8d496e2ea53721e67a1e31f4ac033e103212ac00db8a6bd68835a93da952db"
+            },
+            {
+              "path": "groups/agent.tests/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "evaluation.tests",
+      "manifest_entry_digest": "af30fcf442b602811494adcaade82fb990c3363265cdd423207e436118e129aa",
+      "argv": [
+        "python3",
+        "-m",
+        "pytest",
+        "eval/tests/",
+        "-q",
+        "--tb=short"
+      ],
+      "working_directory": ".",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "python": "Python 3.13.14",
+        "pytest": "pytest 9.1.1"
+      },
+      "timeout_nanos": 900000000000,
+      "started_at_utc": "2026-08-30T20:13:58.189679000Z",
+      "ended_at_utc": "2026-08-30T20:13:58.566240000Z",
+      "duration_nanos": 376486625,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:13:58.270560000Z",
+          "ended_at_utc": "2026-08-30T20:13:58.565789000Z",
+          "duration_nanos": 295203625,
+          "counts": {
+            "passed": 101,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "91c7dfa5f94f8e11987b86502c851ae3474855b58d06d12d3b1bb6614bf1b854",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/evaluation.tests/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 180,
+              "sha256": "91c7dfa5f94f8e11987b86502c851ae3474855b58d06d12d3b1bb6614bf1b854"
+            },
+            {
+              "path": "groups/evaluation.tests/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "mission-control.install",
+      "manifest_entry_digest": "25f44f046e4ef7684580604575bf4924149de954d0a54fcf3073b0d820b6cd0c",
+      "argv": [
+        "npm",
+        "ci"
+      ],
+      "working_directory": "mission-control",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "node": "v26.3.0",
+        "npm": "11.16.0"
+      },
+      "timeout_nanos": 900000000000,
+      "started_at_utc": "2026-08-30T20:13:58.566257000Z",
+      "ended_at_utc": "2026-08-30T20:14:04.747607000Z",
+      "duration_nanos": 6181233917,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:13:58.672101000Z",
+          "ended_at_utc": "2026-08-30T20:14:04.747003000Z",
+          "duration_nanos": 6074835542,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "644ab4e9112ff929659bef5bf31efac48eca570f3013f36b41f53b2766b15ab9",
+          "stderr_sha256": "c331fd65156ce6d05a9c5b6276bbdc161042cb95deb6cebb0b9ef799ab6b2b7f",
+          "logs": [
+            {
+              "path": "groups/mission-control.install/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 144,
+              "sha256": "644ab4e9112ff929659bef5bf31efac48eca570f3013f36b41f53b2766b15ab9"
+            },
+            {
+              "path": "groups/mission-control.install/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 311,
+              "sha256": "c331fd65156ce6d05a9c5b6276bbdc161042cb95deb6cebb0b9ef799ab6b2b7f"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "mission-control.audit",
+      "manifest_entry_digest": "31bbbc496430670fa1fda3a3d6b77e9c5364acbd759bdae7e6021d0cdd97fc68",
+      "argv": [
+        "npm",
+        "audit",
+        "--audit-level=high"
+      ],
+      "working_directory": "mission-control",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "node": "v26.3.0",
+        "npm": "11.16.0"
+      },
+      "timeout_nanos": 300000000000,
+      "started_at_utc": "2026-08-30T20:14:04.747625000Z",
+      "ended_at_utc": "2026-08-30T20:14:05.211881000Z",
+      "duration_nanos": 464153833,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:14:04.859691000Z",
+          "ended_at_utc": "2026-08-30T20:14:05.211261000Z",
+          "duration_nanos": 351536917,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "6d8c5c8f3d7684adb070417bd608d01ae90aa3dc26a65af03ffda4955f38d9a3",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/mission-control.audit/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 24,
+              "sha256": "6d8c5c8f3d7684adb070417bd608d01ae90aa3dc26a65af03ffda4955f38d9a3"
+            },
+            {
+              "path": "groups/mission-control.audit/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "mission-control.lint",
+      "manifest_entry_digest": "11fab5900cd0de36bdd693be4fe1bdb91d3c3b7c02311f8ae6c03c8a442b1e8c",
+      "argv": [
+        "npm",
+        "run",
+        "lint"
+      ],
+      "working_directory": "mission-control",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "node": "v26.3.0",
+        "npm": "11.16.0"
+      },
+      "timeout_nanos": 600000000000,
+      "started_at_utc": "2026-08-30T20:14:05.211905000Z",
+      "ended_at_utc": "2026-08-30T20:14:10.615755000Z",
+      "duration_nanos": 5403735292,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:14:05.330147000Z",
+          "ended_at_utc": "2026-08-30T20:14:10.615252000Z",
+          "duration_nanos": 5285043875,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "036298c87c5a0f63f2688143d794a88bdebf254bbf17ae9c4066de92419f041b",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/mission-control.lint/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 40,
+              "sha256": "036298c87c5a0f63f2688143d794a88bdebf254bbf17ae9c4066de92419f041b"
+            },
+            {
+              "path": "groups/mission-control.lint/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "mission-control.typecheck",
+      "manifest_entry_digest": "8778fbb4e0ad614d737ee653b6f10657f51776e4ed873211054e06697516922a",
+      "argv": [
+        "npx",
+        "tsc",
+        "--noEmit"
+      ],
+      "working_directory": "mission-control",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "node": "v26.3.0",
+        "npm": "11.16.0"
+      },
+      "timeout_nanos": 600000000000,
+      "started_at_utc": "2026-08-30T20:14:10.615773000Z",
+      "ended_at_utc": "2026-08-30T20:14:14.687549000Z",
+      "duration_nanos": 4071680000,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:14:10.727206000Z",
+          "ended_at_utc": "2026-08-30T20:14:14.687118000Z",
+          "duration_nanos": 3959861709,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/mission-control.typecheck/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            {
+              "path": "groups/mission-control.typecheck/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "mission-control.tests",
+      "manifest_entry_digest": "59dfd34d90ca584d8984f90c3b3a624ec92ccd4021e208045d43f842b48d0f8b",
+      "argv": [
+        "npm",
+        "run",
+        "test:run"
+      ],
+      "working_directory": "mission-control",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "node": "v26.3.0",
+        "npm": "11.16.0"
+      },
+      "timeout_nanos": 900000000000,
+      "started_at_utc": "2026-08-30T20:14:14.687567000Z",
+      "ended_at_utc": "2026-08-30T20:14:16.716143000Z",
+      "duration_nanos": 2028468167,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:14:14.796720000Z",
+          "ended_at_utc": "2026-08-30T20:14:16.715550000Z",
+          "duration_nanos": 1918790500,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "038f040e5fa7491e96f2e08bc9dffdbab17cb3956ce7da682e10c0cc5cedd9b5",
+          "stderr_sha256": "f393541a4a8877b19839a51efde933065bcc8544f9796719517bad65b517e625",
+          "logs": [
+            {
+              "path": "groups/mission-control.tests/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 289,
+              "sha256": "038f040e5fa7491e96f2e08bc9dffdbab17cb3956ce7da682e10c0cc5cedd9b5"
+            },
+            {
+              "path": "groups/mission-control.tests/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 191,
+              "sha256": "f393541a4a8877b19839a51efde933065bcc8544f9796719517bad65b517e625"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "mission-control.build",
+      "manifest_entry_digest": "0330e1c7b341af7ff8e1453e1d6b1264f175fc6e60fc6cf8755c1a03769d7b54",
+      "argv": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "working_directory": "mission-control",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "node": "v26.3.0",
+        "npm": "11.16.0"
+      },
+      "timeout_nanos": 1200000000000,
+      "started_at_utc": "2026-08-30T20:14:16.716180000Z",
+      "ended_at_utc": "2026-08-30T20:14:26.252422000Z",
+      "duration_nanos": 9536063208,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:14:16.837915000Z",
+          "ended_at_utc": "2026-08-30T20:14:26.251696000Z",
+          "duration_nanos": 9413685834,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "a8a11c9968a6b57719b52149787fd669c3de3eccc24de10a61c267b61fe1e3d5",
+          "stderr_sha256": "87d2160323f1b2e46bf5ef16cf9cc2e6a2ac02a5843a388f0ad1321a836189d4",
+          "logs": [
+            {
+              "path": "groups/mission-control.build/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 3488,
+              "sha256": "a8a11c9968a6b57719b52149787fd669c3de3eccc24de10a61c267b61fe1e3d5"
+            },
+            {
+              "path": "groups/mission-control.build/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 1897,
+              "sha256": "87d2160323f1b2e46bf5ef16cf9cc2e6a2ac02a5843a388f0ad1321a836189d4"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "mission-control.browser-install",
+      "manifest_entry_digest": "e0d2bc8e4e591e32bdebf295612859905e82aebab325b4deb9fc91458fabbf03",
+      "argv": [
+        "npx",
+        "playwright",
+        "install",
+        "--with-deps",
+        "chromium"
+      ],
+      "working_directory": "mission-control",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "node": "v26.3.0",
+        "npm": "11.16.0",
+        "playwright": "1.62.1"
+      },
+      "timeout_nanos": 900000000000,
+      "started_at_utc": "2026-08-30T20:14:26.252448000Z",
+      "ended_at_utc": "2026-08-30T20:14:27.056783000Z",
+      "duration_nanos": 804239791,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:14:26.382098000Z",
+          "ended_at_utc": "2026-08-30T20:14:27.056220000Z",
+          "duration_nanos": 674084000,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "logs": [
+            {
+              "path": "groups/mission-control.browser-install/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            {
+              "path": "groups/mission-control.browser-install/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "group_id": "mission-control.e2e",
+      "manifest_entry_digest": "2e70e883ab38214edb77a49cefd5a58c2d46cb366e5d4f3d1a81be95654c98e9",
+      "argv": [
+        "npm",
+        "run",
+        "test:e2e"
+      ],
+      "working_directory": "mission-control",
+      "environment_profile_digest": "cd51dfa14595b6553b9e06b277bbe885b4fb1f9b2d5593ec11c760e33650890f",
+      "dependency_versions": {},
+      "tool_versions": {
+        "node": "v26.3.0",
+        "npm": "11.16.0",
+        "playwright": "1.62.1"
+      },
+      "timeout_nanos": 1800000000000,
+      "started_at_utc": "2026-08-30T20:14:27.056802000Z",
+      "ended_at_utc": "2026-08-30T20:14:31.324505000Z",
+      "duration_nanos": 4267600000,
+      "state": "passed",
+      "skip_reason": null,
+      "attempts": [
+        {
+          "attempt_index": 0,
+          "state": "passed",
+          "exit_code": 0,
+          "signal": null,
+          "retry_reason": null,
+          "started_at_utc": "2026-08-30T20:14:27.173870000Z",
+          "ended_at_utc": "2026-08-30T20:14:31.323795000Z",
+          "duration_nanos": 4149864709,
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0
+          },
+          "stdout_sha256": "a8e9a3f04a7a27829d0da201b694e491b87bb84e046e309e10ce899dcc6af8d3",
+          "stderr_sha256": "ce61f0787a735256262cb84e187f5490f1cbee202755116a182c6d791c706f8b",
+          "logs": [
+            {
+              "path": "groups/mission-control.e2e/attempt-0/stdout.log",
+              "media_type": "text/plain",
+              "size_bytes": 474,
+              "sha256": "a8e9a3f04a7a27829d0da201b694e491b87bb84e046e309e10ce899dcc6af8d3"
+            },
+            {
+              "path": "groups/mission-control.e2e/attempt-0/stderr.log",
+              "media_type": "text/plain",
+              "size_bytes": 215,
+              "sha256": "ce61f0787a735256262cb84e187f5490f1cbee202755116a182c6d791c706f8b"
+            }
+          ],
+          "artifacts": []
+        }
+      ],
+      "artifacts": []
+    }
+  ]
+}

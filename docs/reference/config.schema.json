@@ -254,6 +254,59 @@
       "title": "CoordinationConfig",
       "type": "object"
     },
+    "FoundationGatesConfig": {
+      "additionalProperties": false,
+      "description": "Gates for the planned shared Foundation writers.\n\nEvery gate stays disabled by default. No current runtime consults a\ngate, so the default deployment keeps existing behavior unchanged.",
+      "properties": {
+        "activation_ledger": {
+          "default": false,
+          "title": "Activation Ledger",
+          "type": "boolean"
+        },
+        "budget_reservations": {
+          "default": false,
+          "title": "Budget Reservations",
+          "type": "boolean"
+        },
+        "effect_ledger": {
+          "default": false,
+          "title": "Effect Ledger",
+          "type": "boolean"
+        },
+        "evidence_index": {
+          "default": false,
+          "title": "Evidence Index",
+          "type": "boolean"
+        },
+        "goal_index": {
+          "default": false,
+          "title": "Goal Index",
+          "type": "boolean"
+        },
+        "run_context": {
+          "default": false,
+          "title": "Run Context",
+          "type": "boolean"
+        },
+        "runtime_registry": {
+          "default": false,
+          "title": "Runtime Registry",
+          "type": "boolean"
+        },
+        "runtime_unit_of_work": {
+          "default": false,
+          "title": "Runtime Unit Of Work",
+          "type": "boolean"
+        },
+        "trace_envelope": {
+          "default": false,
+          "title": "Trace Envelope",
+          "type": "boolean"
+        }
+      },
+      "title": "FoundationGatesConfig",
+      "type": "object"
+    },
     "InferenceConfig": {
       "additionalProperties": false,
       "properties": {
@@ -836,6 +889,9 @@
     },
     "coordination": {
       "$ref": "#/$defs/CoordinationConfig"
+    },
+    "foundation_gates": {
+      "$ref": "#/$defs/FoundationGatesConfig"
     },
     "model_pools": {
       "anyOf": [

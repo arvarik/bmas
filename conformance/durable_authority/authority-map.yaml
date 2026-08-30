@@ -1,0 +1,675 @@
+# Durable authority map for Foundation Stage 0A.
+#
+# The map records every current durable write path. It names one
+# authority for each table and one owner for each field, and it marks
+# every derived field with its reconstruction rule.
+# daemon/tests/test_durable_authority_map.py compares this map with
+# the live migrated schema and with a scan of every SQL write in the
+# daemon source, so no unknown writer or field owner can appear.
+schema_id: bmas.durable_authority_map
+metadata:
+  contract_version: "1.0.0"
+sqlite_tables:
+  - table: agent_traces
+    authority: daemon.trace-ingest
+    purpose: "Recorded provider interaction telemetry per turn."
+    writers:
+      - database
+    fields:
+      - { name: id, owner: daemon.trace-ingest, derived: false }
+      - { name: task_id, owner: daemon.trace-ingest, derived: false }
+      - { name: turn_id, owner: daemon.trace-ingest, derived: false }
+      - { name: seq, owner: daemon.trace-ingest, derived: false }
+      - { name: role, owner: daemon.trace-ingest, derived: false }
+      - { name: node, owner: daemon.trace-ingest, derived: false }
+      - { name: type, owner: daemon.trace-ingest, derived: false }
+      - { name: data, owner: daemon.trace-ingest, derived: false }
+      - { name: model, owner: daemon.trace-ingest, derived: false }
+      - { name: tokens_in, owner: daemon.trace-ingest, derived: false }
+      - { name: tokens_out, owner: daemon.trace-ingest, derived: false }
+      - { name: cost_usd, owner: daemon.trace-ingest, derived: false }
+      - { name: created_at, owner: daemon.trace-ingest, derived: false }
+  - table: artifacts
+    authority: daemon.artifact-storage
+    purpose: "Task output files that agents produced."
+    writers:
+      - database
+    fields:
+      - { name: id, owner: daemon.artifact-storage, derived: false }
+      - { name: task_id, owner: daemon.artifact-storage, derived: false }
+      - { name: turn_id, owner: daemon.artifact-storage, derived: false }
+      - { name: author, owner: daemon.artifact-storage, derived: false }
+      - { name: rel_path, owner: daemon.artifact-storage, derived: false }
+      - { name: stored_path, owner: daemon.artifact-storage, derived: false }
+      - { name: mime, owner: daemon.artifact-storage, derived: false }
+      - name: bytes
+        owner: daemon.artifact-storage
+        derived: true
+        reconstruction: "Measure the stored file size."
+      - name: sha256
+        owner: daemon.artifact-storage
+        derived: true
+        reconstruction: "Hash the stored file bytes."
+      - { name: version, owner: daemon.artifact-storage, derived: false }
+      - { name: created_at, owner: daemon.artifact-storage, derived: false }
+  - table: benchmark_artifacts
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark artifacts."
+    note: "No current code path writes this reserved table."
+    writers: []
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: run_id, owner: daemon.benchmark-service, derived: false }
+      - { name: attempt_id, owner: daemon.benchmark-service, derived: false }
+      - { name: kind, owner: daemon.benchmark-service, derived: false }
+      - { name: uri, owner: daemon.benchmark-service, derived: false }
+      - { name: checksum, owner: daemon.benchmark-service, derived: false }
+      - { name: metadata, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_attempts
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark attempts."
+    writers:
+      - benchmarks.repository
+      - database
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: trial_id, owner: daemon.benchmark-service, derived: false }
+      - { name: attempt_number, owner: daemon.benchmark-service, derived: false }
+      - { name: task_id, owner: daemon.benchmark-service, derived: false }
+      - { name: status, owner: daemon.benchmark-service, derived: false }
+      - { name: execution_snapshot, owner: daemon.benchmark-service, derived: false }
+      - name: snapshot_checksum
+        owner: daemon.benchmark-service
+        derived: true
+        reconstruction: "Hash the canonical execution_snapshot bytes."
+      - { name: failure_category, owner: daemon.benchmark-service, derived: false }
+      - { name: error_message, owner: daemon.benchmark-service, derived: false }
+      - { name: operator_intervened, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
+      - { name: started_at, owner: daemon.benchmark-service, derived: false }
+      - { name: completed_at, owner: daemon.benchmark-service, derived: false }
+      - { name: repeat_index, owner: daemon.benchmark-service, derived: false }
+      - { name: retry_index, owner: daemon.benchmark-service, derived: false }
+      - { name: random_seed, owner: daemon.benchmark-service, derived: false }
+      - { name: claimed_at, owner: daemon.benchmark-service, derived: false }
+      - { name: lease_owner, owner: daemon.benchmark-service, derived: false }
+      - { name: lease_token, owner: daemon.benchmark-service, derived: false }
+      - { name: lease_expires_at, owner: daemon.benchmark-service, derived: false }
+      - { name: lease_fence, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_baselines
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark baselines."
+    writers:
+      - benchmarks.records
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: test_id, owner: daemon.benchmark-service, derived: false }
+      - { name: run_id, owner: daemon.benchmark-service, derived: false }
+      - { name: name, owner: daemon.benchmark-service, derived: false }
+      - { name: description, owner: daemon.benchmark-service, derived: false }
+      - { name: rules, owner: daemon.benchmark-service, derived: false }
+      - { name: rules_checksum, owner: daemon.benchmark-service, derived: false }
+      - { name: created_by, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_gate_evaluations
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark gate evaluations."
+    writers:
+      - benchmarks.records
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: baseline_id, owner: daemon.benchmark-service, derived: false }
+      - { name: candidate_run_id, owner: daemon.benchmark-service, derived: false }
+      - { name: status, owner: daemon.benchmark-service, derived: false }
+      - { name: report, owner: daemon.benchmark-service, derived: false }
+      - { name: report_checksum, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_human_reviews
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark human reviews."
+    writers:
+      - benchmarks.repository
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: attempt_id, owner: daemon.benchmark-service, derived: false }
+      - { name: reviewer_id, owner: daemon.benchmark-service, derived: false }
+      - { name: score, owner: daemon.benchmark-service, derived: false }
+      - { name: passed, owner: daemon.benchmark-service, derived: false }
+      - { name: note, owner: daemon.benchmark-service, derived: false }
+      - { name: idempotency_key, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_runs
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark runs."
+    writers:
+      - benchmarks.repository
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: test_revision_id, owner: daemon.benchmark-service, derived: false }
+      - { name: status, owner: daemon.benchmark-service, derived: false }
+      - { name: execution_plan, owner: daemon.benchmark-service, derived: false }
+      - name: execution_plan_checksum
+        owner: daemon.benchmark-service
+        derived: true
+        reconstruction: "Hash the canonical execution_plan bytes."
+      - name: total_trials
+        owner: daemon.benchmark-service
+        derived: true
+        reconstruction: "Count benchmark_trials rows for the run."
+      - name: completed_trials
+        owner: daemon.benchmark-service
+        derived: true
+        reconstruction: "Count terminal benchmark_trials rows for the run."
+      - { name: operator_note, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
+      - { name: started_at, owner: daemon.benchmark-service, derived: false }
+      - { name: completed_at, owner: daemon.benchmark-service, derived: false }
+      - { name: archived_at, owner: daemon.benchmark-service, derived: false }
+      - { name: idempotency_key, owner: daemon.benchmark-service, derived: false }
+      - name: total_attempts
+        owner: daemon.benchmark-service
+        derived: true
+        reconstruction: "Count benchmark_attempts rows for the run."
+      - name: completed_attempts
+        owner: daemon.benchmark-service
+        derived: true
+        reconstruction: "Count terminal benchmark_attempts rows for the run."
+      - { name: cancel_reason, owner: daemon.benchmark-service, derived: false }
+      - { name: state_revision, owner: daemon.benchmark-service, derived: false }
+      - { name: priority, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_runtime_qualifications
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark runtime qualifications."
+    writers:
+      - benchmarks.records
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: runtime_id, owner: daemon.benchmark-service, derived: false }
+      - { name: contract_version, owner: daemon.benchmark-service, derived: false }
+      - { name: evidence_key, owner: daemon.benchmark-service, derived: false }
+      - { name: run_id, owner: daemon.benchmark-service, derived: false }
+      - { name: status, owner: daemon.benchmark-service, derived: false }
+      - { name: report, owner: daemon.benchmark-service, derived: false }
+      - { name: report_checksum, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_scheduler_workers
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark scheduler workers."
+    writers:
+      - benchmarks.repository
+    fields:
+      - { name: worker_id, owner: daemon.benchmark-service, derived: false }
+      - { name: hostname, owner: daemon.benchmark-service, derived: false }
+      - { name: process_id, owner: daemon.benchmark-service, derived: false }
+      - { name: status, owner: daemon.benchmark-service, derived: false }
+      - { name: started_at, owner: daemon.benchmark-service, derived: false }
+      - { name: last_seen_at, owner: daemon.benchmark-service, derived: false }
+      - { name: stopped_at, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_scorers
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark scorers."
+    writers:
+      - database
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: name, owner: daemon.benchmark-service, derived: false }
+      - { name: version, owner: daemon.benchmark-service, derived: false }
+      - { name: kind, owner: daemon.benchmark-service, derived: false }
+      - { name: configuration_schema, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_scores
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark scores."
+    writers:
+      - benchmarks.repository
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: attempt_id, owner: daemon.benchmark-service, derived: false }
+      - { name: scorer_id, owner: daemon.benchmark-service, derived: false }
+      - { name: status, owner: daemon.benchmark-service, derived: false }
+      - { name: score, owner: daemon.benchmark-service, derived: false }
+      - { name: passed, owner: daemon.benchmark-service, derived: false }
+      - { name: extracted_output, owner: daemon.benchmark-service, derived: false }
+      - { name: explanation, owner: daemon.benchmark-service, derived: false }
+      - { name: evidence, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_test_arms
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark test arms."
+    writers:
+      - benchmarks.repository
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: test_revision_id, owner: daemon.benchmark-service, derived: false }
+      - { name: name, owner: daemon.benchmark-service, derived: false }
+      - { name: slug, owner: daemon.benchmark-service, derived: false }
+      - { name: runtime_id, owner: daemon.benchmark-service, derived: false }
+      - { name: configuration, owner: daemon.benchmark-service, derived: false }
+      - { name: configuration_checksum, owner: daemon.benchmark-service, derived: false }
+      - { name: sort_order, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_test_revision_scorers
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark test revision scorers."
+    writers:
+      - benchmarks.repository
+    fields:
+      - { name: test_revision_id, owner: daemon.benchmark-service, derived: false }
+      - { name: scorer_id, owner: daemon.benchmark-service, derived: false }
+      - { name: sort_order, owner: daemon.benchmark-service, derived: false }
+      - { name: configuration, owner: daemon.benchmark-service, derived: false }
+      - { name: configuration_checksum, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_test_revisions
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark test revisions."
+    writers:
+      - benchmarks.repository
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: test_id, owner: daemon.benchmark-service, derived: false }
+      - { name: revision, owner: daemon.benchmark-service, derived: false }
+      - { name: dataset_version_id, owner: daemon.benchmark-service, derived: false }
+      - { name: status, owner: daemon.benchmark-service, derived: false }
+      - { name: configuration, owner: daemon.benchmark-service, derived: false }
+      - { name: configuration_checksum, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
+      - { name: published_at, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_tests
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark tests."
+    writers:
+      - benchmarks.repository
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: name, owner: daemon.benchmark-service, derived: false }
+      - { name: description, owner: daemon.benchmark-service, derived: false }
+      - { name: metadata, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
+      - { name: updated_at, owner: daemon.benchmark-service, derived: false }
+      - { name: archived_at, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_trials
+    authority: daemon.benchmark-service
+    purpose: "Benchmark execution record: benchmark trials."
+    writers:
+      - benchmarks.repository
+      - database
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: run_id, owner: daemon.benchmark-service, derived: false }
+      - { name: test_arm_id, owner: daemon.benchmark-service, derived: false }
+      - { name: dataset_item_id, owner: daemon.benchmark-service, derived: false }
+      - { name: status, owner: daemon.benchmark-service, derived: false }
+      - { name: current_attempt_id, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
+      - { name: started_at, owner: daemon.benchmark-service, derived: false }
+      - { name: completed_at, owner: daemon.benchmark-service, derived: false }
+  - table: board_entries
+    authority: daemon.board-gateway
+    purpose: "Durable current state of every classic board entry."
+    note: "The board_events log can rebuild the entry snapshot with core.board_store.fold_events_to_snapshot."
+    writers:
+      - database
+    fields:
+      - { name: id, owner: daemon.board-gateway, derived: false }
+      - { name: task_id, owner: daemon.board-gateway, derived: false }
+      - { name: type, owner: daemon.board-gateway, derived: false }
+      - { name: author, owner: daemon.board-gateway, derived: false }
+      - { name: author_node, owner: daemon.board-gateway, derived: false }
+      - { name: title, owner: daemon.board-gateway, derived: false }
+      - { name: body, owner: daemon.board-gateway, derived: false }
+      - { name: refs, owner: daemon.board-gateway, derived: false }
+      - { name: confidence, owner: daemon.board-gateway, derived: false }
+      - { name: status, owner: daemon.board-gateway, derived: false }
+      - name: salience
+        owner: daemon.board-gateway
+        derived: true
+        reconstruction: "Recompute with core.salience from entry attributes and board state."
+      - { name: round, owner: daemon.board-gateway, derived: false }
+      - { name: space, owner: daemon.board-gateway, derived: false }
+      - { name: created_by_turn, owner: daemon.board-gateway, derived: false }
+      - { name: created_at, owner: daemon.board-gateway, derived: false }
+      - name: updated_at
+        owner: daemon.board-gateway
+        derived: true
+        reconstruction: "Take the newest board_events row for the entry."
+      - { name: sources, owner: daemon.board-gateway, derived: false }
+  - table: board_events
+    authority: daemon.board-gateway
+    purpose: "Append-only classic board mutation log."
+    writers:
+      - database
+    fields:
+      - { name: id, owner: daemon.board-gateway, derived: false }
+      - { name: task_id, owner: daemon.board-gateway, derived: false }
+      - { name: seq, owner: daemon.board-gateway, derived: false }
+      - { name: round, owner: daemon.board-gateway, derived: false }
+      - { name: turn_id, owner: daemon.board-gateway, derived: false }
+      - { name: actor, owner: daemon.board-gateway, derived: false }
+      - { name: event_type, owner: daemon.board-gateway, derived: false }
+      - { name: entry_id, owner: daemon.board-gateway, derived: false }
+      - { name: payload, owner: daemon.board-gateway, derived: false }
+      - { name: redis_stream_id, owner: daemon.board-gateway, derived: false }
+      - { name: created_at, owner: daemon.board-gateway, derived: false }
+  - table: board_meta
+    authority: daemon.board-gateway
+    purpose: "Durable classic board control state per task."
+    writers:
+      - database
+    fields:
+      - { name: task_id, owner: daemon.board-gateway, derived: false }
+      - { name: data, owner: daemon.board-gateway, derived: false }
+      - name: updated_at
+        owner: daemon.board-gateway
+        derived: true
+        reconstruction: "Take the newest board_events row for the task."
+  - table: cost_entries
+    authority: daemon.cost-accounting
+    purpose: "One row per model call with token and cost accounting."
+    writers:
+      - database
+    fields:
+      - { name: id, owner: daemon.cost-accounting, derived: false }
+      - { name: task_id, owner: daemon.cost-accounting, derived: false }
+      - { name: model, owner: daemon.cost-accounting, derived: false }
+      - { name: input_tokens, owner: daemon.cost-accounting, derived: false }
+      - { name: output_tokens, owner: daemon.cost-accounting, derived: false }
+      - { name: cost_usd, owner: daemon.cost-accounting, derived: false }
+      - { name: phase, owner: daemon.cost-accounting, derived: false }
+      - { name: created_at, owner: daemon.cost-accounting, derived: false }
+      - { name: node_id, owner: daemon.cost-accounting, derived: false }
+      - { name: turn_id, owner: daemon.cost-accounting, derived: false }
+      - { name: provider, owner: daemon.cost-accounting, derived: false }
+      - { name: price_source, owner: daemon.cost-accounting, derived: false }
+      - name: joules_estimate
+        owner: daemon.cost-accounting
+        derived: true
+        reconstruction: "Estimate energy from token counts per model."
+  - table: dataset_items
+    authority: daemon.dataset-registry
+    purpose: "Immutable rows of one dataset version."
+    writers:
+      - database
+    fields:
+      - { name: id, owner: daemon.dataset-registry, derived: false }
+      - { name: dataset_version_id, owner: daemon.dataset-registry, derived: false }
+      - { name: item_key, owner: daemon.dataset-registry, derived: false }
+      - { name: input, owner: daemon.dataset-registry, derived: false }
+      - { name: expected_output, owner: daemon.dataset-registry, derived: false }
+      - { name: subject, owner: daemon.dataset-registry, derived: false }
+      - { name: split, owner: daemon.dataset-registry, derived: false }
+      - { name: tags, owner: daemon.dataset-registry, derived: false }
+      - { name: metadata, owner: daemon.dataset-registry, derived: false }
+      - { name: sort_order, owner: daemon.dataset-registry, derived: false }
+      - { name: created_at, owner: daemon.dataset-registry, derived: false }
+  - table: dataset_versions
+    authority: daemon.dataset-registry
+    purpose: "Immutable published dataset versions."
+    writers:
+      - database
+    fields:
+      - { name: id, owner: daemon.dataset-registry, derived: false }
+      - { name: dataset_id, owner: daemon.dataset-registry, derived: false }
+      - { name: version, owner: daemon.dataset-registry, derived: false }
+      - { name: status, owner: daemon.dataset-registry, derived: false }
+      - { name: checksum, owner: daemon.dataset-registry, derived: false }
+      - { name: item_count, owner: daemon.dataset-registry, derived: false }
+      - { name: schema_json, owner: daemon.dataset-registry, derived: false }
+      - { name: source_filename, owner: daemon.dataset-registry, derived: false }
+      - { name: source_mime, owner: daemon.dataset-registry, derived: false }
+      - { name: source_checksum, owner: daemon.dataset-registry, derived: false }
+      - { name: source_path, owner: daemon.dataset-registry, derived: false }
+      - { name: metadata, owner: daemon.dataset-registry, derived: false }
+      - { name: created_at, owner: daemon.dataset-registry, derived: false }
+      - { name: published_at, owner: daemon.dataset-registry, derived: false }
+  - table: datasets
+    authority: daemon.dataset-registry
+    purpose: "Benchmark dataset registry heads."
+    writers:
+      - database
+    fields:
+      - { name: id, owner: daemon.dataset-registry, derived: false }
+      - { name: name, owner: daemon.dataset-registry, derived: false }
+      - { name: description, owner: daemon.dataset-registry, derived: false }
+      - { name: source_uri, owner: daemon.dataset-registry, derived: false }
+      - { name: license, owner: daemon.dataset-registry, derived: false }
+      - { name: author, owner: daemon.dataset-registry, derived: false }
+      - { name: metadata, owner: daemon.dataset-registry, derived: false }
+      - { name: created_at, owner: daemon.dataset-registry, derived: false }
+      - { name: updated_at, owner: daemon.dataset-registry, derived: false }
+      - { name: archived_at, owner: daemon.dataset-registry, derived: false }
+  - table: debate_entries
+    authority: daemon.task-lifecycle
+    purpose: "Legacy debate transcript rows kept for old sessions."
+    note: "No current code path writes this legacy table."
+    writers: []
+    fields:
+      - { name: id, owner: daemon.task-lifecycle, derived: false }
+      - { name: task_id, owner: daemon.task-lifecycle, derived: false }
+      - { name: session_id, owner: daemon.task-lifecycle, derived: false }
+      - { name: agent_role, owner: daemon.task-lifecycle, derived: false }
+      - { name: content, owner: daemon.task-lifecycle, derived: false }
+      - { name: created_at, owner: daemon.task-lifecycle, derived: false }
+  - table: event_journal
+    authority: daemon.event-delivery
+    purpose: "Append-only task event journal for delivery."
+    writers:
+      - database
+    fields:
+      - { name: cursor, owner: daemon.event-delivery, derived: false }
+      - { name: stream, owner: daemon.event-delivery, derived: false }
+      - { name: task_id, owner: daemon.event-delivery, derived: false }
+      - { name: event_type, owner: daemon.event-delivery, derived: false }
+      - { name: data, owner: daemon.event-delivery, derived: false }
+      - { name: idempotency_key, owner: daemon.event-delivery, derived: false }
+      - { name: created_at, owner: daemon.event-delivery, derived: false }
+      - name: published_at
+        owner: daemon.event-delivery
+        derived: true
+        reconstruction: "Set from confirmed delivery bookkeeping."
+  - table: event_outbox
+    authority: daemon.event-delivery
+    purpose: "Delivery bookkeeping for undelivered journal events."
+    writers:
+      - database
+    fields:
+      - { name: event_cursor, owner: daemon.event-delivery, derived: false }
+      - name: attempts
+        owner: daemon.event-delivery
+        derived: true
+        reconstruction: "Count delivery attempts for the event cursor."
+      - name: last_error
+        owner: daemon.event-delivery
+        derived: true
+        reconstruction: "Record the newest failed delivery attempt."
+      - { name: queued_at, owner: daemon.event-delivery, derived: false }
+      - name: last_attempt_at
+        owner: daemon.event-delivery
+        derived: true
+        reconstruction: "Record the newest delivery attempt time."
+  - table: log_entries
+    authority: daemon.task-lifecycle
+    purpose: "Structured task log lines."
+    writers:
+      - database
+    fields:
+      - { name: id, owner: daemon.task-lifecycle, derived: false }
+      - { name: task_id, owner: daemon.task-lifecycle, derived: false }
+      - { name: agent_role, owner: daemon.task-lifecycle, derived: false }
+      - { name: level, owner: daemon.task-lifecycle, derived: false }
+      - { name: message, owner: daemon.task-lifecycle, derived: false }
+      - { name: fields, owner: daemon.task-lifecycle, derived: false }
+      - { name: node, owner: daemon.task-lifecycle, derived: false }
+      - { name: turn_id, owner: daemon.task-lifecycle, derived: false }
+      - { name: created_at, owner: daemon.task-lifecycle, derived: false }
+  - table: operator_actions
+    authority: daemon.operator-audit
+    purpose: "Audited operator interventions."
+    writers:
+      - database
+    fields:
+      - { name: action_id, owner: daemon.operator-audit, derived: false }
+      - { name: task_id, owner: daemon.operator-audit, derived: false }
+      - { name: action, owner: daemon.operator-audit, derived: false }
+      - { name: actor, owner: daemon.operator-audit, derived: false }
+      - { name: status, owner: daemon.operator-audit, derived: false }
+      - { name: request_detail, owner: daemon.operator-audit, derived: false }
+      - { name: result_detail, owner: daemon.operator-audit, derived: false }
+      - { name: created_at, owner: daemon.operator-audit, derived: false }
+      - { name: completed_at, owner: daemon.operator-audit, derived: false }
+  - table: schema_version
+    authority: daemon.storage-migrations
+    purpose: "Applied storage migration level."
+    writers:
+      - database
+    fields:
+      - { name: version, owner: daemon.storage-migrations, derived: false }
+      - { name: applied_at, owner: daemon.storage-migrations, derived: false }
+  - table: sub_tasks
+    authority: daemon.task-lifecycle
+    purpose: "Variant-reported progress items for one task."
+    writers:
+      - database
+    fields:
+      - { name: id, owner: daemon.task-lifecycle, derived: false }
+      - { name: task_id, owner: daemon.task-lifecycle, derived: false }
+      - { name: label, owner: daemon.task-lifecycle, derived: false }
+      - { name: status, owner: daemon.task-lifecycle, derived: false }
+      - { name: agent_role, owner: daemon.task-lifecycle, derived: false }
+      - { name: depends_on, owner: daemon.task-lifecycle, derived: false }
+      - { name: result, owner: daemon.task-lifecycle, derived: false }
+      - { name: error, owner: daemon.task-lifecycle, derived: false }
+      - { name: started_at, owner: daemon.task-lifecycle, derived: false }
+      - { name: completed_at, owner: daemon.task-lifecycle, derived: false }
+      - { name: sort_order, owner: daemon.task-lifecycle, derived: false }
+  - table: task_files
+    authority: daemon.upload-storage
+    purpose: "User-uploaded task input files."
+    writers:
+      - database
+    fields:
+      - { name: id, owner: daemon.upload-storage, derived: false }
+      - { name: task_id, owner: daemon.upload-storage, derived: false }
+      - { name: name, owner: daemon.upload-storage, derived: false }
+      - { name: mime, owner: daemon.upload-storage, derived: false }
+      - name: bytes
+        owner: daemon.upload-storage
+        derived: true
+        reconstruction: "Measure the stored file size."
+      - name: sha256
+        owner: daemon.upload-storage
+        derived: true
+        reconstruction: "Hash the stored file bytes."
+      - { name: stored_path, owner: daemon.upload-storage, derived: false }
+      - name: extracted_chars
+        owner: daemon.upload-storage
+        derived: true
+        reconstruction: "Count the extracted text characters."
+      - { name: summary_entry, owner: daemon.upload-storage, derived: false }
+      - { name: created_at, owner: daemon.upload-storage, derived: false }
+  - table: tasks
+    authority: daemon.task-lifecycle
+    purpose: "One row per submitted task with its full lifecycle state and lease."
+    writers:
+      - database
+    fields:
+      - { name: id, owner: daemon.task-lifecycle, derived: false }
+      - { name: label, owner: daemon.task-lifecycle, derived: false }
+      - { name: full_input, owner: daemon.task-lifecycle, derived: false }
+      - { name: status, owner: daemon.task-lifecycle, derived: false }
+      - { name: complexity, owner: daemon.task-lifecycle, derived: false }
+      - { name: model_used, owner: daemon.task-lifecycle, derived: false }
+      - { name: error_message, owner: daemon.task-lifecycle, derived: false }
+      - name: result_summary
+        owner: daemon.task-lifecycle
+        derived: true
+        reconstruction: "Project a display summary from result_json."
+      - { name: result_json, owner: daemon.task-lifecycle, derived: false }
+      - { name: metadata, owner: daemon.task-lifecycle, derived: false }
+      - { name: created_at, owner: daemon.task-lifecycle, derived: false }
+      - { name: started_at, owner: daemon.task-lifecycle, derived: false }
+      - { name: completed_at, owner: daemon.task-lifecycle, derived: false }
+      - name: duration_ms
+        owner: daemon.task-lifecycle
+        derived: true
+        reconstruction: "Subtract started_at from completed_at."
+      - name: total_cost_usd
+        owner: daemon.task-lifecycle
+        derived: true
+        reconstruction: "Sum cost_entries.cost_usd for the task."
+      - name: total_tokens
+        owner: daemon.task-lifecycle
+        derived: true
+        reconstruction: "Sum cost_entries input and output tokens for the task."
+      - { name: archived_at, owner: daemon.task-lifecycle, derived: false }
+      - { name: variant, owner: daemon.task-lifecycle, derived: false }
+      - name: rounds_used
+        owner: daemon.task-lifecycle
+        derived: true
+        reconstruction: "Read the final round from board_meta control state."
+      - { name: terminated_by, owner: daemon.task-lifecycle, derived: false }
+      - { name: answer_source, owner: daemon.task-lifecycle, derived: false }
+      - { name: phase, owner: daemon.task-lifecycle, derived: false }
+      - { name: output_dir, owner: daemon.task-lifecycle, derived: false }
+      - name: joules_estimate
+        owner: daemon.task-lifecycle
+        derived: true
+        reconstruction: "Sum cost_entries.joules_estimate for the task."
+      - { name: run_state, owner: daemon.task-lifecycle, derived: false }
+      - { name: resume_count, owner: daemon.task-lifecycle, derived: false }
+      - { name: last_heartbeat_at, owner: daemon.task-lifecycle, derived: false }
+      - { name: lease_token, owner: daemon.task-lifecycle, derived: false }
+      - name: effective_actions
+        owner: daemon.task-lifecycle
+        derived: true
+        reconstruction: "Count effective actions from board_events."
+      - { name: state_revision, owner: daemon.task-lifecycle, derived: false }
+      - { name: checkpoint_at, owner: daemon.task-lifecycle, derived: false }
+      - { name: terminal_kind, owner: daemon.task-lifecycle, derived: false }
+      - { name: failure_category, owner: daemon.task-lifecycle, derived: false }
+      - { name: cancel_requested_at, owner: daemon.task-lifecycle, derived: false }
+  - table: turns
+    authority: daemon.task-lifecycle
+    purpose: "One row per dispatched agent turn."
+    writers:
+      - database
+    fields:
+      - { name: id, owner: daemon.task-lifecycle, derived: false }
+      - { name: task_id, owner: daemon.task-lifecycle, derived: false }
+      - { name: round_no, owner: daemon.task-lifecycle, derived: false }
+      - { name: role, owner: daemon.task-lifecycle, derived: false }
+      - { name: node, owner: daemon.task-lifecycle, derived: false }
+      - { name: model, owner: daemon.task-lifecycle, derived: false }
+      - { name: status, owner: daemon.task-lifecycle, derived: false }
+      - name: entries_added
+        owner: daemon.task-lifecycle
+        derived: true
+        reconstruction: "Count board_entries with created_by_turn equal to the turn."
+      - { name: started_at, owner: daemon.task-lifecycle, derived: false }
+      - { name: completed_at, owner: daemon.task-lifecycle, derived: false }
+      - name: cost_usd
+        owner: daemon.task-lifecycle
+        derived: true
+        reconstruction: "Sum cost_entries.cost_usd for the turn."
+      - name: joules_estimate
+        owner: daemon.task-lifecycle
+        derived: true
+        reconstruction: "Sum cost_entries.joules_estimate for the turn."
+      - { name: actor, owner: daemon.task-lifecycle, derived: false }
+      - { name: rationale, owner: daemon.task-lifecycle, derived: false }
+      - { name: phase, owner: daemon.task-lifecycle, derived: false }
+transient_migration_tables:
+  - board_entries_v3
+redis_domains:
+  - id: redis.board
+    owner: daemon.board-gateway
+    purpose: "Live coordination state and event streams for active tasks. The durable SQLite board tables remain the recovery authority."
+    key_patterns_fixture: conformance/runtime_fixtures/protocol-vocabulary.json
+filesystem_domains:
+  - id: filesystem.artifacts
+    owner: daemon.artifact-storage
+    root_configuration: storage.artifacts_dir
+    purpose: "Task output files. The artifacts table stores each digest and size."
+  - id: filesystem.uploads
+    owner: daemon.upload-storage
+    root_configuration: storage.user_media_dir
+    purpose: "User-uploaded task inputs. The task_files table stores each digest and size."

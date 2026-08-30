@@ -287,6 +287,70 @@ def test_timeout_produces_timed_out_state(tmp_path: Path) -> None:
     assert validate(record, repo) == []
 
 
+def test_targeted_group_run_produces_a_valid_record(tmp_path: Path) -> None:
+    manifest_text = (
+        manifest_header()
+        + "groups:\n"
+        + simple_group("fixture.pass", "print('1 passed')")
+        + simple_group(
+            "fixture.dependent",
+            "print('runs alone')",
+            extra="    depends_on: [fixture.pass]\n",
+        )
+        + complete_profile()
+    )
+    repo = build_repository(tmp_path / "targeted", manifest_text)
+    outcome = subprocess.run(
+        [
+            PYTHON,
+            str(SCRIPTS_DIR / "run-test-manifest.py"),
+            "--group",
+            "fixture.dependent",
+            "--repo-root",
+            str(repo),
+            "--results-dir",
+            "test-results",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert outcome.returncode == 0, outcome.stderr
+    record = read_record(repo)
+    assert record["profile_id"] == "group:fixture.dependent"
+    assert record["resolved_group_ids"] == ["fixture.dependent"]
+    assert record["groups"][0]["state"] == "passed"
+    assert validate(record, repo) == []
+
+
+def test_targeted_reserved_group_is_rejected(tmp_path: Path) -> None:
+    manifest_text = (
+        manifest_header()
+        + "groups:\n"
+        + simple_group("fixture.pass", "print('1 passed')")
+        + "  - id: fixture.future\n"
+        "    state: reserved\n"
+        "    owner: fixtures\n"
+        "    purpose: Hold one future identifier.\n"
+        "    activation_stage: Later delivery stage\n"
+        + complete_profile()
+    )
+    repo = build_repository(tmp_path / "targeted-reserved", manifest_text)
+    outcome = subprocess.run(
+        [
+            PYTHON,
+            str(SCRIPTS_DIR / "run-test-manifest.py"),
+            "--group",
+            "fixture.future",
+            "--repo-root",
+            str(repo),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert outcome.returncode == 2
+    assert "not executable" in outcome.stderr
+
+
 # ── Missing fields, unknown fields, duplicate keys ─────────────────
 
 

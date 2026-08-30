@@ -1,0 +1,379 @@
+{
+  "fixture_id": "stigmergic-lifecycle",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "record": {
+    "contract_version": "1",
+    "fresh_run": {
+      "checkpoints": [
+        {
+          "artifact": "agent-output-1-planner",
+          "completed_steps": 1,
+          "contract_version": "1",
+          "schema_version": "1",
+          "step": "revise_artifact"
+        },
+        {
+          "artifact": "agent-output-2-critic",
+          "completed_steps": 2,
+          "contract_version": "1",
+          "schema_version": "1",
+          "step": "revise_artifact"
+        },
+        {
+          "artifact": "agent-output-3-planner",
+          "completed_steps": 3,
+          "contract_version": "1",
+          "schema_version": "1",
+          "step": "revise_artifact"
+        },
+        {
+          "artifact": "agent-output-4-critic",
+          "completed_steps": 4,
+          "contract_version": "1",
+          "schema_version": "1",
+          "step": "revise_artifact"
+        },
+        {
+          "answer": "agent-output-5-decider",
+          "artifact": "agent-output-4-critic",
+          "completed_steps": 4,
+          "contract_version": "1",
+          "schema_version": "1",
+          "step": "complete"
+        }
+      ],
+      "dispatches": [
+        {
+          "activation_id": "activation-9ce2e94c9cd458c28fd2f94b1c9c309c",
+          "actor": "stigmergic.planner",
+          "context": {
+            "coordination": "stigmergic",
+            "objective": "Produce the frozen fixture answer.",
+            "revision": 1,
+            "round": 1,
+            "shared_artifact": "Produce the frozen fixture answer."
+          },
+          "description": "Produce the frozen fixture answer.",
+          "endpoint": "http://agent.fixture",
+          "endpoints": [
+            "http://agent.fixture"
+          ],
+          "model": "model-medium",
+          "persona": "Improve the shared artifact for the objective. Preserve correct work. Correct errors, add missing evidence, and return the complete revision.",
+          "phase": "revise_artifact",
+          "profile": "planner",
+          "rationale": "Stigmergic workspace step revise:0:1:planner",
+          "role": "planner",
+          "round_no": 1,
+          "session_id": "session-fixture",
+          "task_id": "task-fixture"
+        },
+        {
+          "activation_id": "activation-fce2618c55b8583e895507dba2a11aa0",
+          "actor": "stigmergic.critic",
+          "context": {
+            "coordination": "stigmergic",
+            "objective": "Produce the frozen fixture answer.",
+            "revision": 2,
+            "round": 1,
+            "shared_artifact": "agent-output-1-planner"
+          },
+          "description": "Produce the frozen fixture answer.",
+          "endpoint": "http://agent.fixture",
+          "endpoints": [
+            "http://agent.fixture"
+          ],
+          "model": "model-medium",
+          "persona": "Improve the shared artifact for the objective. Preserve correct work. Correct errors, add missing evidence, and return the complete revision.",
+          "phase": "revise_artifact",
+          "profile": "critic",
+          "rationale": "Stigmergic workspace step revise:1:1:critic",
+          "role": "critic",
+          "round_no": 1,
+          "session_id": "session-fixture",
+          "task_id": "task-fixture"
+        },
+        {
+          "activation_id": "activation-0e6e5c041601599398d01977755b4c85",
+          "actor": "stigmergic.planner",
+          "context": {
+            "coordination": "stigmergic",
+            "objective": "Produce the frozen fixture answer.",
+            "revision": 3,
+            "round": 2,
+            "shared_artifact": "agent-output-2-critic"
+          },
+          "description": "Produce the frozen fixture answer.",
+          "endpoint": "http://agent.fixture",
+          "endpoints": [
+            "http://agent.fixture"
+          ],
+          "model": "model-medium",
+          "persona": "Improve the shared artifact for the objective. Preserve correct work. Correct errors, add missing evidence, and return the complete revision.",
+          "phase": "revise_artifact",
+          "profile": "planner",
+          "rationale": "Stigmergic workspace step revise:2:2:planner",
+          "role": "planner",
+          "round_no": 2,
+          "session_id": "session-fixture",
+          "task_id": "task-fixture"
+        },
+        {
+          "activation_id": "activation-45b5856fe6f45166854a43bc5bbf9bd9",
+          "actor": "stigmergic.critic",
+          "context": {
+            "coordination": "stigmergic",
+            "objective": "Produce the frozen fixture answer.",
+            "revision": 4,
+            "round": 2,
+            "shared_artifact": "agent-output-3-planner"
+          },
+          "description": "Produce the frozen fixture answer.",
+          "endpoint": "http://agent.fixture",
+          "endpoints": [
+            "http://agent.fixture"
+          ],
+          "model": "model-medium",
+          "persona": "Improve the shared artifact for the objective. Preserve correct work. Correct errors, add missing evidence, and return the complete revision.",
+          "phase": "revise_artifact",
+          "profile": "critic",
+          "rationale": "Stigmergic workspace step revise:3:2:critic",
+          "role": "critic",
+          "round_no": 2,
+          "session_id": "session-fixture",
+          "task_id": "task-fixture"
+        },
+        {
+          "activation_id": "activation-4242461aa8e651b9acc4991e2e97ae0b",
+          "actor": "stigmergic.decider",
+          "context": {
+            "coordination": "stigmergic",
+            "objective": "Produce the frozen fixture answer.",
+            "shared_artifact": "agent-output-4-critic"
+          },
+          "description": "Produce the frozen fixture answer.",
+          "endpoint": "http://agent.fixture",
+          "endpoints": [
+            "http://agent.fixture"
+          ],
+          "model": "model-medium",
+          "persona": "Audit the shared artifact for correctness and completeness. Return the final answer without review notes.",
+          "phase": "finalize_artifact",
+          "profile": "decider",
+          "rationale": "Stigmergic workspace step finalize:decider",
+          "role": "decider",
+          "round_no": 3,
+          "session_id": "session-fixture",
+          "task_id": "task-fixture"
+        }
+      ],
+      "outcome": {
+        "answer": "agent-output-5-decider",
+        "completed_subtasks": [
+          {
+            "agent_role": "planner",
+            "depends_on": [],
+            "id": "task-fixture-revision-0",
+            "label": "Round 1 revision from planner",
+            "status": "completed"
+          },
+          {
+            "agent_role": "critic",
+            "depends_on": [
+              "task-fixture-revision-0"
+            ],
+            "id": "task-fixture-revision-1",
+            "label": "Round 1 revision from critic",
+            "status": "completed"
+          },
+          {
+            "agent_role": "planner",
+            "depends_on": [
+              "task-fixture-revision-1"
+            ],
+            "id": "task-fixture-revision-2",
+            "label": "Round 2 revision from planner",
+            "status": "completed"
+          },
+          {
+            "agent_role": "critic",
+            "depends_on": [
+              "task-fixture-revision-2"
+            ],
+            "id": "task-fixture-revision-3",
+            "label": "Round 2 revision from critic",
+            "status": "completed"
+          }
+        ],
+        "cost_usd": 0.0,
+        "public_result": {
+          "answer": "agent-output-5-decider",
+          "coordination": "ordered_shared_artifact_revisions",
+          "integrator": "decider",
+          "rounds": 2,
+          "runtime_id": "stigmergic",
+          "steps": 5,
+          "task_id": "task-fixture",
+          "workers": [
+            "planner",
+            "critic"
+          ]
+        },
+        "result": {
+          "answer": "agent-output-5-decider",
+          "coordination": "ordered_shared_artifact_revisions",
+          "integrator": "decider",
+          "rounds": 2,
+          "runtime_id": "stigmergic",
+          "steps": 5,
+          "workers": [
+            "planner",
+            "critic"
+          ]
+        },
+        "variant_id": "stigmergic"
+      },
+      "phases": [
+        {
+          "iteration": 1,
+          "phase": "revise_artifact"
+        },
+        {
+          "iteration": 1,
+          "phase": "revise_artifact"
+        },
+        {
+          "iteration": 2,
+          "phase": "revise_artifact"
+        },
+        {
+          "iteration": 2,
+          "phase": "revise_artifact"
+        },
+        {
+          "iteration": 3,
+          "phase": "finalize_artifact"
+        }
+      ],
+      "progress": [
+        [
+          {
+            "agent_role": "planner",
+            "depends_on": [],
+            "id": "task-fixture-revision-0",
+            "label": "Round 1 revision from planner",
+            "status": "pending"
+          },
+          {
+            "agent_role": "critic",
+            "depends_on": [
+              "task-fixture-revision-0"
+            ],
+            "id": "task-fixture-revision-1",
+            "label": "Round 1 revision from critic",
+            "status": "pending"
+          },
+          {
+            "agent_role": "planner",
+            "depends_on": [
+              "task-fixture-revision-1"
+            ],
+            "id": "task-fixture-revision-2",
+            "label": "Round 2 revision from planner",
+            "status": "pending"
+          },
+          {
+            "agent_role": "critic",
+            "depends_on": [
+              "task-fixture-revision-2"
+            ],
+            "id": "task-fixture-revision-3",
+            "label": "Round 2 revision from critic",
+            "status": "pending"
+          }
+        ]
+      ]
+    },
+    "resumed_run": {
+      "checkpoint_writes": 0,
+      "dispatch_count": 0,
+      "outcome": {
+        "answer": "agent-output-5-decider",
+        "completed_subtasks": [
+          {
+            "agent_role": "planner",
+            "depends_on": [],
+            "id": "task-fixture-revision-0",
+            "label": "Round 1 revision from planner",
+            "status": "completed"
+          },
+          {
+            "agent_role": "critic",
+            "depends_on": [
+              "task-fixture-revision-0"
+            ],
+            "id": "task-fixture-revision-1",
+            "label": "Round 1 revision from critic",
+            "status": "completed"
+          },
+          {
+            "agent_role": "planner",
+            "depends_on": [
+              "task-fixture-revision-1"
+            ],
+            "id": "task-fixture-revision-2",
+            "label": "Round 2 revision from planner",
+            "status": "completed"
+          },
+          {
+            "agent_role": "critic",
+            "depends_on": [
+              "task-fixture-revision-2"
+            ],
+            "id": "task-fixture-revision-3",
+            "label": "Round 2 revision from critic",
+            "status": "completed"
+          }
+        ],
+        "cost_usd": 0.0,
+        "public_result": {
+          "answer": "agent-output-5-decider",
+          "coordination": "ordered_shared_artifact_revisions",
+          "integrator": "decider",
+          "rounds": 2,
+          "runtime_id": "stigmergic",
+          "steps": 5,
+          "task_id": "task-fixture",
+          "workers": [
+            "planner",
+            "critic"
+          ]
+        },
+        "result": {
+          "answer": "agent-output-5-decider",
+          "coordination": "ordered_shared_artifact_revisions",
+          "integrator": "decider",
+          "rounds": 2,
+          "runtime_id": "stigmergic",
+          "steps": 5,
+          "workers": [
+            "planner",
+            "critic"
+          ]
+        },
+        "variant_id": "stigmergic"
+      }
+    },
+    "runtime_id": "stigmergic",
+    "settings": {
+      "integrator_role": "decider",
+      "rounds": 2,
+      "worker_roles": [
+        "planner",
+        "critic"
+      ]
+    }
+  }
+}
