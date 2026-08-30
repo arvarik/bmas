@@ -40,10 +40,13 @@ from core.event_delivery import ensure_system_terminal_event, ensure_terminal_ev
 from core.gateway import LeaseLostError
 from core.triage import MODEL_ROUTING, Complexity, TriageResult, TriageRouter
 from core.variants import (
+    RuntimeKey,
+    UnknownVariantError,
     VariantConfigurationError,
     VariantExecutionRequest,
     VariantOutcome,
     canonical_variant_id,
+    require_runtime,
     require_variant_class,
 )
 from file_utils import read_extracted_text
@@ -118,6 +121,7 @@ class Orchestrator:
         self.http = httpx.AsyncClient(timeout=120.0)
         self._task_lock_ids: dict[str, str] = {}
         self._lease_lost: dict[str, asyncio.Event] = {}
+        self._task_runtime_keys: dict[str, RuntimeKey] = {}
         self._active_gateways: dict[str, Any] = {}
         self._agent_circuits = EndpointCircuitBreaker(
             failure_threshold=CIRCUIT_BREAKER_FAILURE_THRESHOLD,
@@ -434,13 +438,37 @@ class Orchestrator:
         task_id: str,
         variant_id: str,
     ) -> dict[str, Any] | None:
-        """Load one checkpoint only when it belongs to the selected runtime."""
+        """Load one checkpoint only when it matches the stored runtime pair.
+
+        A checkpoint that names another runtime or another contract
+        version raises an error. A silent fresh start would discard
+        durable coordination state, so this boundary fails closed.
+        """
         metadata = await db.get_board_meta(task_id)
         checkpoint = metadata.get("variant_checkpoint")
         if not isinstance(checkpoint, dict):
             return None
         if checkpoint.get("variant_id") != variant_id:
-            return None
+            raise VariantConfigurationError(
+                f"The stored checkpoint of task {task_id} belongs to "
+                f"runtime {checkpoint.get('variant_id')!r}, not {variant_id!r}"
+            )
+        expected = self._task_runtime_keys.get(task_id)
+        recorded_version = str(
+            checkpoint.get("runtime_contract_version")
+            or checkpoint.get("contract_version")
+            or ""
+        )
+        if (
+            expected is not None
+            and recorded_version
+            and recorded_version != expected.runtime_contract_version
+        ):
+            raise VariantConfigurationError(
+                f"The stored checkpoint of task {task_id} carries contract "
+                f"version {recorded_version!r}; the stored runtime pair "
+                f"requires {expected.runtime_contract_version!r}"
+            )
         return checkpoint
 
     async def save_variant_checkpoint(
@@ -451,6 +479,11 @@ class Orchestrator:
     ) -> None:
         """Save one checkpoint and reject a stale runtime lease."""
         value = {**checkpoint, "variant_id": variant_id}
+        expected = self._task_runtime_keys.get(task_id)
+        if expected is not None:
+            value["runtime_contract_version"] = (
+                expected.runtime_contract_version
+            )
         lease_token = self._task_lock_ids.get(task_id)
         await db.patch_board_meta(
             task_id,
@@ -570,6 +603,9 @@ class Orchestrator:
                     user_task,
                     selected_variant,
                     {"effective_configuration": effective_configuration},
+                    runtime_contract_version=(
+                        generated_variant_class.descriptor.contract_version
+                    ),
                 )
 
             lease_claimed = await db.claim_task_lease(task_id, lock_id)
@@ -610,7 +646,19 @@ class Orchestrator:
                     "The requested variant does not match the stored task variant"
                 )
             selected_variant = stored_variant
-            variant_class = require_variant_class(selected_variant)
+            stored_contract_version = str(
+                row.get("runtime_contract_version") or ""
+            ).strip()
+            if not stored_contract_version:
+                raise VariantConfigurationError(
+                    f"Task {task_id} stores no runtime contract version"
+                )
+            runtime_key = RuntimeKey(selected_variant, stored_contract_version)
+            try:
+                variant_class = require_runtime(runtime_key)
+            except UnknownVariantError as exc:
+                raise VariantConfigurationError(str(exc)) from exc
+            self._task_runtime_keys[task_id] = runtime_key
 
             persisted_meta = await db.get_board_meta(task_id)
             stored_configuration = variant_class.configuration_from_metadata(
@@ -787,6 +835,7 @@ class Orchestrator:
                     await db.release_task_lease(task_id, lock_id)
             self._task_lock_ids.pop(task_id, None)
             self._lease_lost.pop(task_id, None)
+            self._task_runtime_keys.pop(task_id, None)
 
     async def rollup_task_cost(
         self,

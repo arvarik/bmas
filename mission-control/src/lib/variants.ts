@@ -77,6 +77,8 @@ export interface VariantUIAdapter {
   label: string;
   aliases: readonly string[];
   supportedContractVersions: readonly string[];
+  /** The explicit registered fallback view. Never a runtime adapter. */
+  generic?: boolean;
   nodeTypes: readonly NodeTypeSpec[];
   edgeSpecs: readonly EdgeSpec[];
   navigationPanels: readonly NavigationPanelSpec[];
@@ -796,25 +798,97 @@ export const STIGMERGIC_ADAPTER = workflowAdapter(
   STIGMERGIC_CONTRACT_VERSIONS,
 );
 
-const ADAPTERS = new Map<string, VariantUIAdapter>();
+/**
+ * The generic trace and artifact view. Mission Control renders this
+ * registered fallback when no adapter matches the exact runtime pair.
+ * The client never renders a task with an adapter for another contract
+ * version.
+ */
+export const GENERIC_ADAPTER: VariantUIAdapter = {
+  id: "generic",
+  label: "Generic view",
+  aliases: [],
+  supportedContractVersions: [],
+  generic: true,
+  nodeTypes: [],
+  edgeSpecs: [],
+  navigationPanels: [
+    { id: "overview", label: "Summary", segment: null, feature: "mission", featureType: "panel" },
+    { id: "logs", label: "Logs", segment: "logs", feature: "logs", featureType: "panel" },
+    { id: "files", label: "Files", segment: "files", feature: "artifacts", featureType: "panel" },
+  ],
+  graphViews: {},
+  decodeEvent(name, value, taskId) {
+    const payload = asRecord(value);
+    return payload ? { name, payload, taskId } : null;
+  },
+  projectEvent: projectClassicEvent,
+  projectHydration: projectClassicHydration,
+  progressLabel(state) {
+    return state.phase || "Running…";
+  },
+  ResultRenderer: ClassicResultRenderer,
+};
+
+// The adapter registry keys on the complete (runtime id, contract
+// version) pair. An alias binds to one complete pair and never moves
+// to another pair silently.
+const ADAPTERS_BY_ID = new Map<string, VariantUIAdapter>();
+const ADAPTERS_BY_PAIR = new Map<string, VariantUIAdapter>();
+const ALIAS_TO_PAIR = new Map<string, { id: string; contractVersion: string }>();
+const ADAPTER_ORDER: VariantUIAdapter[] = [];
+
+function pairKey(id: string, contractVersion: string): string {
+  return `${id} ${contractVersion}`;
+}
 
 export function registerAdapter(adapter: VariantUIAdapter): void {
-  ADAPTERS.set(adapter.id, adapter);
+  if (!ADAPTERS_BY_ID.has(adapter.id)) ADAPTER_ORDER.push(adapter);
+  ADAPTERS_BY_ID.set(adapter.id, adapter);
+  for (const contractVersion of adapter.supportedContractVersions) {
+    ADAPTERS_BY_PAIR.set(pairKey(adapter.id, contractVersion), adapter);
+  }
+  const [boundVersion] = adapter.supportedContractVersions;
+  if (boundVersion === undefined) return;
+  for (const alias of [adapter.id, ...adapter.aliases]) {
+    if (!ALIAS_TO_PAIR.has(alias)) {
+      ALIAS_TO_PAIR.set(alias, { id: adapter.id, contractVersion: boundVersion });
+    }
+  }
 }
 
 registerAdapter(CLASSIC_ADAPTER);
 registerAdapter(PATCHBOARD_ADAPTER);
 registerAdapter(STIGMERGIC_ADAPTER);
 
-export function getActiveAdapter(variantId: string | null | undefined): VariantUIAdapter | null {
+/** Resolve one identifier or alias to its bound complete pair. */
+export function resolveAdapterPair(
+  variantId: string | null | undefined,
+): { id: string; contractVersion: string } | null {
   if (!variantId) return null;
-  const direct = ADAPTERS.get(variantId);
-  if (direct) return direct;
-  return [...ADAPTERS.values()].find((adapter) => adapter.aliases.includes(variantId)) ?? null;
+  return ALIAS_TO_PAIR.get(variantId) ?? null;
+}
+
+export function getActiveAdapter(
+  variantId: string | null | undefined,
+  contractVersion?: string,
+): VariantUIAdapter | null {
+  if (!variantId) return null;
+  if (variantId === GENERIC_ADAPTER.id) return GENERIC_ADAPTER;
+  if (contractVersion !== undefined) {
+    const id = ADAPTERS_BY_ID.has(variantId)
+      ? variantId
+      : ALIAS_TO_PAIR.get(variantId)?.id;
+    if (!id) return null;
+    return ADAPTERS_BY_PAIR.get(pairKey(id, contractVersion)) ?? null;
+  }
+  const bound = ALIAS_TO_PAIR.get(variantId);
+  if (!bound) return null;
+  return ADAPTERS_BY_PAIR.get(pairKey(bound.id, bound.contractVersion)) ?? null;
 }
 
 export function listAdapters(): VariantUIAdapter[] {
-  return [...ADAPTERS.values()];
+  return [...ADAPTER_ORDER];
 }
 
 export function adapterSupportsCapability(
@@ -825,10 +899,25 @@ export function adapterSupportsCapability(
     && adapter.supportedContractVersions.includes(capability.contract_version);
 }
 
+/**
+ * Select the adapter for one exact runtime pair. An unknown pair uses
+ * the generic trace and artifact view; no path selects an adapter for
+ * another contract version.
+ */
+export function selectAdapterForCapability(
+  capability: VariantCapability,
+): VariantUIAdapter {
+  return getActiveAdapter(capability.id, capability.contract_version)
+    ?? GENERIC_ADAPTER;
+}
+
 export function visibleNavigationPanels(
   adapter: VariantUIAdapter,
   capability: VariantCapability,
 ): NavigationPanelSpec[] {
+  // The generic view stays complete for a runtime pair whose feature
+  // names this build does not know.
+  if (adapter.generic) return [...adapter.navigationPanels];
   return adapter.navigationPanels.filter((panel) => {
     const features = panel.featureType === "graph"
       ? capability.features.graphs

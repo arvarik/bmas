@@ -20,6 +20,7 @@ from core.triage import Complexity, TriageResult
 from core.variants import (
     _ALIASES,
     _VARIANTS,
+    RuntimeKey,
     VariantDescriptor,
     VariantExecutionRequest,
     VariantOutcome,
@@ -150,7 +151,7 @@ async def test_registered_variant_controls_runtime_execution():
     try:
         result = await host._run_variant("test_runtime", request)
     finally:
-        _VARIANTS.pop("test_runtime", None)
+        _VARIANTS.pop(RuntimeKey("test_runtime", "1"), None)
         _ALIASES.pop("test_runtime", None)
 
     assert result == {"task_id": "task-runtime", "variant": "test_runtime"}
@@ -563,13 +564,17 @@ async def test_nonclassic_fake_runs_through_submission_worker_and_detail(
                 },
             )
 
-    async def create_task(task_id, label, full_input, variant="classic"):
+    async def create_task(
+        task_id, label, full_input, variant="classic",
+        runtime_contract_version="1",
+    ):
         task_rows[task_id] = {
             "id": task_id,
             "label": label,
             "full_input": full_input,
             "status": "pending",
             "variant": variant,
+            "runtime_contract_version": runtime_contract_version,
             "complexity": None,
             "model_used": None,
         }
@@ -579,8 +584,11 @@ async def test_nonclassic_fake_runs_through_submission_worker_and_detail(
 
     async def create_task_with_meta(
         task_id, label, full_input, variant, metadata,
+        *, runtime_contract_version,
     ):
-        await create_task(task_id, label, full_input, variant)
+        await create_task(
+            task_id, label, full_input, variant, runtime_contract_version,
+        )
         await upsert_meta(task_id, metadata)
 
     async def get_task(task_id):
@@ -658,6 +666,7 @@ async def test_nonclassic_fake_runs_through_submission_worker_and_detail(
     )))
     host._task_lock_ids = {}
     host._lease_lost = {}
+    host._task_runtime_keys = {}
     host._active_gateways = {}
     host._set_phase = AsyncMock()
     host._safe_log = AsyncMock()
@@ -693,7 +702,7 @@ async def test_nonclassic_fake_runs_through_submission_worker_and_detail(
         submit._orchestrator = previous_orchestrator
         submit._scheduled_ids.clear()
         submit._scheduled_ids.update(previous_ids)
-        _VARIANTS.pop("lifecycle_fake", None)
+        _VARIANTS.pop(RuntimeKey("lifecycle_fake", "1"), None)
         _ALIASES.pop("lifecycle_fake", None)
 
     assert response["variant"] == "lifecycle_fake"
@@ -751,6 +760,7 @@ async def test_nonclassic_fake_restart_restores_variant_and_configuration(
         "full_input": "resume fake",
         "status": "running",
         "variant": "restart_fake",
+        "runtime_contract_version": "1",
     }]))
     monkeypatch.setattr(submit.db, "get_board_meta", AsyncMock(return_value={
         "effective_configuration": configuration,
@@ -769,7 +779,7 @@ async def test_nonclassic_fake_restart_restores_variant_and_configuration(
         submit._task_queue = previous_queue
         submit._scheduled_ids.clear()
         submit._scheduled_ids.update(previous_ids)
-        _VARIANTS.pop("restart_fake", None)
+        _VARIANTS.pop(RuntimeKey("restart_fake", "1"), None)
         _ALIASES.pop("restart_fake", None)
 
     assert item.variant_id == "restart_fake"
@@ -789,6 +799,7 @@ async def test_unknown_runtime_is_durably_blocked_during_recovery(monkeypatch):
         "full_input": "resume unavailable runtime",
         "status": "running",
         "variant": "runtime-not-installed",
+        "runtime_contract_version": "1",
     }]))
     monkeypatch.setattr(submit.db, "get_board_meta", AsyncMock(return_value={
         "effective_configuration": {
@@ -816,7 +827,7 @@ async def test_unknown_runtime_is_durably_blocked_during_recovery(monkeypatch):
 
     block_recovery.assert_awaited_once_with("task-runtime-unavailable")
     assert blocked_snapshot == {
-        "task-runtime-unavailable": "runtime-not-installed"
+        "task-runtime-unavailable": "runtime-not-installed:1"
     }
 
 
@@ -894,6 +905,7 @@ async def test_blocked_configuration_reenters_recovery_when_supported(
         "status": "running",
         "run_state": "blocked",
         "variant": "restored_runtime",
+        "runtime_contract_version": "1",
     }]))
     monkeypatch.setattr(submit.db, "get_resumable_tasks", AsyncMock(return_value=[]))
     monkeypatch.setattr(submit.db, "get_board_meta", AsyncMock(return_value={
@@ -917,7 +929,7 @@ async def test_blocked_configuration_reenters_recovery_when_supported(
         submit._task_queue = previous_queue
         submit._recovery_blocked.clear()
         submit._recovery_blocked.update(previous_blocked)
-        _VARIANTS.pop("restored_runtime", None)
+        _VARIANTS.pop(RuntimeKey("restored_runtime", "1"), None)
         _ALIASES.pop("restored_runtime", None)
 
     retry.assert_awaited_once_with("task-supported-config")

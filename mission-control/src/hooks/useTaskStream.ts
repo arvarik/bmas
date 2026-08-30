@@ -9,8 +9,7 @@ import {
   type VariantCapability,
 } from "@/lib/capabilities";
 import {
-  adapterSupportsCapability,
-  getActiveAdapter,
+  selectAdapterForCapability,
   type DecodedVariantEvent,
   type VariantHydrationBundle,
   type VariantUIAdapter,
@@ -458,31 +457,17 @@ export function resolveRuntime(
       adapter: null,
     };
   }
-  const adapter = getActiveAdapter(capability.id);
-  if (!adapter) {
-    return {
-      runtime: runtimeError(
-        "unsupported-variant",
-        `Mission Control has no interface adapter for “${capability.id}”.`,
-        requestedVariant,
-      ),
-      adapter: null,
-    };
-  }
-  if (!adapterSupportsCapability(adapter, capability)) {
-    return {
-      runtime: runtimeError(
-        "unsupported-contract",
-        `Mission Control does not support ${capability.label} contract version ${capability.contract_version}.`,
-        requestedVariant,
-      ),
-      adapter: null,
-    };
-  }
+  // Adapter selection uses the exact runtime pair. A pair without a
+  // registered adapter renders through the generic trace and artifact
+  // view; the client never renders a task with an adapter for another
+  // contract version.
+  const adapter = selectAdapterForCapability(capability);
   return {
     runtime: {
       status: "ready",
-      message: "",
+      message: adapter.generic
+        ? `Mission Control renders “${capability.label}” with the generic trace and artifact view.`
+        : "",
       requestedVariant,
       adapterId: adapter.id,
       capability,

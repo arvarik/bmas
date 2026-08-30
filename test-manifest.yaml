@@ -133,6 +133,56 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  # ── Foundation routing contracts ─────────────────────────────────
+  - id: daemon.runtime-routing
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove that the runtime registry resolves exact runtime pairs
+      only: alias binding, unknown pairs, checkpoint readers,
+      capability negotiation, and admission availability.
+    argv: ["python3", "-m", "pytest", "tests/test_runtime_routing.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.run-admission-recovery
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove run identity, immutable run admissions, the persisted
+      runtime pair before queue admission, and fail-closed recovery.
+    argv: ["python3", "-m", "pytest", "tests/test_run_identity.py", "tests/test_runtime_admission.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.terminal-outcome
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove one host-created terminal outcome per run and the complete
+      registered reason mappings.
+    argv: ["python3", "-m", "pytest", "tests/test_runtime_outcome.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.post-terminal-invalidation
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove that post-terminal invalidation changes derived projections
+      only and never rewrites an immutable terminal outcome.
+    argv: ["python3", "-m", "pytest", "tests/test_post_terminal_invalidation.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
   # ── Agent ────────────────────────────────────────────────────────
   - id: agent.tests
     state: active_required
@@ -348,6 +398,10 @@ profiles:
         - daemon.lint
         - daemon.typecheck
         - daemon.tests
+        - daemon.runtime-routing
+        - daemon.run-admission-recovery
+        - daemon.terminal-outcome
+        - daemon.post-terminal-invalidation
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

@@ -78,11 +78,13 @@ async def test_task_and_recovery_metadata_are_created_atomically(lifecycle_db):
         "atomic",
         "classic",
         {"effective_configuration": {"max_rounds": 4}},
+        runtime_contract_version="1",
     )
 
     task = await db.get_task("task-atomic")
     assert task is not None
     assert task["variant"] == "classic"
+    assert task["runtime_contract_version"] == "1"
     assert await db.get_board_meta("task-atomic") == {
         "effective_configuration": {"max_rounds": 4}
     }
@@ -94,6 +96,7 @@ async def test_task_and_recovery_metadata_are_created_atomically(lifecycle_db):
             "rollback",
             "classic",
             {"invalid": object()},
+            runtime_contract_version="1",
         )
     assert await db.get_task("task-rollback") is None
 

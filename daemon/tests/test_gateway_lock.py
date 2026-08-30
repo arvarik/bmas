@@ -156,12 +156,19 @@ class TestVariantRegistry:
             @classmethod
             async def run(cls, host, request): ...
 
-        original_count = len(available_variants())
-        register_variant("_test_fake_", FakeVariant)
+        from core.variants import _ALIASES, _VARIANTS
 
-        assert get_variant_class("_test_fake_") is FakeVariant
-        assert "_test_fake_" in available_variants()
-        assert len(available_variants()) == original_count + 1
+        original_count = len(available_variants())
+        key = register_variant(
+            "_test_fake_", FakeVariant, availability="test_only",
+        )
+        try:
+            assert get_variant_class("_test_fake_") is FakeVariant
+            assert "_test_fake_" in available_variants()
+            assert len(available_variants()) == original_count + 1
+        finally:
+            _VARIANTS.pop(key, None)
+            _ALIASES.pop("_test_fake_", None)
 
     def test_register_non_class_raises_type_error(self):
         """Registering a non-class raises TypeError."""
@@ -202,12 +209,21 @@ class TestVariantRegistry:
             @classmethod
             async def run(cls, host, request): ...
 
-        register_variant("_test_dup_v1_", V1)
+        from core.variants import _ALIASES, _VARIANTS
 
-        with caplog.at_level(logging.WARNING, logger="bmas.variants"):
-            register_variant("_test_dup_v1_", V2)
+        key = register_variant(
+            "_test_dup_v1_", V1, availability="test_only",
+        )
+        try:
+            with caplog.at_level(logging.WARNING, logger="bmas.variants"):
+                register_variant(
+                    "_test_dup_v1_", V2, availability="test_only",
+                )
 
-        assert any("re-register" in msg.lower() for msg in caplog.messages)
+            assert any("re-register" in msg.lower() for msg in caplog.messages)
+        finally:
+            _VARIANTS.pop(key, None)
+            _ALIASES.pop("_test_dup_v1_", None)
 
     def test_get_unknown_variant_returns_none(self):
         """Looking up an unregistered variant returns None."""
