@@ -1,0 +1,24 @@
+{
+  "schema_id": "bmas.reference_scorer_input",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "scorer": "exact_match",
+  "cases": [
+    {
+      "case_id": "greeting",
+      "expected": "hello board",
+      "actual": "hello board"
+    },
+    {
+      "case_id": "empty-both",
+      "expected": "",
+      "actual": ""
+    },
+    {
+      "case_id": "multiline",
+      "expected": "a\nb\nc",
+      "actual": "a\nb\nc"
+    }
+  ]
+}

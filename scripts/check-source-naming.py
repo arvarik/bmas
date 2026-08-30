@@ -54,6 +54,7 @@ SCAN_ROOTS = [
     "daemon/src",
     "daemon/tests",
     "agent",
+    "conformance",
     "eval",
     "scripts",
     "schemas",

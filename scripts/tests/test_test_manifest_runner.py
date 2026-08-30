@@ -821,6 +821,18 @@ def test_repository_reserved_learning_entries_have_no_command() -> None:
 # ── Schema metadata ────────────────────────────────────────────────
 
 
+def test_runner_result_fails_the_scorer_result_schema(mixed_record: dict) -> None:
+    import jsonschema
+
+    scorer_schema = manifestlib.load_json_text(
+        (REPO_ROOT / "conformance" / "reference_scorer" / "result.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert scorer_schema["schema_id"] == "bmas.reference_scorer_result"
+    assert not jsonschema.Draft202012Validator(scorer_schema).is_valid(mixed_record)
+
+
 def test_result_schema_identifier_and_contract_version() -> None:
     schema = manifestlib.load_schema(REPO_ROOT, manifestlib.RESULT_SCHEMA_PATH)
     assert schema["schema_id"] == "bmas.test_manifest_result"

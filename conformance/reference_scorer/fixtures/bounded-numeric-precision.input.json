@@ -1,0 +1,33 @@
+{
+  "schema_id": "bmas.reference_scorer_input",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "scorer": "bounded_numeric",
+  "cases": [
+    {
+      "case_id": "decimal-tenths",
+      "expected": 0.3,
+      "actual": 0.1,
+      "tolerance": 0.2
+    },
+    {
+      "case_id": "banker-rounding",
+      "expected": 2.675,
+      "actual": 2.665,
+      "tolerance": 0.02
+    },
+    {
+      "case_id": "tiny-values",
+      "expected": 1e-06,
+      "actual": 5e-07,
+      "tolerance": 1e-06
+    },
+    {
+      "case_id": "large-precise",
+      "expected": 123456789.123456,
+      "actual": 123456789.123457,
+      "tolerance": 2e-06
+    }
+  ]
+}

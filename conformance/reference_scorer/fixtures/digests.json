@@ -1,0 +1,42 @@
+{
+  "fixtures": {
+    "bounded-numeric-clamped": {
+      "expected_sha256": "bc8da03c16171c67697be187ff3b34110dc6d708b79cb1bb590d40d70fd8eb18",
+      "input_sha256": "1a1d5daf0de7634488c06326c21cc9f55b1c988e6b1ca35246a821b383420d8e",
+      "normalized_input_sha256": "40da202b1121d9bec96eafb52cf525b3ad154576ebdeae51b183b732ce8dd630"
+    },
+    "bounded-numeric-exact": {
+      "expected_sha256": "75da3b260bbcb99820bf6ab206a1056dd17d5ab4f03e837b4becabb5174a9a59",
+      "input_sha256": "c394247c58cec1c0da0e0050ad1fe8f2860184b2206fca18d3395f040606ba37",
+      "normalized_input_sha256": "6fb720d563e8b08fa0b8f015875f9eff40e7c8d676590b158bae0c32d3dd924c"
+    },
+    "bounded-numeric-partial": {
+      "expected_sha256": "fea436127e75afcd589b6417f187df6c2b68e02a961f058335973fc62535815f",
+      "input_sha256": "637a42fd7abfb91bc61f7d3ce0f99e92d93372e7e4af3733b309d931ce2b2420",
+      "normalized_input_sha256": "7428d7b529e0231dd034c9cc3c0ad68fa7791d68f6399ed738225688f1ea6798"
+    },
+    "bounded-numeric-precision": {
+      "expected_sha256": "6efe50dcc30201dfcd105f67879d9905f718b5e278539a1ed6d9f5501b3993ca",
+      "input_sha256": "a20116dbd4b5657ad84ed9e55de34eb40d2f461d05f619d8c215c5ee2e36ab6a",
+      "normalized_input_sha256": "6390ee88425b02236d4545b4f9aedb06a868d555192abe06a2ce0848baf86993"
+    },
+    "exact-match-all-matched": {
+      "expected_sha256": "e8d84f2b6d4441cb50cf06de5fda3c270700df8e84f95e1a7751a32e7bbacd58",
+      "input_sha256": "f8b12c2fb0b32725e9edb09a47e91e8e34dd30de971a94e178144161a2253aae",
+      "normalized_input_sha256": "9b3fdc151955c4bdaeb8a308e24587314778022b4bd9097cda36fb066241a00c"
+    },
+    "exact-match-mixed": {
+      "expected_sha256": "28c74db77201c2a48a504f36c927f9d11b720696f895ae4502aa3c0e98e1ee7e",
+      "input_sha256": "28b41444cdd2dbccc70afa718d669d463491bca1864ab13b32f43864b065bab8",
+      "normalized_input_sha256": "720002bd5cad3b1e0fa61df689da2d632b9752a65807da0e5c14a32a968105af"
+    },
+    "exact-match-unicode-forms": {
+      "expected_sha256": "497874c068e569bc169253a83ea78b083b65c7b5875916e5dafd0771a8ed5af5",
+      "input_sha256": "f758c605ab7b28f4f9e93c492a402ba2d32bbeb9d087d6658e7f0ce15d7d68de",
+      "normalized_input_sha256": "a58601ad7f5ff54429d0f1f2ee5a7752418ad073221fbfae0b3676dfaddc17cb"
+    }
+  },
+  "metadata": {
+    "contract_version": "1.0.0"
+  }
+}

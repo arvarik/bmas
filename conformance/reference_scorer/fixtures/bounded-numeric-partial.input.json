@@ -1,0 +1,33 @@
+{
+  "schema_id": "bmas.reference_scorer_input",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "scorer": "bounded_numeric",
+  "cases": [
+    {
+      "case_id": "half",
+      "expected": 10,
+      "actual": 12.5,
+      "tolerance": 5
+    },
+    {
+      "case_id": "one-third-away",
+      "expected": 1,
+      "actual": 2,
+      "tolerance": 3
+    },
+    {
+      "case_id": "two-thirds-away",
+      "expected": 0.1,
+      "actual": 0.3,
+      "tolerance": 0.3
+    },
+    {
+      "case_id": "quarter",
+      "expected": -4,
+      "actual": -3.25,
+      "tolerance": 1
+    }
+  ]
+}

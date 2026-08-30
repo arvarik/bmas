@@ -91,6 +91,19 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  # ── Conformance ──────────────────────────────────────────────────
+  - id: conformance.reference-scorer
+    state: active_required
+    owner: conformance
+    purpose: >-
+      Prove the isolated deterministic reference scorer against its
+      frozen fixture bytes, digests, isolation rules, and limits.
+    argv: ["python3", "-m", "pytest", "conformance/reference_scorer/tests/", "-q", "--tb=short"]
+    working_directory: "."
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
   # ── Daemon ───────────────────────────────────────────────────────
   - id: daemon.lint
     state: active_required
@@ -331,6 +344,7 @@ profiles:
         - repo.docs-links
         - repo.compose-render
         - scripts.tests
+        - conformance.reference-scorer
         - daemon.lint
         - daemon.typecheck
         - daemon.tests
