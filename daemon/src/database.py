@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -1216,6 +1216,28 @@ async def _migrate_to_v12(db: aiosqlite.Connection) -> None:
     logger.info("Migration v12 applied: board entry sources")
 
 
+async def _migrate_add_runtime_pair(db: aiosqlite.Connection) -> None:
+    """Add the stored runtime contract version to every task row.
+
+    Every task now persists its exact runtime pair before queue
+    admission. The backfill stamps the historical rows with contract
+    version "1", because every runtime registered before this
+    migration declares that contract version.
+    """
+    cursor = await db.execute("PRAGMA table_info(tasks)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    if "runtime_contract_version" not in columns:
+        await db.execute(
+            "ALTER TABLE tasks ADD COLUMN runtime_contract_version TEXT"
+        )
+    await db.execute(
+        "UPDATE tasks SET runtime_contract_version = '1' "
+        "WHERE runtime_contract_version IS NULL"
+    )
+    await db.commit()
+    logger.info("Migration 13 applied: stored runtime pair on tasks")
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -1230,6 +1252,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         10: _migrate_to_v10,
         11: _migrate_to_v11,
         12: _migrate_to_v12,
+        13: _migrate_add_runtime_pair,
     }
     fn = migrations.get(version)
     if fn is None:
@@ -1353,18 +1376,20 @@ async def create_task(
     label: str,
     full_input: str,
     variant: str = "classic",
+    runtime_contract_version: str = "1",
 ) -> None:
     """Create a new task record with status='pending'.
 
-    Always writes the active variant at creation time so the row never
-    sits at the old schema default between INSERT and the
-    triage update_task_status call.
+    Always writes the active variant and its exact contract version at
+    creation time so the row never sits at the old schema default
+    between INSERT and the triage update_task_status call.
     """
     async with _connect() as db:
         await db.execute(
-            "INSERT INTO tasks (id, label, full_input, status, variant)"
-            " VALUES (?, ?, ?, 'pending', ?)",
-            (task_id, label, full_input, variant),
+            "INSERT INTO tasks "
+            "(id, label, full_input, status, variant, runtime_contract_version)"
+            " VALUES (?, ?, ?, 'pending', ?, ?)",
+            (task_id, label, full_input, variant, runtime_contract_version),
         )
         await db.commit()
 
@@ -1376,17 +1401,30 @@ async def create_task_with_meta(
     variant: str,
     metadata: dict,
     *,
+    runtime_contract_version: str,
     run_state: str = "queued",
 ) -> None:
-    """Create a task and its recovery metadata in one transaction."""
+    """Create a task and its recovery metadata in one transaction.
+
+    The row persists the exact runtime pair before the task can enter
+    the queue, so every later boundary reads the stored pair.
+    """
     async with _connect() as connection:
         await connection.execute("BEGIN IMMEDIATE")
         try:
             await connection.execute(
                 "INSERT INTO tasks "
-                "(id, label, full_input, status, variant, run_state) "
-                "VALUES (?, ?, ?, 'pending', ?, ?)",
-                (task_id, label, full_input, variant, run_state),
+                "(id, label, full_input, status, variant, "
+                "runtime_contract_version, run_state) "
+                "VALUES (?, ?, ?, 'pending', ?, ?, ?)",
+                (
+                    task_id,
+                    label,
+                    full_input,
+                    variant,
+                    runtime_contract_version,
+                    run_state,
+                ),
             )
             await connection.execute(
                 "INSERT INTO board_meta (task_id, data, updated_at) "

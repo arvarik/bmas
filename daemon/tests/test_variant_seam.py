@@ -27,13 +27,14 @@ def preserve_variant_registry():
     """Restore the complete runtime registry after each test."""
     variants = dict(_VARIANTS)
     aliases = dict(_ALIASES)
-    builtins_loaded = variant_registry._BUILTINS_LOADED
+    availability = dict(variant_registry._AVAILABILITY)
     yield
     _VARIANTS.clear()
     _VARIANTS.update(variants)
     _ALIASES.clear()
     _ALIASES.update(aliases)
-    variant_registry._BUILTINS_LOADED = builtins_loaded
+    variant_registry._AVAILABILITY.clear()
+    variant_registry._AVAILABILITY.update(availability)
 
 
 class RuntimeStub:

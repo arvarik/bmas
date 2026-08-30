@@ -473,11 +473,6 @@
       {
         "count": 1,
         "kind": "identifier",
-        "token": "test_schema_version_is_12 (numeric-suffix)"
-      },
-      {
-        "count": 1,
-        "kind": "identifier",
         "token": "test_v1_tables_preserved (version-token)"
       },
       {

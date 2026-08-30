@@ -627,6 +627,7 @@ sqlite_tables:
       - { name: terminal_kind, owner: daemon.task-lifecycle, derived: false }
       - { name: failure_category, owner: daemon.task-lifecycle, derived: false }
       - { name: cancel_requested_at, owner: daemon.task-lifecycle, derived: false }
+      - { name: runtime_contract_version, owner: daemon.task-lifecycle, derived: false }
   - table: turns
     authority: daemon.task-lifecycle
     purpose: "One row per dispatched agent turn."

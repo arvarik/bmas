@@ -189,10 +189,11 @@ async def test_blocked_recovery_rotates_past_an_incompatible_full_page(
         def configuration_from_metadata(cls, metadata):
             return metadata["effective_configuration"]
 
-    def require_runtime(variant_id):
-        if variant_id == "compatible-runtime":
-            return CompatibleRuntime
-        raise submit.UnknownVariantError(variant_id)
+    def resolve_stored(task, *, resuming=False):
+        if task.get("variant") == "compatible-runtime":
+            key = submit.RuntimeKey("compatible-runtime", "1")
+            return key, CompatibleRuntime
+        raise submit.UnknownVariantError(str(task.get("variant")))
 
     retry = AsyncMock(return_value=True)
     monkeypatch.setattr(submit.db, "get_blocked_tasks", load_blocked)
@@ -202,7 +203,7 @@ async def test_blocked_recovery_rotates_past_an_incompatible_full_page(
         AsyncMock(return_value={"effective_configuration": {"version": "1"}}),
     )
     monkeypatch.setattr(submit.db, "retry_blocked_task", retry)
-    monkeypatch.setattr(submit, "require_variant_class", require_runtime)
+    monkeypatch.setattr(submit, "resolve_stored_runtime", resolve_stored)
 
     await submit._retry_compatible_blocked_tasks()
     await submit._retry_compatible_blocked_tasks()
@@ -246,7 +247,13 @@ async def test_operator_resume_enqueues_one_compatible_blocked_task(monkeypatch)
     )
     retry = AsyncMock(return_value=True)
     monkeypatch.setattr(submit.db, "retry_blocked_task", retry)
-    monkeypatch.setattr(submit, "require_variant_class", lambda _variant: CompatibleRuntime)
+    monkeypatch.setattr(
+        submit,
+        "resolve_stored_runtime",
+        lambda task, *, resuming=False: (
+            submit.RuntimeKey("classic", "1"), CompatibleRuntime,
+        ),
+    )
 
     assert await submit.resume_blocked_task("task-blocked") is True
 
@@ -285,6 +292,8 @@ async def test_recovery_restores_persisted_task_overrides(monkeypatch):
         "id": "task-resume",
         "full_input": "question",
         "status": "running",
+        "variant": "classic",
+        "runtime_contract_version": "1",
     }]))
     monkeypatch.setattr(submit.db, "get_blocked_tasks", AsyncMock(return_value=[]))
     monkeypatch.setattr(submit.db, "get_board_meta", AsyncMock(return_value={

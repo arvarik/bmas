@@ -70,14 +70,17 @@ describe("task stream contract", () => {
     expect(resolved.runtime.message).toContain("future-board");
   });
 
-  it("returns an explicit state for an unsupported adapter contract", () => {
+  it("renders an unsupported adapter contract with the generic view", () => {
     const unsupported = {
       ...document,
       variants: [{ ...document.variants[0], contract_version: "2" }],
     };
     const resolved = resolveRuntime(unsupported, "classic");
-    expect(resolved.adapter).toBeNull();
-    expect(resolved.runtime.status).toBe("unsupported-contract");
+    expect(resolved.adapter?.id).toBe("generic");
+    expect(resolved.adapter?.generic).toBe(true);
+    expect(resolved.runtime.status).toBe("ready");
+    expect(resolved.runtime.adapterId).toBe("generic");
+    expect(resolved.runtime.message).toContain("generic trace and artifact view");
   });
 
   it("returns clean stream data when the task ID changes", () => {

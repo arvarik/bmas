@@ -240,7 +240,9 @@ class TestAtomicTaskSubmission:
         previous_ids = set(submit._scheduled_ids)
         submit._task_queue = asyncio.Queue(maxsize=5)
         submit._scheduled_ids.clear()
-        monkeypatch.setattr(submit, "require_variant_class", lambda _name: Runtime)
+        monkeypatch.setattr(
+            submit, "require_admissible_runtime", lambda _key: Runtime,
+        )
 
         test_app = FastAPI()
         test_app.include_router(submit.router)

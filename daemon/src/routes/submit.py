@@ -29,10 +29,15 @@ from config import (
 from core.gateway import LeaseLostError
 from core.orchestrator import LeaseBusyError, Orchestrator
 from core.variants import (
+    CoordinationVariant,
+    MissingCheckpointReaderError,
+    RuntimeKey,
     UnknownVariantError,
     VariantConfigurationError,
     canonical_variant_id,
-    require_variant_class,
+    require_admissible_runtime,
+    require_runtime,
+    resolve_runtime_key,
 )
 from routes.files import FileUploadError, store_task_file
 
@@ -139,6 +144,7 @@ class TaskWorkItem:
     user_task: str
     overrides: dict | None = None
     variant_id: str = "classic"
+    runtime_contract_version: str = "1"
     effective_configuration: dict[str, Any] | None = None
     resume: bool = False
 
@@ -160,6 +166,33 @@ def _remember_recovery_block(task_id: str, variant_id: str) -> None:
     _recovery_blocked[task_id] = variant_id
     while len(_recovery_blocked) > 1000:
         _recovery_blocked.pop(next(iter(_recovery_blocked)))
+
+
+def resolve_stored_runtime(
+    task: dict[str, Any],
+    *,
+    resuming: bool = False,
+) -> tuple[RuntimeKey, type[CoordinationVariant]]:
+    """Resolve the exact runtime pair that one persisted task stores.
+
+    Recovery uses the stored pair only. A task row without a complete
+    pair, an unknown runtime, an unregistered contract version, or a
+    resume without a checkpoint reader raises ``UnknownVariantError``.
+    No recovery path falls back to another runtime or contract version.
+    """
+    stored_id = str(task.get("variant") or "").strip()
+    stored_version = str(task.get("runtime_contract_version") or "").strip()
+    if not stored_id or not stored_version:
+        raise UnknownVariantError(
+            "The stored task does not name a complete runtime pair"
+        )
+    key = RuntimeKey(stored_id, stored_version)
+    variant_class = require_runtime(key)
+    if resuming and not variant_class.descriptor.supports_recovery:
+        raise MissingCheckpointReaderError(
+            f"Runtime pair {key} has no checkpoint reader"
+        )
+    return key, variant_class
 
 
 async def _retry_compatible_blocked_tasks() -> None:
@@ -186,7 +219,7 @@ async def _retry_compatible_blocked_tasks() -> None:
     for task in tasks:
         task_id = str(task["id"])
         try:
-            variant_class = require_variant_class(str(task.get("variant") or COORDINATION_VARIANT))
+            _, variant_class = resolve_stored_runtime(dict(task))
             board_meta = await db.get_board_meta(task_id)
             configuration = variant_class.configuration_from_metadata(board_meta)
             if configuration is None:
@@ -213,7 +246,10 @@ async def resume_blocked_task(task_id: str) -> bool:
     if _task_queue.full():
         raise asyncio.QueueFull
 
-    variant_class = require_variant_class(str(task.get("variant") or COORDINATION_VARIANT))
+    resuming = task.get("status") == "running"
+    runtime_key, variant_class = resolve_stored_runtime(
+        dict(task), resuming=resuming,
+    )
     board_meta = await db.get_board_meta(task_id)
     configuration = variant_class.configuration_from_metadata(board_meta)
     if configuration is None:
@@ -230,9 +266,10 @@ async def resume_blocked_task(task_id: str) -> bool:
                 task_id=task_id,
                 user_task=str(task.get("full_input") or task.get("label") or ""),
                 overrides=(persisted_overrides if isinstance(persisted_overrides, dict) else None),
-                variant_id=canonical_variant_id(str(task.get("variant") or COORDINATION_VARIANT)),
+                variant_id=runtime_key.runtime_id,
+                runtime_contract_version=runtime_key.runtime_contract_version,
                 effective_configuration=configuration,
-                resume=task.get("status") == "running",
+                resume=resuming,
             )
         )
     except Exception:
@@ -346,15 +383,19 @@ async def _recover_unfinished_tasks() -> None:
                 board_meta = await db.get_board_meta(task_id)
                 persisted_overrides = board_meta.get("submission_overrides")
                 persisted_configuration = board_meta.get("effective_configuration")
+                resuming = task.get("status") == "running"
                 try:
-                    variant_id = canonical_variant_id(
-                        str(task.get("variant") or COORDINATION_VARIANT)
+                    runtime_key, _ = resolve_stored_runtime(
+                        dict(task), resuming=resuming,
                     )
                 except UnknownVariantError:
-                    unavailable = str(task.get("variant") or "")
+                    unavailable = "{}:{}".format(
+                        str(task.get("variant") or ""),
+                        str(task.get("runtime_contract_version") or ""),
+                    )
                     if _recovery_blocked.get(task_id) != unavailable:
                         logger.error(
-                            "Recovery rejected unavailable variant for task %s: %s",
+                            "Recovery rejected the stored runtime pair for task %s: %s",
                             task_id,
                             unavailable,
                         )
@@ -373,13 +414,14 @@ async def _recover_unfinished_tasks() -> None:
                         overrides=(
                             persisted_overrides if isinstance(persisted_overrides, dict) else None
                         ),
-                        variant_id=variant_id,
+                        variant_id=runtime_key.runtime_id,
+                        runtime_contract_version=runtime_key.runtime_contract_version,
                         effective_configuration=(
                             persisted_configuration
                             if isinstance(persisted_configuration, dict)
                             else None
                         ),
-                        resume=task.get("status") == "running",
+                        resume=resuming,
                     )
                 )
                 _scheduled_ids.add(task_id)
@@ -531,8 +573,9 @@ async def _admit_task(
         )
 
     try:
-        variant_id = canonical_variant_id(req.variant or COORDINATION_VARIANT)
-        variant_class = require_variant_class(variant_id)
+        runtime_key = resolve_runtime_key(req.variant or COORDINATION_VARIANT)
+        variant_class = require_admissible_runtime(runtime_key)
+        variant_id = runtime_key.runtime_id
     except UnknownVariantError as exc:
         raise HTTPException(
             status_code=422,
@@ -631,6 +674,7 @@ async def _admit_task(
         req.task,
         variant_id,
         submission_meta,
+        runtime_contract_version=runtime_key.runtime_contract_version,
         **({"run_state": "staging"} if initial_uploads else {}),
     )
 
@@ -667,6 +711,7 @@ async def _admit_task(
                 user_task=req.task,
                 overrides=task_overrides,
                 variant_id=variant_id,
+                runtime_contract_version=runtime_key.runtime_contract_version,
                 effective_configuration=effective_configuration,
             )
         )
