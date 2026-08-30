@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema_id": "bmas.reference_scorer_result",
+  "title": "Reference scorer result record",
+  "description": "The pure output contract of the Foundation reference scorer. The record validates scorer output bytes only. It is not the test-manifest runner-result contract, and neither schema can validate the other.",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_id",
+    "metadata",
+    "scorer",
+    "input_sha256",
+    "case_results",
+    "aggregate"
+  ],
+  "properties": {
+    "schema_id": { "const": "bmas.reference_scorer_result" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version"],
+      "properties": {
+        "contract_version": { "const": "1.0.0" }
+      }
+    },
+    "scorer": { "enum": ["exact_match", "bounded_numeric"] },
+    "input_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "case_results": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["case_id", "score"],
+        "properties": {
+          "case_id": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "score": { "$ref": "#/$defs/unitScore" }
+        }
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_count", "score_sum", "mean_score"],
+      "properties": {
+        "case_count": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "score_sum": { "type": "string", "pattern": "^[0-9]{1,5}\\.[0-9]{6}$" },
+        "mean_score": { "$ref": "#/$defs/unitScore" }
+      }
+    }
+  },
+  "$defs": {
+    "unitScore": {
+      "type": "string",
+      "pattern": "^(0\\.[0-9]{6}|1\\.000000)$"
+    }
+  }
+}

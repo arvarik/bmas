@@ -1,0 +1,33 @@
+{
+  "schema_id": "bmas.reference_scorer_input",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "scorer": "bounded_numeric",
+  "cases": [
+    {
+      "case_id": "just-outside",
+      "expected": 5,
+      "actual": 6.01,
+      "tolerance": 1
+    },
+    {
+      "case_id": "far-outside",
+      "expected": 0,
+      "actual": 1000000,
+      "tolerance": 0.001
+    },
+    {
+      "case_id": "huge-magnitudes",
+      "expected": 1e+40,
+      "actual": -1e+40,
+      "tolerance": 1e-10
+    },
+    {
+      "case_id": "rounds-up-to-one",
+      "expected": 1,
+      "actual": 1.0000000001,
+      "tolerance": 1
+    }
+  ]
+}

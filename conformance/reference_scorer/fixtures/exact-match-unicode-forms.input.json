@@ -1,0 +1,24 @@
+{
+  "schema_id": "bmas.reference_scorer_input",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "scorer": "exact_match",
+  "cases": [
+    {
+      "case_id": "composed-matched",
+      "expected": "café",
+      "actual": "café"
+    },
+    {
+      "case_id": "decomposed-differs",
+      "expected": "café",
+      "actual": "café"
+    },
+    {
+      "case_id": "emoji-matched",
+      "expected": "🧠 board",
+      "actual": "🧠 board"
+    }
+  ]
+}

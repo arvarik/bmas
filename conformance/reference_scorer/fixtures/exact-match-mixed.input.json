@@ -1,0 +1,34 @@
+{
+  "schema_id": "bmas.reference_scorer_input",
+  "metadata": {
+    "contract_version": "1.0.0"
+  },
+  "scorer": "exact_match",
+  "cases": [
+    {
+      "case_id": "matched",
+      "expected": "42",
+      "actual": "42"
+    },
+    {
+      "case_id": "unmatched",
+      "expected": "alpha",
+      "actual": "beta"
+    },
+    {
+      "case_id": "empty-actual",
+      "expected": "present",
+      "actual": ""
+    },
+    {
+      "case_id": "case-sensitive",
+      "expected": "Alpha",
+      "actual": "alpha"
+    },
+    {
+      "case_id": "whitespace-strict",
+      "expected": "a b",
+      "actual": "a  b"
+    }
+  ]
+}
