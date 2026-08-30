@@ -1,0 +1,361 @@
+# Authoritative repository test manifest.
+#
+# This file is the single test authority for the repository.
+# Every check declares one lifecycle state, one exact command as an
+# argument array, one owner, and one timeout.
+#
+# Lifecycle states:
+#   reserved         — a stable future identifier without a command.
+#   active_optional  — an executable check outside required profiles.
+#   active_required  — an executable release check in the complete profile.
+#   retired          — a preserved historical identifier.
+#
+# The local runner and continuous integration execute the same
+# active_required set. Neither runner executes a reserved entry.
+# The contract version below is explicit metadata; source identifiers
+# in this repository stay free of version tokens.
+
+schema_id: bmas.test_manifest
+metadata:
+  contract_version: "1.0.0"
+
+groups:
+  # ── Repository contracts ─────────────────────────────────────────
+  - id: manifest.validate
+    state: active_required
+    owner: repository
+    purpose: >-
+      Validate this manifest against its schema and prove that the local
+      complete profile and continuous integration resolve the same
+      required group identifiers.
+    argv: ["python3", "scripts/validate-test-manifest.py"]
+    working_directory: "."
+    timeout_seconds: 300
+    tools: [python]
+
+  - id: repo.source-naming
+    state: active_required
+    owner: repository
+    purpose: >-
+      Reject version tokens and numeric version suffixes in
+      implementation source identifiers, comments, and file names.
+      Contract versions stay in explicit metadata values only.
+    argv: ["python3", "scripts/check-source-naming.py"]
+    working_directory: "."
+    timeout_seconds: 300
+    tools: [python]
+
+  - id: repo.config-examples
+    state: active_required
+    owner: repository
+    purpose: Validate every published configuration example.
+    argv: ["python3", "scripts/validate_configs.py"]
+    working_directory: "."
+    timeout_seconds: 300
+    tools: [python]
+
+  - id: repo.config-schema
+    state: active_required
+    owner: repository
+    purpose: Verify that the generated configuration schema is current.
+    argv: ["python3", "scripts/generate_config_schema.py", "--check"]
+    working_directory: "."
+    timeout_seconds: 300
+    tools: [python]
+
+  - id: repo.docs-links
+    state: active_required
+    owner: repository
+    purpose: Check every documentation link target.
+    argv: ["python3", "scripts/validate_docs.py"]
+    working_directory: "."
+    timeout_seconds: 300
+    tools: [python]
+
+  - id: repo.compose-render
+    state: active_required
+    owner: repository
+    purpose: Render the Docker Compose configuration with the example environment.
+    argv: ["docker", "compose", "--env-file", ".env.example", "config", "--quiet"]
+    working_directory: "."
+    timeout_seconds: 300
+    tools: [docker]
+
+  - id: scripts.tests
+    state: active_required
+    owner: repository
+    purpose: Test the manifest runner, validators, and the naming check.
+    argv: ["python3", "-m", "pytest", "scripts/tests/", "-q", "--tb=short"]
+    working_directory: "."
+    timeout_seconds: 1200
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  # ── Daemon ───────────────────────────────────────────────────────
+  - id: daemon.lint
+    state: active_required
+    owner: daemon
+    purpose: Lint the daemon source and tests with ruff.
+    argv: ["python3", "-m", "ruff", "check", "src/", "tests/"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, ruff]
+
+  - id: daemon.typecheck
+    state: active_required
+    owner: daemon
+    purpose: Type-check the daemon source with mypy.
+    argv: ["python3", "-m", "mypy", "src/", "--ignore-missing-imports"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, mypy]
+
+  - id: daemon.tests
+    state: active_required
+    owner: daemon
+    purpose: Run the daemon test suite.
+    argv: ["python3", "-m", "pytest", "tests/", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 1800
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  # ── Agent ────────────────────────────────────────────────────────
+  - id: agent.tests
+    state: active_required
+    owner: agent
+    purpose: Run the agent test suite.
+    argv: ["python3", "-m", "pytest", "tests/", "-q", "--tb=short"]
+    working_directory: agent
+    timeout_seconds: 900
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  # ── Evaluation harness ───────────────────────────────────────────
+  - id: evaluation.tests
+    state: active_required
+    owner: evaluation
+    purpose: Run the evaluation harness test suite.
+    argv: ["python3", "-m", "pytest", "eval/tests/", "-q", "--tb=short"]
+    working_directory: "."
+    timeout_seconds: 900
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  # ── Mission Control ──────────────────────────────────────────────
+  - id: mission-control.install
+    state: active_required
+    owner: mission-control
+    purpose: Install the exact locked Mission Control dependencies.
+    argv: ["npm", "ci"]
+    working_directory: mission-control
+    timeout_seconds: 900
+    tools: [node, npm]
+
+  - id: mission-control.audit
+    state: active_required
+    owner: mission-control
+    purpose: Audit production and development dependencies for high-severity advisories.
+    argv: ["npm", "audit", "--audit-level=high"]
+    working_directory: mission-control
+    timeout_seconds: 300
+    tools: [node, npm]
+    depends_on: [mission-control.install]
+
+  - id: mission-control.lint
+    state: active_required
+    owner: mission-control
+    purpose: Lint the Mission Control source with eslint.
+    argv: ["npm", "run", "lint"]
+    working_directory: mission-control
+    timeout_seconds: 600
+    tools: [node, npm]
+    depends_on: [mission-control.install]
+
+  - id: mission-control.typecheck
+    state: active_required
+    owner: mission-control
+    purpose: Type-check the Mission Control source with the TypeScript compiler.
+    argv: ["npx", "tsc", "--noEmit"]
+    working_directory: mission-control
+    timeout_seconds: 600
+    tools: [node, npm]
+    depends_on: [mission-control.install]
+
+  - id: mission-control.tests
+    state: active_required
+    owner: mission-control
+    purpose: Run the Mission Control component test suite with vitest.
+    argv: ["npm", "run", "test:run"]
+    working_directory: mission-control
+    timeout_seconds: 900
+    tools: [node, npm]
+    depends_on: [mission-control.install]
+
+  - id: mission-control.build
+    state: active_required
+    owner: mission-control
+    purpose: Build the production Mission Control bundle.
+    argv: ["npm", "run", "build"]
+    working_directory: mission-control
+    timeout_seconds: 1200
+    tools: [node, npm]
+    depends_on: [mission-control.install]
+
+  - id: mission-control.browser-install
+    state: active_required
+    owner: mission-control
+    purpose: Install the exact pinned Playwright Chromium browser.
+    argv: ["npx", "playwright", "install", "--with-deps", "chromium"]
+    working_directory: mission-control
+    timeout_seconds: 900
+    tools: [node, npm, playwright]
+    depends_on: [mission-control.install]
+
+  - id: mission-control.e2e
+    state: active_required
+    owner: mission-control
+    purpose: Run the Playwright end-to-end browser tests.
+    argv: ["npm", "run", "test:e2e"]
+    working_directory: mission-control
+    timeout_seconds: 1800
+    tools: [node, npm, playwright]
+    depends_on: [mission-control.install, mission-control.browser-install]
+    retry:
+      max_attempts: 2
+    artifacts:
+      - "mission-control/test-results/**"
+
+  # ── Reserved learning identifiers ────────────────────────────────
+  # These entries hold stable future identifiers only. A reserved
+  # entry has no command, never executes, and cannot enter a required
+  # profile. The owning delivery stage activates each entry only after
+  # its feature and test exist.
+  - id: learning.trace-access-redaction
+    state: reserved
+    owner: learning
+    purpose: Prove trace access control and redaction in the learning interface.
+    activation_stage: Trace panel and access gate
+  - id: learning.information-level-switching
+    state: reserved
+    owner: learning
+    purpose: Prove correct progressive-disclosure level switching.
+    activation_stage: Trace panel and access gate
+  - id: learning.keyboard-navigation
+    state: reserved
+    owner: learning
+    purpose: Prove complete keyboard navigation of the learning interface.
+    activation_stage: Keyboard and semantic interface
+  - id: learning.focus-stability
+    state: reserved
+    owner: learning
+    purpose: Prove stable focus behavior during live updates.
+    activation_stage: Keyboard and semantic interface
+  - id: learning.accessibility-tree
+    state: reserved
+    owner: learning
+    purpose: Prove a correct accessibility tree for every learning view.
+    activation_stage: Keyboard and semantic interface
+  - id: learning.mobile-layout
+    state: reserved
+    owner: learning
+    purpose: Prove the mobile layout of the learning interface.
+    activation_stage: Responsive and visual access
+  - id: learning.zoom-200
+    state: reserved
+    owner: learning
+    purpose: Prove the layout at 200 percent zoom.
+    activation_stage: Responsive and visual access
+  - id: learning.zoom-400
+    state: reserved
+    owner: learning
+    purpose: Prove the layout at 400 percent zoom.
+    activation_stage: Responsive and visual access
+  - id: learning.forced-colors
+    state: reserved
+    owner: learning
+    purpose: Prove readability under forced-colors mode.
+    activation_stage: Responsive and visual access
+  - id: learning.color-contrast
+    state: reserved
+    owner: learning
+    purpose: Prove sufficient color contrast in every learning view.
+    activation_stage: Responsive and visual access
+  - id: learning.touch-targets
+    state: reserved
+    owner: learning
+    purpose: Prove minimum touch-target sizes on mobile devices.
+    activation_stage: Responsive and visual access
+  - id: learning.reduced-motion
+    state: reserved
+    owner: learning
+    purpose: Prove reduced-motion behavior in animated views.
+    activation_stage: Responsive and visual access
+  - id: learning.large-trace-performance
+    state: reserved
+    owner: learning
+    purpose: Prove interface performance on large traces.
+    activation_stage: Large-trace delivery
+  - id: learning.metric-integrity
+    state: reserved
+    owner: learning
+    purpose: Prove every displayed metric against its metric definition.
+    activation_stage: Metric implementation
+  - id: learning.study-contract
+    state: reserved
+    owner: learning
+    purpose: Prove the study harness contract.
+    activation_stage: Study harness delivery
+  - id: learning.study-analysis-fixtures
+    state: reserved
+    owner: learning
+    purpose: Prove study analysis against frozen fixtures.
+    activation_stage: Study harness delivery
+
+profiles:
+  - id: complete
+    description: >-
+      Every active_required group. This is the local release gate and the
+      exact set that continuous integration must also execute.
+    selector:
+      states: [active_required]
+
+  - id: ci.daemon
+    description: Continuous integration partition for daemon and repository checks.
+    selector:
+      groups:
+        - manifest.validate
+        - repo.source-naming
+        - repo.config-examples
+        - repo.config-schema
+        - repo.docs-links
+        - repo.compose-render
+        - scripts.tests
+        - daemon.lint
+        - daemon.typecheck
+        - daemon.tests
+
+  - id: ci.agent
+    description: Continuous integration partition for agent checks.
+    selector:
+      groups:
+        - agent.tests
+
+  - id: ci.evaluation
+    description: Continuous integration partition for evaluation harness checks.
+    selector:
+      groups:
+        - evaluation.tests
+
+  - id: ci.mission-control
+    description: Continuous integration partition for Mission Control checks.
+    selector:
+      groups:
+        - mission-control.install
+        - mission-control.audit
+        - mission-control.lint
+        - mission-control.typecheck
+        - mission-control.tests
+        - mission-control.build
+        - mission-control.browser-install
+        - mission-control.e2e

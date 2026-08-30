@@ -1,5 +1,10 @@
 name: CI
 
+# Every job executes its checks through the authoritative test manifest
+# (test-manifest.yaml). The manifest validator proves that these
+# partition profiles exactly cover the same complete required set that
+# the local scripts/check-ci.sh run executes, including Playwright.
+
 on:
   pull_request:
     branches: [main]
@@ -11,13 +16,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── Daemon (Python) ────────────────────────────────────────────────
+  # ── Daemon (Python) + repository contracts ─────────────────────────
   daemon:
     name: Daemon — tests + type-check + lint
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: daemon
     steps:
       - uses: actions/checkout@v4
 
@@ -30,39 +32,24 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx2 mypy ruff
+          pip install -r daemon/requirements.txt
+          pip install pytest pytest-asyncio httpx2 mypy ruff pyyaml jsonschema
 
-      - name: Lint (ruff)
-        run: ruff check src/ tests/
+      - name: Run the manifest partition (daemon + repository contracts)
+        run: python3 scripts/run-test-manifest.py --profile ci.daemon
 
-      - name: Type-check (mypy)
-        run: mypy src/ --ignore-missing-imports
-
-      - name: Tests (pytest)
-        run: pytest tests/ -v --tb=short
-
-      - name: Validate published configuration files
-        run: python ../scripts/validate_configs.py
-
-      - name: Verify generated configuration schema
-        run: python ../scripts/generate_config_schema.py --check
-
-      - name: Check documentation links
-        working-directory: .
-        run: python scripts/validate_docs.py
-
-      - name: Validate Docker Compose
-        working-directory: .
-        run: docker compose --env-file .env.example config --quiet
+      - name: Upload the manifest result record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-manifest-result-daemon
+          path: test-results/
+          if-no-files-found: ignore
 
   # ── Agent (Python) ─────────────────────────────────────────────────
   agent:
     name: Agent — tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: agent
     steps:
       - uses: actions/checkout@v4
 
@@ -74,11 +61,19 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install pytest pytest-asyncio
+          if [ -f agent/requirements.txt ]; then pip install -r agent/requirements.txt; fi
+          pip install pytest pytest-asyncio pyyaml jsonschema
 
-      - name: Tests (pytest)
-        run: pytest tests/ -v --tb=short
+      - name: Run the manifest partition (agent)
+        run: python3 scripts/run-test-manifest.py --profile ci.agent
+
+      - name: Upload the manifest result record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-manifest-result-agent
+          path: test-results/
+          if-no-files-found: ignore
 
   # ── Evaluation harness (Python) ───────────────────────────────────────
   evaluation:
@@ -96,18 +91,23 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install httpx pyyaml pytest pytest-asyncio
+          pip install httpx pyyaml pytest pytest-asyncio jsonschema
 
-      - name: Tests (pytest)
-        run: pytest eval/tests/ -v --tb=short
+      - name: Run the manifest partition (evaluation)
+        run: python3 scripts/run-test-manifest.py --profile ci.evaluation
+
+      - name: Upload the manifest result record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-manifest-result-evaluation
+          path: test-results/
+          if-no-files-found: ignore
 
   # ── Mission Control (Next.js / TypeScript) ─────────────────────────
   mission-control:
     name: Mission Control — lint + type-check + build
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mission-control
     steps:
       - uses: actions/checkout@v4
 
@@ -117,26 +117,20 @@ jobs:
           cache: npm
           cache-dependency-path: mission-control/package-lock.json
 
-      - name: Install dependencies
-        run: npm ci
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
 
-      - name: Audit production and development dependencies
-        run: npm audit --audit-level=high
+      - name: Install runner dependencies
+        run: python3 -m pip install pyyaml jsonschema
 
-      - name: Lint (eslint)
-        run: npm run lint
+      - name: Run the manifest partition (mission-control)
+        run: python3 scripts/run-test-manifest.py --profile ci.mission-control
 
-      - name: Type-check (tsc)
-        run: npx tsc --noEmit
-
-      - name: Tests (vitest)
-        run: npm run test:run
-
-      - name: Build
-        run: npm run build
-
-      - name: Install browser for end-to-end tests
-        run: npx playwright install --with-deps chromium
-
-      - name: End-to-end tests (Playwright)
-        run: npm run test:e2e
+      - name: Upload the manifest result record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-manifest-result-mission-control
+          path: test-results/
+          if-no-files-found: ignore

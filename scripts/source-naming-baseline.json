@@ -1,0 +1,953 @@
+{
+  "files": {
+    "agent/api_server.py": [
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "v1 (version-token)"
+      }
+    ],
+    "agent/profiles/cleaner/config.yaml": [
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "v0 (version-token)"
+      }
+    ],
+    "agent/profiles/conflict_resolver/config.yaml": [
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "v0 (version-token)"
+      }
+    ],
+    "agent/profiles/critic/config.yaml": [
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "v0 (version-token)"
+      }
+    ],
+    "agent/profiles/decider/config.yaml": [
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "v0 (version-token)"
+      }
+    ],
+    "agent/profiles/expert/config.yaml": [
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "v0 (version-token)"
+      }
+    ],
+    "agent/profiles/planner/config.yaml": [
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "v0 (version-token)"
+      }
+    ],
+    "daemon/src/config.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "BLACKBOARD_V2 (version-token)"
+      }
+    ],
+    "daemon/src/config_schema.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "blackboard_v2 (version-token)"
+      }
+    ],
+    "daemon/src/core/blackboard.py": [
+      {
+        "count": 2,
+        "kind": "comment",
+        "token": "v2 (version-token)"
+      }
+    ],
+    "daemon/src/core/orchestrator.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "insert_cost_entry_v2 (version-token)"
+      }
+    ],
+    "daemon/src/core/protocol.py": [
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "V2 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "comment",
+        "token": "v2 (version-token)"
+      },
+      {
+        "count": 3,
+        "kind": "identifier",
+        "token": "V2_EVENT_NAMES (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "V2_KEY_PATTERNS (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "all_v2_event_names (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "is_v2_event (version-token)"
+      }
+    ],
+    "daemon/src/core/response_parser.py": [
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "v1 (version-token)"
+      }
+    ],
+    "daemon/src/core/salience.py": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "_clamp01 (numeric-suffix)"
+      }
+    ],
+    "daemon/src/core/variants/classic.py": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "V2_EVENT_NAMES (version-token)"
+      }
+    ],
+    "daemon/src/core/variants/traditional.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "insert_cost_entry_v2 (version-token)"
+      }
+    ],
+    "daemon/src/database.py": [
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "v1 (version-token)"
+      },
+      {
+        "count": 4,
+        "kind": "comment",
+        "token": "v2 (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "v3 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "MIGRATION_V10_BENCHMARK_ANALYSIS_DDL (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "MIGRATION_V11_BENCHMARK_SCHEDULER_DDL (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "MIGRATION_V2_ALTER_COST_ENTRIES (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "MIGRATION_V2_ALTER_TASKS (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "MIGRATION_V2_DDL (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "MIGRATION_V3_BOARD_META_DDL (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "MIGRATION_V4_COST_IDEMPOTENCY_DDL (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "MIGRATION_V5_TASK_LEASE_DDL (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "MIGRATION_V6_EVENT_DELIVERY_DDL (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "MIGRATION_V8_BENCHMARK_FOUNDATION_DDL (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "MIGRATION_V9_BENCHMARK_EXECUTION_DDL (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "_migrate_to_v10 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "_migrate_to_v11 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "_migrate_to_v12 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "_migrate_to_v2 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "_migrate_to_v3 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "_migrate_to_v4 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "_migrate_to_v5 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "_migrate_to_v6 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "_migrate_to_v7 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "_migrate_to_v8 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "_migrate_to_v9 (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "insert_cost_entry_v2 (version-token)"
+      }
+    ],
+    "daemon/src/routes/ingest.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "insert_cost_entry_v2 (version-token)"
+      }
+    ],
+    "daemon/src/routes/tasks.py": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "BLACKBOARD_V2 (version-token)"
+      }
+    ],
+    "daemon/tests/conftest.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "BLACKBOARD_V2 (version-token)"
+      }
+    ],
+    "daemon/tests/test_artifacts.py": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "artifact_v1 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "artifact_v2 (version-token)"
+      },
+      {
+        "count": 4,
+        "kind": "identifier",
+        "token": "content_v1 (version-token)"
+      },
+      {
+        "count": 4,
+        "kind": "identifier",
+        "token": "content_v2 (version-token)"
+      },
+      {
+        "count": 3,
+        "kind": "identifier",
+        "token": "download_v1 (version-token)"
+      },
+      {
+        "count": 3,
+        "kind": "identifier",
+        "token": "download_v2 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "sha_v1 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "sha_v2 (version-token)"
+      }
+    ],
+    "daemon/tests/test_auth.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_bearer_without_space_raises_401 (numeric-suffix)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_non_bearer_scheme_raises_401 (numeric-suffix)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_wrong_bearer_token_raises_401 (numeric-suffix)"
+      }
+    ],
+    "daemon/tests/test_benchmark_foundation.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_v8_creates_benchmark_tables_and_scorers (version-token)"
+      }
+    ],
+    "daemon/tests/test_board_store.py": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "seq1 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "seq2 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "seq3 (numeric-suffix)"
+      },
+      {
+        "count": 5,
+        "kind": "identifier",
+        "token": "snap1 (numeric-suffix)"
+      },
+      {
+        "count": 4,
+        "kind": "identifier",
+        "token": "snap2 (numeric-suffix)"
+      }
+    ],
+    "daemon/tests/test_classic_orchestration.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_dispatch_reschedules_after_http_429 (numeric-suffix)"
+      }
+    ],
+    "daemon/tests/test_config_validation.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_blackboard_v2_flag (version-token)"
+      }
+    ],
+    "daemon/tests/test_database_migration.py": [
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "v1 (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "v2 (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "TestV3Durability (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "TestV4CostIdempotency (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "TestV5LeaseFencing (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "V2_TABLES (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "_migrate_to_v2 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "_migrate_to_v3 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "insert_cost_entry_v2 (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_fresh_db_is_v1 (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_init_db_upgrade_v1_to_v2 (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_migrated_db_is_v2 (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_schema_version_is_12 (numeric-suffix)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_v1_tables_preserved (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_v2_tables_created (version-token)"
+      },
+      {
+        "count": 29,
+        "kind": "identifier",
+        "token": "v2_db (version-token)"
+      }
+    ],
+    "daemon/tests/test_file_utils.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "TestComputeSha256 (numeric-suffix)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_truncates_at_60 (numeric-suffix)"
+      }
+    ],
+    "daemon/tests/test_gateway.py": [
+      {
+        "count": 3,
+        "kind": "identifier",
+        "token": "entries1 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "entries2 (numeric-suffix)"
+      }
+    ],
+    "daemon/tests/test_gateway_lock.py": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "V1 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "V2 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "lock1 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "lock2 (numeric-suffix)"
+      }
+    ],
+    "daemon/tests/test_hitl_routes.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_run_action_returns_not_found_when_each_node_returns_404 (numeric-suffix)"
+      }
+    ],
+    "daemon/tests/test_ingest.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_trace_journal_failure_returns_503 (numeric-suffix)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_trace_types_phase1 (numeric-suffix)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_trace_types_reserved_for_phase2 (numeric-suffix)"
+      }
+    ],
+    "daemon/tests/test_lifecycle_telemetry.py": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "insert_cost_entry_v2 (version-token)"
+      }
+    ],
+    "daemon/tests/test_long_horizon.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "_migrate_to_v12 (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_v12_migration_adds_the_column (version-token)"
+      }
+    ],
+    "daemon/tests/test_platform_contracts.py": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "V2_EVENT_NAMES (version-token)"
+      }
+    ],
+    "daemon/tests/test_protocol.py": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "SPEC_V2_EVENTS (version-token)"
+      },
+      {
+        "count": 5,
+        "kind": "identifier",
+        "token": "V2_EVENT_NAMES (version-token)"
+      },
+      {
+        "count": 5,
+        "kind": "identifier",
+        "token": "V2_KEY_PATTERNS (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "all_v2_event_names (version-token)"
+      },
+      {
+        "count": 5,
+        "kind": "identifier",
+        "token": "is_v2_event (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_all_spec_v2_events_registered (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_all_v2_event_names_sorted (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_is_v2_event (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_no_v2_legacy_overlap (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_v2_event_count (version-token)"
+      }
+    ],
+    "daemon/tests/test_response_parser.py": [
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "v1 (version-token)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_structured_entries_v1 (version-token)"
+      }
+    ],
+    "daemon/tests/test_salience.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_salience_clamped_to_01 (numeric-suffix)"
+      }
+    ],
+    "daemon/tests/test_smoke_pipeline.py": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "page2 (numeric-suffix)"
+      },
+      {
+        "count": 3,
+        "kind": "identifier",
+        "token": "v2 (version-token)"
+      }
+    ],
+    "daemon/tests/test_sole_scoring.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_different_returns_0 (numeric-suffix)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_disjoint_returns_0 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "test_identical_returns_1 (numeric-suffix)"
+      }
+    ],
+    "daemon/tests/test_traditional_guards.py": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "snapshot1 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "snapshot2 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "snapshot3 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "sol1 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "sol2 (numeric-suffix)"
+      }
+    ],
+    "daemon/tests/test_variant_seam.py": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "V1 (version-token)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "V2 (version-token)"
+      }
+    ],
+    "eval/tests/test_metrics.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_accuracy_0 (numeric-suffix)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_accuracy_100 (numeric-suffix)"
+      }
+    ],
+    "eval/tests/test_scorer.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_correct_dollar_5 (numeric-suffix)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "test_correct_with_hash_marker_10 (numeric-suffix)"
+      }
+    ],
+    "mission-control/e2e/benchmarks.spec.ts": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "v2 (version-token)"
+      }
+    ],
+    "mission-control/src/__tests__/boardModel.test.ts": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "key1 (numeric-suffix)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "key2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/__tests__/design-tokens.test.ts": [
+      {
+        "count": 4,
+        "kind": "identifier",
+        "token": "color1 (numeric-suffix)"
+      },
+      {
+        "count": 4,
+        "kind": "identifier",
+        "token": "color2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/__tests__/system-stream-state.test.ts": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "_000_000 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/__tests__/task-submission.test.ts": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "_048_577 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/app/api/tasks/[taskId]/hydrate/route.ts": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "_048_576 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/app/api/telemetry/route.ts": [
+      {
+        "count": 1,
+        "kind": "comment",
+        "token": "v0 (version-token)"
+      }
+    ],
+    "mission-control/src/app/baselines/BaselinesPageClient.tsx": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "Trash2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/app/datasets/DatasetsPageClient.tsx": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "FileCheck2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/app/datasets/[datasetId]/DatasetDetailClient.tsx": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "CheckCircle2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/app/runtimes/RuntimesPageClient.tsx": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "CheckCircle2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/app/settings/SettingsPageClient.tsx": [
+      {
+        "count": 3,
+        "kind": "identifier",
+        "token": "Trash2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/components/features/AgentMindCard.tsx": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "CheckCircle2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/components/features/BenchmarkTestForm.tsx": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "Trash2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/components/features/BlackboardGraph.tsx": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "CheckCircle2 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "FileCode2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/components/features/DatasetImportPanel.tsx": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "CheckCircle2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/components/features/FilesWorkspace.tsx": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "Code2 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "Columns2 (numeric-suffix)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "_000_000 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/components/features/ProcessFlowGraph.tsx": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "cx1 (numeric-suffix)"
+      },
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "cx2 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "raf1 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "raf2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/components/features/TaskLifecycle.tsx": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "Clock3 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "Settings2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/components/features/TurnGraph.tsx": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "Table2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/components/features/board/boardModel.ts": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "CheckCircle2 (numeric-suffix)"
+      },
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "FileCode2 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/components/ui/TaskSidebar.tsx": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "BarChart3 (numeric-suffix)"
+      }
+    ],
+    "mission-control/src/components/ui/Toast.tsx": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "CheckCircle2 (numeric-suffix)"
+      }
+    ]
+  }
+}
