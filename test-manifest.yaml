@@ -232,6 +232,46 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  # ── Foundation storage authority ─────────────────────────────────
+  - id: daemon.unit-of-work-atomicity
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove that every typed unit-of-work operation commits its journal
+      record, projections, and outbox rows completely or not at all
+      under injected crashes at every durable boundary.
+    argv: ["python3", "-m", "pytest", "tests/test_unit_of_work_atomicity.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 900
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.journal-replay
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove that replay from journal cursor zero rebuilds every
+      verified projection, that snapshots verify before use, and that
+      a corrupted record stops replay.
+    argv: ["python3", "-m", "pytest", "tests/test_journal_replay.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.sqlite-operational
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the single-host SQLite boundary: readiness, WAL recovery,
+      consistent verified backups, and restores that replay every
+      retained chain.
+    argv: ["python3", "-m", "pytest", "tests/test_sqlite_operational.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 900
+    tools: [python, pytest]
+    parser: pytest_summary
+
   # ── Agent ────────────────────────────────────────────────────────
   - id: agent.tests
     state: active_required
@@ -455,6 +495,9 @@ profiles:
         - daemon.fence-and-cancellation
         - daemon.asset-boundary
         - daemon.human-controls
+        - daemon.unit-of-work-atomicity
+        - daemon.journal-replay
+        - daemon.sqlite-operational
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.
