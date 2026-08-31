@@ -786,6 +786,8 @@ def empty_projection_state() -> dict[str, Any]:
         "activation_dispatch": {},
         "effects": {},
         "effect_operations": {},
+        "claim_support": {},
+        "goal_index": {},
         "budgets": {},
         "traces": {},
         "evidence": {},
@@ -910,9 +912,17 @@ def apply_record_to_state(
         _append_trace(state, record, "control")
     elif record.operation_type == "evidence_update":
         state["evidence"][payload["claim_id"]] = payload["evidence_state"]
+        claim_projection = payload.get("claim_index")
+        if claim_projection is not None:
+            state["claim_support"][payload["claim_id"]] = dict(
+                claim_projection,
+            )
         _append_trace(state, record, "evidence.updated")
     elif record.operation_type == "goal_update":
         state["goals"][payload["goal_id"]] = payload["goal_state"]
+        goal_projection = payload.get("goal_index")
+        if goal_projection is not None:
+            state["goal_index"][payload["goal_id"]] = dict(goal_projection)
         _append_trace(state, record, "goal.updated")
     elif record.operation_type == "budget_reconciliation":
         totals = state["budgets"].setdefault(

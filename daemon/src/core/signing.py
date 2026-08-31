@@ -14,6 +14,7 @@ historical verification of already stored bytes unchanged.
 from __future__ import annotations
 
 import base64
+import dataclasses
 from dataclasses import dataclass
 from typing import Any
 
@@ -89,7 +90,11 @@ def decode_signature(text: str) -> bytes:
 
 @dataclass(frozen=True)
 class SigningKeyRecord:
-    """One registered verification key with its validity window."""
+    """One registered verification key with its validity window.
+
+    Each key scopes to one environment, tenant boundary, principal,
+    and purpose. Rotation links a predecessor to its successor.
+    """
 
     key_id: str
     owner_id: str
@@ -98,6 +103,10 @@ class SigningKeyRecord:
     not_before: str
     not_after: str | None = None
     revoked_at: str | None = None
+    environment: str = "default"
+    tenant_id: str = "tenant-default"
+    predecessor_key_id: str | None = None
+    successor_key_id: str | None = None
 
     def valid_for_new_authority(self, at: str) -> bool:
         """Report whether the key can authorize new work at one time."""
@@ -205,3 +214,45 @@ def public_bytes_of(private_key: Ed25519PrivateKey) -> bytes:
     return private_key.public_key().public_bytes(
         Encoding.Raw, PublicFormat.Raw,
     )
+
+
+def backup_registry(registry: KeyRegistry, backup_key: bytes) -> bytes:
+    """Serialize and encrypt the key registry under the backup key.
+
+    The backup key is separate from every signing key. The encrypted
+    payload holds public verification material and metadata only.
+    """
+    import json
+
+    from cryptography.fernet import Fernet
+
+    records = []
+    for record in registry._keys.values():  # noqa: SLF001
+        entry = dataclasses.asdict(record)
+        entry["public_bytes"] = base64.urlsafe_b64encode(
+            record.public_bytes,
+        ).decode("ascii")
+        records.append(entry)
+    payload = json.dumps(records, sort_keys=True).encode("utf-8")
+    return Fernet(backup_key).encrypt(payload)
+
+
+def restore_registry(encrypted: bytes, backup_key: bytes) -> KeyRegistry:
+    """Decrypt and rebuild the key registry from one backup."""
+    import json
+
+    from cryptography.fernet import Fernet, InvalidToken
+
+    try:
+        payload = Fernet(backup_key).decrypt(encrypted)
+    except InvalidToken as exc:
+        raise SigningError(
+            "The backup does not decrypt under this backup key"
+        ) from exc
+    registry = KeyRegistry()
+    for entry in json.loads(payload):
+        entry["public_bytes"] = base64.urlsafe_b64decode(
+            entry["public_bytes"],
+        )
+        registry._keys[entry["key_id"]] = SigningKeyRecord(**entry)  # noqa: SLF001
+    return registry

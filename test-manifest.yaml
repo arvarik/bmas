@@ -369,6 +369,101 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.evidence-authority
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the evidence authority: verifier policies, independence
+      groups, expiry and revocation invalidation across derived-claim
+      chains, dependent revalidation markers, and the preserved
+      immutable decision history.
+    argv: ["python3", "-m", "pytest", "tests/test_evidence_authority.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 900
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.goal-concurrency
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove goal concurrency: optimistic versions, the legal
+      transition table, deterministic duplicate merges, cycle
+      rejection, and completion rollback when evidence becomes
+      invalid.
+    argv: ["python3", "-m", "pytest", "tests/test_goal_concurrency.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 900
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.typed-indexes
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove that the host never parses runtime payloads, every shared
+      index update passes its host schema, no index update carries
+      runtime-owned state, and every index equals journal replay.
+    argv: ["python3", "-m", "pytest", "tests/test_typed_indexes.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.keyed-digest
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the semantic text transform, keyed HMAC lookup digests
+      with per-tenant rotation, public-export exclusion, and the
+      digest profile and domain audit.
+    argv: ["python3", "-m", "pytest", "tests/test_keyed_digest.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.privacy-boundary
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove classification before persistence, secret references,
+      object-level access on trace, artifact, and evidence lookups,
+      and that no sensitive value enters an unauthorized response.
+    argv: ["python3", "-m", "pytest", "tests/test_privacy_boundary.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.security-matrix
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the security matrix: multi-agent injection surfaces, the
+      privacy-utility gate, SSRF URL validation, role and object
+      access, separation of duties, and key backup with historical
+      verification.
+    argv: ["python3", "-m", "pytest", "tests/test_security_matrix.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.recovery-center
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove every Recovery Center queue, redacted authorized display,
+      foreign-tenant and role denial, one journaled control decision
+      per action with no direct ledger update, and unsafe-retry
+      approval separation.
+    argv: ["python3", "-m", "pytest", "tests/test_recovery_center.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 900
+    tools: [python, pytest]
+    parser: pytest_summary
+
   # ── Agent ────────────────────────────────────────────────────────
   - id: agent.tests
     state: active_required
@@ -602,6 +697,13 @@ profiles:
         - daemon.external-effects
         - daemon.agent-protocol
         - daemon.execution-envelope
+        - daemon.evidence-authority
+        - daemon.goal-concurrency
+        - daemon.typed-indexes
+        - daemon.keyed-digest
+        - daemon.privacy-boundary
+        - daemon.security-matrix
+        - daemon.recovery-center
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

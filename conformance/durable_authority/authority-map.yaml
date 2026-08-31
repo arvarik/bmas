@@ -658,6 +658,7 @@ sqlite_tables:
     authority: daemon.journal-authority
     purpose: "Mutable journal publication state, separate from the immutable journal."
     writers:
+      - recovery_center
       - runtime_journal
     fields:
       - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
@@ -1075,6 +1076,106 @@ sqlite_tables:
       - { name: issued_at, owner: daemon.qualification-authority, derived: false }
       - { name: expires_at, owner: daemon.qualification-authority, derived: false }
       - { name: revoked, owner: daemon.qualification-authority, derived: false }
+  - table: backup_records
+    authority: daemon.recovery-authority
+    purpose: "Backup and restore-test health outcomes."
+    writers:
+      - recovery_center
+    fields:
+      - { name: backup_id, owner: daemon.recovery-authority, derived: false }
+      - { name: kind, owner: daemon.recovery-authority, derived: false }
+      - { name: state, owner: daemon.recovery-authority, derived: false }
+      - { name: published_path, owner: daemon.recovery-authority, derived: false }
+      - { name: details, owner: daemon.recovery-authority, derived: false }
+      - { name: created_at, owner: daemon.recovery-authority, derived: false }
+      - { name: expires_at, owner: daemon.recovery-authority, derived: false }
+  - table: claim_index
+    authority: daemon.evidence-authority
+    purpose: "Host claim index over evidence relationships."
+    writers:
+      - evidence_service
+    fields:
+      - { name: claim_id, owner: daemon.evidence-authority, derived: false }
+      - { name: tenant_id, owner: daemon.evidence-authority, derived: false }
+      - { name: run_id, owner: daemon.evidence-authority, derived: false }
+      - { name: task_id, owner: daemon.evidence-authority, derived: false }
+      - { name: statement_digest, owner: daemon.evidence-authority, derived: false }
+      - { name: state, owner: daemon.evidence-authority, derived: false }
+      - { name: supported, owner: daemon.evidence-authority, derived: false }
+      - { name: derived_from, owner: daemon.evidence-authority, derived: false }
+      - { name: policy_id, owner: daemon.evidence-authority, derived: false }
+      - { name: policy_version, owner: daemon.evidence-authority, derived: false }
+      - { name: revalidation_required, owner: daemon.evidence-authority, derived: false }
+      - { name: revalidation_reason, owner: daemon.evidence-authority, derived: false }
+      - { name: created_at, owner: daemon.evidence-authority, derived: false }
+      - { name: updated_at, owner: daemon.evidence-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.evidence-authority, derived: false }
+  - table: evidence_decisions
+    authority: daemon.evidence-authority
+    purpose: "Immutable evidence decision history with revocation."
+    writers:
+      - evidence_service
+    fields:
+      - { name: decision_id, owner: daemon.evidence-authority, derived: false }
+      - { name: claim_id, owner: daemon.evidence-authority, derived: false }
+      - { name: tenant_id, owner: daemon.evidence-authority, derived: false }
+      - { name: run_id, owner: daemon.evidence-authority, derived: false }
+      - { name: verifier_id, owner: daemon.evidence-authority, derived: false }
+      - { name: verifier_capability, owner: daemon.evidence-authority, derived: false }
+      - { name: verifier_version, owner: daemon.evidence-authority, derived: false }
+      - { name: independence_group, owner: daemon.evidence-authority, derived: false }
+      - { name: policy_version, owner: daemon.evidence-authority, derived: false }
+      - { name: input_digests, owner: daemon.evidence-authority, derived: false }
+      - { name: verdict, owner: daemon.evidence-authority, derived: false }
+      - { name: confidence, owner: daemon.evidence-authority, derived: false }
+      - { name: human_approval, owner: daemon.evidence-authority, derived: false }
+      - { name: created_at, owner: daemon.evidence-authority, derived: false }
+      - { name: expires_at, owner: daemon.evidence-authority, derived: false }
+      - { name: revoked, owner: daemon.evidence-authority, derived: false }
+      - { name: revoked_at, owner: daemon.evidence-authority, derived: false }
+      - { name: revocation_reason, owner: daemon.evidence-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.evidence-authority, derived: false }
+  - table: goal_index
+    authority: daemon.goal-authority
+    purpose: "Host goal index with optimistic versions."
+    writers:
+      - goal_service
+    fields:
+      - { name: goal_id, owner: daemon.goal-authority, derived: false }
+      - { name: tenant_id, owner: daemon.goal-authority, derived: false }
+      - { name: run_id, owner: daemon.goal-authority, derived: false }
+      - { name: task_id, owner: daemon.goal-authority, derived: false }
+      - { name: state, owner: daemon.goal-authority, derived: false }
+      - { name: version, owner: daemon.goal-authority, derived: false }
+      - { name: owner, owner: daemon.goal-authority, derived: false }
+      - { name: runtime_id, owner: daemon.goal-authority, derived: false }
+      - { name: runtime_contract_version, owner: daemon.goal-authority, derived: false }
+      - { name: parent_goal_id, owner: daemon.goal-authority, derived: false }
+      - { name: dependency_ids, owner: daemon.goal-authority, derived: false }
+      - { name: transition_policy, owner: daemon.goal-authority, derived: false }
+      - { name: completion_evidence, owner: daemon.goal-authority, derived: false }
+      - { name: merge_key, owner: daemon.goal-authority, derived: false }
+      - { name: alias_of, owner: daemon.goal-authority, derived: false }
+      - { name: revalidation_required, owner: daemon.goal-authority, derived: false }
+      - { name: created_at, owner: daemon.goal-authority, derived: false }
+      - { name: updated_at, owner: daemon.goal-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.goal-authority, derived: false }
+  - table: revalidation_markers
+    authority: daemon.evidence-authority
+    purpose: "Durable revalidation markers for dependent work."
+    writers:
+      - evidence_service
+      - goal_service
+    fields:
+      - { name: marker_id, owner: daemon.evidence-authority, derived: false }
+      - { name: tenant_id, owner: daemon.evidence-authority, derived: false }
+      - { name: run_id, owner: daemon.evidence-authority, derived: false }
+      - { name: target_kind, owner: daemon.evidence-authority, derived: false }
+      - { name: target_id, owner: daemon.evidence-authority, derived: false }
+      - { name: source_decision_id, owner: daemon.evidence-authority, derived: false }
+      - { name: reason, owner: daemon.evidence-authority, derived: false }
+      - { name: created_at, owner: daemon.evidence-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.evidence-authority, derived: false }
   - table: run_controls
     authority: daemon.run-authority
     purpose: "One live control row per Foundation run: lease, fence, pause, cancellation, deadline, and clock watermark."
