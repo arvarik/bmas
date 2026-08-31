@@ -100,7 +100,7 @@ async def _get_schema_version(db_path: str) -> int:
 class TestSchemaVersion:
 
     def test_schema_version_is_current(self):
-        assert SCHEMA_VERSION == 15
+        assert SCHEMA_VERSION == 16
 
     @pytest.mark.asyncio
     async def test_fresh_db_is_v1(self, fresh_db):
@@ -324,7 +324,7 @@ class TestInitDb:
         await init_db()
 
         v = await _get_schema_version(db_path)
-        assert v == 15
+        assert v == 16
         tables = await _get_tables(db_path)
         assert "board_entries" in tables
 
@@ -335,7 +335,7 @@ class TestInitDb:
         await init_db()
 
         v = await _get_schema_version(fresh_db)
-        assert v == 15
+        assert v == 16
         tables = await _get_tables(fresh_db)
         assert "board_entries" in tables
 
@@ -346,7 +346,7 @@ class TestInitDb:
         await init_db()
 
         v = await _get_schema_version(v2_db)
-        assert v == 15
+        assert v == 16
 
 
 class TestV3Durability:

@@ -633,6 +633,14 @@ sqlite_tables:
       - { name: asset_manifest_digest, owner: daemon.journal-authority, derived: false }
       - { name: admission_digest, owner: daemon.journal-authority, derived: false }
       - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
+      - { name: asset_manifest_id, owner: daemon.journal-authority, derived: false }
+      - { name: prompt_profile_digest, owner: daemon.journal-authority, derived: false }
+      - { name: role_profile_digest, owner: daemon.journal-authority, derived: false }
+      - { name: seed_policy, owner: daemon.journal-authority, derived: false }
+      - { name: requested_seed, owner: daemon.journal-authority, derived: false }
+      - { name: qualification_ids, owner: daemon.journal-authority, derived: false }
+      - { name: run_budget_id, owner: daemon.journal-authority, derived: false }
+      - { name: initial_reservation_id, owner: daemon.journal-authority, derived: false }
   - table: run_queue
     authority: daemon.journal-authority
     purpose: "Mutable admission delivery state. Never an authority row."
@@ -702,6 +710,74 @@ sqlite_tables:
       - { name: deleted_at, owner: daemon.journal-authority, derived: false }
       - { name: erasure_state, owner: daemon.journal-authority, derived: false }
       - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
+  - table: run_budgets
+    authority: daemon.budget-authority
+    purpose: "One durable budget per Foundation run with its currency and mode."
+    writers:
+      - budget_service
+    fields:
+      - { name: budget_id, owner: daemon.budget-authority, derived: false }
+      - { name: run_id, owner: daemon.budget-authority, derived: false }
+      - { name: task_id, owner: daemon.budget-authority, derived: false }
+      - { name: currency, owner: daemon.budget-authority, derived: false }
+      - { name: budget_mode, owner: daemon.budget-authority, derived: false }
+      - { name: pessimistic_price_version, owner: daemon.budget-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.budget-authority, derived: false }
+  - table: budget_limits
+    authority: daemon.budget-authority
+    purpose: "One aggregate limit per scope and resource with separate reserved and consumed amounts."
+    writers:
+      - budget_service
+    fields:
+      - { name: limit_id, owner: daemon.budget-authority, derived: false }
+      - { name: budget_id, owner: daemon.budget-authority, derived: false }
+      - { name: scope, owner: daemon.budget-authority, derived: false }
+      - { name: scope_key, owner: daemon.budget-authority, derived: false }
+      - { name: resource, owner: daemon.budget-authority, derived: false }
+      - { name: unit, owner: daemon.budget-authority, derived: false }
+      - { name: currency, owner: daemon.budget-authority, derived: false }
+      - { name: limit_amount, owner: daemon.budget-authority, derived: false }
+      - { name: reserved_amount, owner: daemon.budget-authority, derived: false }
+      - { name: consumed_amount, owner: daemon.budget-authority, derived: false }
+  - table: budget_reservations
+    authority: daemon.budget-authority
+    purpose: "One reservation per cost-bearing action through the registered budget states."
+    writers:
+      - budget_service
+      - run_admission
+    fields:
+      - { name: reservation_id, owner: daemon.budget-authority, derived: false }
+      - { name: budget_id, owner: daemon.budget-authority, derived: false }
+      - { name: run_id, owner: daemon.budget-authority, derived: false }
+      - { name: task_id, owner: daemon.budget-authority, derived: false }
+      - { name: activation_id, owner: daemon.budget-authority, derived: false }
+      - { name: provider, owner: daemon.budget-authority, derived: false }
+      - { name: tool, owner: daemon.budget-authority, derived: false }
+      - { name: state, owner: daemon.budget-authority, derived: false }
+      - { name: currency, owner: daemon.budget-authority, derived: false }
+      - { name: resources, owner: daemon.budget-authority, derived: false }
+      - { name: requested_amount_nanos, owner: daemon.budget-authority, derived: false }
+      - { name: reserved_amount_nanos, owner: daemon.budget-authority, derived: false }
+      - { name: consumed_amount_nanos, owner: daemon.budget-authority, derived: false }
+      - { name: released_amount_nanos, owner: daemon.budget-authority, derived: false }
+      - { name: consumption_kind, owner: daemon.budget-authority, derived: false }
+      - { name: consumed_resources, owner: daemon.budget-authority, derived: false }
+      - { name: original_amount_text, owner: daemon.budget-authority, derived: false }
+      - { name: pricing_version, owner: daemon.budget-authority, derived: false }
+      - { name: overshoot, owner: daemon.budget-authority, derived: false }
+      - { name: request_deadline_at, owner: daemon.budget-authority, derived: false }
+      - { name: created_at, owner: daemon.budget-authority, derived: false }
+      - { name: state_changed_at, owner: daemon.budget-authority, derived: false }
+  - table: budget_reconciliations
+    authority: daemon.budget-authority
+    purpose: "One idempotency record per reconciliation request."
+    writers:
+      - budget_service
+    fields:
+      - { name: reconciliation_key, owner: daemon.budget-authority, derived: false }
+      - { name: reservation_id, owner: daemon.budget-authority, derived: false }
+      - { name: content_digest, owner: daemon.budget-authority, derived: false }
+      - { name: recorded_at, owner: daemon.budget-authority, derived: false }
   - table: run_controls
     authority: daemon.run-authority
     purpose: "One live control row per Foundation run: lease, fence, pause, cancellation, deadline, and clock watermark."
