@@ -470,6 +470,51 @@ class ArtifactStore:
         path.unlink()
         return record
 
+    def health_report(
+        self,
+        *,
+        journal_refs: frozenset[str] = frozenset(),
+    ) -> dict[str, list[str]]:
+        """Report unhealthy artifact objects for the Recovery Center.
+
+        Missing: a committed reference without stored bytes. Corrupt:
+        stored bytes whose digest no longer matches the address.
+        Quarantined: bytes moved aside after a digest collision.
+        Orphans: stored objects that no committed or journal
+        reference names.
+        """
+        from core.digest_profile import digest_bytes as _digest_bytes
+
+        referenced = set(self._state.committed_refs) | set(journal_refs)
+        missing = sorted(
+            digest
+            for digest in self._state.committed_refs
+            if not self._object_path(digest).is_file()
+            and digest not in self._state.erasures
+        )
+        corrupt: list[str] = []
+        orphans: list[str] = []
+        if self._objects_dir.is_dir():
+            for shard in sorted(self._objects_dir.iterdir()):
+                for path in sorted(shard.iterdir()):
+                    stored_digest = path.name
+                    actual = _digest_bytes(
+                        ARTIFACT_CONTENT_DIGEST_DOMAIN, path.read_bytes(),
+                    )
+                    if actual != stored_digest:
+                        corrupt.append(stored_digest)
+                    if stored_digest not in referenced:
+                        orphans.append(stored_digest)
+        quarantined = sorted(
+            path.name for path in self._quarantine_dir.iterdir()
+        )
+        return {
+            "missing": missing,
+            "corrupt": corrupt,
+            "quarantined": quarantined,
+            "orphans": orphans,
+        }
+
     def sweep_orphans(
         self,
         *,

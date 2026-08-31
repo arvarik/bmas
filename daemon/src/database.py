@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -2061,6 +2061,173 @@ async def _migrate_add_activation_effect_protocol(
     )
 
 
+TYPED_INDEX_DDL = """
+CREATE TABLE IF NOT EXISTS claim_index (
+    claim_id               TEXT PRIMARY KEY,
+    tenant_id              TEXT NOT NULL DEFAULT 'tenant-default',
+    run_id                 TEXT NOT NULL,
+    task_id                TEXT NOT NULL,
+    statement_digest       TEXT,
+    state                  TEXT NOT NULL DEFAULT 'proposed'
+                           CHECK (state IN
+                                  ('proposed', 'supported', 'unsupported',
+                                   'invalidated')),
+    supported              INTEGER NOT NULL DEFAULT 0
+                           CHECK (supported IN (0, 1)),
+    derived_from           TEXT NOT NULL DEFAULT '[]',
+    policy_id              TEXT,
+    policy_version         TEXT,
+    revalidation_required  INTEGER NOT NULL DEFAULT 0
+                           CHECK (revalidation_required IN (0, 1)),
+    revalidation_reason    TEXT,
+    created_at             TEXT NOT NULL,
+    updated_at             TEXT NOT NULL,
+    journal_cursor         INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_claim_index_run
+ON claim_index(run_id, state);
+
+CREATE TABLE IF NOT EXISTS evidence_decisions (
+    decision_id        TEXT PRIMARY KEY,
+    claim_id           TEXT NOT NULL,
+    tenant_id          TEXT NOT NULL DEFAULT 'tenant-default',
+    run_id             TEXT NOT NULL,
+    verifier_id        TEXT NOT NULL,
+    verifier_capability TEXT NOT NULL,
+    verifier_version   TEXT NOT NULL,
+    independence_group TEXT NOT NULL,
+    policy_version     TEXT NOT NULL,
+    input_digests      TEXT NOT NULL DEFAULT '[]',
+    verdict            TEXT NOT NULL
+                       CHECK (verdict IN
+                              ('supported', 'refuted', 'inconclusive')),
+    confidence         INTEGER NOT NULL DEFAULT 0
+                       CHECK (confidence BETWEEN 0 AND 100),
+    human_approval     INTEGER NOT NULL DEFAULT 0
+                       CHECK (human_approval IN (0, 1)),
+    created_at         TEXT NOT NULL,
+    expires_at         TEXT,
+    revoked            INTEGER NOT NULL DEFAULT 0
+                       CHECK (revoked IN (0, 1)),
+    revoked_at         TEXT,
+    revocation_reason  TEXT,
+    journal_cursor     INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_decisions_claim
+ON evidence_decisions(claim_id, revoked);
+
+CREATE TRIGGER IF NOT EXISTS evidence_decisions_history_immutable
+BEFORE UPDATE ON evidence_decisions
+WHEN NEW.decision_id IS NOT OLD.decision_id
+     OR NEW.claim_id IS NOT OLD.claim_id
+     OR NEW.verifier_id IS NOT OLD.verifier_id
+     OR NEW.verifier_capability IS NOT OLD.verifier_capability
+     OR NEW.verifier_version IS NOT OLD.verifier_version
+     OR NEW.independence_group IS NOT OLD.independence_group
+     OR NEW.policy_version IS NOT OLD.policy_version
+     OR NEW.input_digests IS NOT OLD.input_digests
+     OR NEW.verdict IS NOT OLD.verdict
+     OR NEW.confidence IS NOT OLD.confidence
+     OR NEW.human_approval IS NOT OLD.human_approval
+     OR NEW.created_at IS NOT OLD.created_at
+     OR NEW.expires_at IS NOT OLD.expires_at
+BEGIN
+    SELECT RAISE(ABORT,
+                 'evidence decision history is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS evidence_decisions_immutable_delete
+BEFORE DELETE ON evidence_decisions
+BEGIN
+    SELECT RAISE(ABORT, 'evidence decision history is immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS goal_index (
+    goal_id                  TEXT PRIMARY KEY,
+    tenant_id                TEXT NOT NULL DEFAULT 'tenant-default',
+    run_id                   TEXT NOT NULL,
+    task_id                  TEXT NOT NULL,
+    state                    TEXT NOT NULL DEFAULT 'proposed'
+                             CHECK (state IN
+                                    ('proposed', 'active', 'blocked',
+                                     'completed', 'abandoned', 'merged')),
+    version                  INTEGER NOT NULL DEFAULT 1,
+    owner                    TEXT NOT NULL,
+    runtime_id               TEXT NOT NULL,
+    runtime_contract_version TEXT NOT NULL,
+    parent_goal_id           TEXT,
+    dependency_ids           TEXT NOT NULL DEFAULT '[]',
+    transition_policy        TEXT NOT NULL DEFAULT 'shared',
+    completion_evidence      TEXT NOT NULL DEFAULT '[]',
+    merge_key                TEXT,
+    alias_of                 TEXT,
+    revalidation_required    INTEGER NOT NULL DEFAULT 0
+                             CHECK (revalidation_required IN (0, 1)),
+    created_at               TEXT NOT NULL,
+    updated_at               TEXT NOT NULL,
+    journal_cursor           INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_goal_index_merge
+ON goal_index(merge_key);
+
+CREATE TABLE IF NOT EXISTS revalidation_markers (
+    marker_id          TEXT PRIMARY KEY,
+    tenant_id          TEXT NOT NULL DEFAULT 'tenant-default',
+    run_id             TEXT NOT NULL,
+    target_kind        TEXT NOT NULL
+                       CHECK (target_kind IN ('claim', 'goal', 'action')),
+    target_id          TEXT NOT NULL,
+    source_decision_id TEXT,
+    reason             TEXT NOT NULL,
+    created_at         TEXT NOT NULL,
+    journal_cursor     INTEGER NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS revalidation_markers_immutable_update
+BEFORE UPDATE ON revalidation_markers
+BEGIN
+    SELECT RAISE(ABORT, 'revalidation_markers rows are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS revalidation_markers_immutable_delete
+BEFORE DELETE ON revalidation_markers
+BEGIN
+    SELECT RAISE(ABORT, 'revalidation_markers rows are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS backup_records (
+    backup_id      TEXT PRIMARY KEY,
+    kind           TEXT NOT NULL
+                   CHECK (kind IN ('backup', 'restore_test')),
+    state          TEXT NOT NULL
+                   CHECK (state IN ('succeeded', 'failed')),
+    published_path TEXT,
+    details        TEXT,
+    created_at     TEXT NOT NULL,
+    expires_at     TEXT
+);
+"""
+
+
+async def _migrate_add_typed_indexes(db: aiosqlite.Connection) -> None:
+    """Expand migration: shared typed indexes and recovery records.
+
+    The claim, evidence-decision, goal, and revalidation-marker tables
+    are host-defined index projections fed through the unit of work.
+    Evidence decision history is immutable; only the revocation fields
+    change, so the complete prior decision history survives. The
+    backup-records table feeds the Recovery Center backup-health
+    queue.
+    """
+    await db.executescript(TYPED_INDEX_DDL)
+    db.row_factory = aiosqlite.Row
+    await db.commit()
+    logger.info("Migration 18 applied: typed index and recovery tables")
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -2080,6 +2247,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         15: _migrate_add_runtime_journal,
         16: _migrate_add_budget_authority,
         17: _migrate_add_activation_effect_protocol,
+        18: _migrate_add_typed_indexes,
     }
     fn = migrations.get(version)
     if fn is None:
