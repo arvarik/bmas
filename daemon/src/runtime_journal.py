@@ -32,9 +32,13 @@ from core.digest_profile import digest_hex
 from core.failpoints import failpoint
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Awaitable, Callable
 
     import aiosqlite
+
+    ExtraWrites = Callable[
+        ["aiosqlite.Connection", int, str], Awaitable[None],
+    ]
 
 RUNTIME_JOURNAL_SCHEMA_VERSION = "1"
 
@@ -80,6 +84,8 @@ JOURNAL_FAILPOINTS = (
     "journal.after_projection_write",
     "journal.before_outbox_write",
     "journal.after_outbox_write",
+    "journal.before_resource_write",
+    "journal.after_resource_write",
     "journal.before_commit",
     "journal.after_commit",
 )
@@ -379,12 +385,16 @@ async def commit_operation(
     operation: JournalOperation,
     *,
     database_time: str | None = None,
+    extra_writes: ExtraWrites | None = None,
 ) -> JournalRecord:
     """Commit one typed operation as one journal transaction.
 
     One transaction writes the journal record, the changed projections,
-    and the outbox obligations together. A crash at any point before
-    the commit leaves no record; the commit itself is atomic.
+    and the outbox obligations together. ``extra_writes`` joins the
+    same transaction, so run admission creates its budget and initial
+    reservation atomically with the journal genesis. A crash at any
+    point before the commit leaves no record; the commit itself is
+    atomic.
     """
     _validate_operation(operation)
     failpoint("journal.before_transaction")
@@ -574,6 +584,11 @@ async def commit_operation(
                 )
             failpoint("journal.after_outbox_write")
 
+            failpoint("journal.before_resource_write")
+            if extra_writes is not None:
+                await extra_writes(connection, journal_cursor, now)
+            failpoint("journal.after_resource_write")
+
             failpoint("journal.before_commit")
             await connection.commit()
         except BaseException:
@@ -677,8 +692,12 @@ async def _apply_durable_projection(
             "admission_id, task_id, run_id, runtime_id, "
             "runtime_contract_version, version_set, specification_digest, "
             "capability_document_digest, policy_set_digest, "
-            "asset_manifest_digest, admission_digest, journal_cursor) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "asset_manifest_digest, admission_digest, asset_manifest_id, "
+            "prompt_profile_digest, role_profile_digest, seed_policy, "
+            "requested_seed, qualification_ids, run_budget_id, "
+            "initial_reservation_id, journal_cursor) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            "?, ?)",
             (
                 payload["admission_id"],
                 operation.task_id,
@@ -691,6 +710,15 @@ async def _apply_durable_projection(
                 payload.get("policy_set_digest"),
                 payload.get("asset_manifest_digest"),
                 payload["admission_digest"],
+                payload.get("asset_manifest_id"),
+                payload.get("prompt_profile_digest"),
+                payload.get("role_profile_digest"),
+                payload.get("seed_policy"),
+                json.dumps(payload.get("requested_seed")),
+                json.dumps(payload.get("qualification_ids", []),
+                           sort_keys=True),
+                payload.get("run_budget_id"),
+                payload.get("initial_reservation_id"),
                 journal_cursor,
             ),
         )

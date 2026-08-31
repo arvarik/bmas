@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     )
 
 DatabaseTimeSource = Callable[[], Awaitable[str]]
+ReservationValidator = Callable[[str], Awaitable[bool]]
 
 
 class AuthorityError(PermissionError):
@@ -239,11 +240,18 @@ class EffectLedger:
 
     Cancellation cannot undo an external effect. An in-flight result
     reconciles into the ledger without an authorized state commit.
+    When a reservation validator is attached, no cost-bearing effect
+    approves without one valid reservation.
     """
 
-    def __init__(self, authority: FencedAuthority) -> None:
+    def __init__(
+        self,
+        authority: FencedAuthority,
+        reservation_validator: ReservationValidator | None = None,
+    ) -> None:
         self._authority = authority
         self._ledger = _FencedLedger(authority, "effect")
+        self._reservation_validator = reservation_validator
         self.reconciled: list[dict[str, Any]] = []
 
     @property
@@ -251,10 +259,25 @@ class EffectLedger:
         return list(self._ledger.entries)
 
     async def approve(
-        self, context: RunContext, effect_id: str, action: str,
+        self,
+        context: RunContext,
+        effect_id: str,
+        action: str,
+        *,
+        reservation_id: str | None = None,
     ) -> LedgerEntry:
+        if self._reservation_validator is not None and (
+            reservation_id is None
+            or not await self._reservation_validator(reservation_id)
+        ):
+            raise AuthorityError("reservation")
         return await self._ledger.commit(
-            {"effect_id": effect_id, "action": action, "state": "approved"},
+            {
+                "effect_id": effect_id,
+                "action": action,
+                "state": "approved",
+                "reservation_id": reservation_id,
+            },
         )
 
     async def reconcile(
@@ -282,10 +305,17 @@ class ExternalEffectService:
         self.executed: list[dict[str, Any]] = []
 
     async def execute(
-        self, context: RunContext, *, kind: str, request: dict[str, Any],
+        self,
+        context: RunContext,
+        *,
+        kind: str,
+        request: dict[str, Any],
+        reservation_id: str | None = None,
     ) -> dict[str, Any]:
         effect_id = f"effect-{uuid.uuid4()}"
-        entry = await self._effects.approve(context, effect_id, kind)
+        entry = await self._effects.approve(
+            context, effect_id, kind, reservation_id=reservation_id,
+        )
         record = {
             "effect_id": effect_id,
             "kind": kind,
@@ -519,6 +549,7 @@ def create_runtime_services(
     controls: Any,
     database_time: DatabaseTimeSource | None = None,
     lease_ttl_seconds: float = 30.0,
+    reservation_validator: ReservationValidator | None = None,
 ) -> ReferenceRuntimeServices:
     """Wire the complete reference service boundary for one lease holder."""
     authority = FencedAuthority(
@@ -527,7 +558,7 @@ def create_runtime_services(
         lease_fence=lease_fence,
         database_time=database_time or _default_database_time,
     )
-    effects = EffectLedger(authority)
+    effects = EffectLedger(authority, reservation_validator)
     external_effects = ExternalEffectService(effects)
     return ReferenceRuntimeServices(
         mutations=RuntimeUnitOfWork(authority, run_ledger, outcome_ledger),

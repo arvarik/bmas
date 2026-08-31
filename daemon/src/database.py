@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -1462,6 +1462,119 @@ async def _migrate_add_runtime_journal(db: aiosqlite.Connection) -> None:
     logger.info("Migration 15 applied: immutable runtime journal tables")
 
 
+BUDGET_AUTHORITY_DDL = """
+CREATE TABLE IF NOT EXISTS run_budgets (
+    budget_id                 TEXT PRIMARY KEY,
+    run_id                    TEXT NOT NULL UNIQUE,
+    task_id                   TEXT NOT NULL,
+    currency                  TEXT NOT NULL,
+    budget_mode               TEXT NOT NULL DEFAULT 'strict'
+                              CHECK (budget_mode IN ('strict', 'permissive')),
+    pessimistic_price_version TEXT,
+    journal_cursor            INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS budget_limits (
+    limit_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    budget_id       TEXT NOT NULL,
+    scope           TEXT NOT NULL
+                    CHECK (scope IN
+                           ('task', 'run', 'activation', 'provider',
+                            'tool')),
+    scope_key       TEXT NOT NULL,
+    resource        TEXT NOT NULL,
+    unit            TEXT NOT NULL,
+    currency        TEXT,
+    limit_amount    INTEGER NOT NULL CHECK (limit_amount >= 0),
+    reserved_amount INTEGER NOT NULL DEFAULT 0
+                    CHECK (reserved_amount >= 0),
+    consumed_amount INTEGER NOT NULL DEFAULT 0
+                    CHECK (consumed_amount >= 0),
+    UNIQUE(scope, scope_key, resource)
+);
+
+CREATE TABLE IF NOT EXISTS budget_reservations (
+    reservation_id         TEXT PRIMARY KEY,
+    budget_id              TEXT NOT NULL,
+    run_id                 TEXT NOT NULL,
+    task_id                TEXT NOT NULL,
+    activation_id          TEXT,
+    provider               TEXT,
+    tool                   TEXT,
+    state                  TEXT NOT NULL DEFAULT 'requested'
+                           CHECK (state IN
+                                  ('requested', 'reserved', 'consumed',
+                                   'released', 'expired')),
+    currency               TEXT NOT NULL,
+    resources              TEXT NOT NULL,
+    requested_amount_nanos INTEGER NOT NULL
+                           CHECK (requested_amount_nanos >= 0),
+    reserved_amount_nanos  INTEGER NOT NULL DEFAULT 0
+                           CHECK (reserved_amount_nanos >= 0),
+    consumed_amount_nanos  INTEGER NOT NULL DEFAULT 0
+                           CHECK (consumed_amount_nanos >= 0),
+    released_amount_nanos  INTEGER NOT NULL DEFAULT 0
+                           CHECK (released_amount_nanos >= 0),
+    consumption_kind       TEXT
+                           CHECK (consumption_kind IN
+                                  ('actual', 'estimated')),
+    consumed_resources     TEXT,
+    original_amount_text   TEXT,
+    pricing_version        TEXT,
+    overshoot              INTEGER NOT NULL DEFAULT 0
+                           CHECK (overshoot IN (0, 1)),
+    request_deadline_at    TEXT,
+    created_at             TEXT NOT NULL,
+    state_changed_at       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_budget_reservations_budget
+ON budget_reservations(budget_id, state);
+
+CREATE TABLE IF NOT EXISTS budget_reconciliations (
+    reconciliation_key TEXT PRIMARY KEY,
+    reservation_id     TEXT NOT NULL,
+    content_digest     TEXT NOT NULL,
+    recorded_at        TEXT NOT NULL
+);
+"""
+
+RUNTIME_ADMISSION_FINAL_COLUMNS = (
+    ("asset_manifest_id", "TEXT"),
+    ("prompt_profile_digest", "TEXT"),
+    ("role_profile_digest", "TEXT"),
+    ("seed_policy", "TEXT"),
+    ("requested_seed", "TEXT"),
+    ("qualification_ids", "TEXT"),
+    ("run_budget_id", "TEXT"),
+    ("initial_reservation_id", "TEXT"),
+)
+
+
+async def _migrate_add_budget_authority(db: aiosqlite.Connection) -> None:
+    """Expand migration: budget authority tables and final admissions.
+
+    The budget tables give reservations one durable authority with
+    separate reserved and consumed aggregates per scope and resource,
+    so one atomic compare-and-reserve statement enforces every hard
+    limit. The admission table gains the final admission fields: the
+    asset manifest, profile digests, seed policy, qualifications, and
+    the run budget with its initial reservation.
+    """
+    await db.executescript(BUDGET_AUTHORITY_DDL)
+    db.row_factory = aiosqlite.Row
+    cursor = await db.execute("PRAGMA table_info(runtime_admissions)")
+    existing = {row[1] for row in await cursor.fetchall()}
+    for column, column_type in RUNTIME_ADMISSION_FINAL_COLUMNS:
+        if column not in existing:
+            await db.execute(
+                f"ALTER TABLE runtime_admissions ADD COLUMN "
+                f"{column} {column_type}"
+            )
+    await db.commit()
+    logger.info("Migration 16 applied: budget authority and final admissions")
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -1479,6 +1592,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         13: _migrate_add_runtime_pair,
         14: _migrate_add_run_controls,
         15: _migrate_add_runtime_journal,
+        16: _migrate_add_budget_authority,
     }
     fn = migrations.get(version)
     if fn is None:

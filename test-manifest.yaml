@@ -272,6 +272,47 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  # ── Foundation budget and admission ──────────────────────────────
+  - id: daemon.budget-arithmetic
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove exact integer monetary arithmetic: decimal-string parsing,
+      upward reservation rounding, integer hard-limit comparison, and
+      rejection of binary floating point at every hard-limit API.
+    argv: ["python3", "-m", "pytest", "tests/test_budget_arithmetic.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.budget-states
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the registered reservation states, every reconciliation
+      rule, and that concurrent reservations cannot exceed any
+      aggregate limit.
+    argv: ["python3", "-m", "pytest", "tests/test_budget_states.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.run-admission
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove that run admission creates the run, admission, initial
+      reservation, journal genesis, and queue row atomically after
+      every prerequisite passes, and that no cost-bearing action
+      starts without a valid reservation.
+    argv: ["python3", "-m", "pytest", "tests/test_run_admission.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 900
+    tools: [python, pytest]
+    parser: pytest_summary
+
   # ── Agent ────────────────────────────────────────────────────────
   - id: agent.tests
     state: active_required
@@ -498,6 +539,9 @@ profiles:
         - daemon.unit-of-work-atomicity
         - daemon.journal-replay
         - daemon.sqlite-operational
+        - daemon.budget-arithmetic
+        - daemon.budget-states
+        - daemon.run-admission
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.
