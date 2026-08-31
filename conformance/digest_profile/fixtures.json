@@ -1,0 +1,161 @@
+{
+  "fixture_id": "digest-profile",
+  "metadata": {
+    "digest_profile_version": "1"
+  },
+  "vectors": [
+    {
+      "canonical": "null",
+      "domain": "digest-fixture",
+      "input": null,
+      "name": "scalar-null",
+      "sha256": "f3daf468115f0145a3994a081f739d531811bc0853cb3a1c6083c171fe77878a"
+    },
+    {
+      "canonical": "[true,false]",
+      "domain": "digest-fixture",
+      "input": [
+        true,
+        false
+      ],
+      "name": "scalar-booleans",
+      "sha256": "cc8110d0a683f61d8cfd5eea2407ee7efc1e9b713689b8e988a9c75b19c65000"
+    },
+    {
+      "canonical": "[0,-1,42,9007199254740991,-9007199254740991]",
+      "domain": "digest-fixture",
+      "input": [
+        0,
+        -1,
+        42,
+        9007199254740991,
+        -9007199254740991
+      ],
+      "name": "integer-range",
+      "sha256": "6ace079063995b458fc0f9874bb20de026fbcb63c4fbe773ec381030261bb80c"
+    },
+    {
+      "canonical": "{\"\":5,\"A\":3,\"a\":2,\"aa\":4,\"b\":1}",
+      "domain": "digest-fixture",
+      "input": {
+        "": 5,
+        "A": 3,
+        "a": 2,
+        "aa": 4,
+        "b": 1
+      },
+      "name": "key-sorting-ascii",
+      "sha256": "20c70c4358b59faf3eb653f8f9a7b25a4e6b233303f8a96478d4ec1bfcb957f8"
+    },
+    {
+      "canonical": "{\"e\":\"ascii\",\"\u00e9\":\"latin small e acute\",\"\ud83d\ude00\":\"astral face\",\"\uff61\":\"halfwidth stop\"}",
+      "domain": "digest-fixture",
+      "input": {
+        "e": "ascii",
+        "\u00e9": "latin small e acute",
+        "\uff61": "halfwidth stop",
+        "\ud83d\ude00": "astral face"
+      },
+      "name": "key-sorting-utf16-code-units",
+      "sha256": "415e59b032f805c38632695536d7f25c9050e15c5d1be645ef2b2a907da88ca6"
+    },
+    {
+      "canonical": "{\"control\":\" \\b\\t\\n\\f\\r\\u0000\\u001f\",\"delete\":\"\u007f\",\"plain\":\"snowman \u2603\",\"quote-backslash\":\"\\\"\\\\/\"}",
+      "domain": "digest-fixture",
+      "input": {
+        "control": " \b\t\n\f\r\u0000\u001f",
+        "delete": "\u007f",
+        "plain": "snowman \u2603",
+        "quote-backslash": "\"\\/"
+      },
+      "name": "string-escapes",
+      "sha256": "2307db577e265301cfe9e419f05663b30eafd09e6a053b2dc47fbdc4f8df628e"
+    },
+    {
+      "canonical": "{\"e\u0301\":\"decomposed\",\"\u00e9\":\"precomposed\"}",
+      "domain": "digest-fixture",
+      "input": {
+        "e\u0301": "decomposed",
+        "\u00e9": "precomposed"
+      },
+      "name": "unicode-stays-unnormalized",
+      "sha256": "8f6a229ae850bde94d41edfb762d8a50eb8a87c36acb7d3a3c53abe67ca52a3d"
+    },
+    {
+      "canonical": "{\"array\":[],\"object\":{},\"text\":\"\"}",
+      "domain": "digest-fixture",
+      "input": {
+        "array": [],
+        "object": {},
+        "text": ""
+      },
+      "name": "empty-containers",
+      "sha256": "30b99cfd725cf5d262cd3d315b8f38d53f79b41324a0ec9a74c8b726a88e7528"
+    },
+    {
+      "canonical": "{\"list\":[{\"a\":2,\"z\":1}],\"outer\":{\"inner\":[1,\"two\",null,{\"deep\":true}]}}",
+      "domain": "digest-fixture",
+      "input": {
+        "list": [
+          {
+            "a": 2,
+            "z": 1
+          }
+        ],
+        "outer": {
+          "inner": [
+            1,
+            "two",
+            null,
+            {
+              "deep": true
+            }
+          ]
+        }
+      },
+      "name": "nested-structure",
+      "sha256": "33c2fd49cdc0882ccbeda6d5cff5503300c6d1acf2aaf0c628eab3ba5beabdd7"
+    },
+    {
+      "canonical": "{\"access_policy_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"environment_policy_digest\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"model_policy_digest\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"redaction_policy_digest\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"retention_policy_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"schema_version\":\"1\",\"source_trust_policy_digest\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"tool_policy_digest\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+      "domain": "policy-set",
+      "input": {
+        "access_policy_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "environment_policy_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "model_policy_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "redaction_policy_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "retention_policy_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+        "schema_version": "1",
+        "source_trust_policy_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "tool_policy_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "name": "policy-set-example",
+      "sha256": "64cd5ee0b1e74758da860ea0fb0b76b3db6c612ff88a2829c07e808a6d4e98a5"
+    },
+    {
+      "canonical": "{\"asset_manifest_schema_version\":\"1\",\"entries\":[{\"access_policy\":\"task-scope\",\"asset_id\":\"asset-brief\",\"content_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"data_class\":\"internal\",\"extraction_version\":\"1\",\"media_type\":\"text/markdown\",\"redacted_refs\":[],\"scanner_version\":\"1\",\"size_bytes\":2048,\"source\":\"user-upload\",\"trust_level\":\"untrusted\"}],\"manifest_id\":\"manifest-fixture\"}",
+      "domain": "asset-manifest",
+      "input": {
+        "asset_manifest_schema_version": "1",
+        "entries": [
+          {
+            "access_policy": "task-scope",
+            "asset_id": "asset-brief",
+            "content_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "data_class": "internal",
+            "extraction_version": "1",
+            "media_type": "text/markdown",
+            "redacted_refs": [],
+            "scanner_version": "1",
+            "size_bytes": 2048,
+            "source": "user-upload",
+            "trust_level": "untrusted"
+          }
+        ],
+        "manifest_id": "manifest-fixture"
+      },
+      "name": "asset-manifest-example",
+      "sha256": "20ccfd6a3542786e7e358dd905ab1a59ee63f8b077a757693adb3631d28c072d"
+    }
+  ]
+}
