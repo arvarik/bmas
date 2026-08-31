@@ -675,31 +675,66 @@ sqlite_tables:
       - { name: target, owner: daemon.journal-authority, derived: false }
       - { name: created_at, owner: daemon.journal-authority, derived: false }
   - table: activation_dispatch_outbox
-    authority: daemon.journal-authority
-    purpose: "Mutable activation-grant delivery obligations."
+    authority: daemon.activation-authority
+    purpose: "Mutable activation delivery projection with its claim lease."
     writers:
+      - activation_service
+      - database
       - runtime_journal
     fields:
-      - { name: dispatch_id, owner: daemon.journal-authority, derived: false }
-      - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
-      - { name: run_id, owner: daemon.journal-authority, derived: false }
-      - { name: activation_id, owner: daemon.journal-authority, derived: false }
-      - { name: dispatch_state, owner: daemon.journal-authority, derived: false }
-      - { name: attempts, owner: daemon.journal-authority, derived: false }
-      - { name: last_attempt_at, owner: daemon.journal-authority, derived: false }
+      - { name: dispatch_id, owner: daemon.activation-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.activation-authority, derived: false }
+      - { name: run_id, owner: daemon.activation-authority, derived: false }
+      - { name: activation_id, owner: daemon.activation-authority, derived: false }
+      - { name: activation_attempt, owner: daemon.activation-authority, derived: false }
+      - { name: grant_id, owner: daemon.activation-authority, derived: false }
+      - { name: grant_artifact_digest, owner: daemon.activation-authority, derived: false }
+      - { name: target_agent_id, owner: daemon.activation-authority, derived: false }
+      - { name: audience, owner: daemon.activation-authority, derived: false }
+      - { name: not_before, owner: daemon.activation-authority, derived: false }
+      - { name: grant_expires_at, owner: daemon.activation-authority, derived: false }
+      - { name: delivery_count, owner: daemon.activation-authority, derived: false }
+      - { name: dispatch_state, owner: daemon.activation-authority, derived: false }
+      - { name: claim_owner, owner: daemon.activation-authority, derived: false }
+      - { name: claim_fence, owner: daemon.activation-authority, derived: false }
+      - { name: claimed_at, owner: daemon.activation-authority, derived: false }
+      - { name: claim_expires_at, owner: daemon.activation-authority, derived: false }
+      - { name: send_started_at, owner: daemon.activation-authority, derived: false }
+      - { name: acknowledgement_id, owner: daemon.activation-authority, derived: false }
+      - { name: terminal_reason, owner: daemon.activation-authority, derived: false }
+      - { name: attempts, owner: daemon.activation-authority, derived: false }
+      - { name: last_attempt_at, owner: daemon.activation-authority, derived: false }
   - table: effect_dispatch_outbox
-    authority: daemon.journal-authority
-    purpose: "Mutable external-effect delivery obligations."
+    authority: daemon.effect-authority
+    purpose: "Mutable effect delivery projection with its claim lease."
     writers:
+      - database
+      - effect_service
       - runtime_journal
     fields:
-      - { name: dispatch_id, owner: daemon.journal-authority, derived: false }
-      - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
-      - { name: run_id, owner: daemon.journal-authority, derived: false }
-      - { name: effect_id, owner: daemon.journal-authority, derived: false }
-      - { name: dispatch_state, owner: daemon.journal-authority, derived: false }
-      - { name: attempts, owner: daemon.journal-authority, derived: false }
-      - { name: last_attempt_at, owner: daemon.journal-authority, derived: false }
+      - { name: dispatch_id, owner: daemon.effect-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.effect-authority, derived: false }
+      - { name: run_id, owner: daemon.effect-authority, derived: false }
+      - { name: effect_id, owner: daemon.effect-authority, derived: false }
+      - { name: dispatch_ref, owner: daemon.effect-authority, derived: false }
+      - { name: effect_operation_id, owner: daemon.effect-authority, derived: false }
+      - { name: effect_attempt_number, owner: daemon.effect-authority, derived: false }
+      - { name: target, owner: daemon.effect-authority, derived: false }
+      - { name: request_digest, owner: daemon.effect-authority, derived: false }
+      - { name: not_before, owner: daemon.effect-authority, derived: false }
+      - { name: dispatch_policy, owner: daemon.effect-authority, derived: false }
+      - { name: dispatch_state, owner: daemon.effect-authority, derived: false }
+      - { name: claim_owner, owner: daemon.effect-authority, derived: false }
+      - { name: dispatch_fence, owner: daemon.effect-authority, derived: false }
+      - { name: claimed_at, owner: daemon.effect-authority, derived: false }
+      - { name: claim_expires_at, owner: daemon.effect-authority, derived: false }
+      - { name: transport_started_at, owner: daemon.effect-authority, derived: false }
+      - { name: grant_token_id, owner: daemon.effect-authority, derived: false }
+      - { name: grant_digest, owner: daemon.effect-authority, derived: false }
+      - { name: grant_nonce, owner: daemon.effect-authority, derived: false }
+      - { name: grant_expires_at, owner: daemon.effect-authority, derived: false }
+      - { name: attempts, owner: daemon.effect-authority, derived: false }
+      - { name: last_attempt_at, owner: daemon.effect-authority, derived: false }
   - table: task_tombstones
     authority: daemon.journal-authority
     purpose: "Preserved deleted-task identity and erasure state instead of journal cascades."
@@ -778,6 +813,268 @@ sqlite_tables:
       - { name: reservation_id, owner: daemon.budget-authority, derived: false }
       - { name: content_digest, owner: daemon.budget-authority, derived: false }
       - { name: recorded_at, owner: daemon.budget-authority, derived: false }
+  - table: activation_acknowledgements
+    authority: daemon.activation-authority
+    purpose: "Authenticated agent acknowledgements with replay protection."
+    writers:
+      - activation_service
+    fields:
+      - { name: acknowledgement_id, owner: daemon.activation-authority, derived: false }
+      - { name: tenant_id, owner: daemon.activation-authority, derived: false }
+      - { name: activation_grant_id, owner: daemon.activation-authority, derived: false }
+      - { name: acknowledgement_digest, owner: daemon.activation-authority, derived: false }
+      - { name: decision, owner: daemon.activation-authority, derived: false }
+      - { name: decision_reason_code, owner: daemon.activation-authority, derived: false }
+      - { name: agent_id, owner: daemon.activation-authority, derived: false }
+      - { name: key_id, owner: daemon.activation-authority, derived: false }
+      - { name: stored_bytes, owner: daemon.activation-authority, derived: false }
+      - { name: late_observation, owner: daemon.activation-authority, derived: false }
+      - { name: agent_observed_at, owner: daemon.activation-authority, derived: false }
+      - { name: received_at, owner: daemon.activation-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.activation-authority, derived: false }
+  - table: activation_grants
+    authority: daemon.activation-authority
+    purpose: "Immutable signed activation grants, one per attempt."
+    writers:
+      - activation_service
+    fields:
+      - { name: grant_id, owner: daemon.activation-authority, derived: false }
+      - { name: activation_id, owner: daemon.activation-authority, derived: false }
+      - { name: attempt, owner: daemon.activation-authority, derived: false }
+      - { name: run_id, owner: daemon.activation-authority, derived: false }
+      - { name: task_id, owner: daemon.activation-authority, derived: false }
+      - { name: grant_artifact_digest, owner: daemon.activation-authority, derived: false }
+      - { name: agent_id, owner: daemon.activation-authority, derived: false }
+      - { name: audience, owner: daemon.activation-authority, derived: false }
+      - { name: agent_protocol_version, owner: daemon.activation-authority, derived: false }
+      - { name: request_digest, owner: daemon.activation-authority, derived: false }
+      - { name: context_view_digest, owner: daemon.activation-authority, derived: false }
+      - { name: task_fence, owner: daemon.activation-authority, derived: false }
+      - { name: activation_fence, owner: daemon.activation-authority, derived: false }
+      - { name: grant_nonce, owner: daemon.activation-authority, derived: false }
+      - { name: not_before, owner: daemon.activation-authority, derived: false }
+      - { name: expires_at, owner: daemon.activation-authority, derived: false }
+      - { name: key_id, owner: daemon.activation-authority, derived: false }
+      - { name: signature_algorithm, owner: daemon.activation-authority, derived: false }
+      - { name: created_at, owner: daemon.activation-authority, derived: false }
+  - table: activation_leases
+    authority: daemon.activation-authority
+    purpose: "Live activation lease owner, fence, and expiry."
+    writers:
+      - activation_service
+    fields:
+      - { name: lease_id, owner: daemon.activation-authority, derived: false }
+      - { name: activation_id, owner: daemon.activation-authority, derived: false }
+      - { name: attempt, owner: daemon.activation-authority, derived: false }
+      - { name: run_id, owner: daemon.activation-authority, derived: false }
+      - { name: owner, owner: daemon.activation-authority, derived: false }
+      - { name: lease_fence, owner: daemon.activation-authority, derived: false }
+      - { name: purpose, owner: daemon.activation-authority, derived: false }
+      - { name: acquired_at, owner: daemon.activation-authority, derived: false }
+      - { name: expires_at, owner: daemon.activation-authority, derived: false }
+      - { name: released, owner: daemon.activation-authority, derived: false }
+  - table: activations
+    authority: daemon.activation-authority
+    purpose: "One durable ledger row per activation attempt."
+    writers:
+      - activation_service
+    fields:
+      - { name: activation_id, owner: daemon.activation-authority, derived: false }
+      - { name: attempt, owner: daemon.activation-authority, derived: false }
+      - { name: run_id, owner: daemon.activation-authority, derived: false }
+      - { name: task_id, owner: daemon.activation-authority, derived: false }
+      - { name: tenant_id, owner: daemon.activation-authority, derived: false }
+      - { name: runtime_id, owner: daemon.activation-authority, derived: false }
+      - { name: runtime_contract_version, owner: daemon.activation-authority, derived: false }
+      - { name: retry_of_attempt, owner: daemon.activation-authority, derived: false }
+      - { name: state, owner: daemon.activation-authority, derived: false }
+      - { name: agent_protocol_version, owner: daemon.activation-authority, derived: false }
+      - { name: task_fence, owner: daemon.activation-authority, derived: false }
+      - { name: lease_id, owner: daemon.activation-authority, derived: false }
+      - { name: reservation_id, owner: daemon.activation-authority, derived: false }
+      - { name: request_digest, owner: daemon.activation-authority, derived: false }
+      - { name: context_view_digest, owner: daemon.activation-authority, derived: false }
+      - { name: effect_ids, owner: daemon.activation-authority, derived: false }
+      - { name: raw_result_artifact_digest, owner: daemon.activation-authority, derived: false }
+      - { name: proposal_digest, owner: daemon.activation-authority, derived: false }
+      - { name: execution_envelope_digest, owner: daemon.activation-authority, derived: false }
+      - { name: usage, owner: daemon.activation-authority, derived: false }
+      - { name: wait_reason, owner: daemon.activation-authority, derived: false }
+      - { name: wait_policy_version, owner: daemon.activation-authority, derived: false }
+      - { name: required_approver, owner: daemon.activation-authority, derived: false }
+      - { name: reconciliation_reason, owner: daemon.activation-authority, derived: false }
+      - { name: terminal_reason, owner: daemon.activation-authority, derived: false }
+      - { name: retry_delay_ms, owner: daemon.activation-authority, derived: false }
+      - { name: retry_jitter_ms, owner: daemon.activation-authority, derived: false }
+      - { name: created_at, owner: daemon.activation-authority, derived: false }
+      - { name: state_changed_at, owner: daemon.activation-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.activation-authority, derived: false }
+  - table: attempt_receipts
+    authority: daemon.effect-authority
+    purpose: "Signed agent attempt receipts with monotonic sequence."
+    writers:
+      - effect_service
+    fields:
+      - { name: receipt_id, owner: daemon.effect-authority, derived: false }
+      - { name: tenant_id, owner: daemon.effect-authority, derived: false }
+      - { name: effect_operation_id, owner: daemon.effect-authority, derived: false }
+      - { name: effect_id, owner: daemon.effect-authority, derived: false }
+      - { name: effect_attempt_number, owner: daemon.effect-authority, derived: false }
+      - { name: dispatch_ref, owner: daemon.effect-authority, derived: false }
+      - { name: token_id, owner: daemon.effect-authority, derived: false }
+      - { name: activation_id, owner: daemon.effect-authority, derived: false }
+      - { name: activation_attempt, owner: daemon.effect-authority, derived: false }
+      - { name: receipt_sequence, owner: daemon.effect-authority, derived: false }
+      - { name: stage, owner: daemon.effect-authority, derived: false }
+      - { name: request_digest, owner: daemon.effect-authority, derived: false }
+      - { name: provider, owner: daemon.effect-authority, derived: false }
+      - { name: model, owner: daemon.effect-authority, derived: false }
+      - { name: tool, owner: daemon.effect-authority, derived: false }
+      - { name: operation, owner: daemon.effect-authority, derived: false }
+      - { name: transport_observation, owner: daemon.effect-authority, derived: false }
+      - { name: provider_run_id, owner: daemon.effect-authority, derived: false }
+      - { name: provider_receipt, owner: daemon.effect-authority, derived: false }
+      - { name: raw_response_digest, owner: daemon.effect-authority, derived: false }
+      - { name: usage, owner: daemon.effect-authority, derived: false }
+      - { name: agent_id, owner: daemon.effect-authority, derived: false }
+      - { name: protocol_version, owner: daemon.effect-authority, derived: false }
+      - { name: key_id, owner: daemon.effect-authority, derived: false }
+      - { name: signature, owner: daemon.effect-authority, derived: false }
+      - { name: agent_observed_at, owner: daemon.effect-authority, derived: false }
+      - { name: received_at, owner: daemon.effect-authority, derived: false }
+  - table: effect_attempts
+    authority: daemon.effect-authority
+    purpose: "One immutable attempt row per possible transport start."
+    writers:
+      - effect_service
+    fields:
+      - { name: effect_id, owner: daemon.effect-authority, derived: false }
+      - { name: effect_operation_id, owner: daemon.effect-authority, derived: false }
+      - { name: effect_attempt_number, owner: daemon.effect-authority, derived: false }
+      - { name: retry_of_effect_id, owner: daemon.effect-authority, derived: false }
+      - { name: request_digest, owner: daemon.effect-authority, derived: false }
+      - { name: provider_operation_key, owner: daemon.effect-authority, derived: false }
+      - { name: reservation_id, owner: daemon.effect-authority, derived: false }
+      - { name: dispatch_ref, owner: daemon.effect-authority, derived: false }
+      - { name: run_id, owner: daemon.effect-authority, derived: false }
+      - { name: task_id, owner: daemon.effect-authority, derived: false }
+      - { name: state, owner: daemon.effect-authority, derived: false }
+      - { name: retry_safety, owner: daemon.effect-authority, derived: false }
+      - { name: approval_id, owner: daemon.effect-authority, derived: false }
+      - { name: lookup_evidence, owner: daemon.effect-authority, derived: false }
+      - { name: raw_response_artifact_digest, owner: daemon.effect-authority, derived: false }
+      - { name: usage, owner: daemon.effect-authority, derived: false }
+      - { name: observed_outcome, owner: daemon.effect-authority, derived: false }
+      - { name: reconciliation_reason, owner: daemon.effect-authority, derived: false }
+      - { name: terminal_reason, owner: daemon.effect-authority, derived: false }
+      - { name: created_at, owner: daemon.effect-authority, derived: false }
+      - { name: state_changed_at, owner: daemon.effect-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.effect-authority, derived: false }
+  - table: effect_grants
+    authority: daemon.effect-authority
+    purpose: "Immutable signed effect grants for nested attempts."
+    writers:
+      - effect_service
+    fields:
+      - { name: token_id, owner: daemon.effect-authority, derived: false }
+      - { name: effect_operation_id, owner: daemon.effect-authority, derived: false }
+      - { name: effect_id, owner: daemon.effect-authority, derived: false }
+      - { name: effect_attempt_number, owner: daemon.effect-authority, derived: false }
+      - { name: dispatch_ref, owner: daemon.effect-authority, derived: false }
+      - { name: activation_id, owner: daemon.effect-authority, derived: false }
+      - { name: activation_attempt, owner: daemon.effect-authority, derived: false }
+      - { name: run_id, owner: daemon.effect-authority, derived: false }
+      - { name: task_id, owner: daemon.effect-authority, derived: false }
+      - { name: request_digest, owner: daemon.effect-authority, derived: false }
+      - { name: task_fence, owner: daemon.effect-authority, derived: false }
+      - { name: lease_ref, owner: daemon.effect-authority, derived: false }
+      - { name: reservation_id, owner: daemon.effect-authority, derived: false }
+      - { name: max_authorized_amount_nanos, owner: daemon.effect-authority, derived: false }
+      - { name: provider, owner: daemon.effect-authority, derived: false }
+      - { name: model, owner: daemon.effect-authority, derived: false }
+      - { name: tool, owner: daemon.effect-authority, derived: false }
+      - { name: operation, owner: daemon.effect-authority, derived: false }
+      - { name: capability_digest, owner: daemon.effect-authority, derived: false }
+      - { name: agent_id, owner: daemon.effect-authority, derived: false }
+      - { name: audience, owner: daemon.effect-authority, derived: false }
+      - { name: issued_at, owner: daemon.effect-authority, derived: false }
+      - { name: expires_at, owner: daemon.effect-authority, derived: false }
+      - { name: grant_nonce, owner: daemon.effect-authority, derived: false }
+      - { name: protocol_version, owner: daemon.effect-authority, derived: false }
+      - { name: schema_version, owner: daemon.effect-authority, derived: false }
+      - { name: digest_profile, owner: daemon.effect-authority, derived: false }
+      - { name: signature_algorithm, owner: daemon.effect-authority, derived: false }
+      - { name: key_id, owner: daemon.effect-authority, derived: false }
+      - { name: grant_artifact_digest, owner: daemon.effect-authority, derived: false }
+      - { name: dispatcher, owner: daemon.effect-authority, derived: false }
+      - { name: dispatch_fence, owner: daemon.effect-authority, derived: false }
+      - { name: created_at, owner: daemon.effect-authority, derived: false }
+  - table: effect_operations
+    authority: daemon.effect-authority
+    purpose: "One logical external action with its idempotency scope."
+    writers:
+      - effect_service
+    fields:
+      - { name: effect_operation_id, owner: daemon.effect-authority, derived: false }
+      - { name: run_id, owner: daemon.effect-authority, derived: false }
+      - { name: task_id, owner: daemon.effect-authority, derived: false }
+      - { name: tenant_id, owner: daemon.effect-authority, derived: false }
+      - { name: activation_id, owner: daemon.effect-authority, derived: false }
+      - { name: activation_attempt, owner: daemon.effect-authority, derived: false }
+      - { name: kind, owner: daemon.effect-authority, derived: false }
+      - { name: request_digest, owner: daemon.effect-authority, derived: false }
+      - { name: idempotency_scope, owner: daemon.effect-authority, derived: false }
+      - { name: child_idempotency_key, owner: daemon.effect-authority, derived: false }
+      - { name: authoritative_result_effect_id, owner: daemon.effect-authority, derived: false }
+      - { name: created_at, owner: daemon.effect-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.effect-authority, derived: false }
+  - table: effect_retry_approvals
+    authority: daemon.effect-authority
+    purpose: "Separated operator approvals for unsafe retries."
+    writers:
+      - effect_service
+    fields:
+      - { name: approval_id, owner: daemon.effect-authority, derived: false }
+      - { name: effect_operation_id, owner: daemon.effect-authority, derived: false }
+      - { name: retry_of_effect_id, owner: daemon.effect-authority, derived: false }
+      - { name: requested_by, owner: daemon.effect-authority, derived: false }
+      - { name: approved_by, owner: daemon.effect-authority, derived: false }
+      - { name: reason, owner: daemon.effect-authority, derived: false }
+      - { name: recorded_at, owner: daemon.effect-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.effect-authority, derived: false }
+  - table: protected_observations
+    authority: daemon.effect-authority
+    purpose: "Protected late, duplicate, and untrusted observations."
+    writers:
+      - activation_service
+    fields:
+      - { name: observation_id, owner: daemon.effect-authority, derived: false }
+      - { name: kind, owner: daemon.effect-authority, derived: false }
+      - { name: run_id, owner: daemon.effect-authority, derived: false }
+      - { name: activation_id, owner: daemon.effect-authority, derived: false }
+      - { name: effect_id, owner: daemon.effect-authority, derived: false }
+      - { name: dispatch_ref, owner: daemon.effect-authority, derived: false }
+      - { name: grant_id, owner: daemon.effect-authority, derived: false }
+      - { name: artifact_digest, owner: daemon.effect-authority, derived: false }
+      - { name: payload, owner: daemon.effect-authority, derived: false }
+      - { name: recorded_at, owner: daemon.effect-authority, derived: false }
+  - table: provider_qualifications
+    authority: daemon.qualification-authority
+    purpose: "Expiring live qualification records per tuple."
+    writers:
+      - qualification_service
+    fields:
+      - { name: qualification_id, owner: daemon.qualification-authority, derived: false }
+      - { name: provider, owner: daemon.qualification-authority, derived: false }
+      - { name: model, owner: daemon.qualification-authority, derived: false }
+      - { name: adapter, owner: daemon.qualification-authority, derived: false }
+      - { name: adapter_version, owner: daemon.qualification-authority, derived: false }
+      - { name: provider_version, owner: daemon.qualification-authority, derived: false }
+      - { name: capabilities, owner: daemon.qualification-authority, derived: false }
+      - { name: probe_effect_ids, owner: daemon.qualification-authority, derived: false }
+      - { name: issued_at, owner: daemon.qualification-authority, derived: false }
+      - { name: expires_at, owner: daemon.qualification-authority, derived: false }
+      - { name: revoked, owner: daemon.qualification-authority, derived: false }
   - table: run_controls
     authority: daemon.run-authority
     purpose: "One live control row per Foundation run: lease, fence, pause, cancellation, deadline, and clock watermark."

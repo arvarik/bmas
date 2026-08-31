@@ -473,6 +473,39 @@ async def reserve(
             raise
 
 
+async def release_in_transaction(
+    connection: aiosqlite.Connection,
+    reservation_id: str,
+    *,
+    database_time: str | None = None,
+) -> None:
+    """Release one reservation inside one open transaction.
+
+    The caller owns the transaction. This path lets one unit of work
+    release a reservation atomically with its journal record.
+    """
+    record = await _load_reservation(connection, reservation_id)
+    now = await _now(connection, database_time)
+    validate_budget_transition(str(record["state"]), "released")
+    released = 0
+    if record["state"] == "reserved":
+        await _shift_limits(
+            connection,
+            record,
+            reserve_delta={
+                resource: -amount
+                for resource, amount in record["resources"].items()
+            },
+        )
+        released = int(record["reserved_amount_nanos"])
+    await connection.execute(
+        "UPDATE budget_reservations SET state = 'released', "
+        "released_amount_nanos = ?, state_changed_at = ? "
+        "WHERE reservation_id = ?",
+        (released, now, reservation_id),
+    )
+
+
 async def release(
     reservation_id: str, *, database_time: str | None = None,
 ) -> dict[str, Any]:
@@ -480,25 +513,8 @@ async def release(
     async with db._connect() as connection:  # noqa: SLF001
         await connection.execute("BEGIN IMMEDIATE")
         try:
-            record = await _load_reservation(connection, reservation_id)
-            now = await _now(connection, database_time)
-            validate_budget_transition(str(record["state"]), "released")
-            released = 0
-            if record["state"] == "reserved":
-                await _shift_limits(
-                    connection,
-                    record,
-                    reserve_delta={
-                        resource: -amount
-                        for resource, amount in record["resources"].items()
-                    },
-                )
-                released = int(record["reserved_amount_nanos"])
-            await connection.execute(
-                "UPDATE budget_reservations SET state = 'released', "
-                "released_amount_nanos = ?, state_changed_at = ? "
-                "WHERE reservation_id = ?",
-                (released, now, reservation_id),
+            await release_in_transaction(
+                connection, reservation_id, database_time=database_time,
             )
             await connection.commit()
         except BaseException:

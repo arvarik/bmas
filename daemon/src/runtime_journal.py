@@ -783,7 +783,9 @@ def empty_projection_state() -> dict[str, Any]:
         "checkpoints": {},
         "circuits": {},
         "activations": {},
+        "activation_dispatch": {},
         "effects": {},
+        "effect_operations": {},
         "budgets": {},
         "traces": {},
         "evidence": {},
@@ -829,11 +831,26 @@ def apply_record_to_state(
             run["state"] = "running"
         if payload.get("attempt") is not None:
             run["attempt"] = int(payload["attempt"])
+        dispatch_row = payload.get("dispatch_row")
+        if dispatch_row is not None:
+            state["activation_dispatch"][dispatch_row["grant_id"]] = {
+                "activation_id": payload["activation_id"],
+                "activation_attempt": payload.get("activation_attempt"),
+                "dispatch_state": dispatch_row["dispatch_state"],
+            }
         _append_trace(state, record, "activation")
     elif record.operation_type == "effect_transition":
         state["effects"].setdefault(run_id, {})[payload["effect_id"]] = (
             payload["effect_state"]
         )
+        operation_id = payload.get("effect_operation_id")
+        if operation_id is not None:
+            operation = state["effect_operations"].setdefault(
+                operation_id, {"authoritative_result_effect_id": None},
+            )
+            authoritative = payload.get("authoritative_result_effect_id")
+            if authoritative is not None:
+                operation["authoritative_result_effect_id"] = authoritative
         _append_trace(state, record, "effect")
     elif record.operation_type == "proposal_decision":
         accepted = payload["decision"] == "accepted"
