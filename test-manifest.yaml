@@ -183,6 +183,55 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  # ── Foundation run boundary contracts ────────────────────────────
+  - id: daemon.digest-profile
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the canonical bmas-digest profile against the frozen
+      cross-language fixture vectors and its rejection rules.
+    argv: ["python3", "-m", "pytest", "tests/test_digest_profile.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.fence-and-cancellation
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove that every state mutation validates the live lease owner,
+      fence, expiry, cancellation, deadline, and clock authority.
+    argv: ["python3", "-m", "pytest", "tests/test_fence_and_cancellation.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.asset-boundary
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove immutable asset manifests, task-scoped asset access, staged
+      atomic artifact writes, and the privacy classifications.
+    argv: ["python3", "-m", "pytest", "tests/test_asset_boundary.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.human-controls
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove authenticated, audited human controls that never change an
+      admitted specification in place.
+    argv: ["python3", "-m", "pytest", "tests/test_human_controls.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
   # ── Agent ────────────────────────────────────────────────────────
   - id: agent.tests
     state: active_required
@@ -402,6 +451,10 @@ profiles:
         - daemon.run-admission-recovery
         - daemon.terminal-outcome
         - daemon.post-terminal-invalidation
+        - daemon.digest-profile
+        - daemon.fence-and-cancellation
+        - daemon.asset-boundary
+        - daemon.human-controls
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

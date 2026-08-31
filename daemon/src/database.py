@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -1238,6 +1238,53 @@ async def _migrate_add_runtime_pair(db: aiosqlite.Connection) -> None:
     logger.info("Migration 13 applied: stored runtime pair on tasks")
 
 
+RUN_CONTROLS_DDL = """
+CREATE TABLE IF NOT EXISTS run_controls (
+    run_id                  TEXT PRIMARY KEY,
+    task_id                 TEXT NOT NULL,
+    lease_owner             TEXT,
+    lease_fence             TEXT,
+    lease_acquired_at       TEXT,
+    lease_renewed_at        TEXT,
+    lease_expires_at        TEXT,
+    lease_expired           INTEGER NOT NULL DEFAULT 0
+                            CHECK (lease_expired IN (0, 1)),
+    task_fence              TEXT NOT NULL,
+    control_version         INTEGER NOT NULL DEFAULT 0,
+    pause_state             TEXT NOT NULL DEFAULT 'active'
+                            CHECK (pause_state IN ('active', 'paused')),
+    cancellation_state      TEXT NOT NULL DEFAULT 'active'
+                            CHECK (cancellation_state IN
+                                   ('active', 'requested',
+                                    'acknowledged', 'terminal')),
+    deadline_at             TEXT,
+    deadline_policy         TEXT,
+    deadline_expired        INTEGER NOT NULL DEFAULT 0
+                            CHECK (deadline_expired IN (0, 1)),
+    database_time_watermark TEXT NOT NULL,
+    clock_fault             INTEGER NOT NULL DEFAULT 0
+                            CHECK (clock_fault IN (0, 1))
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_controls_task
+ON run_controls(task_id);
+"""
+
+
+async def _migrate_add_run_controls(db: aiosqlite.Connection) -> None:
+    """Add the durable run-control row for the fenced run boundary.
+
+    The row is the live authority for lease ownership, the task fence,
+    pause and cancellation states, the durable deadline, and the
+    nondecreasing database-time watermark. Every fenced mutation loads
+    this row again inside its own transaction.
+    """
+    await db.executescript(RUN_CONTROLS_DDL)
+    db.row_factory = aiosqlite.Row
+    await db.commit()
+    logger.info("Migration 14 applied: durable run-control rows")
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -1253,6 +1300,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         11: _migrate_to_v11,
         12: _migrate_to_v12,
         13: _migrate_add_runtime_pair,
+        14: _migrate_add_run_controls,
     }
     fn = migrations.get(version)
     if fn is None:
@@ -3827,3 +3875,382 @@ async def create_benchmark_attempt(
         "execution_snapshot": execution_snapshot,
         "snapshot_checksum": snapshot_checksum,
     }
+
+
+# ── Foundation run controls ──────────────────────────────────────────────
+# The run-control row is the live authority for lease ownership, the
+# task fence, pause and cancellation states, the durable deadline, and
+# the nondecreasing database-time watermark. Every function here reads
+# and validates the row inside one transaction against database UTC
+# time. A forward clock jump can expire a lease or a deadline, and the
+# sticky expiry flags keep that decision durable after a later clock
+# correction.
+
+CLOCK_TOLERANCE_SECONDS = 2.0
+
+_DB_NOW = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+
+
+async def _control_now(
+    db: aiosqlite.Connection, database_time: str | None,
+) -> str:
+    """Return the authoritative database UTC time for one transaction."""
+    if database_time is not None:
+        return database_time
+    cursor = await db.execute(f"SELECT {_DB_NOW}")
+    row = await cursor.fetchone()
+    if row is None:
+        raise RuntimeError("The database clock query returned no row")
+    return str(row[0])
+
+
+def _shifted(timestamp: str, seconds: float) -> str:
+    """Return one ISO UTC timestamp moved by a number of seconds."""
+    from datetime import datetime, timedelta
+
+    parsed = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ")
+    moved = parsed + timedelta(seconds=seconds)
+    return moved.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+async def _load_control_row(
+    db: aiosqlite.Connection, run_id: str,
+) -> dict | None:
+    cursor = await db.execute(
+        "SELECT * FROM run_controls WHERE run_id = ?", (run_id,)
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row is not None else None
+
+
+async def _advance_watermark(
+    db: aiosqlite.Connection, control: dict, now: str,
+) -> bool:
+    """Advance the watermark or enter clock fault. Returns fault state."""
+    if control["clock_fault"]:
+        return True
+    watermark = str(control["database_time_watermark"])
+    if now >= watermark:
+        await db.execute(
+            "UPDATE run_controls SET database_time_watermark = ? "
+            "WHERE run_id = ?",
+            (now, control["run_id"]),
+        )
+        control["database_time_watermark"] = now
+        return False
+    if _shifted(watermark, -CLOCK_TOLERANCE_SECONDS) > now:
+        await db.execute(
+            "UPDATE run_controls SET clock_fault = 1 WHERE run_id = ?",
+            (control["run_id"],),
+        )
+        control["clock_fault"] = 1
+        return True
+    return False
+
+
+async def create_run_control(
+    run_id: str,
+    task_id: str,
+    task_fence: str,
+    *,
+    database_time: str | None = None,
+) -> None:
+    """Create the durable run-control row for one run."""
+    async with _connect() as db:
+        now = await _control_now(db, database_time)
+        await db.execute(
+            "INSERT INTO run_controls "
+            "(run_id, task_id, task_fence, database_time_watermark) "
+            "VALUES (?, ?, ?, ?)",
+            (run_id, task_id, task_fence, now),
+        )
+        await db.commit()
+
+
+async def get_run_control(run_id: str) -> dict | None:
+    """Read the live run-control row."""
+    async with _connect() as db:
+        return await _load_control_row(db, run_id)
+
+
+async def acquire_run_lease(
+    run_id: str,
+    owner: str,
+    fence: str,
+    ttl_seconds: float,
+    *,
+    database_time: str | None = None,
+) -> bool:
+    """Acquire the run lease when no live lease exists.
+
+    The scheduler alone calls this function. Acquisition is denied in
+    clock fault and while another owner holds an unexpired lease.
+    """
+    async with _connect() as connection:
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            control = await _load_control_row(connection, run_id)
+            if control is None:
+                await connection.commit()
+                return False
+            now = await _control_now(connection, database_time)
+            if await _advance_watermark(connection, control, now):
+                await connection.commit()
+                return False
+            held = (
+                control["lease_owner"] is not None
+                and not control["lease_expired"]
+                and str(control["lease_expires_at"] or "") > now
+            )
+            if held:
+                await connection.commit()
+                return False
+            expires = _shifted(now, ttl_seconds)
+            await connection.execute(
+                "UPDATE run_controls SET lease_owner = ?, lease_fence = ?, "
+                "lease_acquired_at = ?, lease_renewed_at = ?, "
+                "lease_expires_at = ?, lease_expired = 0, "
+                "control_version = control_version + 1 WHERE run_id = ?",
+                (owner, fence, now, now, expires, run_id),
+            )
+            await connection.commit()
+            return True
+        except BaseException:
+            await connection.rollback()
+            raise
+
+
+async def renew_run_lease(
+    run_id: str,
+    owner: str,
+    fence: str,
+    ttl_seconds: float,
+    *,
+    database_time: str | None = None,
+) -> bool:
+    """Renew one held lease for the same owner and fence."""
+    async with _connect() as connection:
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            control = await _load_control_row(connection, run_id)
+            if control is None:
+                await connection.commit()
+                return False
+            now = await _control_now(connection, database_time)
+            if await _advance_watermark(connection, control, now):
+                await connection.commit()
+                return False
+            if (
+                control["lease_owner"] != owner
+                or control["lease_fence"] != fence
+                or control["lease_expired"]
+            ):
+                await connection.commit()
+                return False
+            if str(control["lease_expires_at"] or "") <= now:
+                await connection.execute(
+                    "UPDATE run_controls SET lease_expired = 1 "
+                    "WHERE run_id = ?",
+                    (run_id,),
+                )
+                await connection.commit()
+                return False
+            expires = _shifted(now, ttl_seconds)
+            await connection.execute(
+                "UPDATE run_controls SET lease_renewed_at = ?, "
+                "lease_expires_at = ?, "
+                "control_version = control_version + 1 WHERE run_id = ?",
+                (now, expires, run_id),
+            )
+            await connection.commit()
+            return True
+        except BaseException:
+            await connection.rollback()
+            raise
+
+
+async def release_run_lease(run_id: str, owner: str, fence: str) -> bool:
+    """Release one held lease for the same owner and fence."""
+    async with _connect() as db:
+        cursor = await db.execute(
+            "UPDATE run_controls SET lease_owner = NULL, lease_fence = NULL, "
+            "lease_expires_at = NULL, "
+            "control_version = control_version + 1 "
+            "WHERE run_id = ? AND lease_owner = ? AND lease_fence = ?",
+            (run_id, owner, fence),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def check_run_authority(
+    run_id: str,
+    owner: str | None,
+    fence: str | None,
+    *,
+    deny_paused: bool = False,
+    database_time: str | None = None,
+) -> dict:
+    """Validate the live run authority for one mutation.
+
+    One transaction validates the clock watermark, the lease owner, the
+    fence, the lease expiry, the cancellation state, the deadline, and
+    optionally the pause state. On success the optimistic control
+    version advances and returns with the decision.
+    """
+    async with _connect() as connection:
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            control = await _load_control_row(connection, run_id)
+            if control is None:
+                await connection.commit()
+                return {"authorized": False, "reason": "unknown_run"}
+            now = await _control_now(connection, database_time)
+            denial: str | None = None
+            if await _advance_watermark(connection, control, now):
+                denial = "clock_fault"
+            elif owner is None or control["lease_owner"] != owner:
+                denial = "lease_owner"
+            elif fence is None or control["lease_fence"] != fence:
+                denial = "stale_fence"
+            elif (
+                control["lease_expired"]
+                or str(control["lease_expires_at"] or "") <= now
+            ):
+                await connection.execute(
+                    "UPDATE run_controls SET lease_expired = 1 "
+                    "WHERE run_id = ?",
+                    (run_id,),
+                )
+                denial = "lease_expired"
+            elif control["cancellation_state"] != "active":
+                denial = "cancelled"
+            elif deny_paused and control["pause_state"] == "paused":
+                denial = "paused"
+            elif control["deadline_expired"] or (
+                control["deadline_at"] is not None
+                and str(control["deadline_at"]) <= now
+            ):
+                await connection.execute(
+                    "UPDATE run_controls SET deadline_expired = 1 "
+                    "WHERE run_id = ?",
+                    (run_id,),
+                )
+                denial = "deadline"
+            if denial is not None:
+                await connection.commit()
+                return {"authorized": False, "reason": denial}
+            await connection.execute(
+                "UPDATE run_controls SET "
+                "control_version = control_version + 1 WHERE run_id = ?",
+                (run_id,),
+            )
+            await connection.commit()
+            return {
+                "authorized": True,
+                "reason": None,
+                "control_version": int(control["control_version"]) + 1,
+                "database_time": now,
+            }
+        except BaseException:
+            await connection.rollback()
+            raise
+
+
+async def request_run_cancellation_control(run_id: str) -> bool:
+    """Move one active run control to the requested cancellation state."""
+    async with _connect() as db:
+        cursor = await db.execute(
+            "UPDATE run_controls SET cancellation_state = 'requested', "
+            "control_version = control_version + 1 "
+            "WHERE run_id = ? AND cancellation_state = 'active'",
+            (run_id,),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def acknowledge_run_cancellation_control(
+    run_id: str, owner: str, fence: str,
+) -> bool:
+    """Acknowledge one requested cancellation under the live lease."""
+    async with _connect() as db:
+        cursor = await db.execute(
+            "UPDATE run_controls SET cancellation_state = 'acknowledged', "
+            "control_version = control_version + 1 "
+            "WHERE run_id = ? AND cancellation_state = 'requested' "
+            "AND lease_owner = ? AND lease_fence = ?",
+            (run_id, owner, fence),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def finalize_run_cancellation_control(run_id: str) -> bool:
+    """Move one cancellation to its terminal state."""
+    async with _connect() as db:
+        cursor = await db.execute(
+            "UPDATE run_controls SET cancellation_state = 'terminal', "
+            "control_version = control_version + 1 "
+            "WHERE run_id = ? AND cancellation_state IN "
+            "('requested', 'acknowledged')",
+            (run_id,),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def set_run_pause_state(run_id: str, paused: bool) -> bool:
+    """Set the live pause state of one run control."""
+    async with _connect() as db:
+        cursor = await db.execute(
+            "UPDATE run_controls SET pause_state = ?, "
+            "control_version = control_version + 1 WHERE run_id = ?",
+            ("paused" if paused else "active", run_id),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def set_run_deadline(
+    run_id: str, deadline_at: str, deadline_policy: str,
+) -> bool:
+    """Set the durable deadline of one run control."""
+    async with _connect() as db:
+        cursor = await db.execute(
+            "UPDATE run_controls SET deadline_at = ?, deadline_policy = ?, "
+            "control_version = control_version + 1 WHERE run_id = ?",
+            (deadline_at, deadline_policy, run_id),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def clear_run_clock_fault(
+    run_id: str,
+    new_task_fence: str,
+    *,
+    database_time: str | None = None,
+) -> bool:
+    """Clear one clock fault after an operator corrects time.
+
+    The operator creates a new task fence, and the watermark restarts
+    at the corrected database time.
+    """
+    async with _connect() as db:
+        now = await _control_now(db, database_time)
+        cursor = await db.execute(
+            "UPDATE run_controls SET clock_fault = 0, task_fence = ?, "
+            "database_time_watermark = ?, "
+            "control_version = control_version + 1 "
+            "WHERE run_id = ? AND clock_fault = 1",
+            (new_task_fence, now, run_id),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def database_utc_now() -> str:
+    """Return the authoritative database UTC time."""
+    async with _connect() as db:
+        return await _control_now(db, None)
