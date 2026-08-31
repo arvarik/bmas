@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -1575,6 +1575,492 @@ async def _migrate_add_budget_authority(db: aiosqlite.Connection) -> None:
     logger.info("Migration 16 applied: budget authority and final admissions")
 
 
+ACTIVATION_EFFECT_PROTOCOL_DDL = """
+CREATE TABLE IF NOT EXISTS activations (
+    activation_id              TEXT NOT NULL,
+    attempt                    INTEGER NOT NULL,
+    run_id                     TEXT NOT NULL,
+    task_id                    TEXT NOT NULL,
+    tenant_id                  TEXT NOT NULL DEFAULT 'tenant-default',
+    runtime_id                 TEXT NOT NULL,
+    runtime_contract_version   TEXT NOT NULL,
+    retry_of_attempt           INTEGER,
+    state                      TEXT NOT NULL DEFAULT 'queued'
+                               CHECK (state IN
+                                      ('queued', 'leased', 'dispatch_queued',
+                                       'dispatched', 'result_received',
+                                       'proposal_recorded', 'awaiting_gate',
+                                       'awaiting_human', 'suspended',
+                                       'resume_queued', 'committed',
+                                       'cancelled', 'abandoned')),
+    agent_protocol_version     TEXT,
+    task_fence                 TEXT,
+    lease_id                   TEXT,
+    reservation_id             TEXT,
+    request_digest             TEXT,
+    context_view_digest        TEXT,
+    effect_ids                 TEXT NOT NULL DEFAULT '[]',
+    raw_result_artifact_digest TEXT,
+    proposal_digest            TEXT,
+    execution_envelope_digest  TEXT,
+    usage                      TEXT,
+    wait_reason                TEXT,
+    wait_policy_version        TEXT,
+    required_approver          TEXT,
+    reconciliation_reason      TEXT,
+    terminal_reason            TEXT,
+    retry_delay_ms             INTEGER,
+    retry_jitter_ms            INTEGER,
+    created_at                 TEXT NOT NULL,
+    state_changed_at           TEXT NOT NULL,
+    journal_cursor             INTEGER NOT NULL,
+    PRIMARY KEY (activation_id, attempt)
+);
+
+CREATE INDEX IF NOT EXISTS idx_activations_run
+ON activations(run_id, state);
+
+CREATE TABLE IF NOT EXISTS activation_leases (
+    lease_id      TEXT PRIMARY KEY,
+    activation_id TEXT NOT NULL,
+    attempt       INTEGER NOT NULL,
+    run_id        TEXT NOT NULL,
+    owner         TEXT NOT NULL,
+    lease_fence   INTEGER NOT NULL,
+    purpose       TEXT NOT NULL DEFAULT 'dispatch'
+                  CHECK (purpose IN ('dispatch', 'validation_resume')),
+    acquired_at   TEXT NOT NULL,
+    expires_at    TEXT NOT NULL,
+    released      INTEGER NOT NULL DEFAULT 0
+                  CHECK (released IN (0, 1))
+);
+
+CREATE INDEX IF NOT EXISTS idx_activation_leases_activation
+ON activation_leases(activation_id, attempt);
+
+CREATE TABLE IF NOT EXISTS activation_grants (
+    grant_id              TEXT PRIMARY KEY,
+    activation_id         TEXT NOT NULL,
+    attempt               INTEGER NOT NULL,
+    run_id                TEXT NOT NULL,
+    task_id               TEXT NOT NULL,
+    grant_artifact_digest TEXT NOT NULL,
+    agent_id              TEXT NOT NULL,
+    audience              TEXT NOT NULL,
+    agent_protocol_version TEXT NOT NULL,
+    request_digest        TEXT NOT NULL,
+    context_view_digest   TEXT NOT NULL,
+    task_fence            TEXT NOT NULL,
+    activation_fence      TEXT NOT NULL,
+    grant_nonce           TEXT NOT NULL UNIQUE,
+    not_before            TEXT NOT NULL,
+    expires_at            TEXT NOT NULL,
+    key_id                TEXT NOT NULL,
+    signature_algorithm   TEXT NOT NULL,
+    created_at            TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_activation_grants_attempt
+ON activation_grants(activation_id, attempt);
+
+CREATE TRIGGER IF NOT EXISTS activation_grants_immutable_update
+BEFORE UPDATE ON activation_grants
+BEGIN
+    SELECT RAISE(ABORT, 'activation_grants rows are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS activation_grants_immutable_delete
+BEFORE DELETE ON activation_grants
+BEGIN
+    SELECT RAISE(ABORT, 'activation_grants rows are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS activation_acknowledgements (
+    acknowledgement_id     TEXT NOT NULL,
+    tenant_id              TEXT NOT NULL DEFAULT 'tenant-default',
+    activation_grant_id    TEXT NOT NULL,
+    acknowledgement_digest TEXT NOT NULL,
+    decision               TEXT NOT NULL
+                           CHECK (decision IN ('accepted', 'rejected')),
+    decision_reason_code   TEXT NOT NULL,
+    agent_id               TEXT NOT NULL,
+    key_id                 TEXT NOT NULL,
+    stored_bytes           TEXT NOT NULL,
+    late_observation       INTEGER NOT NULL DEFAULT 0
+                           CHECK (late_observation IN (0, 1)),
+    agent_observed_at      TEXT NOT NULL,
+    received_at            TEXT NOT NULL,
+    journal_cursor         INTEGER,
+    PRIMARY KEY (tenant_id, acknowledgement_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_acknowledgements_accepted_grant
+ON activation_acknowledgements(activation_grant_id)
+WHERE decision = 'accepted' AND late_observation = 0;
+
+CREATE TABLE IF NOT EXISTS effect_operations (
+    effect_operation_id           TEXT PRIMARY KEY,
+    run_id                        TEXT NOT NULL,
+    task_id                       TEXT NOT NULL,
+    tenant_id                     TEXT NOT NULL DEFAULT 'tenant-default',
+    activation_id                 TEXT,
+    activation_attempt            INTEGER,
+    kind                          TEXT NOT NULL
+                                  CHECK (kind IN
+                                         ('provider', 'tool', 'environment',
+                                          'import', 'benchmark_admission',
+                                          'judge')),
+    request_digest                TEXT NOT NULL,
+    idempotency_scope             TEXT NOT NULL,
+    child_idempotency_key         TEXT NOT NULL,
+    authoritative_result_effect_id TEXT,
+    created_at                    TEXT NOT NULL,
+    journal_cursor                INTEGER NOT NULL,
+    UNIQUE (idempotency_scope, child_idempotency_key)
+);
+
+CREATE TRIGGER IF NOT EXISTS effect_operations_authoritative_set_once
+BEFORE UPDATE OF authoritative_result_effect_id ON effect_operations
+WHEN OLD.authoritative_result_effect_id IS NOT NULL
+     AND NEW.authoritative_result_effect_id
+         IS NOT OLD.authoritative_result_effect_id
+BEGIN
+    SELECT RAISE(ABORT,
+                 'authoritative_result_effect_id is set exactly once');
+END;
+
+CREATE TABLE IF NOT EXISTS effect_attempts (
+    effect_id                   TEXT PRIMARY KEY,
+    effect_operation_id         TEXT NOT NULL,
+    effect_attempt_number       INTEGER NOT NULL,
+    retry_of_effect_id          TEXT,
+    request_digest              TEXT NOT NULL,
+    provider_operation_key      TEXT,
+    reservation_id              TEXT NOT NULL,
+    dispatch_ref                TEXT NOT NULL UNIQUE,
+    run_id                      TEXT NOT NULL,
+    task_id                     TEXT NOT NULL,
+    state                       TEXT NOT NULL DEFAULT 'intent'
+                                CHECK (state IN
+                                       ('intent', 'approved',
+                                        'dispatch_queued',
+                                        'dispatch_claimed',
+                                        'outcome_unknown', 'observed',
+                                        'reconciled', 'denied',
+                                        'cancelled')),
+    retry_safety                TEXT
+                                CHECK (retry_safety IN
+                                       ('safe', 'conditional', 'unsafe')),
+    approval_id                 TEXT,
+    lookup_evidence             TEXT,
+    raw_response_artifact_digest TEXT,
+    usage                       TEXT,
+    observed_outcome            TEXT,
+    reconciliation_reason       TEXT,
+    terminal_reason             TEXT,
+    created_at                  TEXT NOT NULL,
+    state_changed_at            TEXT NOT NULL,
+    journal_cursor              INTEGER NOT NULL,
+    UNIQUE (effect_operation_id, effect_attempt_number)
+);
+
+CREATE TRIGGER IF NOT EXISTS effect_attempts_identity_immutable
+BEFORE UPDATE ON effect_attempts
+WHEN NEW.effect_operation_id IS NOT OLD.effect_operation_id
+     OR NEW.effect_attempt_number IS NOT OLD.effect_attempt_number
+     OR NEW.retry_of_effect_id IS NOT OLD.retry_of_effect_id
+     OR NEW.request_digest IS NOT OLD.request_digest
+     OR NEW.provider_operation_key IS NOT OLD.provider_operation_key
+     OR NEW.reservation_id IS NOT OLD.reservation_id
+     OR NEW.dispatch_ref IS NOT OLD.dispatch_ref
+BEGIN
+    SELECT RAISE(ABORT, 'effect_attempts identity fields are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS effect_grants (
+    token_id                    TEXT PRIMARY KEY,
+    effect_operation_id         TEXT NOT NULL,
+    effect_id                   TEXT NOT NULL,
+    effect_attempt_number       INTEGER NOT NULL,
+    dispatch_ref                TEXT NOT NULL,
+    activation_id               TEXT NOT NULL,
+    activation_attempt          INTEGER NOT NULL,
+    run_id                      TEXT NOT NULL,
+    task_id                     TEXT NOT NULL,
+    request_digest              TEXT NOT NULL,
+    task_fence                  TEXT NOT NULL,
+    lease_ref                   TEXT NOT NULL,
+    reservation_id              TEXT NOT NULL,
+    max_authorized_amount_nanos INTEGER NOT NULL,
+    provider                    TEXT,
+    model                       TEXT,
+    tool                        TEXT,
+    operation                   TEXT NOT NULL,
+    capability_digest           TEXT NOT NULL,
+    agent_id                    TEXT NOT NULL,
+    audience                    TEXT NOT NULL,
+    issued_at                   TEXT NOT NULL,
+    expires_at                  TEXT NOT NULL,
+    grant_nonce                 TEXT NOT NULL UNIQUE,
+    protocol_version            TEXT NOT NULL,
+    schema_version              TEXT NOT NULL,
+    digest_profile              TEXT NOT NULL,
+    signature_algorithm         TEXT NOT NULL,
+    key_id                      TEXT NOT NULL,
+    grant_artifact_digest       TEXT NOT NULL,
+    dispatcher                  TEXT NOT NULL,
+    dispatch_fence              TEXT NOT NULL,
+    created_at                  TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS effect_grants_immutable_update
+BEFORE UPDATE ON effect_grants
+BEGIN
+    SELECT RAISE(ABORT, 'effect_grants rows are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS effect_grants_immutable_delete
+BEFORE DELETE ON effect_grants
+BEGIN
+    SELECT RAISE(ABORT, 'effect_grants rows are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS attempt_receipts (
+    receipt_id            TEXT PRIMARY KEY,
+    tenant_id             TEXT NOT NULL DEFAULT 'tenant-default',
+    effect_operation_id   TEXT NOT NULL,
+    effect_id             TEXT NOT NULL,
+    effect_attempt_number INTEGER NOT NULL,
+    dispatch_ref          TEXT NOT NULL,
+    token_id              TEXT NOT NULL,
+    activation_id         TEXT NOT NULL,
+    activation_attempt    INTEGER NOT NULL,
+    receipt_sequence      INTEGER NOT NULL,
+    stage                 TEXT NOT NULL
+                          CHECK (stage IN
+                                 ('grant_acknowledged',
+                                  'transport_starting',
+                                  'provider_acknowledged',
+                                  'response_observed',
+                                  'failed_before_transport',
+                                  'cancellation_observed')),
+    request_digest        TEXT NOT NULL,
+    provider              TEXT,
+    model                 TEXT,
+    tool                  TEXT,
+    operation             TEXT NOT NULL,
+    transport_observation TEXT,
+    provider_run_id       TEXT,
+    provider_receipt      TEXT,
+    raw_response_digest   TEXT,
+    usage                 TEXT,
+    agent_id              TEXT NOT NULL,
+    protocol_version      TEXT NOT NULL,
+    key_id                TEXT NOT NULL,
+    signature             TEXT NOT NULL,
+    agent_observed_at     TEXT NOT NULL,
+    received_at           TEXT NOT NULL,
+    UNIQUE (dispatch_ref, receipt_sequence)
+);
+
+CREATE TRIGGER IF NOT EXISTS attempt_receipts_immutable_update
+BEFORE UPDATE ON attempt_receipts
+BEGIN
+    SELECT RAISE(ABORT, 'attempt_receipts rows are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS attempt_receipts_immutable_delete
+BEFORE DELETE ON attempt_receipts
+BEGIN
+    SELECT RAISE(ABORT, 'attempt_receipts rows are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS effect_retry_approvals (
+    approval_id         TEXT PRIMARY KEY,
+    effect_operation_id TEXT NOT NULL,
+    retry_of_effect_id  TEXT NOT NULL,
+    requested_by        TEXT NOT NULL,
+    approved_by         TEXT NOT NULL,
+    reason              TEXT NOT NULL,
+    recorded_at         TEXT NOT NULL,
+    journal_cursor      INTEGER,
+    CHECK (requested_by <> approved_by)
+);
+
+CREATE TABLE IF NOT EXISTS protected_observations (
+    observation_id  TEXT PRIMARY KEY,
+    kind            TEXT NOT NULL
+                    CHECK (kind IN
+                           ('late_acknowledgement', 'late_result',
+                            'late_usage', 'duplicate_result',
+                            'post_terminal_message',
+                            'agent_untrusted_content')),
+    run_id          TEXT,
+    activation_id   TEXT,
+    effect_id       TEXT,
+    dispatch_ref    TEXT,
+    grant_id        TEXT,
+    artifact_digest TEXT,
+    payload         TEXT,
+    recorded_at     TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS protected_observations_immutable_update
+BEFORE UPDATE ON protected_observations
+BEGIN
+    SELECT RAISE(ABORT, 'protected_observations rows are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS protected_observations_immutable_delete
+BEFORE DELETE ON protected_observations
+BEGIN
+    SELECT RAISE(ABORT, 'protected_observations rows are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS provider_qualifications (
+    qualification_id TEXT PRIMARY KEY,
+    provider         TEXT NOT NULL,
+    model            TEXT NOT NULL,
+    adapter          TEXT NOT NULL,
+    adapter_version  TEXT NOT NULL,
+    provider_version TEXT NOT NULL,
+    capabilities     TEXT NOT NULL,
+    probe_effect_ids TEXT NOT NULL DEFAULT '[]',
+    issued_at        TEXT NOT NULL,
+    expires_at       TEXT NOT NULL,
+    revoked          INTEGER NOT NULL DEFAULT 0
+                     CHECK (revoked IN (0, 1))
+);
+"""
+
+ACTIVATION_DISPATCH_REBUILD_DDL = """
+ALTER TABLE activation_dispatch_outbox
+RENAME TO activation_dispatch_rebuild_source;
+
+CREATE TABLE activation_dispatch_outbox (
+    dispatch_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    journal_cursor        INTEGER NOT NULL,
+    run_id                TEXT NOT NULL,
+    activation_id         TEXT NOT NULL,
+    activation_attempt    INTEGER NOT NULL DEFAULT 1,
+    grant_id              TEXT,
+    grant_artifact_digest TEXT,
+    target_agent_id       TEXT,
+    audience              TEXT,
+    not_before            TEXT,
+    grant_expires_at      TEXT,
+    delivery_count        INTEGER NOT NULL DEFAULT 0,
+    dispatch_state        TEXT NOT NULL DEFAULT 'queued'
+                          CHECK (dispatch_state IN
+                                 ('queued', 'claimed', 'delivery_unknown',
+                                  'acknowledged', 'cancelled',
+                                  'dead_letter')),
+    claim_owner           TEXT,
+    claim_fence           TEXT,
+    claimed_at            TEXT,
+    claim_expires_at      TEXT,
+    send_started_at       TEXT,
+    acknowledgement_id    TEXT,
+    terminal_reason       TEXT,
+    attempts              INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at       TEXT
+);
+
+INSERT INTO activation_dispatch_outbox (
+    dispatch_id, journal_cursor, run_id, activation_id, dispatch_state,
+    attempts, last_attempt_at)
+SELECT dispatch_id, journal_cursor, run_id, activation_id,
+       CASE dispatch_state
+            WHEN 'pending' THEN 'queued'
+            WHEN 'dispatched' THEN 'delivery_unknown'
+            WHEN 'acknowledged' THEN 'acknowledged'
+            ELSE 'dead_letter'
+       END,
+       attempts, last_attempt_at
+FROM activation_dispatch_rebuild_source;
+
+DROP TABLE activation_dispatch_rebuild_source;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_activation_dispatch_grant
+ON activation_dispatch_outbox(grant_id)
+WHERE grant_id IS NOT NULL;
+"""
+
+EFFECT_DISPATCH_REBUILD_DDL = """
+ALTER TABLE effect_dispatch_outbox
+RENAME TO effect_dispatch_rebuild_source;
+
+CREATE TABLE effect_dispatch_outbox (
+    dispatch_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    journal_cursor        INTEGER NOT NULL,
+    run_id                TEXT NOT NULL,
+    effect_id             TEXT NOT NULL,
+    dispatch_ref          TEXT,
+    effect_operation_id   TEXT,
+    effect_attempt_number INTEGER,
+    target                TEXT,
+    request_digest        TEXT,
+    not_before            TEXT,
+    dispatch_policy       TEXT,
+    dispatch_state        TEXT NOT NULL DEFAULT 'queued'
+                          CHECK (dispatch_state IN
+                                 ('queued', 'claimed', 'completed',
+                                  'cancelled', 'dead_letter')),
+    claim_owner           TEXT,
+    dispatch_fence        TEXT,
+    claimed_at            TEXT,
+    claim_expires_at      TEXT,
+    transport_started_at  TEXT,
+    grant_token_id        TEXT,
+    grant_digest          TEXT,
+    grant_nonce           TEXT,
+    grant_expires_at      TEXT,
+    attempts              INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at       TEXT
+);
+
+INSERT INTO effect_dispatch_outbox (
+    dispatch_id, journal_cursor, run_id, effect_id, dispatch_state,
+    attempts, last_attempt_at)
+SELECT dispatch_id, journal_cursor, run_id, effect_id,
+       CASE dispatch_state
+            WHEN 'pending' THEN 'queued'
+            WHEN 'abandoned' THEN 'cancelled'
+            ELSE 'completed'
+       END,
+       attempts, last_attempt_at
+FROM effect_dispatch_rebuild_source;
+
+DROP TABLE effect_dispatch_rebuild_source;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_effect_dispatch_ref
+ON effect_dispatch_outbox(dispatch_ref)
+WHERE dispatch_ref IS NOT NULL;
+"""
+
+
+async def _migrate_add_activation_effect_protocol(
+    db: aiosqlite.Connection,
+) -> None:
+    """Expand migration: the activation and effect protocol authority.
+
+    The activation ledger, activation leases, grants,
+    acknowledgements, effect operations, immutable effect attempts,
+    effect grants, attempt receipts, retry approvals, protected
+    observations, and live qualification records gain durable tables.
+    Both dispatch outbox tables rebuild with the registered Foundation
+    delivery states and claim-lease fields.
+    """
+    await db.executescript(ACTIVATION_EFFECT_PROTOCOL_DDL)
+    await db.executescript(ACTIVATION_DISPATCH_REBUILD_DDL)
+    await db.executescript(EFFECT_DISPATCH_REBUILD_DDL)
+    db.row_factory = aiosqlite.Row
+    await db.commit()
+    logger.info(
+        "Migration 17 applied: activation and effect protocol tables"
+    )
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -1593,6 +2079,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         14: _migrate_add_run_controls,
         15: _migrate_add_runtime_journal,
         16: _migrate_add_budget_authority,
+        17: _migrate_add_activation_effect_protocol,
     }
     fn = migrations.get(version)
     if fn is None:

@@ -7,3 +7,4 @@ pyyaml>=6.0.3           # bmas.yaml config file loading
 aiosqlite>=0.22.0       # Async SQLite for task history persistence
 pymupdf>=1.27.0         # PDF text extraction (doc 17 §3)
 python-multipart>=0.0.32  # FastAPI multipart form data (file uploads, doc 17 §3)
+cryptography>=46.0.0    # Ed25519 signing for activation and effect grants (Foundation)

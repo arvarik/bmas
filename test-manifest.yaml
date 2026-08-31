@@ -313,6 +313,62 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.activation-states
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the durable activation state machine: only declared
+      transitions pass, one atomic claim wins each race, waits persist
+      the proposal digest first, and resume rechecks every changed
+      authority.
+    argv: ["python3", "-m", "pytest", "tests/test_activation_states.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 900
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.external-effects
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove effect operations and immutable attempts: every retry
+      creates a new identity chain, crash recovery lands in one
+      declared state, uncertain effects stay visible, and unsafe
+      retries need the separated approval.
+    argv: ["python3", "-m", "pytest", "tests/test_external_effects.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 900
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.agent-protocol
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the agent protocol: signed activation and effect grants,
+      the durable dispatch outbox with its claim lease and recovery
+      branches, authenticated acknowledgements and receipts, key
+      rotation, and live qualification.
+    argv: ["python3", "-m", "pytest", "tests/test_agent_protocol.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 900
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.execution-envelope
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove that model proposals stay untrusted, the daemon builds
+      every trusted execution envelope from verified receipts, and
+      crashes around raw persistence and parsing never duplicate a
+      proposal commit.
+    argv: ["python3", "-m", "pytest", "tests/test_execution_envelope.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 900
+    tools: [python, pytest]
+    parser: pytest_summary
+
   # ── Agent ────────────────────────────────────────────────────────
   - id: agent.tests
     state: active_required
@@ -542,6 +598,10 @@ profiles:
         - daemon.budget-arithmetic
         - daemon.budget-states
         - daemon.run-admission
+        - daemon.activation-states
+        - daemon.external-effects
+        - daemon.agent-protocol
+        - daemon.execution-envelope
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.
