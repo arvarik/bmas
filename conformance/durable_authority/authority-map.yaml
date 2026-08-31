@@ -566,6 +566,142 @@ sqlite_tables:
         reconstruction: "Count the extracted text characters."
       - { name: summary_entry, owner: daemon.upload-storage, derived: false }
       - { name: created_at, owner: daemon.upload-storage, derived: false }
+  - table: runtime_journal
+    authority: daemon.journal-authority
+    purpose: "The one append-only replay authority for Foundation runtime transactions. Rows are immutable."
+    writers:
+      - runtime_journal
+    fields:
+      - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
+      - { name: transaction_id, owner: daemon.journal-authority, derived: false }
+      - { name: idempotency_key, owner: daemon.journal-authority, derived: false }
+      - { name: task_id, owner: daemon.journal-authority, derived: false }
+      - { name: run_id, owner: daemon.journal-authority, derived: false }
+      - { name: chain_epoch, owner: daemon.journal-authority, derived: false }
+      - { name: run_sequence, owner: daemon.journal-authority, derived: false }
+      - { name: previous_digest, owner: daemon.journal-authority, derived: false }
+      - { name: payload_digest, owner: daemon.journal-authority, derived: false }
+      - { name: transaction_digest, owner: daemon.journal-authority, derived: false }
+      - { name: runtime_id, owner: daemon.journal-authority, derived: false }
+      - { name: runtime_contract_version, owner: daemon.journal-authority, derived: false }
+      - { name: payload_schema_versions, owner: daemon.journal-authority, derived: false }
+      - { name: correlation_id, owner: daemon.journal-authority, derived: false }
+      - { name: causation_id, owner: daemon.journal-authority, derived: false }
+      - { name: producer, owner: daemon.journal-authority, derived: false }
+      - { name: authority_type, owner: daemon.journal-authority, derived: false }
+      - { name: recorded_at, owner: daemon.journal-authority, derived: false }
+      - { name: data_classification, owner: daemon.journal-authority, derived: false }
+      - { name: redaction_policy_version, owner: daemon.journal-authority, derived: false }
+      - { name: operation_type, owner: daemon.journal-authority, derived: false }
+      - { name: payload, owner: daemon.journal-authority, derived: false }
+  - table: runs
+    authority: daemon.journal-authority
+    purpose: "The durable run lifecycle projection with the chain head of each run."
+    writers:
+      - runtime_journal
+    fields:
+      - { name: run_id, owner: daemon.journal-authority, derived: false }
+      - { name: task_id, owner: daemon.journal-authority, derived: false }
+      - { name: tenant_id, owner: daemon.journal-authority, derived: false }
+      - { name: runtime_id, owner: daemon.journal-authority, derived: false }
+      - { name: runtime_contract_version, owner: daemon.journal-authority, derived: false }
+      - { name: state, owner: daemon.journal-authority, derived: false }
+      - { name: attempt, owner: daemon.journal-authority, derived: false }
+      - { name: parent_run_id, owner: daemon.journal-authority, derived: false }
+      - { name: lineage_reason, owner: daemon.journal-authority, derived: false }
+      - { name: rerouted_from_run_id, owner: daemon.journal-authority, derived: false }
+      - { name: projection_version, owner: daemon.journal-authority, derived: false }
+      - { name: chain_epoch, owner: daemon.journal-authority, derived: false }
+      - { name: next_run_sequence, owner: daemon.journal-authority, derived: false }
+      - { name: chain_head_digest, owner: daemon.journal-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
+  - table: runtime_admissions
+    authority: daemon.journal-authority
+    purpose: "Immutable admitted run specifications and digests."
+    writers:
+      - runtime_journal
+    fields:
+      - { name: admission_id, owner: daemon.journal-authority, derived: false }
+      - { name: task_id, owner: daemon.journal-authority, derived: false }
+      - { name: run_id, owner: daemon.journal-authority, derived: false }
+      - { name: runtime_id, owner: daemon.journal-authority, derived: false }
+      - { name: runtime_contract_version, owner: daemon.journal-authority, derived: false }
+      - { name: version_set, owner: daemon.journal-authority, derived: false }
+      - { name: specification_digest, owner: daemon.journal-authority, derived: false }
+      - { name: capability_document_digest, owner: daemon.journal-authority, derived: false }
+      - { name: policy_set_digest, owner: daemon.journal-authority, derived: false }
+      - { name: asset_manifest_digest, owner: daemon.journal-authority, derived: false }
+      - { name: admission_digest, owner: daemon.journal-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
+  - table: run_queue
+    authority: daemon.journal-authority
+    purpose: "Mutable admission delivery state. Never an authority row."
+    writers:
+      - runtime_journal
+    fields:
+      - { name: run_id, owner: daemon.journal-authority, derived: false }
+      - { name: admission_id, owner: daemon.journal-authority, derived: false }
+      - { name: admission_digest, owner: daemon.journal-authority, derived: false }
+      - { name: delivery_state, owner: daemon.journal-authority, derived: false }
+      - { name: attempts, owner: daemon.journal-authority, derived: false }
+      - { name: last_attempt_at, owner: daemon.journal-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
+  - table: journal_delivery
+    authority: daemon.journal-authority
+    purpose: "Mutable journal publication state, separate from the immutable journal."
+    writers:
+      - runtime_journal
+    fields:
+      - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
+      - { name: delivery_state, owner: daemon.journal-authority, derived: false }
+      - { name: attempts, owner: daemon.journal-authority, derived: false }
+      - { name: published_at, owner: daemon.journal-authority, derived: false }
+  - table: journal_outbox
+    authority: daemon.journal-authority
+    purpose: "Durable projection delivery obligations written with each journal transaction."
+    writers:
+      - runtime_journal
+    fields:
+      - { name: outbox_id, owner: daemon.journal-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
+      - { name: target, owner: daemon.journal-authority, derived: false }
+      - { name: created_at, owner: daemon.journal-authority, derived: false }
+  - table: activation_dispatch_outbox
+    authority: daemon.journal-authority
+    purpose: "Mutable activation-grant delivery obligations."
+    writers:
+      - runtime_journal
+    fields:
+      - { name: dispatch_id, owner: daemon.journal-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
+      - { name: run_id, owner: daemon.journal-authority, derived: false }
+      - { name: activation_id, owner: daemon.journal-authority, derived: false }
+      - { name: dispatch_state, owner: daemon.journal-authority, derived: false }
+      - { name: attempts, owner: daemon.journal-authority, derived: false }
+      - { name: last_attempt_at, owner: daemon.journal-authority, derived: false }
+  - table: effect_dispatch_outbox
+    authority: daemon.journal-authority
+    purpose: "Mutable external-effect delivery obligations."
+    writers:
+      - runtime_journal
+    fields:
+      - { name: dispatch_id, owner: daemon.journal-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
+      - { name: run_id, owner: daemon.journal-authority, derived: false }
+      - { name: effect_id, owner: daemon.journal-authority, derived: false }
+      - { name: dispatch_state, owner: daemon.journal-authority, derived: false }
+      - { name: attempts, owner: daemon.journal-authority, derived: false }
+      - { name: last_attempt_at, owner: daemon.journal-authority, derived: false }
+  - table: task_tombstones
+    authority: daemon.journal-authority
+    purpose: "Preserved deleted-task identity and erasure state instead of journal cascades."
+    writers:
+      - runtime_journal
+    fields:
+      - { name: task_id, owner: daemon.journal-authority, derived: false }
+      - { name: deleted_at, owner: daemon.journal-authority, derived: false }
+      - { name: erasure_state, owner: daemon.journal-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
   - table: run_controls
     authority: daemon.run-authority
     purpose: "One live control row per Foundation run: lease, fence, pause, cancellation, deadline, and clock watermark."

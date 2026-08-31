@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -831,19 +831,19 @@ async def _connect():
     See module docstring for rationale.
     """
     db = await aiosqlite.connect(DB_PATH, timeout=15.0)
-    await db.execute("PRAGMA journal_mode=WAL")
-    await db.execute("PRAGMA foreign_keys=ON")
-    # Performance tuning — safe with WAL mode (SQLite docs §3.3):
-    # synchronous=NORMAL: skip fsync on every commit, only on checkpoint
-    await db.execute("PRAGMA synchronous=NORMAL")
-    # 32 MB page cache (default is 2 MB) — reduces disk reads on hot tables
-    await db.execute("PRAGMA cache_size=-32000")
-    # 128 MB memory-mapped I/O — eliminates pread() syscalls on reads
-    await db.execute("PRAGMA mmap_size=134217728")
-    # Keep temp tables (GROUP BY, ORDER BY spills) in RAM
-    await db.execute("PRAGMA temp_store=MEMORY")
-    db.row_factory = aiosqlite.Row
     try:
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA foreign_keys=ON")
+        # Performance tuning — safe with WAL mode (SQLite docs §3.3):
+        # synchronous=NORMAL: skip fsync on every commit, only on checkpoint
+        await db.execute("PRAGMA synchronous=NORMAL")
+        # 32 MB page cache (default is 2 MB) — reduces disk reads on hot tables
+        await db.execute("PRAGMA cache_size=-32000")
+        # 128 MB memory-mapped I/O — eliminates pread() syscalls on reads
+        await db.execute("PRAGMA mmap_size=134217728")
+        # Keep temp tables (GROUP BY, ORDER BY spills) in RAM
+        await db.execute("PRAGMA temp_store=MEMORY")
+        db.row_factory = aiosqlite.Row
         yield db
     finally:
         await db.close()
@@ -1285,6 +1285,183 @@ async def _migrate_add_run_controls(db: aiosqlite.Connection) -> None:
     logger.info("Migration 14 applied: durable run-control rows")
 
 
+RUNTIME_JOURNAL_DDL = """
+CREATE TABLE IF NOT EXISTS runtime_journal (
+    journal_cursor           INTEGER PRIMARY KEY AUTOINCREMENT,
+    transaction_id           TEXT NOT NULL UNIQUE,
+    idempotency_key          TEXT NOT NULL UNIQUE,
+    task_id                  TEXT NOT NULL,
+    run_id                   TEXT NOT NULL,
+    chain_epoch              INTEGER NOT NULL DEFAULT 1,
+    run_sequence             INTEGER NOT NULL,
+    previous_digest          TEXT NOT NULL,
+    payload_digest           TEXT NOT NULL,
+    transaction_digest       TEXT NOT NULL,
+    runtime_id               TEXT NOT NULL,
+    runtime_contract_version TEXT NOT NULL,
+    payload_schema_versions  TEXT NOT NULL,
+    correlation_id           TEXT,
+    causation_id             TEXT,
+    producer                 TEXT NOT NULL,
+    authority_type           TEXT NOT NULL,
+    recorded_at              TEXT NOT NULL,
+    data_classification      TEXT NOT NULL,
+    redaction_policy_version TEXT NOT NULL,
+    operation_type           TEXT NOT NULL,
+    payload                  TEXT NOT NULL,
+    UNIQUE(run_id, chain_epoch, run_sequence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_journal_run
+ON runtime_journal(run_id, chain_epoch, run_sequence);
+
+CREATE TRIGGER IF NOT EXISTS runtime_journal_immutable_update
+BEFORE UPDATE ON runtime_journal
+BEGIN
+    SELECT RAISE(ABORT, 'runtime_journal rows are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS runtime_journal_immutable_delete
+BEFORE DELETE ON runtime_journal
+BEGIN
+    SELECT RAISE(ABORT, 'runtime_journal rows are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS runs (
+    run_id                   TEXT PRIMARY KEY,
+    task_id                  TEXT NOT NULL,
+    tenant_id                TEXT NOT NULL,
+    runtime_id               TEXT NOT NULL,
+    runtime_contract_version TEXT NOT NULL,
+    state                    TEXT NOT NULL DEFAULT 'admitted'
+                             CHECK (state IN
+                                    ('admitted', 'queued', 'running',
+                                     'paused', 'needs_attention',
+                                     'cancelling', 'completed', 'failed',
+                                     'cancelled')),
+    attempt                  INTEGER NOT NULL DEFAULT 0,
+    parent_run_id            TEXT,
+    lineage_reason           TEXT,
+    rerouted_from_run_id     TEXT,
+    projection_version       INTEGER NOT NULL DEFAULT 0,
+    chain_epoch              INTEGER NOT NULL DEFAULT 1,
+    next_run_sequence        INTEGER NOT NULL DEFAULT 0,
+    chain_head_digest        TEXT NOT NULL,
+    journal_cursor           INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id);
+
+CREATE TABLE IF NOT EXISTS runtime_admissions (
+    admission_id               TEXT PRIMARY KEY,
+    task_id                    TEXT NOT NULL,
+    run_id                     TEXT NOT NULL UNIQUE,
+    runtime_id                 TEXT NOT NULL,
+    runtime_contract_version   TEXT NOT NULL,
+    version_set                TEXT NOT NULL,
+    specification_digest       TEXT NOT NULL,
+    capability_document_digest TEXT NOT NULL,
+    policy_set_digest          TEXT,
+    asset_manifest_digest      TEXT,
+    admission_digest           TEXT NOT NULL,
+    journal_cursor             INTEGER NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS runtime_admissions_immutable_update
+BEFORE UPDATE ON runtime_admissions
+BEGIN
+    SELECT RAISE(ABORT, 'runtime_admissions rows are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS runtime_admissions_immutable_delete
+BEFORE DELETE ON runtime_admissions
+BEGIN
+    SELECT RAISE(ABORT, 'runtime_admissions rows are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS run_queue (
+    run_id           TEXT PRIMARY KEY,
+    admission_id     TEXT NOT NULL,
+    admission_digest TEXT NOT NULL,
+    delivery_state   TEXT NOT NULL DEFAULT 'pending'
+                     CHECK (delivery_state IN
+                            ('pending', 'claimed', 'delivered',
+                             'cancelled')),
+    attempts         INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at  TEXT,
+    journal_cursor   INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS journal_delivery (
+    journal_cursor INTEGER PRIMARY KEY,
+    delivery_state TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (delivery_state IN
+                          ('pending', 'published', 'failed')),
+    attempts       INTEGER NOT NULL DEFAULT 0,
+    published_at   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS journal_outbox (
+    outbox_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    journal_cursor INTEGER NOT NULL,
+    target         TEXT NOT NULL,
+    created_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_journal_outbox_cursor
+ON journal_outbox(journal_cursor);
+
+CREATE TABLE IF NOT EXISTS activation_dispatch_outbox (
+    dispatch_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    journal_cursor  INTEGER NOT NULL,
+    run_id          TEXT NOT NULL,
+    activation_id   TEXT NOT NULL,
+    dispatch_state  TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (dispatch_state IN
+                           ('pending', 'dispatched', 'acknowledged',
+                            'abandoned')),
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS effect_dispatch_outbox (
+    dispatch_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    journal_cursor  INTEGER NOT NULL,
+    run_id          TEXT NOT NULL,
+    effect_id       TEXT NOT NULL,
+    dispatch_state  TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (dispatch_state IN
+                           ('pending', 'dispatched', 'acknowledged',
+                            'abandoned')),
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS task_tombstones (
+    task_id        TEXT PRIMARY KEY,
+    deleted_at     TEXT NOT NULL,
+    erasure_state  TEXT NOT NULL DEFAULT 'recorded'
+                   CHECK (erasure_state IN
+                          ('recorded', 'erasure_requested', 'erased')),
+    journal_cursor INTEGER
+);
+"""
+
+
+async def _migrate_add_runtime_journal(db: aiosqlite.Connection) -> None:
+    """Expand migration: the immutable runtime journal and its tables.
+
+    The journal is the one append-only replay authority for new
+    contract transactions. Immutability triggers reject every update
+    and delete, no foreign key cascades from task deletion, and every
+    mutable delivery state lives in its own separate table.
+    """
+    await db.executescript(RUNTIME_JOURNAL_DDL)
+    db.row_factory = aiosqlite.Row
+    await db.commit()
+    logger.info("Migration 15 applied: immutable runtime journal tables")
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -1301,6 +1478,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         12: _migrate_to_v12,
         13: _migrate_add_runtime_pair,
         14: _migrate_add_run_controls,
+        15: _migrate_add_runtime_journal,
     }
     fn = migrations.get(version)
     if fn is None:
