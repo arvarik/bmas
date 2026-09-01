@@ -112,6 +112,7 @@ sqlite_tables:
       - { name: rules_checksum, owner: daemon.benchmark-service, derived: false }
       - { name: created_by, owner: daemon.benchmark-service, derived: false }
       - { name: created_at, owner: daemon.benchmark-service, derived: false }
+      - { name: treatment_declaration, owner: daemon.benchmark-service, derived: false }
   - table: benchmark_gate_evaluations
     authority: daemon.benchmark-service
     purpose: "Benchmark execution record: benchmark gate evaluations."
@@ -125,6 +126,8 @@ sqlite_tables:
       - { name: report, owner: daemon.benchmark-service, derived: false }
       - { name: report_checksum, owner: daemon.benchmark-service, derived: false }
       - { name: created_at, owner: daemon.benchmark-service, derived: false }
+      - { name: invariant_digest, owner: daemon.benchmark-service, derived: false }
+      - { name: display_exceptions, owner: daemon.benchmark-service, derived: false }
   - table: benchmark_human_reviews
     authority: daemon.benchmark-service
     purpose: "Benchmark execution record: benchmark human reviews."
@@ -178,6 +181,8 @@ sqlite_tables:
       - { name: cancel_reason, owner: daemon.benchmark-service, derived: false }
       - { name: state_revision, owner: daemon.benchmark-service, derived: false }
       - { name: priority, owner: daemon.benchmark-service, derived: false }
+      - { name: scoring_status, owner: daemon.benchmark-service, derived: false }
+      - { name: analysis_status, owner: daemon.benchmark-service, derived: false }
   - table: benchmark_runtime_qualifications
     authority: daemon.benchmark-service
     purpose: "Benchmark execution record: benchmark runtime qualifications."
@@ -259,6 +264,7 @@ sqlite_tables:
       - { name: sort_order, owner: daemon.benchmark-service, derived: false }
       - { name: configuration, owner: daemon.benchmark-service, derived: false }
       - { name: configuration_checksum, owner: daemon.benchmark-service, derived: false }
+      - { name: required, owner: daemon.benchmark-service, derived: false }
   - table: benchmark_test_revisions
     authority: daemon.benchmark-service
     purpose: "Benchmark execution record: benchmark test revisions."

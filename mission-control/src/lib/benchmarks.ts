@@ -86,6 +86,20 @@ export interface BenchmarkAttempt {
   tags?: string[];
 }
 
+export interface BenchmarkNamedMetric {
+  scorer_id: string;
+  scorer_name: string;
+  mean: number | null;
+  count: number;
+}
+
+export interface BenchmarkRunAggregates {
+  total_cost_usd: number;
+  failed_attempts: number;
+  primary_metric: BenchmarkNamedMetric | null;
+  secondary_metrics: BenchmarkNamedMetric[];
+}
+
 export interface BenchmarkRun {
   id: string;
   test_id: string;
@@ -93,11 +107,19 @@ export interface BenchmarkRun {
   test_revision_id: string;
   revision: number;
   status: BenchmarkStatus;
+  scoring_status?: "pending" | "running" | "completed" | "failed";
+  analysis_status?: "pending" | "blocked" | "valid";
   total_trials: number;
   completed_trials: number;
   total_attempts: number;
   completed_attempts: number;
   total_cost_usd?: number;
+  primary_scorer_id?: string | null;
+  primary_scorer_name?: string | null;
+  primary_metric_mean?: number | null;
+  primary_metric_count?: number | null;
+  failed_attempts?: number;
+  aggregates?: BenchmarkRunAggregates;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -458,17 +480,23 @@ export function supportedAnalysisMethods(metric: string): RegressionAnalysisMeth
   return methods;
 }
 
-export function scoreSummary(run: BenchmarkRun) {
-  const latest = new Map<string, BenchmarkAttempt>();
-  for (const attempt of run.attempts ?? []) {
-    const key = `${attempt.trial_id}:${attempt.repeat_index}`;
-    const previous = latest.get(key);
-    if (!previous || attempt.retry_index > previous.retry_index) latest.set(key, attempt);
+/** Read the server's named primary metric. The browser never averages. */
+export function primaryMetric(run: BenchmarkRun): BenchmarkNamedMetric | null {
+  if (run.aggregates?.primary_metric) return run.aggregates.primary_metric;
+  if (run.primary_scorer_id && run.primary_metric_mean !== null && run.primary_metric_mean !== undefined) {
+    return {
+      scorer_id: run.primary_scorer_id,
+      scorer_name: run.primary_scorer_name ?? run.primary_scorer_id,
+      mean: run.primary_metric_mean,
+      count: run.primary_metric_count ?? 0,
+    };
   }
-  const currentIds = new Set([...latest.values()].map((attempt) => attempt.id));
-  const scored = (run.scores ?? []).filter(
-    (score) => currentIds.has(score.attempt_id) && score.status === "scored" && score.score !== null,
-  );
-  if (!scored.length) return null;
-  return scored.reduce((sum, score) => sum + Number(score.score), 0) / scored.length;
+  return null;
+}
+
+/** Label a scoring failure so failed work never looks complete. */
+export function scoringBadge(run: BenchmarkRun): string | null {
+  if (run.scoring_status === "failed") return "Scoring failed";
+  if (run.analysis_status === "blocked") return "Analysis blocked";
+  return null;
 }

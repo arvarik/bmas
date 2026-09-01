@@ -5,7 +5,11 @@ from time import perf_counter
 import pytest
 
 from benchmarks.analysis import build_run_report, report_csv_rows, safe_csv_cell
-from benchmarks.gates import evaluate_gate, validate_rules
+from benchmarks.gates import (
+    GateTerminalityError,
+    evaluate_gate,
+    validate_rules,
+)
 from benchmarks.qualification import qualify_runtime
 
 
@@ -73,15 +77,28 @@ def test_csv_export_protects_spreadsheet_formula_cells():
     assert safe_csv_cell("math") == "math"
 
 
-def test_gate_marks_incomplete_runs_indeterminate():
+def test_gate_rejects_a_nonterminal_candidate_and_previews_it():
     rules = [{
         "id": "score",
         "metric": "arm.right.score.exact",
         "operator": "gte",
         "value": 0.9,
     }]
-    report = evaluate_gate(_run("baseline"), _run("candidate", "partial"), rules)
-    assert report["status"] == "indeterminate"
+    # A final gate accepts only terminal candidates.
+    with pytest.raises(GateTerminalityError):
+        evaluate_gate(_run("baseline"), _run("candidate", "running"), rules)
+    # A preview inspects the active candidate without a decision.
+    preview = evaluate_gate(
+        _run("baseline"), _run("candidate", "running"), rules,
+        mode="preview",
+    )
+    assert preview["mode"] == "preview"
+    assert preview["status"] == "indeterminate"
+    # A partial run is terminal: its failed work is real, and the gate
+    # records a real decision instead of a false indeterminate.
+    final = evaluate_gate(_run("baseline"), _run("candidate", "partial"), rules)
+    assert final["mode"] == "final"
+    assert final["status"] in ("passed", "failed")
 
 
 def test_gate_rejects_duplicate_rule_identifiers():
@@ -191,6 +208,7 @@ def test_gate_can_select_a_holm_corrected_sign_test():
         "analysis_method": "holm_sign_test",
         "operator": "lte",
         "value": 0.05,
+        "direction": "improvement",
     }])
 
     assert report["status"] == "passed"

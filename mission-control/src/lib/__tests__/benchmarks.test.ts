@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runProgress, scoreSummary, statusLabel, type BenchmarkRun } from "@/lib/benchmarks";
+import { primaryMetric, runProgress, scoringBadge, statusLabel, type BenchmarkRun } from "@/lib/benchmarks";
 
 describe("benchmark presentation", () => {
   it("calculates bounded progress", () => {
@@ -11,17 +11,25 @@ describe("benchmark presentation", () => {
     expect(statusLabel("partial_failure")).toBe("Partial failure");
   });
 
-  it("uses only the latest retry for a score summary", () => {
+  it("reads the server primary metric and never averages in the browser", () => {
     const run = {
-      attempts: [
-        { id: "a1", trial_id: "t1", repeat_index: 1, retry_index: 0 },
-        { id: "a2", trial_id: "t1", repeat_index: 1, retry_index: 1 },
-      ],
-      scores: [
-        { attempt_id: "a1", status: "scored", score: 0 },
-        { attempt_id: "a2", status: "scored", score: 1 },
-      ],
+      primary_scorer_id: "scorer-exact",
+      primary_scorer_name: "Exact match",
+      primary_metric_mean: 0.75,
+      primary_metric_count: 4,
     } as BenchmarkRun;
-    expect(scoreSummary(run)).toBe(1);
+    expect(primaryMetric(run)).toEqual({
+      scorer_id: "scorer-exact",
+      scorer_name: "Exact match",
+      mean: 0.75,
+      count: 4,
+    });
+    expect(primaryMetric({} as BenchmarkRun)).toBeNull();
+  });
+
+  it("labels failed scoring so failed work never looks complete", () => {
+    expect(scoringBadge({ scoring_status: "failed" } as BenchmarkRun)).toBe("Scoring failed");
+    expect(scoringBadge({ analysis_status: "blocked" } as BenchmarkRun)).toBe("Analysis blocked");
+    expect(scoringBadge({ scoring_status: "completed", analysis_status: "valid" } as BenchmarkRun)).toBeNull();
   });
 });
