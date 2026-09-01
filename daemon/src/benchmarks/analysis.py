@@ -14,13 +14,102 @@ from benchmarks.provenance import content_checksum
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-ANALYSIS_VERSION = "2"
+ANALYSIS_VERSION = "3"
+ANALYSIS_RNG = "bmas-analysis-rng"
 CONFIDENCE_LEVEL = 0.95
 ALPHA = 1 - CONFIDENCE_LEVEL
 BOOTSTRAP_RESAMPLES = 999
+SIGN_FLIP_RESAMPLES = 999
+# At or below this paired case count the sign-flip test enumerates
+# every sign pattern exactly instead of sampling.
+EXACT_ENUMERATION_LIMIT = 12
+WILSON_LABEL = "unclustered_slot_diagnostic"
 MAX_ITEM_DIFFERENCES = 500
 MAX_SLICES = 100
 _NORMAL = NormalDist()
+_WORD_MASK = 2**64 - 1
+
+
+class AnalysisRandom:
+    """The named deterministic analysis generator: ``bmas-analysis-rng``.
+
+    The generator is SplitMix64 with unbiased rejection sampling for
+    bounded draws. Every step uses exact 64-bit integer arithmetic, so
+    any language reproduces the same candidates, rejections, indexes,
+    and draws from the same seed.
+    """
+
+    def __init__(self, seed: int) -> None:
+        self._state = seed & _WORD_MASK
+
+    def next_raw(self) -> int:
+        """Return the next raw 64-bit draw."""
+        self._state = (self._state + 0x9E3779B97F4A7C15) & _WORD_MASK
+        mixed = self._state
+        mixed = ((mixed ^ (mixed >> 30)) * 0xBF58476D1CE4E5B9) & _WORD_MASK
+        mixed = ((mixed ^ (mixed >> 27)) * 0x94D049BB133111EB) & _WORD_MASK
+        return mixed ^ (mixed >> 31)
+
+    def uniform_index(self, bound: int) -> int:
+        """Return one unbiased index in ``[0, bound)`` by rejection."""
+        if bound <= 0:
+            raise ValueError("The draw bound must be positive")
+        limit = (2**64 // bound) * bound
+        while True:
+            draw = self.next_raw()
+            if draw < limit:
+                return draw % bound
+
+    def coin(self) -> bool:
+        """Return one unbiased sign-flip bit."""
+        return bool(self.next_raw() & 1)
+
+
+def analysis_rng(seed_key: str) -> AnalysisRandom:
+    """Return the named generator seeded from one stable identity."""
+    payload = f"{ANALYSIS_RNG}:{ANALYSIS_VERSION}:{seed_key}"
+    seed = int.from_bytes(
+        hashlib.sha256(payload.encode()).digest()[:8], "big",
+    )
+    return AnalysisRandom(seed)
+
+
+def wilson_interval(successes: int, total: int) -> dict[str, Any]:
+    """Return one Wilson score interval as a slot-level diagnostic.
+
+    The interval is an unclustered descriptive diagnostic only: it
+    ignores case and family clustering, it never enters a primary
+    gate, and it stays defined for all-success and all-failure
+    samples.
+    """
+    if total <= 0:
+        return {
+            "successes": 0,
+            "total": 0,
+            "rate": None,
+            "ci_low": None,
+            "ci_high": None,
+            "label": WILSON_LABEL,
+        }
+    z = _NORMAL.inv_cdf(1 - ALPHA / 2)
+    rate = successes / total
+    denominator = 1 + z * z / total
+    center = (rate + z * z / (2 * total)) / denominator
+    margin = (
+        z
+        * math.sqrt(
+            rate * (1 - rate) / total + z * z / (4 * total * total),
+        )
+        / denominator
+    )
+    return {
+        "successes": successes,
+        "total": total,
+        "rate": rate,
+        "ci_low": max(0.0, center - margin),
+        "ci_high": min(1.0, center + margin),
+        "label": WILSON_LABEL,
+    }
 
 
 def safe_csv_cell(value: Any) -> Any:
@@ -175,6 +264,428 @@ def _latest_attempts(attempts: Iterable[dict[str, Any]]) -> list[dict[str, Any]]
     return list(latest.values())
 
 
+def outcome_slots(
+    attempts: Iterable[dict[str, Any]],
+    excluded_categories: set[str],
+) -> dict[tuple[str, int], dict[str, Any]]:
+    """Group one arm's attempts into sealed outcome slots.
+
+    One slot exists for each case and planned repetition. Retries stay
+    inside their original slot, ordered by retry index. The first
+    valid substantive outcome seals the slot, and a later or duplicate
+    attempt can never replace the sealed outcome. An excluded
+    infrastructure failure never seals, so an infrastructure retry can
+    still fill the slot.
+    """
+    ordered = sorted(
+        attempts,
+        key=lambda attempt: (
+            str(attempt["dataset_item_id"]),
+            int(attempt.get("repeat_index") or 1),
+            int(attempt.get("retry_index") or 0),
+            str(attempt["id"]),
+        ),
+    )
+    slots: dict[tuple[str, int], dict[str, Any]] = {}
+    for attempt in ordered:
+        key = (
+            str(attempt["dataset_item_id"]),
+            int(attempt.get("repeat_index") or 1),
+        )
+        slot = slots.setdefault(
+            key,
+            {
+                "attempts": [],
+                "sealed": None,
+                "post_seal_attempts": 0,
+                "retry_attempts": 0,
+            },
+        )
+        if slot["attempts"]:
+            slot["retry_attempts"] += 1
+        slot["attempts"].append(attempt)
+        status = str(attempt.get("status"))
+        category = str(attempt.get("failure_category") or "")
+        substantive = status == "completed" or (
+            status in {"failed", "cancelled"}
+            and category not in excluded_categories
+        )
+        if slot["sealed"] is not None:
+            if substantive:
+                slot["post_seal_attempts"] += 1
+            continue
+        if substantive:
+            slot["sealed"] = attempt
+    return slots
+
+
+def _slot_representatives(
+    attempts: Iterable[dict[str, Any]],
+    excluded_categories: set[str],
+) -> list[dict[str, Any]]:
+    """Return one representative attempt per arm, case, and repetition.
+
+    A sealed slot returns its sealed outcome. An unsealed slot returns
+    its latest attempt for progress and denominator accounting only.
+    """
+    by_arm: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for attempt in attempts:
+        by_arm[str(attempt["arm_id"])].append(attempt)
+    representatives: list[dict[str, Any]] = []
+    for arm_attempts in by_arm.values():
+        for slot in outcome_slots(arm_attempts, excluded_categories).values():
+            representatives.append(slot["sealed"] or slot["attempts"][-1])
+    return representatives
+
+
+def _binary_case_reduction(
+    passes: list[bool], estimand: dict[str, Any],
+) -> bool:
+    """Reduce repetition slot passes into one predeclared binary case."""
+    reduction = str(estimand.get("binary_reduction") or "strict_majority")
+    if reduction == "all":
+        return all(passes)
+    if reduction == "at_least_k":
+        threshold = int(estimand.get("at_least_k") or 1)
+        return sum(passes) >= threshold
+    return sum(passes) * 2 > len(passes)
+
+
+def case_outcomes(
+    slots: dict[tuple[str, int], dict[str, Any]],
+    scores_by_attempt: dict[str, list[dict[str, Any]]],
+    scorer_id: str,
+    estimand: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Nest sealed repetition slots into per-case outcomes.
+
+    A sealed completed slot contributes its scored value; a sealed
+    substantive failure contributes zero, the unconditional outcome. A
+    case reduces its repetitions through the predeclared fractional
+    mean and the predeclared binary reduction.
+    """
+    per_case: dict[str, dict[str, Any]] = {}
+    for (item_id, _repeat), slot in sorted(slots.items()):
+        sealed = slot["sealed"]
+        if sealed is None:
+            continue
+        scores = {
+            str(score["scorer_id"]): score
+            for score in scores_by_attempt.get(str(sealed["id"]), [])
+            if score.get("status") == "scored"
+            and score.get("score") is not None
+        }
+        if str(sealed.get("status")) == "completed":
+            score = scores.get(scorer_id)
+            if score is None:
+                continue
+            value = float(score["score"])
+            passed = bool(score.get("passed"))
+        else:
+            value = 0.0
+            passed = False
+        case = per_case.setdefault(
+            item_id,
+            {
+                "item_key": str(sealed.get("item_key") or item_id),
+                "family": str(
+                    sealed.get(
+                        str(estimand.get("family_field") or "subject"),
+                    )
+                    or "default",
+                ),
+                "slot_values": [],
+                "slot_passes": [],
+                "retry_attempts": 0,
+            },
+        )
+        case["slot_values"].append(value)
+        case["slot_passes"].append(passed)
+        case["retry_attempts"] += int(slot["retry_attempts"])
+    for case in per_case.values():
+        case["fractional"] = fmean(case["slot_values"])
+        case["binary"] = _binary_case_reduction(
+            case["slot_passes"], estimand,
+        )
+    return per_case
+
+
+def mcnemar_exact(
+    left_passes: list[Any], right_passes: list[Any],
+) -> dict[str, Any]:
+    """Return the exact McNemar test over paired binary case outcomes.
+
+    The test accepts only booleans from a predeclared binary case
+    reduction; a fractional case outcome fails closed.
+    """
+    for value in [*left_passes, *right_passes]:
+        if not isinstance(value, bool):
+            raise ValueError(
+                "McNemar accepts only predeclared binary case outcomes"
+            )
+    if len(left_passes) != len(right_passes):
+        raise ValueError("McNemar needs one pair per case")
+    discordant_left = sum(
+        left and not right
+        for left, right in zip(left_passes, right_passes, strict=True)
+    )
+    discordant_right = sum(
+        right and not left
+        for left, right in zip(left_passes, right_passes, strict=True)
+    )
+    total = discordant_left + discordant_right
+    if total == 0:
+        p_value = None
+    else:
+        tail = sum(
+            math.comb(total, index)
+            for index in range(min(discordant_left, discordant_right) + 1)
+        ) / 2**total
+        p_value = min(1.0, 2 * tail)
+    return {
+        "method": "mcnemar_exact_binomial",
+        "reduction": "predeclared_binary",
+        "discordant_left": discordant_left,
+        "discordant_right": discordant_right,
+        "p_value": p_value,
+    }
+
+
+def _weighted_theta(
+    entries: list[dict[str, Any]],
+) -> float | None:
+    """Aggregate case deltas with each weight applied exactly once."""
+    families: dict[str, dict[str, float]] = {}
+    for entry in entries:
+        family = families.setdefault(
+            entry["family"],
+            {"weight": entry["family_weight"], "numerator": 0.0,
+             "denominator": 0.0},
+        )
+        family["numerator"] += entry["weight"] * entry["delta"]
+        family["denominator"] += entry["weight"]
+    total_weight = 0.0
+    total = 0.0
+    for family in families.values():
+        if family["denominator"] <= 0 or family["weight"] <= 0:
+            continue
+        total += family["weight"] * (
+            family["numerator"] / family["denominator"]
+        )
+        total_weight += family["weight"]
+    if total_weight <= 0:
+        return None
+    return total / total_weight
+
+
+def paired_case_comparison(
+    left_cases: dict[str, dict[str, Any]],
+    right_cases: dict[str, dict[str, Any]],
+    *,
+    estimand: dict[str, Any],
+    seed_key: str,
+    practical_difference: float,
+    bootstrap_resamples: int = BOOTSTRAP_RESAMPLES,
+    sign_flip_resamples: int = SIGN_FLIP_RESAMPLES,
+    record_draws: bool = False,
+) -> dict[str, Any]:
+    """Compare two arms at the case level under the frozen estimand.
+
+    Cases pair on their identifiers. The interval comes from a
+    family-stratified case bootstrap with uniform draws, and each
+    declared case weight applies exactly once during aggregation. The
+    significance test is a paired sign-flip randomization over the
+    same weighted statistic, exact by enumeration for small case
+    counts. McNemar runs beside it, only on the predeclared binary
+    case reduction.
+    """
+    family_weights = {
+        str(name): float(value)
+        for name, value in (estimand.get("family_weights") or {}).items()
+    }
+    case_weights = {
+        str(name): float(value)
+        for name, value in (estimand.get("case_weights") or {}).items()
+    }
+    common = sorted(set(left_cases) & set(right_cases))
+    entries: list[dict[str, Any]] = []
+    removed_zero_weight: list[str] = []
+    for item_id in common:
+        left = left_cases[item_id]
+        right = right_cases[item_id]
+        key = str(left["item_key"])
+        weight = case_weights.get(key, 1.0)
+        family = str(left["family"])
+        family_weight = family_weights.get(family, 1.0)
+        if weight <= 0 or family_weight <= 0:
+            removed_zero_weight.append(key)
+            continue
+        entries.append({
+            "item_id": item_id,
+            "item_key": key,
+            "family": family,
+            "weight": weight,
+            "family_weight": family_weight,
+            "delta": float(right["fractional"]) - float(left["fractional"]),
+            "left_binary": bool(left["binary"]),
+            "right_binary": bool(right["binary"]),
+        })
+    deltas = [entry["delta"] for entry in entries]
+    count = len(entries)
+    theta = _weighted_theta(entries)
+    wins = sum(delta > 0 for delta in deltas)
+    ties = sum(delta == 0 for delta in deltas)
+    losses = sum(delta < 0 for delta in deltas)
+    families = sorted({entry["family"] for entry in entries})
+    by_family: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for entry in entries:
+        by_family[entry["family"]].append(entry)
+    min_family_cases = int(estimand.get("min_family_cases") or 5)
+    small_families = sorted(
+        family
+        for family, members in by_family.items()
+        if len(members) < min_family_cases
+    )
+
+    interval_status = "estimated"
+    ci_low: float | None = None
+    ci_high: float | None = None
+    standard_error: float | None = None
+    draws: list[list[str]] = []
+    if count == 0 or theta is None:
+        interval_status = "no_data"
+    elif count == 1:
+        interval_status = "insufficient_sample"
+    else:
+        rng = analysis_rng(f"bootstrap:{seed_key}")
+        replicates: list[float] = []
+        for _ in range(bootstrap_resamples):
+            resample: list[dict[str, Any]] = []
+            drawn: list[str] = []
+            for family in families:
+                members = by_family[family]
+                for _ in range(len(members)):
+                    # Uniform draws only. The declared case weight
+                    # never changes the draw probability; it applies
+                    # once in the aggregation below.
+                    member = members[rng.uniform_index(len(members))]
+                    resample.append(member)
+                    drawn.append(member["item_key"])
+            replicate = _weighted_theta(resample)
+            if replicate is not None:
+                replicates.append(replicate)
+            if record_draws:
+                draws.append(drawn)
+        if len({format(value, ".17g") for value in replicates}) <= 1:
+            # Every stratified replicate is identical, so the
+            # resampling distribution is a point mass and the interval
+            # collapses onto the estimate.
+            interval_status = "degenerate_bootstrap"
+            if replicates:
+                ci_low = min(replicates)
+                ci_high = max(replicates)
+                standard_error = 0.0
+        else:
+            ci_low = _percentile(replicates, ALPHA / 2)
+            ci_high = _percentile(replicates, 1 - ALPHA / 2)
+            standard_error = stdev(replicates)
+
+    sign_flip: dict[str, Any] = {
+        "method": "paired_sign_flip",
+        "statistic": "family_stratified_weighted_mean",
+        "p_value": None,
+        "mode": None,
+        "resamples": None,
+    }
+    flips: list[list[bool]] = []
+    if count >= 1 and theta is not None:
+        observed = abs(theta)
+
+        def _flipped(pattern: list[bool]) -> float | None:
+            flipped_entries = [
+                {**entry, "delta": -entry["delta"] if flip else entry["delta"]}
+                for entry, flip in zip(entries, pattern, strict=True)
+            ]
+            return _weighted_theta(flipped_entries)
+
+        if count <= EXACT_ENUMERATION_LIMIT:
+            at_least = 0
+            total_patterns = 2**count
+            for mask in range(total_patterns):
+                pattern = [bool(mask >> bit & 1) for bit in range(count)]
+                value = _flipped(pattern)
+                if value is not None and abs(value) >= observed - 1e-12:
+                    at_least += 1
+            sign_flip.update({
+                "p_value": at_least / total_patterns,
+                "mode": "exact_enumeration",
+                "resamples": total_patterns,
+            })
+        else:
+            rng = analysis_rng(f"sign-flip:{seed_key}")
+            at_least = 0
+            for _ in range(sign_flip_resamples):
+                pattern = [rng.coin() for _ in range(count)]
+                value = _flipped(pattern)
+                if value is not None and abs(value) >= observed - 1e-12:
+                    at_least += 1
+                if record_draws:
+                    flips.append(pattern)
+            sign_flip.update({
+                "p_value": (1 + at_least) / (sign_flip_resamples + 1),
+                "mode": "monte_carlo",
+                "resamples": sign_flip_resamples,
+            })
+
+    mcnemar = mcnemar_exact(
+        [entry["left_binary"] for entry in entries],
+        [entry["right_binary"] for entry in entries],
+    )
+    deviation = stdev(deltas) if count >= 2 else None
+    result = {
+        "count": count,
+        "mean": theta,
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "standard_error": standard_error,
+        "interval_status": interval_status,
+        "interval_method": "family_stratified_weighted_case_bootstrap",
+        "rng": ANALYSIS_RNG,
+        "wins": wins,
+        "ties": ties,
+        "losses": losses,
+        "probability_of_superiority": (
+            (wins + 0.5 * ties) / count if count else None
+        ),
+        "standardized_paired_effect": (
+            fmean(deltas) / deviation
+            if deviation is not None and deviation > 0
+            else None
+        ),
+        "p_value_raw": sign_flip["p_value"],
+        "p_value_adjusted": None,
+        "sign_flip": sign_flip,
+        "mcnemar": mcnemar,
+        "practical_difference": practical_difference,
+        "sample_guidance": _sample_guidance(deltas, practical_difference),
+        "direction": "right_minus_left",
+        "unit": "case",
+        "families": families,
+        "small_families": small_families,
+        "small_cluster_policy": {
+            "min_family_cases": min_family_cases,
+            "policy": "flagged_not_dropped",
+            "exact_enumeration_limit": EXACT_ENUMERATION_LIMIT,
+        },
+        "removed_zero_weight_cases": sorted(removed_zero_weight),
+        "paired_cases": [entry["item_key"] for entry in entries],
+    }
+    if record_draws:
+        result["bootstrap_draws"] = draws
+        result["sign_flip_patterns"] = flips
+    return result
+
+
 def _matches_filters(attempt: dict[str, Any], filters: dict[str, Any]) -> bool:
     """Return true when one attempt matches all report filters."""
     if filters.get("subject") and attempt.get("subject") != filters["subject"]:
@@ -185,18 +696,6 @@ def _matches_filters(attempt: dict[str, Any], filters: dict[str, Any]) -> bool:
         filters.get("tag") and filters["tag"] not in (attempt.get("tags") or [])
     )
 
-
-def _sign_test(deltas: list[float]) -> float | None:
-    """Return an exact two-sided sign-test probability without ties."""
-    wins = sum(delta > 0 for delta in deltas)
-    losses = sum(delta < 0 for delta in deltas)
-    trials = wins + losses
-    if trials == 0:
-        return None
-    lower_tail = sum(
-        math.comb(trials, index) for index in range(min(wins, losses) + 1)
-    ) / 2**trials
-    return min(1.0, 2 * lower_tail)
 
 
 def _holm_adjust(values: list[float | None]) -> list[float | None]:
@@ -241,44 +740,6 @@ def _sample_guidance(deltas: list[float], practical_difference: float) -> dict[s
     }
 
 
-def _paired_effect(
-    deltas: list[float],
-    *,
-    seed_key: str,
-    practical_difference: float,
-) -> dict[str, Any]:
-    """Return paired uncertainty, effect size, significance, and power guidance."""
-    interval = _mean_interval(
-        deltas,
-        seed_key=seed_key,
-        lower=-1.0,
-        upper=1.0,
-    )
-    wins = sum(delta > 0 for delta in deltas)
-    ties = sum(delta == 0 for delta in deltas)
-    losses = sum(delta < 0 for delta in deltas)
-    deviation = stdev(deltas) if len(deltas) >= 2 else None
-    standardized = (
-        fmean(deltas) / deviation
-        if deviation is not None and deviation > 0
-        else None
-    )
-    return {
-        **interval,
-        "wins": wins,
-        "ties": ties,
-        "losses": losses,
-        "probability_of_superiority": (
-            (wins + 0.5 * ties) / len(deltas) if deltas else None
-        ),
-        "standardized_paired_effect": standardized,
-        "p_value_raw": _sign_test(deltas),
-        "p_value_adjusted": None,
-        "practical_difference": practical_difference,
-        "sample_guidance": _sample_guidance(deltas, practical_difference),
-        "direction": "right_minus_left",
-    }
-
 
 def _classification(metric: dict[str, Any]) -> str:
     """Classify one corrected paired effect without overstating small samples."""
@@ -308,7 +769,9 @@ def _cohen_kappa(left: list[bool], right: list[bool]) -> float | None:
     right_rate = sum(right) / len(right)
     expected = left_rate * right_rate + (1 - left_rate) * (1 - right_rate)
     if expected == 1:
-        return 1.0 if observed == 1 else None
+        # Chance agreement is total, so kappa is zero over zero:
+        # undefined. The raw agreement rate beside it stays defined.
+        return None
     return (observed - expected) / (1 - expected)
 
 
@@ -320,14 +783,36 @@ def _review_diagnostics(
     review_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for review in reviews:
         review_groups[str(review["attempt_id"])].append(review)
-    human = {
-        attempt_id: {
+    # Review states: an even split is a tie that needs adjudication;
+    # an odd vote after disagreement records an adjudicated result.
+    review_states: list[dict[str, Any]] = []
+    human: dict[str, dict[str, Any]] = {}
+    for attempt_id, items in sorted(review_groups.items()):
+        pass_votes = sum(bool(item["passed"]) for item in items)
+        fail_votes = len(items) - pass_votes
+        if pass_votes == fail_votes:
+            state = "tie"
+        elif pass_votes > fail_votes:
+            state = "passed"
+        else:
+            state = "failed"
+        review_states.append({
+            "attempt_id": attempt_id,
+            "review_count": len(items),
+            "pass_votes": pass_votes,
+            "fail_votes": fail_votes,
+            "state": state,
+            "adjudicated": state != "tie" and min(pass_votes, fail_votes) > 0,
+        })
+        if state == "tie":
+            # A tied review carries no resolved judgment; it stays out
+            # of the calibration until adjudication resolves it.
+            continue
+        human[attempt_id] = {
             "score": fmean(float(item["score"]) for item in items),
-            "passed": sum(bool(item["passed"]) for item in items) >= len(items) / 2,
+            "passed": state == "passed",
             "review_count": len(items),
         }
-        for attempt_id, items in review_groups.items()
-    }
     scorer_rows: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
     for score in score_rows:
         if score.get("status") == "scored" and score.get("score") is not None:
@@ -386,6 +871,7 @@ def _review_diagnostics(
             "review_count": len(reviews),
             "reason": None if human else "No completed attempt has a human review",
         },
+        "review_states": review_states,
         "human_calibration": calibration,
         "scorer_agreement": agreement,
     }
@@ -460,6 +946,34 @@ def _slice_report(
     return reports
 
 
+def _run_estimand(run: dict[str, Any]) -> dict[str, Any]:
+    """Read the frozen estimand from the run plan, with a legacy fill.
+
+    A run created after the estimand freeze carries the complete
+    estimand in its execution plan. A legacy run derives the same
+    defaults from its configuration, marked as derived.
+    """
+    plan = run.get("execution_plan") or {}
+    if isinstance(plan, dict) and isinstance(plan.get("estimand"), dict):
+        return dict(plan["estimand"])
+    configuration = run.get("test_configuration") or {}
+    statistics = configuration.get("statistics") or {}
+    return {
+        "target_population": "declared dataset cases",
+        "primary_estimand": "paired-difference-in-weighted-case-means",
+        "family_field": str(statistics.get("family_field") or "subject"),
+        "family_weights": statistics.get("family_weights") or {},
+        "case_weights": statistics.get("case_weights") or {},
+        "binary_reduction": str(
+            statistics.get("binary_reduction") or "strict_majority",
+        ),
+        "at_least_k": statistics.get("at_least_k"),
+        "fractional_reduction": "mean",
+        "min_family_cases": int(statistics.get("min_family_cases") or 5),
+        "derived_from_configuration": True,
+    }
+
+
 def build_run_report(
     run: dict[str, Any],
     filters: dict[str, Any] | None = None,
@@ -468,10 +982,30 @@ def build_run_report(
     selected_filters = {
         key: value for key, value in (filters or {}).items() if value
     }
-    all_latest = _latest_attempts(run.get("attempts") or [])
+    configuration = run.get("test_configuration") or {}
+    practical_difference = float(
+        configuration.get("practical_difference", 0.01)
+    )
+    # The declared infrastructure exclusion policy. Only a predeclared
+    # failure category can leave the unconditional denominator, and
+    # every exclusion carries the policy reason.
+    exclusion_policy = configuration.get("infrastructure_exclusions") or {}
+    excluded_categories = set(exclusion_policy.get("categories") or [])
+    exclusion_reason = str(
+        exclusion_policy.get("reason") or "predeclared infrastructure policy"
+    )
+    repetitions = int(configuration.get("repetitions") or 1)
+    estimand = _run_estimand(run)
+    # One representative per arm, case, and repetition slot: the
+    # sealed first valid substantive outcome, or the latest in-flight
+    # attempt for progress accounting. A late or duplicate attempt
+    # never replaces a sealed slot outcome.
+    all_sealed = _slot_representatives(
+        run.get("attempts") or [], excluded_categories,
+    )
     latest = [
         attempt
-        for attempt in all_latest
+        for attempt in all_sealed
         if _matches_filters(attempt, selected_filters)
     ]
     latest_ids = {str(attempt["id"]) for attempt in latest}
@@ -487,20 +1021,6 @@ def build_run_report(
     scores_by_attempt: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for score in score_rows:
         scores_by_attempt[str(score["attempt_id"])].append(score)
-
-    configuration = run.get("test_configuration") or {}
-    practical_difference = float(
-        configuration.get("practical_difference", 0.01)
-    )
-    # The declared infrastructure exclusion policy. Only a predeclared
-    # failure category can leave the unconditional denominator, and
-    # every exclusion carries the policy reason.
-    exclusion_policy = configuration.get("infrastructure_exclusions") or {}
-    excluded_categories = set(exclusion_policy.get("categories") or [])
-    exclusion_reason = str(
-        exclusion_policy.get("reason") or "predeclared infrastructure policy"
-    )
-    repetitions = int(configuration.get("repetitions") or 1)
     arm_attempts: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for attempt in latest:
         arm_attempts[str(attempt["arm_id"])].append(attempt)
@@ -508,6 +1028,26 @@ def build_run_report(
     for attempt in run.get("attempts") or []:
         if _matches_filters(attempt, selected_filters):
             all_filtered_attempts[str(attempt["arm_id"])].append(attempt)
+    # Sealed outcome slots and nested case outcomes per arm and
+    # scorer. Retries and duplicates stay inside their slots, so the
+    # case level is the statistical unit for every paired comparison.
+    slots_by_arm: dict[str, dict[tuple[str, int], dict[str, Any]]] = {}
+    cases_by_arm: dict[str, dict[str, dict[str, dict[str, Any]]]] = {}
+    for arm_id, arm_all in all_filtered_attempts.items():
+        slots_by_arm[arm_id] = outcome_slots(arm_all, excluded_categories)
+    for arm_id, slots in slots_by_arm.items():
+        scorer_ids = {
+            str(score["scorer_id"])
+            for slot in slots.values()
+            if slot["sealed"] is not None
+            for score in scores_by_attempt.get(str(slot["sealed"]["id"]), [])
+        }
+        cases_by_arm[arm_id] = {
+            scorer_id: case_outcomes(
+                slots, scores_by_attempt, scorer_id, estimand,
+            )
+            for scorer_id in sorted(scorer_ids)
+        }
     arms: list[dict[str, Any]] = []
     error_categories: list[dict[str, Any]] = []
     for arm_id, attempts in arm_attempts.items():
@@ -601,6 +1141,7 @@ def build_run_report(
             ]
             values = [float(score["score"]) for score in scored]
             passed_count = sum(bool(score.get("passed")) for score in scored)
+            arm_cases = cases_by_arm.get(arm_id, {}).get(scorer_id, {})
             scorer_metrics.append({
                 "scorer_id": scorer_id,
                 "scorer_name": scores[0].get("scorer_name"),
@@ -610,6 +1151,12 @@ def build_run_report(
                     seed_key=f"arm:{arm_id}:score:{scorer_id}",
                     lower=0.0,
                     upper=1.0,
+                ),
+                # A descriptive slot-level diagnostic only: it ignores
+                # clustering and never enters a primary gate.
+                "wilson_unclustered_diagnostic": wilson_interval(
+                    sum(bool(case["binary"]) for case in arm_cases.values()),
+                    len(arm_cases),
                 ),
                 "passed": passed_count,
                 "failed": sum(not bool(score.get("passed")) for score in scored),
@@ -719,11 +1266,23 @@ def build_run_report(
                 "matched_attempts": len(common_keys),
                 "scorers": [],
             }
-            for scorer_id, deltas in sorted(scorer_deltas.items()):
+            left_cases_by_scorer = cases_by_arm.get(
+                str(left_arm["arm_id"]), {},
+            )
+            right_cases_by_scorer = cases_by_arm.get(
+                str(right_arm["arm_id"]), {},
+            )
+            shared_scorers = sorted(
+                set(scorer_deltas)
+                | (set(left_cases_by_scorer) & set(right_cases_by_scorer)),
+            )
+            for scorer_id in shared_scorers:
                 metric = {
                     "scorer_id": scorer_id,
-                    **_paired_effect(
-                        deltas,
+                    **paired_case_comparison(
+                        left_cases_by_scorer.get(scorer_id, {}),
+                        right_cases_by_scorer.get(scorer_id, {}),
+                        estimand=estimand,
                         seed_key=(
                             f"comparison:{left_arm['arm_id']}:"
                             f"{right_arm['arm_id']}:{scorer_id}"
@@ -773,11 +1332,19 @@ def build_run_report(
             "version": ANALYSIS_VERSION,
             "confidence_level": CONFIDENCE_LEVEL,
             "interval_method": "deterministic_bca_bootstrap",
+            "paired_interval_method": (
+                "family_stratified_weighted_case_bootstrap"
+            ),
             "bootstrap_resamples": BOOTSTRAP_RESAMPLES,
-            "paired_test": "exact_two_sided_sign_test",
+            "paired_test": "paired_sign_flip",
+            "sign_flip_resamples": SIGN_FLIP_RESAMPLES,
+            "exact_enumeration_limit": EXACT_ENUMERATION_LIMIT,
+            "rng": ANALYSIS_RNG,
             "multiple_comparison_method": "holm_bonferroni",
             "family_alpha": ALPHA,
             "practical_difference": practical_difference,
+            "statistical_unit": "case",
+            "estimand": estimand,
         },
         "interval_method": "deterministic_bca_bootstrap_95",
         "run": {
@@ -792,7 +1359,7 @@ def build_run_report(
         },
         "filters": selected_filters,
         "latest_attempt_count": len(latest),
-        "prior_attempt_count": len(run.get("attempts") or []) - len(all_latest),
+        "prior_attempt_count": len(run.get("attempts") or []) - len(all_sealed),
         "arms": sorted_arms,
         "comparisons": comparisons,
         "diagnostics": {

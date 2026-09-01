@@ -14,6 +14,27 @@ from benchmarks.scoring import score_output
 if TYPE_CHECKING:
     from benchmarks.capacity import CapacityPolicy
 
+# The three frozen scheduler priority bands and their weighted
+# round-robin weights. A larger weight receives proportionally more
+# dispatch turns; the smallest weight still receives turns, so no band
+# starves by construction.
+PRIORITY_BANDS = ("expedited", "standard", "deferred")
+PRIORITY_BAND_WEIGHTS = {"expedited": 4, "standard": 2, "deferred": 1}
+PRIORITY_BAND_PROMOTION = {"deferred": "standard", "standard": "expedited"}
+# The frozen starvation limit: an eligible run skipped this many times
+# in a row promotes one band and records a scheduler event.
+STARVATION_PROMOTION_LIMIT = 25
+SEED_CONTROL_LABELS = ("recorded", "best_effort", "applied")
+
+
+def priority_band_for(priority: int) -> str:
+    """Map one numeric run priority onto a frozen priority band."""
+    if priority >= 10:
+        return "expedited"
+    if priority < 0:
+        return "deferred"
+    return "standard"
+
 
 class BenchmarkConflict(RuntimeError):
     """A benchmark mutation conflicts with immutable or active state."""
@@ -241,7 +262,7 @@ async def _revision_children(
     return (
         [_record(row, "configuration") for row in arms],
         [_record(row, "configuration", "configuration_schema") for row in scorers],
-        [_record(row, "execution_plan") for row in runs],
+        [_run_record(row, "execution_plan") for row in runs],
     )
 
 
@@ -274,6 +295,127 @@ async def get_test(test_id: str) -> dict[str, Any] | None:
     result = _record(test_row, "metadata")
     result["revisions"] = revisions
     return result
+
+
+def _run_record(row: Any, *json_columns: str) -> dict[str, Any]:
+    """Decode one run row; an absent cost amount stays null."""
+    record = _record(row, *json_columns, "settled_cost", "cost_bound")
+    for column in ("settled_cost", "cost_bound"):
+        if record.get(column) == {}:
+            record[column] = None
+    return record
+
+
+def _seed_control_label(runtime_id: str) -> str:
+    """Read the declared seed support for one runtime.
+
+    ``recorded`` means the runtime only records the seed.
+    ``best_effort`` means the runtime forwards the seed without a
+    determinism guarantee. ``applied`` means the provider applies the
+    seed deterministically. An unknown runtime stays ``recorded``,
+    the honest minimum.
+    """
+    from core import variants
+
+    try:
+        record = variants.capability_record(
+            variants.resolve_runtime_key(runtime_id),
+        )
+    except variants.UnknownVariantError:
+        return "recorded"
+    label = str(
+        (record.get("benchmark") or {}).get("seed_strategy") or "recorded"
+    )
+    return label if label in SEED_CONTROL_LABELS else "recorded"
+
+
+def _frozen_estimand(
+    configuration: dict[str, Any],
+    *,
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Freeze the complete statistical estimand into the run plan.
+
+    The estimand names the target population, the primary paired
+    estimand, the task-family field, the family and case weights, and
+    the predeclared repetition reductions. A zero-sum weight vector
+    rejects here, before any admission.
+    """
+    statistics = configuration.get("statistics") or {}
+    if not isinstance(statistics, dict):
+        raise BenchmarkConflict(
+            "The statistics configuration must be one object"
+        )
+    family_field = str(statistics.get("family_field") or "subject")
+    families: dict[str, list[str]] = {}
+    for item in items:
+        family = str(item.get(family_field) or "default")
+        families.setdefault(family, []).append(
+            str(item.get("item_key") or item.get("id")),
+        )
+
+    raw_family_weights = statistics.get("family_weights") or {}
+    family_weights: dict[str, float] = {}
+    for name, weight in raw_family_weights.items():
+        value = float(weight)
+        if value < 0:
+            raise BenchmarkConflict("A family weight cannot be negative")
+        family_weights[str(name)] = value
+    if family_weights and all(
+        family_weights.get(name, 1.0) == 0 for name in families
+    ):
+        raise BenchmarkConflict(
+            "The family weight vector sums to zero; the estimand covers "
+            "no family"
+        )
+
+    raw_case_weights = statistics.get("case_weights") or {}
+    case_weights: dict[str, float] = {}
+    for name, weight in raw_case_weights.items():
+        value = float(weight)
+        if value < 0:
+            raise BenchmarkConflict("A case weight cannot be negative")
+        case_weights[str(name)] = value
+    for family, keys in families.items():
+        if family_weights and family_weights.get(family, 1.0) == 0:
+            continue
+        if case_weights and all(
+            case_weights.get(key, 1.0) == 0 for key in keys
+        ):
+            raise BenchmarkConflict(
+                f"Every case weight in the included family {family} is "
+                "zero; the estimand covers no case there"
+            )
+
+    binary_reduction = str(
+        statistics.get("binary_reduction") or "strict_majority"
+    )
+    if binary_reduction not in {"strict_majority", "all", "at_least_k"}:
+        raise BenchmarkConflict(
+            f"Unknown binary case reduction: {binary_reduction}"
+        )
+    at_least_k = statistics.get("at_least_k")
+    if binary_reduction == "at_least_k":
+        if not isinstance(at_least_k, int) or at_least_k < 1:
+            raise BenchmarkConflict(
+                "The at_least_k reduction needs one positive integer k"
+            )
+    else:
+        at_least_k = None
+    return {
+        "target_population": "declared dataset cases",
+        "primary_estimand": "paired-difference-in-weighted-case-means",
+        "family_field": family_field,
+        "families": {
+            name: sorted(keys) for name, keys in sorted(families.items())
+        },
+        "family_weights": family_weights,
+        "case_weights": case_weights,
+        "binary_reduction": binary_reduction,
+        "at_least_k": at_least_k,
+        "fractional_reduction": "mean",
+        "min_family_cases": int(statistics.get("min_family_cases") or 5),
+    }
 
 
 async def create_run(
@@ -347,6 +489,10 @@ async def create_run(
 
             repetitions = int(revision["configuration"].get("repetitions", 1))
             base_seed = int(revision["configuration"].get("seed", 0))
+            estimand = _frozen_estimand(
+                revision["configuration"],
+                items=[dict(item) for item in items],
+            )
             plan = {
                 "schema_version": "1",
                 "test_revision_id": revision_id,
@@ -355,6 +501,12 @@ async def create_run(
                 "dataset_checksum": revision["dataset_checksum"],
                 "repetitions": repetitions,
                 "seed": base_seed,
+                "seed_scope": "item-repetition",
+                "arm_order": {
+                    "strategy": "rotated_interleave",
+                    "rotation": "slot_index_modulo_arm_count",
+                },
+                "estimand": estimand,
                 "arms": [
                     {
                         "id": arm["id"],
@@ -378,8 +530,8 @@ async def create_run(
                 "INSERT INTO benchmark_runs "
                 "(id, test_revision_id, status, execution_plan, "
                 "execution_plan_checksum, total_trials, total_attempts, "
-                "operator_note, idempotency_key, priority) "
-                "VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)",
+                "operator_note, idempotency_key, priority, priority_band) "
+                "VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     run_id,
                     revision_id,
@@ -390,10 +542,19 @@ async def create_run(
                     operator_note,
                     idempotency_key,
                     priority,
+                    priority_band_for(priority),
                 ),
             )
+            arm_count = len(arms)
+            seed_controls = {
+                str(arm["runtime_id"]): _seed_control_label(
+                    str(arm["runtime_id"]),
+                )
+                for arm in arms
+            }
             for arm_index, arm_row in enumerate(arms):
                 arm = _record(arm_row, "configuration")
+                seed_control = seed_controls[str(arm["runtime_id"])]
                 for item_index, item in enumerate(items):
                     trial_id = f"trial-{uuid.uuid4().hex}"
                     await connection.execute(
@@ -403,12 +564,22 @@ async def create_run(
                     )
                     for repeat_index in range(1, repetitions + 1):
                         attempt_id = f"attempt-{uuid.uuid4().hex}"
+                        # One shared seed per case and repetition. Every
+                        # arm receives the same value, so paired slots
+                        # keep the case, repetition, and seed relation.
                         random_seed = (
-                            base_seed
-                            + arm_index * 1_000_000
-                            + item_index * 1_000
-                            + repeat_index
+                            base_seed + item_index * 1_000 + repeat_index
                         )
+                        # The stored arm-order schedule. Each slot
+                        # rotates its arm order, and the rank
+                        # interleaves arms inside the run.
+                        slot_index = (
+                            item_index * repetitions + repeat_index - 1
+                        )
+                        arm_position = (
+                            arm_index - slot_index
+                        ) % arm_count
+                        schedule_rank = slot_index * arm_count + arm_position
                         snapshot = {
                             "schema_version": "1",
                             "run_id": run_id,
@@ -417,6 +588,8 @@ async def create_run(
                             "repeat_index": repeat_index,
                             "retry_index": 0,
                             "random_seed": random_seed,
+                            "seed_scope": "item-repetition",
+                            "seed_control": seed_control,
                             "runtime_id": arm["runtime_id"],
                             "runtime_configuration": arm["configuration"],
                             "dataset_item_id": item["id"],
@@ -424,14 +597,17 @@ async def create_run(
                         await connection.execute(
                             "INSERT INTO benchmark_attempts "
                             "(id, trial_id, attempt_number, repeat_index, retry_index, "
-                            "random_seed, execution_snapshot, snapshot_checksum) "
-                            "VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
+                            "random_seed, seed_control, schedule_rank, "
+                            "execution_snapshot, snapshot_checksum) "
+                            "VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",
                             (
                                 attempt_id,
                                 trial_id,
                                 repeat_index,
                                 repeat_index,
                                 random_seed,
+                                seed_control,
+                                schedule_rank,
                                 json.dumps(snapshot, separators=(",", ":"), sort_keys=True),
                                 content_checksum(snapshot),
                             ),
@@ -594,7 +770,7 @@ async def list_runs(
         )
     return (
         [
-            _apply_effective_statuses(_record(row, "execution_plan"))
+            _apply_effective_statuses(_run_record(row, "execution_plan"))
             for row in rows
         ],
         int(count_row["count"] if count_row else 0),
@@ -683,7 +859,7 @@ async def get_run(run_id: str) -> dict[str, Any] | None:
             (run_id,),
         )
     result = _apply_effective_statuses(
-        _record(run_row, "execution_plan", "test_configuration"),
+        _run_record(run_row, "execution_plan", "test_configuration"),
     )
     result["attempts"] = [
         _record(row, "execution_snapshot", "tags") for row in rows
@@ -837,7 +1013,13 @@ _ATTEMPT_CONTEXT_SELECT = (
     "SELECT attempt.*, trial.run_id, trial.dataset_item_id, "
     "arm.runtime_id, arm.configuration AS arm_configuration, "
     "item.input, revision.configuration AS test_configuration, "
-    "run.status AS run_status, run.priority, task.model_used AS task_model_used, "
+    "run.status AS run_status, run.priority, run.priority_band, "
+    "run.dispatch_tickets, run.starvation_wait, "
+    "run.budget_id AS run_budget_id, run.authority_run_id, "
+    "run.authority_fence, run.total_attempts AS run_total_attempts, "
+    "(SELECT COUNT(*) FROM benchmark_test_arms AS counted_arm "
+    "WHERE counted_arm.test_revision_id = run.test_revision_id) AS arm_count, "
+    "task.model_used AS task_model_used, "
     "(SELECT COUNT(*) FROM benchmark_attempts AS active_attempt "
     "JOIN benchmark_trials AS active_trial ON active_trial.id = active_attempt.trial_id "
     "WHERE active_trial.run_id = run.id AND active_attempt.status = 'running') "
@@ -887,11 +1069,18 @@ async def claim_next_attempt(
                 _ATTEMPT_CONTEXT_SELECT
                 + "WHERE attempt.status = 'queued' "
                 "AND run.status IN ('queued','running') "
-                "ORDER BY run.priority DESC, run.created_at, arm.sort_order, "
-                "item.sort_order, attempt.repeat_index LIMIT 200"
+                "ORDER BY trial.run_id, attempt.schedule_rank, "
+                "attempt.retry_index, attempt.id LIMIT 500"
             )
-            selected: Any | None = None
+            # The first eligible attempt per run, in stored arm-order
+            # schedule position. The stored schedule decides the order
+            # inside a run; the weighted round-robin decides the order
+            # across runs.
+            eligible: dict[str, Any] = {}
             for row in rows:
+                run_key = str(row["run_id"])
+                if run_key in eligible:
+                    continue
                 candidate = _attempt_record(row)
                 configuration = candidate["test_configuration"]
                 limit = max(
@@ -901,16 +1090,85 @@ async def claim_next_attempt(
                 if int(candidate["active_count"] or 0) >= limit:
                     continue
                 if policy.allows(candidate, active):
-                    selected = row
-                    break
-            if selected is None:
+                    eligible[run_key] = row
+            if not eligible:
                 await connection.rollback()
                 return None
+            # One transactional weighted round-robin turn. The run with
+            # the smallest consumed-tickets-per-weight value wins; the
+            # stable digest breaks exact ties. An equal-priority run
+            # that just took a turn carries a larger virtual time, so
+            # it cannot take a second turn while an equal-priority run
+            # waits.
+            def _turn_order(run_key: str) -> tuple[float, int, str]:
+                # Stride order: the next turn finishes at
+                # (tickets + 1) / weight, so a heavier band starts
+                # first and receives proportionally more turns.
+                row = eligible[run_key]
+                band = str(row["priority_band"] or "standard")
+                weight = PRIORITY_BAND_WEIGHTS.get(band, 1)
+                tickets = int(row["dispatch_tickets"] or 0)
+                return (
+                    (tickets + 1) / weight,
+                    tickets,
+                    content_checksum([run_key]),
+                )
+
+            selected_run = min(eligible, key=_turn_order)
+            selected = eligible[selected_run]
+            now_marker = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+            for run_key, row in eligible.items():
+                if run_key == selected_run:
+                    continue
+                waits = int(row["starvation_wait"] or 0) + 1
+                band = str(row["priority_band"] or "standard")
+                promoted = PRIORITY_BAND_PROMOTION.get(band)
+                if waits >= STARVATION_PROMOTION_LIMIT and promoted:
+                    await connection.execute(
+                        "UPDATE benchmark_runs SET priority_band = ?, "
+                        "starvation_wait = 0 WHERE id = ?",
+                        (promoted, run_key),
+                    )
+                    await connection.execute(
+                        "INSERT INTO benchmark_scheduler_events "
+                        "(id, run_id, event_type, payload) VALUES (?, ?, "
+                        "'priority_promotion', ?)",
+                        (
+                            f"scheduler-event-{uuid.uuid4().hex}",
+                            run_key,
+                            json.dumps(
+                                {
+                                    "old_band": band,
+                                    "new_band": promoted,
+                                    "waits": waits,
+                                    "starvation_limit":
+                                        STARVATION_PROMOTION_LIMIT,
+                                },
+                                separators=(",", ":"),
+                                sort_keys=True,
+                            ),
+                        ),
+                    )
+                else:
+                    await connection.execute(
+                        "UPDATE benchmark_runs SET starvation_wait = ? "
+                        "WHERE id = ?",
+                        (waits, run_key),
+                    )
+            ticket_cursor = await connection.execute(
+                "UPDATE benchmark_runs SET dispatch_tickets = "
+                "dispatch_tickets + 1, starvation_wait = 0 WHERE id = ? "
+                "RETURNING dispatch_tickets",
+                (selected_run,),
+            )
+            ticket_row = await ticket_cursor.fetchone()
+            assert ticket_row is not None  # The selected run exists.
+            ticket = int(ticket_row["dispatch_tickets"])
             lease_token = uuid.uuid4().hex
             cursor = await connection.execute(
                 "UPDATE benchmark_attempts SET status = 'running', "
-                "claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
-                "started_at = COALESCE(started_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')), "
+                f"claimed_at = {now_marker}, "
+                f"started_at = COALESCE(started_at, {now_marker}), "
                 "lease_owner = ?, lease_token = ?, "
                 "lease_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ','now', ?), "
                 "lease_fence = lease_fence + 1 "
@@ -920,6 +1178,30 @@ async def claim_next_attempt(
             if cursor.rowcount != 1:
                 await connection.rollback()
                 return None
+            # One immutable dispatch rank per eligibility generation.
+            # A requeued attempt claims again under a new generation,
+            # and the earlier rank rows stay durable.
+            generation = int(selected["eligibility_generation"] or 1)
+            arm_count = max(int(selected["arm_count"] or 1), 1)
+            await connection.execute(
+                "INSERT INTO benchmark_dispatch_ranks "
+                "(id, run_id, attempt_id, eligibility_generation, "
+                "priority_band, arm_position, ticket, tie_break_digest) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(attempt_id, eligibility_generation) DO NOTHING",
+                (
+                    f"dispatch-rank-{uuid.uuid4().hex}",
+                    selected_run,
+                    str(selected["id"]),
+                    generation,
+                    str(selected["priority_band"] or "standard"),
+                    int(selected["schedule_rank"] or 0) % arm_count,
+                    ticket,
+                    content_checksum(
+                        [selected_run, str(selected["id"]), generation],
+                    ),
+                ),
+            )
             await connection.execute(
                 "UPDATE benchmark_trials SET status = 'running', "
                 "started_at = COALESCE(started_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')) "
@@ -1057,7 +1339,8 @@ async def release_attempt(
         cursor = await connection.execute(
             "UPDATE benchmark_attempts SET status = 'queued', claimed_at = NULL, "
             "started_at = NULL, error_message = ?, lease_owner = NULL, "
-            "lease_token = NULL, lease_expires_at = NULL "
+            "lease_token = NULL, lease_expires_at = NULL, "
+            "eligibility_generation = eligibility_generation + 1 "
             "WHERE id = ? AND status = 'running' AND task_id IS NULL"
             f"{lease_clause}",
             parameters,
@@ -1412,6 +1695,15 @@ async def _refresh_run(connection: Any, run_id: str) -> None:
             run_id,
         ),
     )
+    # A terminal run ends its cost-bearing work: the run cost moves
+    # from provisional to settling. Settlement itself waits for every
+    # reservation reconciliation and unknown-charge decision.
+    if terminal_next:
+        await connection.execute(
+            "UPDATE benchmark_runs SET cost_status = 'settling' "
+            "WHERE id = ? AND cost_status = 'provisional'",
+            (run_id,),
+        )
 
 
 async def recover_orphan_attempts() -> int:
@@ -1675,7 +1967,8 @@ async def retry_failed_attempts(run_id: str) -> int:
                 await connection.execute(
                     "INSERT INTO benchmark_attempts "
                     "(id, trial_id, attempt_number, repeat_index, retry_index, random_seed, "
-                    "execution_snapshot, snapshot_checksum) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "seed_control, schedule_rank, "
+                    "execution_snapshot, snapshot_checksum) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         attempt_id,
                         row["trial_id"],
@@ -1683,6 +1976,8 @@ async def retry_failed_attempts(run_id: str) -> int:
                         row["repeat_index"],
                         retry_index,
                         row["random_seed"],
+                        row["seed_control"],
+                        row["schedule_rank"],
                         json.dumps(snapshot, separators=(",", ":"), sort_keys=True),
                         content_checksum(snapshot),
                     ),
@@ -1698,3 +1993,296 @@ async def retry_failed_attempts(run_id: str) -> int:
             await connection.rollback()
             raise
     return len(rows)
+
+
+# ── Scheduler evidence, admission authority, and run cost ────────────
+
+
+async def run_dispatch_records(run_id: str) -> dict[str, Any]:
+    """Return the immutable dispatch ranks and scheduler events."""
+    async with db._connect() as connection:  # noqa: SLF001
+        ranks = await connection.execute_fetchall(
+            "SELECT * FROM benchmark_dispatch_ranks WHERE run_id = ? "
+            "ORDER BY ticket, created_at, id",
+            (run_id,),
+        )
+        events = await connection.execute_fetchall(
+            "SELECT * FROM benchmark_scheduler_events WHERE run_id = ? "
+            "ORDER BY created_at, id",
+            (run_id,),
+        )
+    return {
+        "ranks": [dict(row) for row in ranks],
+        "events": [_record(row, "payload") for row in events],
+    }
+
+
+async def record_scheduler_event(
+    run_id: str, event_type: str, payload: dict[str, Any],
+) -> None:
+    """Save one durable scheduler event for one run."""
+    async with db._connect() as connection:  # noqa: SLF001
+        await connection.execute(
+            "INSERT INTO benchmark_scheduler_events "
+            "(id, run_id, event_type, payload) VALUES (?, ?, ?, ?)",
+            (
+                f"scheduler-event-{uuid.uuid4().hex}",
+                run_id,
+                event_type,
+                json.dumps(payload, separators=(",", ":"), sort_keys=True),
+            ),
+        )
+        await connection.commit()
+
+
+async def set_run_authority(
+    run_id: str,
+    *,
+    authority_run_id: str,
+    authority_fence: str,
+    budget_id: str,
+) -> None:
+    """Attach the Foundation admission authority exactly once."""
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "UPDATE benchmark_runs SET authority_run_id = ?, "
+            "authority_fence = ?, budget_id = ? "
+            "WHERE id = ? AND authority_run_id IS NULL",
+            (authority_run_id, authority_fence, budget_id, run_id),
+        )
+        await connection.commit()
+        if cursor.rowcount != 1:
+            existing = await connection.execute(
+                "SELECT authority_run_id, budget_id FROM benchmark_runs "
+                "WHERE id = ?",
+                (run_id,),
+            )
+            row = await existing.fetchone()
+            if row is None:
+                raise BenchmarkNotFound("Benchmark run not found")
+            if (
+                str(row["authority_run_id"]) != authority_run_id
+                or str(row["budget_id"]) != budget_id
+            ):
+                raise BenchmarkConflict(
+                    "The run already carries a different admission authority"
+                )
+
+
+async def record_attempt_admission(
+    attempt_id: str,
+    *,
+    effect_id: str,
+    reservation_id: str,
+    lease_token: str | None = None,
+) -> bool:
+    """Link one attempt to its admission effect and reservation."""
+    async with db._connect() as connection:  # noqa: SLF001
+        lease_clause = " AND lease_token = ?" if lease_token else ""
+        parameters: list[Any] = [effect_id, reservation_id, attempt_id]
+        if lease_token:
+            parameters.append(lease_token)
+        cursor = await connection.execute(
+            "UPDATE benchmark_attempts SET admission_effect_id = ?, "
+            "admission_reservation_id = ? "
+            "WHERE id = ? AND status = 'running'"
+            f"{lease_clause}",
+            parameters,
+        )
+        await connection.commit()
+        return cursor.rowcount == 1
+
+
+async def record_cost_charge(
+    run_id: str,
+    *,
+    kind: str,
+    currency: str,
+    amount_nanos: int | None,
+    attempt_id: str | None = None,
+    provider: str = "",
+    source_text: str | None = None,
+    source_kind: str = "decimal_string",
+    evidence: dict[str, Any] | None = None,
+) -> str:
+    """Save one charge, estimate, unknown, or not-billable record.
+
+    An unknown price stores a null amount and stays visible; it never
+    becomes zero. A not-billable event stores zero with its evidence.
+    """
+    if kind == "unknown" and amount_nanos is not None:
+        raise BenchmarkConflict("An unknown charge stores no amount")
+    if kind not in {"unknown", "not_billable"} and amount_nanos is None:
+        raise BenchmarkConflict(f"A {kind} record needs an exact amount")
+    charge_id = f"cost-charge-{uuid.uuid4().hex}"
+    async with db._connect() as connection:  # noqa: SLF001
+        await connection.execute(
+            "INSERT INTO benchmark_cost_charges "
+            "(id, run_id, attempt_id, provider, kind, currency, "
+            "amount_nanos, source_text, source_kind, evidence) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                charge_id,
+                run_id,
+                attempt_id,
+                provider,
+                kind,
+                currency,
+                amount_nanos,
+                source_text,
+                source_kind,
+                json.dumps(
+                    evidence or {}, separators=(",", ":"), sort_keys=True,
+                ),
+            ),
+        )
+        await connection.commit()
+    return charge_id
+
+
+async def list_cost_charges(run_id: str) -> list[dict[str, Any]]:
+    """Return every recorded cost charge for one run."""
+    async with db._connect() as connection:  # noqa: SLF001
+        rows = await connection.execute_fetchall(
+            "SELECT * FROM benchmark_cost_charges WHERE run_id = ? "
+            "ORDER BY created_at, id",
+            (run_id,),
+        )
+    return [_record(row, "evidence") for row in rows]
+
+
+async def accept_unknown_charge(
+    charge_id: str,
+    *,
+    operator_id: str,
+    bound: dict[str, Any] | None,
+) -> None:
+    """Record one operator acceptance for one unknown charge.
+
+    The acceptance can carry one conservative upper bound. The amount
+    stays null: the unknown price never becomes zero.
+    """
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "SELECT * FROM benchmark_cost_charges WHERE id = ?",
+            (charge_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise BenchmarkNotFound("The cost charge does not exist")
+        if str(row["kind"]) != "unknown":
+            raise BenchmarkConflict("Only an unknown charge takes acceptance")
+        evidence = _json(row["evidence"], {})
+        evidence["accepted_by"] = operator_id
+        if bound is not None:
+            evidence["accepted_bound"] = bound
+        await connection.execute(
+            "UPDATE benchmark_cost_charges SET evidence = ? WHERE id = ?",
+            (
+                json.dumps(evidence, separators=(",", ":"), sort_keys=True),
+                charge_id,
+            ),
+        )
+        await connection.commit()
+
+
+async def set_run_cost_status(
+    run_id: str,
+    target: str,
+    *,
+    settled_cost: dict[str, Any] | None = None,
+    cost_bound: dict[str, Any] | None = None,
+) -> None:
+    """Move one run through the declared cost state machine."""
+    from benchmarks.costs import validate_cost_transition
+
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "SELECT cost_status FROM benchmark_runs WHERE id = ?",
+            (run_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise BenchmarkNotFound("Benchmark run not found")
+        current = str(row["cost_status"] or "provisional")
+        if current == target:
+            return
+        validate_cost_transition(current, target)
+        await connection.execute(
+            "UPDATE benchmark_runs SET cost_status = ?, "
+            "settled_cost = ?, cost_bound = ?, "
+            "cost_settled_at = CASE WHEN ? = 'settled' THEN "
+            "strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END, "
+            "state_revision = state_revision + 1 WHERE id = ?",
+            (
+                target,
+                json.dumps(settled_cost, separators=(",", ":"),
+                           sort_keys=True) if settled_cost else None,
+                json.dumps(cost_bound, separators=(",", ":"),
+                           sort_keys=True) if cost_bound else None,
+                target,
+                run_id,
+            ),
+        )
+        await connection.commit()
+
+
+async def supersede_gate_evaluations(
+    run_id: str, *, superseded_by: str,
+) -> int:
+    """Mark every stored gate for one candidate run as superseded.
+
+    The superseded evaluations stay readable; a later evaluation
+    creates the next evaluation version.
+    """
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "UPDATE benchmark_gate_evaluations SET "
+            "superseded_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), "
+            "superseded_by = ? "
+            "WHERE candidate_run_id = ? AND superseded_at IS NULL",
+            (superseded_by, run_id),
+        )
+        await connection.commit()
+        return cursor.rowcount
+
+
+async def record_late_charge(
+    run_id: str,
+    *,
+    currency: str,
+    source_text: str,
+    provider: str = "",
+    evidence: dict[str, Any] | None = None,
+) -> str:
+    """Record one late provider charge after settlement.
+
+    The late charge parses at the trusted boundary, keeps the original
+    provider string with its evidence, reopens settlement, and
+    supersedes every stored gate for the run.
+    """
+    from core.money import Money
+
+    money = Money.from_decimal_string(currency, source_text)
+    charge_id = await record_cost_charge(
+        run_id,
+        kind="late_charge",
+        currency=currency,
+        amount_nanos=money.amount_nanos,
+        provider=provider,
+        source_text=source_text,
+        source_kind="decimal_string",
+        evidence=evidence,
+    )
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "SELECT cost_status FROM benchmark_runs WHERE id = ?",
+            (run_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise BenchmarkNotFound("Benchmark run not found")
+    if str(row["cost_status"] or "provisional") == "settled":
+        await set_run_cost_status(run_id, "settling")
+    await supersede_gate_evaluations(run_id, superseded_by=charge_id)
+    return charge_id

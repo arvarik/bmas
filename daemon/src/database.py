@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -2267,6 +2267,162 @@ async def _migrate_add_benchmark_status_contracts(
     )
 
 
+BENCHMARK_SCHEDULE_COST_COLUMNS = (
+    ("benchmark_runs", "priority_band",
+     "TEXT NOT NULL DEFAULT 'standard'"),
+    ("benchmark_runs", "dispatch_tickets", "INTEGER NOT NULL DEFAULT 0"),
+    ("benchmark_runs", "starvation_wait", "INTEGER NOT NULL DEFAULT 0"),
+    ("benchmark_runs", "cost_status",
+     "TEXT NOT NULL DEFAULT 'provisional'"),
+    ("benchmark_runs", "budget_id", "TEXT"),
+    ("benchmark_runs", "authority_run_id", "TEXT"),
+    ("benchmark_runs", "authority_fence", "TEXT"),
+    ("benchmark_runs", "settled_cost", "TEXT"),
+    ("benchmark_runs", "cost_bound", "TEXT"),
+    ("benchmark_runs", "cost_settled_at", "TEXT"),
+    ("benchmark_attempts", "schedule_rank", "INTEGER NOT NULL DEFAULT 0"),
+    ("benchmark_attempts", "eligibility_generation",
+     "INTEGER NOT NULL DEFAULT 1"),
+    ("benchmark_attempts", "seed_control",
+     "TEXT NOT NULL DEFAULT 'recorded'"),
+    ("benchmark_attempts", "admission_effect_id", "TEXT"),
+    ("benchmark_attempts", "admission_reservation_id", "TEXT"),
+)
+
+
+BENCHMARK_SCHEDULE_COST_DDL = """
+CREATE TABLE IF NOT EXISTS benchmark_dispatch_ranks (
+    id                     TEXT PRIMARY KEY,
+    run_id                 TEXT NOT NULL
+                           REFERENCES benchmark_runs(id) ON DELETE CASCADE,
+    attempt_id             TEXT NOT NULL
+                           REFERENCES benchmark_attempts(id) ON DELETE CASCADE,
+    eligibility_generation INTEGER NOT NULL CHECK (eligibility_generation > 0),
+    priority_band          TEXT NOT NULL,
+    arm_position           INTEGER NOT NULL CHECK (arm_position >= 0),
+    ticket                 INTEGER NOT NULL CHECK (ticket > 0),
+    tie_break_digest       TEXT NOT NULL,
+    created_at             TEXT NOT NULL
+                           DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(attempt_id, eligibility_generation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_dispatch_ranks_run
+ON benchmark_dispatch_ranks(run_id, ticket);
+
+CREATE TRIGGER IF NOT EXISTS prevent_dispatch_rank_update
+BEFORE UPDATE ON benchmark_dispatch_ranks
+BEGIN
+    SELECT RAISE(ABORT, 'dispatch ranks are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS benchmark_scheduler_events (
+    id         TEXT PRIMARY KEY,
+    run_id     TEXT NOT NULL REFERENCES benchmark_runs(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    payload    TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+               DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_scheduler_events_run
+ON benchmark_scheduler_events(run_id, created_at);
+
+CREATE TABLE IF NOT EXISTS benchmark_cost_charges (
+    id           TEXT PRIMARY KEY,
+    run_id       TEXT NOT NULL
+                 REFERENCES benchmark_runs(id) ON DELETE CASCADE,
+    attempt_id   TEXT,
+    provider     TEXT NOT NULL DEFAULT '',
+    kind         TEXT NOT NULL CHECK (kind IN
+                 ('estimate','charge','late_charge','not_billable','unknown')),
+    currency     TEXT NOT NULL,
+    amount_nanos INTEGER,
+    source_text  TEXT,
+    source_kind  TEXT NOT NULL DEFAULT 'decimal_string' CHECK (source_kind IN
+                 ('decimal_string','integer_nanos','legacy_float','none')),
+    evidence     TEXT NOT NULL DEFAULT '{}',
+    created_at   TEXT NOT NULL
+                 DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_cost_charges_run
+ON benchmark_cost_charges(run_id, created_at);
+"""
+
+
+BENCHMARK_GATE_EVALUATION_REBUILD_DDL = """
+ALTER TABLE benchmark_gate_evaluations
+RENAME TO benchmark_gate_evaluations_rebuild_source;
+
+CREATE TABLE benchmark_gate_evaluations (
+    id                  TEXT PRIMARY KEY,
+    baseline_id         TEXT NOT NULL REFERENCES benchmark_baselines(id),
+    candidate_run_id    TEXT NOT NULL REFERENCES benchmark_runs(id),
+    status              TEXT NOT NULL
+                        CHECK (status IN ('passed','failed','indeterminate')),
+    report              TEXT NOT NULL,
+    report_checksum     TEXT NOT NULL,
+    invariant_digest    TEXT,
+    display_exceptions  TEXT NOT NULL DEFAULT '[]',
+    evaluation_version  INTEGER NOT NULL DEFAULT 1
+                        CHECK (evaluation_version > 0),
+    superseded_at       TEXT,
+    superseded_by       TEXT,
+    created_at          TEXT NOT NULL
+                        DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(baseline_id, candidate_run_id, evaluation_version)
+);
+
+INSERT INTO benchmark_gate_evaluations (
+    id, baseline_id, candidate_run_id, status, report, report_checksum,
+    invariant_digest, display_exceptions, evaluation_version, created_at)
+SELECT id, baseline_id, candidate_run_id, status, report, report_checksum,
+       invariant_digest, display_exceptions, 1, created_at
+FROM benchmark_gate_evaluations_rebuild_source;
+
+DROP TABLE benchmark_gate_evaluations_rebuild_source;
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_gate_evaluations_baseline
+ON benchmark_gate_evaluations(baseline_id, created_at DESC);
+"""
+
+
+async def _migrate_add_benchmark_schedule_and_cost(
+    db: aiosqlite.Connection,
+) -> None:
+    """Expand migration: paired scheduling, dispatch ranks, and run cost.
+
+    Runs gain a priority band, weighted-round-robin ticket state, and
+    the provisional, settling, and settled cost contract. Attempts
+    gain the stored schedule rank, the eligibility generation, the
+    seed-control label, and the admission-effect link. Dispatch ranks
+    and scheduler events gain immutable tables, cost charges gain an
+    evidence table, and gate evaluations rebuild with an evaluation
+    version and a superseded state. Every column is additive with a
+    compatible default, so existing rows keep their behavior.
+    """
+    db.row_factory = aiosqlite.Row
+    for table, column, definition in BENCHMARK_SCHEDULE_COST_COLUMNS:
+        cursor = await db.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in await cursor.fetchall()}
+        if column not in existing:
+            await db.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+            )
+    await db.executescript(BENCHMARK_SCHEDULE_COST_DDL)
+    db.row_factory = aiosqlite.Row
+    cursor = await db.execute("PRAGMA table_info(benchmark_gate_evaluations)")
+    gate_columns = {row[1] for row in await cursor.fetchall()}
+    if "evaluation_version" not in gate_columns:
+        await db.executescript(BENCHMARK_GATE_EVALUATION_REBUILD_DDL)
+        db.row_factory = aiosqlite.Row
+    await db.commit()
+    logger.info(
+        "Migration 20 applied: benchmark scheduling and run cost contracts"
+    )
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -2288,6 +2444,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         17: _migrate_add_activation_effect_protocol,
         18: _migrate_add_typed_indexes,
         19: _migrate_add_benchmark_status_contracts,
+        20: _migrate_add_benchmark_schedule_and_cost,
     }
     fn = migrations.get(version)
     if fn is None:

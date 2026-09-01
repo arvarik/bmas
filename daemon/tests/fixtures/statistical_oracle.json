@@ -1,0 +1,1573 @@
+{
+ "analysis_version": "3",
+ "fixture_version": "1",
+ "fixtures": [
+  {
+   "entries": [
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-00",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-01",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-02",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-03",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-04",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-05",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    }
+   ],
+   "expected": {
+    "count": 6,
+    "families": [
+     "one"
+    ],
+    "family_sizes": {
+     "one": 6
+    },
+    "interval": {
+     "ci_high": 0.0,
+     "ci_low": 0.0,
+     "interval_status": "degenerate_bootstrap",
+     "standard_error": 0.0
+    },
+    "losses": 0,
+    "mcnemar_p_value": null,
+    "mean": 0.0,
+    "p_value": 1.0,
+    "removed_zero_weight_cases": [],
+    "sign_flip_mode": "exact_enumeration",
+    "small_families": [],
+    "ties": 6,
+    "wins": 0
+   },
+   "name": "equal_paired_binary_outcomes",
+   "note": "Every pair agrees, so the difference is exactly zero.",
+   "primary_estimand": "paired-difference-in-weighted-case-means",
+   "target_population": "declared dataset cases"
+  },
+  {
+   "entries": [
+    {
+     "delta": 1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-00",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-01",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-02",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-03",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-04",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-05",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-06",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-07",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    }
+   ],
+   "expected": {
+    "count": 8,
+    "families": [
+     "one"
+    ],
+    "family_sizes": {
+     "one": 8
+    },
+    "interval": {
+     "ci_high": 1.0,
+     "ci_low": 1.0,
+     "interval_status": "degenerate_bootstrap",
+     "standard_error": 0.0
+    },
+    "losses": 0,
+    "mcnemar_p_value": 0.0078125,
+    "mean": 1.0,
+    "p_value": 0.0078125,
+    "removed_zero_weight_cases": [],
+    "sign_flip_mode": "exact_enumeration",
+    "small_families": [],
+    "ties": 0,
+    "wins": 8
+   },
+   "name": "one_clear_binary_improvement",
+   "note": "Every case flips from failure to success.",
+   "primary_estimand": "paired-difference-in-weighted-case-means",
+   "target_population": "declared dataset cases"
+  },
+  {
+   "entries": [
+    {
+     "delta": -1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-00",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": -1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-01",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": -1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-02",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": -1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-03",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": -1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-04",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": -1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-05",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": -1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-06",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": -1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-07",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    }
+   ],
+   "expected": {
+    "count": 8,
+    "families": [
+     "one"
+    ],
+    "family_sizes": {
+     "one": 8
+    },
+    "interval": {
+     "ci_high": -1.0,
+     "ci_low": -1.0,
+     "interval_status": "degenerate_bootstrap",
+     "standard_error": 0.0
+    },
+    "losses": 8,
+    "mcnemar_p_value": 0.0078125,
+    "mean": -1.0,
+    "p_value": 0.0078125,
+    "removed_zero_weight_cases": [],
+    "sign_flip_mode": "exact_enumeration",
+    "small_families": [],
+    "ties": 0,
+    "wins": 0
+   },
+   "name": "one_clear_binary_regression",
+   "note": "Every case flips from success to failure.",
+   "primary_estimand": "paired-difference-in-weighted-case-means",
+   "target_population": "declared dataset cases"
+  },
+  {
+   "entries": [
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-00",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-01",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-02",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-03",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-04",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    }
+   ],
+   "expected": {
+    "count": 5,
+    "families": [
+     "one"
+    ],
+    "family_sizes": {
+     "one": 5
+    },
+    "interval": {
+     "ci_high": 0.0,
+     "ci_low": 0.0,
+     "interval_status": "degenerate_bootstrap",
+     "standard_error": 0.0
+    },
+    "losses": 0,
+    "mcnemar_p_value": null,
+    "mean": 0.0,
+    "p_value": 1.0,
+    "removed_zero_weight_cases": [],
+    "sign_flip_mode": "exact_enumeration",
+    "small_families": [],
+    "ties": 5,
+    "wins": 0
+   },
+   "name": "all_successes",
+   "note": "Both arms solve every case; McNemar has no discordant pair.",
+   "primary_estimand": "paired-difference-in-weighted-case-means",
+   "target_population": "declared dataset cases"
+  },
+  {
+   "entries": [
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-00",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-01",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-02",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-03",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-04",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    }
+   ],
+   "expected": {
+    "count": 5,
+    "families": [
+     "one"
+    ],
+    "family_sizes": {
+     "one": 5
+    },
+    "interval": {
+     "ci_high": 0.0,
+     "ci_low": 0.0,
+     "interval_status": "degenerate_bootstrap",
+     "standard_error": 0.0
+    },
+    "losses": 0,
+    "mcnemar_p_value": null,
+    "mean": 0.0,
+    "p_value": 1.0,
+    "removed_zero_weight_cases": [],
+    "sign_flip_mode": "exact_enumeration",
+    "small_families": [],
+    "ties": 5,
+    "wins": 0
+   },
+   "name": "all_failures",
+   "note": "Both arms fail every case; McNemar has no discordant pair.",
+   "primary_estimand": "paired-difference-in-weighted-case-means",
+   "target_population": "declared dataset cases"
+  },
+  {
+   "entries": [
+    {
+     "delta": 1.0,
+     "family": "small",
+     "family_weight": 1.0,
+     "item_key": "case-00",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.5,
+     "family": "small",
+     "family_weight": 1.0,
+     "item_key": "case-01",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.5,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.25,
+     "family": "large",
+     "family_weight": 1.0,
+     "item_key": "case-02",
+     "left": 0.5,
+     "left_binary": true,
+     "right": 0.75,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.25,
+     "family": "large",
+     "family_weight": 1.0,
+     "item_key": "case-03",
+     "left": 0.5,
+     "left_binary": true,
+     "right": 0.75,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.25,
+     "family": "large",
+     "family_weight": 1.0,
+     "item_key": "case-04",
+     "left": 0.5,
+     "left_binary": true,
+     "right": 0.75,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.25,
+     "family": "large",
+     "family_weight": 1.0,
+     "item_key": "case-05",
+     "left": 0.5,
+     "left_binary": true,
+     "right": 0.75,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.25,
+     "family": "large",
+     "family_weight": 1.0,
+     "item_key": "case-06",
+     "left": 0.5,
+     "left_binary": true,
+     "right": 0.75,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.25,
+     "family": "large",
+     "family_weight": 1.0,
+     "item_key": "case-07",
+     "left": 0.5,
+     "left_binary": true,
+     "right": 0.75,
+     "right_binary": true,
+     "weight": 1.0
+    }
+   ],
+   "expected": {
+    "count": 8,
+    "families": [
+     "large",
+     "small"
+    ],
+    "family_sizes": {
+     "large": 6,
+     "small": 2
+    },
+    "interval": {
+     "ci_high": 0.625,
+     "ci_low": 0.375,
+     "interval_status": "estimated",
+     "standard_error": 0.08203360568264924
+    },
+    "losses": 0,
+    "mcnemar_p_value": 0.5,
+    "mean": 0.5,
+    "p_value": 0.0078125,
+    "removed_zero_weight_cases": [],
+    "sign_flip_mode": "exact_enumeration",
+    "small_families": [
+     "small"
+    ],
+    "ties": 0,
+    "wins": 8
+   },
+   "name": "unequal_task_family_sizes",
+   "note": "Two cases in one family, six in the other, equal family weights.",
+   "primary_estimand": "paired-difference-in-weighted-case-means",
+   "target_population": "declared dataset cases"
+  },
+  {
+   "entries": [
+    {
+     "delta": 1.0,
+     "family": "alpha",
+     "family_weight": 3.0,
+     "item_key": "case-00",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 1.0,
+     "family": "alpha",
+     "family_weight": 3.0,
+     "item_key": "case-01",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.25,
+     "family": "beta",
+     "family_weight": 1.0,
+     "item_key": "case-02",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.25,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.25,
+     "family": "beta",
+     "family_weight": 1.0,
+     "item_key": "case-03",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.25,
+     "right_binary": false,
+     "weight": 1.0
+    }
+   ],
+   "expected": {
+    "count": 4,
+    "families": [
+     "alpha",
+     "beta"
+    ],
+    "family_sizes": {
+     "alpha": 2,
+     "beta": 2
+    },
+    "interval": {
+     "ci_high": 0.8125,
+     "ci_low": 0.8125,
+     "interval_status": "degenerate_bootstrap",
+     "standard_error": 0.0
+    },
+    "losses": 0,
+    "mcnemar_p_value": 0.5,
+    "mean": 0.8125,
+    "p_value": 0.125,
+    "removed_zero_weight_cases": [],
+    "sign_flip_mode": "exact_enumeration",
+    "small_families": [
+     "alpha",
+     "beta"
+    ],
+    "ties": 0,
+    "wins": 4
+   },
+   "name": "unequal_family_weights_with_equal_case_weights",
+   "note": "The alpha family carries triple weight in aggregation.",
+   "primary_estimand": "paired-difference-in-weighted-case-means",
+   "target_population": "declared dataset cases"
+  },
+  {
+   "entries": [
+    {
+     "delta": 1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-00",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 4.0
+    },
+    {
+     "delta": 0.5,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-01",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.5,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-02",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 1.0
+    }
+   ],
+   "expected": {
+    "count": 3,
+    "families": [
+     "one"
+    ],
+    "family_sizes": {
+     "one": 3
+    },
+    "interval": {
+     "ci_high": 0.9472222222222213,
+     "ci_low": 0.0,
+     "interval_status": "estimated",
+     "standard_error": 0.2934520461273707
+    },
+    "losses": 0,
+    "mcnemar_p_value": 0.5,
+    "mean": 0.75,
+    "p_value": 0.5,
+    "removed_zero_weight_cases": [],
+    "sign_flip_mode": "exact_enumeration",
+    "small_families": [
+     "one"
+    ],
+    "ties": 1,
+    "wins": 2
+   },
+   "name": "custom_case_weights_inside_one_family",
+   "note": "One case dominates through its declared weight.",
+   "primary_estimand": "paired-difference-in-weighted-case-means",
+   "target_population": "declared dataset cases"
+  },
+  {
+   "entries": [
+    {
+     "delta": 1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-00",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.5,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-01",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.5,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": -1.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-02",
+     "left": 1.0,
+     "left_binary": true,
+     "right": 0.0,
+     "right_binary": false,
+     "weight": 0.0
+    }
+   ],
+   "expected": {
+    "count": 2,
+    "families": [
+     "one"
+    ],
+    "family_sizes": {
+     "one": 2
+    },
+    "interval": {
+     "ci_high": 1.0,
+     "ci_low": 0.5,
+     "interval_status": "estimated",
+     "standard_error": 0.17588161767036212
+    },
+    "losses": 0,
+    "mcnemar_p_value": 0.5,
+    "mean": 0.75,
+    "p_value": 0.5,
+    "removed_zero_weight_cases": [
+     "case-02"
+    ],
+    "sign_flip_mode": "exact_enumeration",
+    "small_families": [
+     "one"
+    ],
+    "ties": 0,
+    "wins": 2
+   },
+   "name": "zero_case_weight_removed_and_renormalized",
+   "note": "The zero-weight case leaves the estimand and the remaining weights renormalize.",
+   "primary_estimand": "paired-difference-in-weighted-case-means",
+   "target_population": "declared dataset cases"
+  },
+  {
+   "entries": [
+    {
+     "delta": 1.0,
+     "family": "tiny",
+     "family_weight": 1.0,
+     "item_key": "case-00",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 1.0,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.75,
+     "family": "tiny",
+     "family_weight": 1.0,
+     "item_key": "case-01",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.75,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.5,
+     "family": "tiny",
+     "family_weight": 1.0,
+     "item_key": "case-02",
+     "left": 0.25,
+     "left_binary": false,
+     "right": 0.75,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "large",
+     "family_weight": 1.0,
+     "item_key": "case-03",
+     "left": 0.5,
+     "left_binary": true,
+     "right": 0.5,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "large",
+     "family_weight": 1.0,
+     "item_key": "case-04",
+     "left": 0.5,
+     "left_binary": true,
+     "right": 0.5,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "large",
+     "family_weight": 1.0,
+     "item_key": "case-05",
+     "left": 0.5,
+     "left_binary": true,
+     "right": 0.5,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "large",
+     "family_weight": 1.0,
+     "item_key": "case-06",
+     "left": 0.5,
+     "left_binary": true,
+     "right": 0.5,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "large",
+     "family_weight": 1.0,
+     "item_key": "case-07",
+     "left": 0.5,
+     "left_binary": true,
+     "right": 0.5,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "large",
+     "family_weight": 1.0,
+     "item_key": "case-08",
+     "left": 0.5,
+     "left_binary": true,
+     "right": 0.5,
+     "right_binary": true,
+     "weight": 1.0
+    }
+   ],
+   "expected": {
+    "count": 9,
+    "families": [
+     "large",
+     "tiny"
+    ],
+    "family_sizes": {
+     "large": 6,
+     "tiny": 3
+    },
+    "interval": {
+     "ci_high": 0.5,
+     "ci_low": 0.25,
+     "interval_status": "estimated",
+     "standard_error": 0.06459175677373095
+    },
+    "losses": 0,
+    "mcnemar_p_value": 0.25,
+    "mean": 0.375,
+    "p_value": 0.25,
+    "removed_zero_weight_cases": [],
+    "sign_flip_mode": "exact_enumeration",
+    "small_families": [
+     "tiny"
+    ],
+    "ties": 6,
+    "wins": 3
+   },
+   "name": "weighted_family_with_fewer_than_five_usable_items",
+   "note": "The tiny family flags the small-cluster policy.",
+   "primary_estimand": "paired-difference-in-weighted-case-means",
+   "target_population": "declared dataset cases"
+  },
+  {
+   "entries": [
+    {
+     "delta": 0.5,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-00",
+     "left": 0.25,
+     "left_binary": false,
+     "right": 0.75,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.0,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-01",
+     "left": 0.5,
+     "left_binary": true,
+     "right": 0.5,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.30000000000000004,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-02",
+     "left": 0.1,
+     "left_binary": false,
+     "right": 0.4,
+     "right_binary": false,
+     "weight": 1.0
+    },
+    {
+     "delta": -0.30000000000000004,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-03",
+     "left": 0.9,
+     "left_binary": true,
+     "right": 0.6,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.5,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-04",
+     "left": 0.3,
+     "left_binary": false,
+     "right": 0.8,
+     "right_binary": true,
+     "weight": 1.0
+    }
+   ],
+   "expected": {
+    "count": 5,
+    "families": [
+     "one"
+    ],
+    "family_sizes": {
+     "one": 5
+    },
+    "interval": {
+     "ci_high": 0.42000000000000004,
+     "ci_low": -0.061000000000000006,
+     "interval_status": "estimated",
+     "standard_error": 0.1301591096999217
+    },
+    "losses": 1,
+    "mcnemar_p_value": 0.5,
+    "mean": 0.2,
+    "p_value": 0.375,
+    "removed_zero_weight_cases": [],
+    "sign_flip_mode": "exact_enumeration",
+    "small_families": [],
+    "ties": 1,
+    "wins": 3
+   },
+   "name": "fractional_case_outcomes",
+   "note": "Fractional outcomes use the paired sign-flip, never McNemar.",
+   "primary_estimand": "paired-difference-in-weighted-case-means",
+   "target_population": "declared dataset cases"
+  },
+  {
+   "entries": [
+    {
+     "delta": 0.6,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-00",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.6,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.62,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-01",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.62,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.64,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-02",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.64,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.6599999999999999,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-03",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.6599999999999999,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.6799999999999999,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-04",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.6799999999999999,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.6,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-05",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.6,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.62,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-06",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.62,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.64,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-07",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.64,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.6599999999999999,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-08",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.6599999999999999,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.6799999999999999,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-09",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.6799999999999999,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.6,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-10",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.6,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.62,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-11",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.62,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.64,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-12",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.64,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.6599999999999999,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-13",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.6599999999999999,
+     "right_binary": true,
+     "weight": 1.0
+    },
+    {
+     "delta": 0.6799999999999999,
+     "family": "one",
+     "family_weight": 1.0,
+     "item_key": "case-14",
+     "left": 0.0,
+     "left_binary": false,
+     "right": 0.6799999999999999,
+     "right_binary": true,
+     "weight": 1.0
+    }
+   ],
+   "expected": {
+    "count": 15,
+    "families": [
+     "one"
+    ],
+    "family_sizes": {
+     "one": 15
+    },
+    "interval": {
+     "ci_high": 0.6534,
+     "ci_low": 0.628,
+     "interval_status": "estimated",
+     "standard_error": 0.00727928517873051
+    },
+    "losses": 0,
+    "mcnemar_p_value": 6.103515625e-05,
+    "mean": 0.64,
+    "p_value": 0.005,
+    "removed_zero_weight_cases": [],
+    "sign_flip_mode": "monte_carlo",
+    "small_families": [],
+    "ties": 0,
+    "wins": 15
+   },
+   "name": "monte_carlo_regime_above_the_enumeration_limit",
+   "note": "Fifteen cases exceed the exact enumeration limit, so the sign-flip samples with the named generator.",
+   "primary_estimand": "paired-difference-in-weighted-case-means",
+   "target_population": "declared dataset cases"
+  }
+ ],
+ "resamples": 199,
+ "rng": "bmas-analysis-rng",
+ "rng_reference": {
+  "bounded_bound": 7,
+  "bounded_sequence": [
+   1,
+   2,
+   6,
+   5,
+   1,
+   4,
+   4,
+   0,
+   0,
+   4,
+   5,
+   0,
+   1,
+   1,
+   2,
+   6
+  ],
+  "raw_sequence": [
+   15645101436199012174,
+   7391613938896343876,
+   6011230282697227883,
+   13146204527276004690,
+   10855771512085002,
+   10320977767803128655,
+   3621700763926976362,
+   7466488739561642490
+  ],
+  "seed_key": "oracle:rng-probe"
+ },
+ "weighted_bootstrap_draws": {
+  "entries": [
+   {
+    "delta": 1.0,
+    "family": "alpha",
+    "family_weight": 1.0,
+    "item_key": "case-00",
+    "left": 0.0,
+    "left_binary": false,
+    "right": 1.0,
+    "right_binary": true,
+    "weight": 5.0
+   },
+   {
+    "delta": 0.5,
+    "family": "alpha",
+    "family_weight": 1.0,
+    "item_key": "case-01",
+    "left": 0.0,
+    "left_binary": false,
+    "right": 0.5,
+    "right_binary": true,
+    "weight": 1.0
+   },
+   {
+    "delta": 0.0,
+    "family": "alpha",
+    "family_weight": 1.0,
+    "item_key": "case-02",
+    "left": 0.5,
+    "left_binary": true,
+    "right": 0.5,
+    "right_binary": true,
+    "weight": 1.0
+   },
+   {
+    "delta": 0.5,
+    "family": "beta",
+    "family_weight": 1.0,
+    "item_key": "case-03",
+    "left": 0.25,
+    "left_binary": false,
+    "right": 0.75,
+    "right_binary": true,
+    "weight": 1.0
+   },
+   {
+    "delta": -0.5,
+    "family": "beta",
+    "family_weight": 1.0,
+    "item_key": "case-04",
+    "left": 0.75,
+    "left_binary": true,
+    "right": 0.25,
+    "right_binary": false,
+    "weight": 2.0
+   }
+  ],
+  "expected": {
+   "ci_high": 0.7272727272727273,
+   "ci_low": -0.19999999999999998,
+   "draws": [
+    [
+     "case-00",
+     "case-01",
+     "case-00",
+     "case-03",
+     "case-03"
+    ],
+    [
+     "case-01",
+     "case-02",
+     "case-00",
+     "case-03",
+     "case-03"
+    ],
+    [
+     "case-01",
+     "case-01",
+     "case-02",
+     "case-04",
+     "case-04"
+    ],
+    [
+     "case-00",
+     "case-00",
+     "case-01",
+     "case-03",
+     "case-03"
+    ],
+    [
+     "case-00",
+     "case-00",
+     "case-02",
+     "case-03",
+     "case-04"
+    ],
+    [
+     "case-01",
+     "case-01",
+     "case-01",
+     "case-04",
+     "case-03"
+    ],
+    [
+     "case-02",
+     "case-02",
+     "case-00",
+     "case-04",
+     "case-04"
+    ],
+    [
+     "case-02",
+     "case-00",
+     "case-02",
+     "case-04",
+     "case-03"
+    ],
+    [
+     "case-01",
+     "case-00",
+     "case-02",
+     "case-04",
+     "case-04"
+    ],
+    [
+     "case-00",
+     "case-02",
+     "case-00",
+     "case-03",
+     "case-04"
+    ],
+    [
+     "case-02",
+     "case-02",
+     "case-00",
+     "case-03",
+     "case-03"
+    ],
+    [
+     "case-02",
+     "case-00",
+     "case-00",
+     "case-04",
+     "case-04"
+    ],
+    [
+     "case-02",
+     "case-00",
+     "case-01",
+     "case-03",
+     "case-03"
+    ],
+    [
+     "case-02",
+     "case-00",
+     "case-02",
+     "case-03",
+     "case-04"
+    ],
+    [
+     "case-01",
+     "case-01",
+     "case-02",
+     "case-04",
+     "case-04"
+    ],
+    [
+     "case-02",
+     "case-00",
+     "case-01",
+     "case-04",
+     "case-04"
+    ],
+    [
+     "case-00",
+     "case-00",
+     "case-01",
+     "case-03",
+     "case-03"
+    ],
+    [
+     "case-00",
+     "case-02",
+     "case-02",
+     "case-04",
+     "case-03"
+    ],
+    [
+     "case-02",
+     "case-00",
+     "case-00",
+     "case-04",
+     "case-04"
+    ],
+    [
+     "case-02",
+     "case-02",
+     "case-01",
+     "case-04",
+     "case-04"
+    ],
+    [
+     "case-01",
+     "case-00",
+     "case-02",
+     "case-03",
+     "case-04"
+    ],
+    [
+     "case-02",
+     "case-02",
+     "case-02",
+     "case-04",
+     "case-04"
+    ],
+    [
+     "case-02",
+     "case-02",
+     "case-01",
+     "case-04",
+     "case-03"
+    ],
+    [
+     "case-02",
+     "case-01",
+     "case-00",
+     "case-03",
+     "case-03"
+    ],
+    [
+     "case-02",
+     "case-00",
+     "case-01",
+     "case-03",
+     "case-03"
+    ]
+   ],
+   "interval_status": "estimated",
+   "standard_error": 0.2993534664768702
+  },
+  "resamples": 25,
+  "seed_key": "oracle:weighted_bootstrap_draws"
+ },
+ "wilson": {
+  "all_failure": {
+   "ci_high": 0.27753279986288903,
+   "ci_low": 0.0,
+   "rate": 0.0
+  },
+  "all_success": {
+   "ci_high": 1.0,
+   "ci_low": 0.7224672001371109,
+   "rate": 1.0
+  },
+  "seven_of_ten": {
+   "ci_high": 0.8922087325936989,
+   "ci_low": 0.3967781474611454,
+   "rate": 0.7
+  }
+ }
+}

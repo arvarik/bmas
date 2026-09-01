@@ -737,8 +737,9 @@ def _denominator_run():
         _attempt(
             "a-infra", "left", "five", 1, 0, "failed", "infrastructure",
         ),
-        # One retried slot: the failed first try stays in the resource
-        # totals while the retry seals the slot outcome.
+        # One retried slot: the first substantive execution failure
+        # seals the slot, so the prohibited retry cannot replace it.
+        # Both attempts stay in the resource totals.
         _attempt("a-retried-old", "left", "six", 1, 0, "failed",
                  "execution", cost=0.02),
         _attempt("a-retried-new", "left", "six", 1, 1),
@@ -773,12 +774,13 @@ def test_unconditional_and_conditional_denominators_separate():
     assert denominators["planned"] == 6
     assert denominators["excluded"] == 1
     assert denominators["unconditional_denominator"] == 5
-    assert denominators["completed"] == 2
-    # Agent failure, timeout, and budget stop stay failures with zero
-    # success; only the predeclared infrastructure slot left.
-    assert denominators["failed"] == 3
+    assert denominators["completed"] == 1
+    # Agent failure, timeout, budget stop, and the sealed substantive
+    # failure stay failures with zero success; only the predeclared
+    # infrastructure slot left.
+    assert denominators["failed"] == 4
     scorer = arm["scorers"][0]
-    assert scorer["unconditional_success_rate"] == pytest.approx(2 / 5)
+    assert scorer["unconditional_success_rate"] == pytest.approx(1 / 5)
     assert scorer["conditional_success_rate"] == pytest.approx(1.0)
     # Every exclusion carries its category and the policy reason.
     assert denominators["exclusions"] == [{
@@ -800,9 +802,9 @@ def test_only_a_predeclared_infrastructure_failure_can_be_excluded():
     # Without the predeclared policy, no slot leaves the denominator.
     assert denominators["excluded"] == 0
     assert denominators["unconditional_denominator"] == 6
-    assert denominators["failed"] == 4
+    assert denominators["failed"] == 5
     scorer = report["arms"][0]["scorers"][0]
-    assert scorer["unconditional_success_rate"] == pytest.approx(2 / 6)
+    assert scorer["unconditional_success_rate"] == pytest.approx(1 / 6)
 
 
 def test_resource_totals_count_all_attempts_and_retries():
@@ -821,5 +823,5 @@ def test_reports_show_planned_admitted_missing_and_excluded():
     assert summary["admitted"] == 6
     assert summary["missing"] == 0
     assert summary["excluded"] == 1
-    assert summary["completed"] == 2
-    assert summary["failed"] == 3
+    assert summary["completed"] == 1
+    assert summary["failed"] == 4

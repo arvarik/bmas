@@ -45,8 +45,28 @@ class BenchmarkScorerInput(BaseModel):
     required: bool = True
 
 
+class BenchmarkStatisticsInput(BaseModel):
+    """Declare the statistical estimand before any admission."""
+
+    model_config = ConfigDict(extra="forbid")
+    family_field: str = Field(default="subject", max_length=64)
+    family_weights: dict[str, float] = Field(default_factory=dict)
+    case_weights: dict[str, float] = Field(default_factory=dict)
+    binary_reduction: str = Field(
+        default="strict_majority",
+        pattern=r"^(strict_majority|all|at_least_k)$",
+    )
+    at_least_k: int | None = Field(default=None, ge=1, le=20)
+    min_family_cases: int = Field(default=5, ge=2, le=100)
+
+
 class BenchmarkTestInput(BaseModel):
-    """Define one complete immutable test revision."""
+    """Define one complete immutable test revision.
+
+    A monetary limit arrives as one decimal string and parses exactly
+    at this trusted boundary. A legacy float still parses, through its
+    shortest decimal text, and keeps the conservative rounding.
+    """
 
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=200)
@@ -56,8 +76,10 @@ class BenchmarkTestInput(BaseModel):
     seed: int = Field(default=0, ge=0, le=2_147_483_647)
     max_concurrency: int = Field(default=1, ge=1, le=16)
     timeout_seconds: int = Field(default=3600, ge=30, le=86400)
-    cost_limit_usd: float | None = Field(default=None, gt=0)
+    cost_limit_usd: str | float | None = Field(default=None)
+    attempt_cost_limit_usd: str | float | None = Field(default=None)
     practical_difference: float = Field(default=0.01, ge=0, le=1)
+    statistics: BenchmarkStatisticsInput | None = None
     arms: list[BenchmarkArmInput] = Field(min_length=1, max_length=8)
     scorers: list[BenchmarkScorerInput] = Field(min_length=1, max_length=8)
 
@@ -171,15 +193,43 @@ async def _prepare(payload: BenchmarkTestInput) -> dict[str, Any]:
             "slug": slug,
             **prepared,
         })
+    from benchmarks import costs
+    from core.money import MoneyError
+
+    limits: dict[str, Any] = {}
+    for field_name, raw in (
+        ("cost_limit_usd", payload.cost_limit_usd),
+        ("attempt_cost_limit_usd", payload.attempt_cost_limit_usd),
+    ):
+        if raw is None:
+            continue
+        try:
+            money, _ = costs.parse_boundary_amount(raw)
+        except MoneyError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if money.amount_nanos <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail=f"The {field_name} limit must be positive",
+            )
+        limits[field_name] = raw
     configuration = {
         "schema_version": "1",
         "repetitions": payload.repetitions,
         "seed": payload.seed,
         "max_concurrency": payload.max_concurrency,
         "timeout_seconds": payload.timeout_seconds,
-        "cost_limit_usd": payload.cost_limit_usd,
+        "cost_limit_usd": limits.get("cost_limit_usd"),
         "practical_difference": payload.practical_difference,
     }
+    if "attempt_cost_limit_usd" in limits:
+        configuration["attempt_cost_limit_usd"] = limits[
+            "attempt_cost_limit_usd"
+        ]
+    if payload.statistics is not None:
+        configuration["statistics"] = payload.statistics.model_dump(
+            exclude_none=True,
+        )
     return {
         "configuration": configuration,
         "configuration_checksum": content_checksum(configuration),

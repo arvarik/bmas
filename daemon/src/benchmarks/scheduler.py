@@ -13,10 +13,8 @@ from typing import Any
 
 from fastapi import HTTPException
 
-import database as db
 from benchmarks import repository
 from benchmarks.capacity import CapacityPolicy
-from benchmarks.provenance import content_checksum
 
 logger = logging.getLogger("bmas.benchmarks")
 POLL_SECONDS = 1.0
@@ -37,45 +35,26 @@ def _age_seconds(value: str | None) -> float:
 
 
 async def _admit(attempt: dict[str, Any]) -> None:
-    from routes.submit import BenchmarkContext, TaskOverrides, TaskSubmission, _admit_task
+    """Admit one attempt through the shared Foundation effect ledger.
 
-    arm = attempt.get("arm_configuration") or {}
-    overrides = arm.get("submission_overrides") or {}
-    request = TaskSubmission(
-        task=str(attempt["input"]),
-        variant=str(attempt["runtime_id"]),
-        overrides=TaskOverrides.model_validate(overrides) if overrides else None,
-        benchmark=BenchmarkContext(
-            run_id=str(attempt["run_id"]),
-            trial_id=str(attempt["trial_id"]),
-            attempt_id=str(attempt["id"]),
-        ),
-    )
-    response = await _admit_task(
-        request,
-        captured_configuration=arm.get("effective_configuration"),
-        task_id=(
-            "task-benchmark-"
-            + uuid.uuid5(
-                uuid.NAMESPACE_URL,
-                f"bmas:benchmark:{attempt['id']}",
-            ).hex
-        ),
-    )
-    metadata = await db.get_board_meta(response["task_id"])
-    snapshot = {
-        "schema_version": "1",
-        "benchmark_plan": attempt.get("execution_snapshot") or {},
-        "task_execution": metadata.get("execution_snapshot") or {},
-    }
-    checksum = content_checksum(snapshot)
-    await repository.attach_attempt_task(
-        str(attempt["id"]),
-        response["task_id"],
-        snapshot,
-        checksum,
-        lease_token=str(attempt["lease_token"]),
-    )
+    The admission module commits the intent, reserves the maximum task
+    cost, dispatches through the shared ledger, stores the raw
+    admission response, and links the task under the attempt fence. A
+    blocked budget maps to a retryable capacity rejection.
+    """
+    from benchmarks import admission
+
+    try:
+        await admission.admit_attempt(attempt)
+    except admission.BudgetBlockedError as error:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "benchmark_budget_blocked",
+                "message": str(error),
+            },
+        ) from error
+    await admission.record_admission_link(attempt)
 
 
 async def _reconcile() -> None:
@@ -139,10 +118,15 @@ async def _reconcile() -> None:
             cancelled_runs.add(run_id)
             continue
         if attempt.get("task_status") in {"completed", "failed"}:
-            await repository.finish_attempt_from_task(
+            finished = await repository.finish_attempt_from_task(
                 str(attempt["id"]),
                 lease_token,
             )
+            if finished:
+                from benchmarks import admission
+
+                await admission.settle_attempt_admission(attempt)
+                await admission.try_settle_run(run_id)
             continue
         timeout = _attempt_timeout_seconds(configuration)
         if attempt.get("task_id") and _age_seconds(attempt.get("started_at")) >= timeout:

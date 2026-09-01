@@ -59,6 +59,16 @@ class GateCompatibilityError(ValueError):
 
 class GateTerminalityError(ValueError):
     """A final gate needs terminal runs with a valid analysis."""
+
+
+class GateSettlementError(ValueError):
+    """A cost-sensitive final gate waits for run cost settlement."""
+
+
+def rule_is_cost_sensitive(rule: dict[str, Any]) -> bool:
+    """Report whether one rule reads a monetary or resource metric."""
+    metric = str(rule.get("metric") or "")
+    return ".cost_usd" in metric or ".resource" in metric
 ANALYSIS_METHODS = {
     "point_estimate",
     "lower_confidence_bound",
@@ -182,6 +192,7 @@ def invariant_digest(run: dict[str, Any]) -> str:
                 "practical_difference", 0.01,
             ),
             "repetitions": configuration.get("repetitions"),
+            "estimand": configuration.get("statistics") or {},
         },
     })
 
@@ -379,6 +390,12 @@ def validate_rules(rules: list[dict[str, Any]]) -> None:
                 f"Regression rule {rule_id} must read corrected "
                 "significance, never a raw p-value"
             )
+        if ".wilson" in metric:
+            raise ValueError(
+                f"Regression rule {rule_id} reads a Wilson interval; a "
+                "Wilson interval is an unclustered slot diagnostic and "
+                "never enters a gate"
+            )
         direction = rule.get("direction")
         if metric.startswith("comparison."):
             # A comparison rule declares its effect direction and reads
@@ -455,6 +472,7 @@ def evaluate_gate(
     mode: str = "final",
     treatment_declaration: list[str] | None = None,
     display_exceptions: list[dict[str, Any]] | None = None,
+    cost_evidence: dict[str, Any] | None = None,
     now: str = "",
 ) -> dict[str, Any]:
     """Return passed, failed, or indeterminate for a candidate run.
@@ -462,10 +480,22 @@ def evaluate_gate(
     ``preview`` inspects an active candidate and never persists, so it
     cannot block a later final decision. ``final`` requires terminal
     runs with a valid analysis and stores exactly one terminal
-    decision. Compatibility fails before any rule evaluates.
+    decision. Compatibility fails before any rule evaluates. A
+    cost-sensitive final gate additionally waits for the candidate run
+    cost to settle, and an unbounded unknown amount fails every cost
+    rule instead of passing it.
     """
     if mode not in GATE_MODES:
         raise ValueError(f"Unknown gate mode: {mode!r}")
+    cost_rules = [rule for rule in rules if rule_is_cost_sensitive(rule)]
+    unknown_unbounded = bool((cost_evidence or {}).get("unbounded_unknown"))
+    if mode == "final" and cost_rules and cost_evidence is not None:
+        cost_status = str(cost_evidence.get("cost_status") or "provisional")
+        if cost_status != "settled":
+            raise GateSettlementError(
+                "A cost-sensitive final gate waits for settlement; the "
+                f"candidate run cost is {cost_status}"
+            )
     validate_rules(rules)
     declaration = list(treatment_declaration or [])
     validate_treatment_declaration(declaration)
@@ -519,6 +549,13 @@ def evaluate_gate(
                 status = "passed" if candidate_value <= boundary else "failed"
         classification = _comparison_classification(candidate_report, metric)
         guard_reason = _direction_guard(rule, classification)
+        if guard_reason is None and unknown_unbounded and (
+            rule_is_cost_sensitive(rule)
+        ):
+            # An unbounded unknown amount can never pass a cost rule.
+            guard_reason = (
+                "An unbounded unknown charge blocks a passing cost rule"
+            )
         if guard_reason is not None:
             status = "failed"
         exception = None

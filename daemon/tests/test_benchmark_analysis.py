@@ -213,7 +213,7 @@ def test_gate_can_select_a_holm_corrected_sign_test():
 
     assert report["status"] == "passed"
     assert report["rules"][0]["resolved_metric"].endswith("p_value_adjusted")
-    assert report["analysis_version"] == "2"
+    assert report["analysis_version"] == "3"
 
 
 def test_gate_can_select_a_cost_confidence_bound():
