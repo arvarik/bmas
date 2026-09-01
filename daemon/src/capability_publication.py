@@ -3,7 +3,7 @@
 The capability API publishes one record per runtime pair. Each record
 states the exact supported versions, the availability state, and every
 conformance capability, and it marks each unsupported native
-capability explicitly instead of implying a v2 guarantee.
+capability explicitly instead of implying a native guarantee.
 
 Stage 0 marks the runtime pairs that need a not-yet-built native
 implementation as ``planned``. A planned pair is available for
@@ -16,6 +16,7 @@ trace, assets, costs, and final result projections.
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,7 +26,7 @@ from core.variants import (
 )
 
 # The values a legacy compatibility column declares instead of a
-# native native guarantee. Every value is explicit, so no export or view
+# native guarantee. Every value is explicit, so no export or view
 # can imply a capability the runtime does not have.
 COMPATIBILITY_VALUES = (
     "native",
@@ -428,8 +429,8 @@ class CapabilityDirectory:
     def select_ui_adapter(self, key: RuntimeKey) -> str:
         """Select the UI adapter for one pair or the generic fallback.
 
-        The client never renders a v1 state with a v2 adapter. An
-        unknown pair uses the generic trace and artifact view.
+        The client never renders a legacy state with a native adapter.
+        An unknown pair uses the generic trace and artifact view.
         """
         record = self.records.get(key)
         if record is None:
@@ -446,37 +447,6 @@ class CapabilityDirectory:
                 f"Only a planned pair qualifies; {key} is "
                 f"{record.availability}"
             )
-        promoted = RuntimeCapabilityRecord(
-            **{
-                **_record_fields(record),
-                "availability": "qualified",
-            },
-        )
+        promoted = dataclasses.replace(record, availability="qualified")
         self.records[key] = promoted
         return promoted
-
-
-def _record_fields(record: RuntimeCapabilityRecord) -> dict[str, Any]:
-    return {
-        "runtime_key": record.runtime_key,
-        "canonical_label": record.canonical_label,
-        "historical_label": record.historical_label,
-        "availability": record.availability,
-        "schema_versions": dict(record.schema_versions),
-        "capabilities": dict(record.capabilities),
-        "agent_protocol_version": record.agent_protocol_version,
-        "agent_receipt_version": record.agent_receipt_version,
-        "effect_schema_version": record.effect_schema_version,
-        "supports_seed_state": record.supports_seed_state,
-        "supports_assets": record.supports_assets,
-        "supports_cancellation": record.supports_cancellation,
-        "supports_recovery": record.supports_recovery,
-        "supports_evidence": record.supports_evidence,
-        "supports_budget": record.supports_budget,
-        "nested_effect_receipts": record.nested_effect_receipts,
-        "provider_qualification": record.provider_qualification,
-        "benchmark_qualification": record.benchmark_qualification,
-        "ui_adapter": record.ui_adapter,
-        "ui_fallback": record.ui_fallback,
-        "ui_fallback_panels": record.ui_fallback_panels,
-    }

@@ -407,16 +407,19 @@ async def _mark_revalidation(
 
 
 async def _dependent_claim_ids(
-    connection: aiosqlite.Connection, claim_id: str,
+    connection: aiosqlite.Connection, run_id: str, claim_id: str,
 ) -> list[str]:
+    # Scan only the run's claims. A derived-claim chain stays inside
+    # one run, so this scoping is exact and avoids a global scan.
     cursor = await connection.execute(
-        "SELECT claim_id, derived_from FROM claim_index",
+        "SELECT claim_id, derived_from FROM claim_index WHERE run_id = ?",
+        (run_id,),
     )
-    dependents = []
-    for row in await cursor.fetchall():
-        if claim_id in json.loads(str(row["derived_from"])):
-            dependents.append(str(row["claim_id"]))
-    return dependents
+    return [
+        str(row["claim_id"])
+        for row in await cursor.fetchall()
+        if claim_id in json.loads(str(row["derived_from"]))
+    ]
 
 
 async def reevaluate_claim(
@@ -486,7 +489,7 @@ async def reevaluate_claim(
             changed["invalidated"].append(current)
             changed["markers"].append(marker)
             queue.extend(
-                await _dependent_claim_ids(connection, current),
+                await _dependent_claim_ids(connection, run_id, current),
             )
         for action_id in dependent_action_ids:
             marker = await _mark_revalidation(

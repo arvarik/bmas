@@ -986,14 +986,29 @@ def projection_digest(state: dict[str, Any]) -> str:
     return digest_hex(PROJECTION_DIGEST_DOMAIN, state)
 
 
-async def read_journal(from_cursor: int = 0) -> list[JournalRecord]:
-    """Read every journal record after one cursor, in order."""
+async def read_journal(
+    from_cursor: int = 0, *, run_id: str | None = None,
+) -> list[JournalRecord]:
+    """Read journal records after one cursor, in order.
+
+    Full replay omits ``run_id`` and reads every run. A per-run reader
+    passes ``run_id`` to read only that run's chain through the
+    ``idx_runtime_journal_run`` index, so a single run's trace or index
+    projection never scans the whole journal.
+    """
     async with _journal_connect() as connection:
-        cursor = await connection.execute(
-            "SELECT * FROM runtime_journal WHERE journal_cursor > ? "
-            "ORDER BY journal_cursor",
-            (from_cursor,),
-        )
+        if run_id is None:
+            cursor = await connection.execute(
+                "SELECT * FROM runtime_journal WHERE journal_cursor > ? "
+                "ORDER BY journal_cursor",
+                (from_cursor,),
+            )
+        else:
+            cursor = await connection.execute(
+                "SELECT * FROM runtime_journal WHERE run_id = ? "
+                "AND journal_cursor > ? ORDER BY journal_cursor",
+                (run_id, from_cursor),
+            )
         rows = await cursor.fetchall()
     return [_record_from_row(row) for row in rows]
 

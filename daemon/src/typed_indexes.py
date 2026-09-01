@@ -185,12 +185,8 @@ def envelope_from_journal_record(
 
 async def trace_projection(run_id: str) -> list[TraceEnvelope]:
     """Build the trace read projection of one run from the journal."""
-    records = await journal.read_journal()
-    return [
-        envelope_from_journal_record(record)
-        for record in records
-        if record.run_id == run_id
-    ]
+    records = await journal.read_journal(run_id=run_id)
+    return [envelope_from_journal_record(record) for record in records]
 
 
 # ── Shared index reads and journal rebuilds ──────────────────────────
@@ -274,9 +270,8 @@ async def rebuild_claim_and_goal_indexes(run_id: str) -> dict[str, Any]:
     diverged would be a second authority, and that never happens.
     """
     state = journal.empty_projection_state()
-    for record in await journal.read_journal():
-        if record.run_id == run_id:
-            journal.apply_record_to_state(state, record)
+    for record in await journal.read_journal(run_id=run_id):
+        journal.apply_record_to_state(state, record)
     return {
         "claims": state["claim_support"],
         "goals": state["goal_index"],

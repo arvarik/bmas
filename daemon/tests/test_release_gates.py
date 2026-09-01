@@ -74,14 +74,15 @@ def test_conformance_gate_records_only_on_a_full_pass():
     ledger.record_conformance(passing)
     assert ledger.gate_passed("conformance", REFERENCE)
     # A failing report records nothing.
-    broken_record = cap.RuntimeCapabilityRecord(
-        **{
-            **cap._record_fields(directory.get(REFERENCE)),
-            "runtime_key": CLASSIC_NATIVE,
-            "capabilities": {
-                **directory.get(REFERENCE).capabilities,
-                "nested_receipts": "legacy_unobservable",
-            },
+    import dataclasses
+
+    reference = directory.get(REFERENCE)
+    broken_record = dataclasses.replace(
+        reference,
+        runtime_key=CLASSIC_NATIVE,
+        capabilities={
+            **reference.capabilities,
+            "nested_receipts": "legacy_unobservable",
         },
     )
     failing = kit.run_conformance_suite(
