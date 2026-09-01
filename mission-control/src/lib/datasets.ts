@@ -17,6 +17,11 @@ export interface DatasetVersion {
   metadata: Record<string, unknown>;
   created_at: string;
   published_at: string | null;
+  // Each immutable version carries its own field distributions, so a
+  // consumer reads the admitted revision's distribution, never the
+  // latest upload's.
+  subjects?: Record<string, number>;
+  splits?: Record<string, number>;
 }
 
 export interface DatasetSummary {
@@ -42,6 +47,7 @@ export interface DatasetDetail extends Omit<DatasetSummary, "latest_version_id" 
   versions: DatasetVersion[];
   subjects: Record<string, number>;
   splits: Record<string, number>;
+  distribution_version_id?: string | null;
 }
 
 export interface DatasetItem {

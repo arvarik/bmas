@@ -80,6 +80,34 @@ async def dataset_version_item_count(version_id: str) -> int | None:
     return int(row["item_count"]) if row else None
 
 
+def _validate_scorer_configuration(
+    scorer_id: str,
+    configuration: Any,
+    schema: dict[str, Any],
+) -> None:
+    """Reject an invalid scorer configuration before publication."""
+    import jsonschema
+
+    if not isinstance(configuration, dict):
+        raise BenchmarkConflict(
+            f"The configuration for scorer {scorer_id} must be one object"
+        )
+    if not schema:
+        if configuration:
+            raise BenchmarkConflict(
+                f"The scorer {scorer_id} declares no configuration schema "
+                "and accepts only an empty configuration"
+            )
+        return
+    try:
+        jsonschema.validate(configuration, schema)
+    except jsonschema.ValidationError as error:
+        raise BenchmarkConflict(
+            f"The configuration for scorer {scorer_id} is invalid: "
+            f"{error.message}"
+        ) from error
+
+
 async def create_test_revision(
     *,
     test_id: str,
@@ -107,11 +135,25 @@ async def create_test_revision(
             scorer_ids = [str(item["id"]) for item in scorers]
             placeholders = ",".join("?" for _ in scorer_ids)
             scorer_rows = await connection.execute_fetchall(
-                f"SELECT id FROM benchmark_scorers WHERE id IN ({placeholders})",
+                f"SELECT id, configuration_schema FROM benchmark_scorers "
+                f"WHERE id IN ({placeholders})",
                 scorer_ids,
             )
             if {row["id"] for row in scorer_rows} != set(scorer_ids):
                 raise BenchmarkNotFound("One or more scorer versions do not exist")
+            # An invalid scorer configuration blocks publication. The
+            # validated configuration is the complete effective
+            # configuration that scoring receives.
+            schemas = {
+                str(row["id"]): _json(row["configuration_schema"], {})
+                for row in scorer_rows
+            }
+            for item in scorers:
+                _validate_scorer_configuration(
+                    str(item["id"]),
+                    item.get("configuration", {}),
+                    schemas.get(str(item["id"])) or {},
+                )
 
             await connection.execute(
                 "INSERT INTO benchmark_tests (id, name, description) VALUES (?, ?, ?) "
@@ -493,6 +535,17 @@ async def create_run(
                 revision["configuration"],
                 items=[dict(item) for item in items],
             )
+            # One sorted outcome-mapping set per experiment. Admission
+            # rejects here when any arm's runtime pair has no
+            # registered mapping, and each arm pins its exact member.
+            from benchmarks import outcome_mappings
+
+            try:
+                mapping_set = outcome_mappings.mapping_set_for_arms(
+                    [dict(arm) for arm in arms],
+                )
+            except outcome_mappings.OutcomeMappingError as error:
+                raise BenchmarkConflict(str(error)) from error
             plan = {
                 "schema_version": "1",
                 "test_revision_id": revision_id,
@@ -507,11 +560,15 @@ async def create_run(
                     "rotation": "slot_index_modulo_arm_count",
                 },
                 "estimand": estimand,
+                "outcome_mapping_set": mapping_set,
                 "arms": [
                     {
                         "id": arm["id"],
                         "runtime_id": arm["runtime_id"],
                         "configuration_checksum": arm["configuration_checksum"],
+                        "outcome_mapping": outcome_mappings.member_for_arm(
+                            mapping_set, str(arm["runtime_id"]),
+                        ),
                     }
                     for arm in arms
                 ],
@@ -1402,8 +1459,9 @@ async def fail_active_attempt(
                 scorers = await _attempt_scorers(connection, attempt_id)
                 await connection.executemany(
                     "INSERT INTO benchmark_scores "
-                    "(id, attempt_id, scorer_id, status, explanation, evidence) "
-                    "VALUES (?, ?, ?, 'excluded', ?, ?) "
+                    "(id, attempt_id, scorer_id, status, explanation, "
+                    "evidence, configuration_checksum) "
+                    "VALUES (?, ?, ?, 'excluded', ?, ?, ?) "
                     "ON CONFLICT(attempt_id, scorer_id) DO NOTHING",
                     [
                         (
@@ -1412,6 +1470,7 @@ async def fail_active_attempt(
                             scorer["id"],
                             error[:1000],
                             json.dumps({"failure_category": category}),
+                            scorer.get("configuration_checksum"),
                         )
                         for scorer in scorers
                     ],
@@ -1458,7 +1517,8 @@ async def _attempt_scorers(
     attempt_id: str,
 ) -> list[dict[str, Any]]:
     rows = await connection.execute_fetchall(
-        "SELECT scorer.*, link.configuration FROM benchmark_scorers AS scorer "
+        "SELECT scorer.*, link.configuration, link.configuration_checksum "
+        "FROM benchmark_scorers AS scorer "
         "JOIN benchmark_test_revision_scorers AS link ON link.scorer_id = scorer.id "
         "JOIN benchmark_runs AS run ON run.test_revision_id = link.test_revision_id "
         "JOIN benchmark_trials AS trial ON trial.run_id = run.id "
@@ -1538,8 +1598,9 @@ async def finish_attempt_from_task(
                 await connection.execute(
                     "INSERT INTO benchmark_scores "
                     "(id, attempt_id, scorer_id, status, score, passed, "
-                    "extracted_output, explanation, evidence) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "extracted_output, explanation, evidence, "
+                    "configuration_checksum) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(attempt_id, scorer_id) DO NOTHING",
                     (
                         f"score-{uuid.uuid4().hex}",
@@ -1551,6 +1612,7 @@ async def finish_attempt_from_task(
                         score["extracted_output"],
                         score["explanation"],
                         json.dumps(score["evidence"], separators=(",", ":"), sort_keys=True),
+                        scorer.get("configuration_checksum"),
                     ),
                 )
             await connection.commit()
@@ -1889,8 +1951,10 @@ async def set_run_state(
                     scorers = await _attempt_scorers(connection, str(queued["id"]))
                     await connection.executemany(
                         "INSERT INTO benchmark_scores "
-                        "(id, attempt_id, scorer_id, status, explanation, evidence) "
-                        "VALUES (?, ?, ?, 'excluded', 'Run cancelled before admission', ?) "
+                        "(id, attempt_id, scorer_id, status, explanation, "
+                        "evidence, configuration_checksum) "
+                        "VALUES (?, ?, ?, 'excluded', "
+                        "'Run cancelled before admission', ?, ?) "
                         "ON CONFLICT(attempt_id, scorer_id) DO NOTHING",
                         [
                             (
@@ -1898,6 +1962,7 @@ async def set_run_state(
                                 queued["id"],
                                 scorer["id"],
                                 json.dumps({"failure_category": "cancelled"}),
+                                scorer.get("configuration_checksum"),
                             )
                             for scorer in scorers
                         ],

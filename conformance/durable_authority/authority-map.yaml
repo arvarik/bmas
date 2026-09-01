@@ -295,6 +295,10 @@ sqlite_tables:
       - { name: kind, owner: daemon.benchmark-service, derived: false }
       - { name: configuration_schema, owner: daemon.benchmark-service, derived: false }
       - { name: created_at, owner: daemon.benchmark-service, derived: false }
+      - { name: description, owner: daemon.benchmark-service, derived: false }
+      - { name: scale, owner: daemon.benchmark-service, derived: false }
+      - { name: direction, owner: daemon.benchmark-service, derived: false }
+      - { name: evidence_requirements, owner: daemon.benchmark-service, derived: false }
   - table: benchmark_scores
     authority: daemon.benchmark-service
     purpose: "Benchmark execution record: benchmark scores."
@@ -311,6 +315,10 @@ sqlite_tables:
       - { name: explanation, owner: daemon.benchmark-service, derived: false }
       - { name: evidence, owner: daemon.benchmark-service, derived: false }
       - { name: created_at, owner: daemon.benchmark-service, derived: false }
+      - name: configuration_checksum
+        owner: daemon.benchmark-service
+        derived: true
+        reconstruction: "Hash the canonical effective scorer configuration."
   - table: benchmark_test_arms
     authority: daemon.benchmark-service
     purpose: "Benchmark execution record: benchmark test arms."

@@ -422,7 +422,16 @@ async def get_run_report_endpoint(
     run = await repository.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="The benchmark run does not exist")
-    return build_run_report(run, _report_filters(subject, split, tag, scorer_id))
+    from benchmarks.outcome_mappings import OutcomeMappingError
+
+    try:
+        return build_run_report(
+            run, _report_filters(subject, split, tag, scorer_id),
+        )
+    except OutcomeMappingError as error:
+        # A broken outcome contract rejects before analysis; the run
+        # needs a new mapping set and run plan, not a report.
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get("/runs/{run_id}/report.csv")

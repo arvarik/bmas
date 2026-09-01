@@ -261,16 +261,16 @@ def test_gate_rejects_each_undeclared_treatment_difference():
 
 
 def test_a_changed_outcome_mapping_set_breaks_the_invariant():
-    baseline = _gate_run(
-        "baseline",
-        configuration={"outcome_mappings": {"passed": "success"},
-                       "repetitions": 1},
-    )
-    candidate = _gate_run(
-        "candidate",
-        configuration={"outcome_mappings": {"passed": "victory"},
-                       "repetitions": 1},
-    )
+    baseline = _gate_run("baseline")
+    baseline["execution_plan"] = {
+        "outcome_mapping_set": {"digest": "a" * 64},
+    }
+    candidate = _gate_run("candidate")
+    candidate["execution_plan"] = {
+        "outcome_mapping_set": {"digest": "b" * 64},
+    }
+    # Only the complete mapping-set digest enters the invariant, and a
+    # different set digest breaks gate compatibility.
     with pytest.raises(GateCompatibilityError, match="invariant digest"):
         check_compatibility(baseline, candidate, [])
 

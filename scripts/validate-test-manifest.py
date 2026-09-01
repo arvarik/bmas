@@ -28,6 +28,20 @@ import manifestlib
 PROFILE_FLAG_PATTERN = re.compile(r"run-test-manifest\.py\s+--profile[= ]([A-Za-z0-9._-]+)")
 
 
+def _executed_profiles(text: str) -> list[str]:
+    """Collect profiles the text executes, ignoring list-only calls.
+
+    A ``--list`` invocation publishes the resolved check list without
+    executing anything, so it never counts as an execution path.
+    """
+    found: list[str] = []
+    for line in text.splitlines():
+        if "--list" in line:
+            continue
+        found.extend(PROFILE_FLAG_PATTERN.findall(line))
+    return found
+
+
 def profiles_in_workflow(workflow_path: Path) -> list[str]:
     """Collect every profile that the workflow executes through the runner."""
     workflow = manifestlib.load_yaml_text(workflow_path.read_text(encoding="utf-8"))
@@ -37,12 +51,12 @@ def profiles_in_workflow(workflow_path: Path) -> list[str]:
             run_text = step.get("run")
             if not isinstance(run_text, str):
                 continue
-            found.extend(PROFILE_FLAG_PATTERN.findall(run_text))
+            found.extend(_executed_profiles(run_text))
     return found
 
 
 def profiles_in_script(script_path: Path) -> list[str]:
-    return PROFILE_FLAG_PATTERN.findall(script_path.read_text(encoding="utf-8"))
+    return _executed_profiles(script_path.read_text(encoding="utf-8"))
 
 
 def main(argv: list[str]) -> int:
