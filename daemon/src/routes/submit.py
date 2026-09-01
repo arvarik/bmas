@@ -108,13 +108,29 @@ class TaskOverrides(BaseModel):
 
 
 class BenchmarkContext(BaseModel):
-    """Optional durable benchmark identity for a scheduler-created task."""
+    """Optional durable benchmark identity for a scheduler-created task.
+
+    The context carries the shared item and repetition seed with its
+    seed-control label, plus the stable admission key and request
+    digest. The task service rejects an equal admission key with a
+    different request digest through the identity conflict check.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     run_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,128}$")
     trial_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,128}$")
     attempt_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,128}$")
+    random_seed: int | None = None
+    seed_control: str | None = Field(
+        default=None, pattern=r"^(recorded|best_effort|applied)$",
+    )
+    admission_key: str | None = Field(
+        default=None, pattern=r"^[a-zA-Z0-9_-]{1,128}$",
+    )
+    request_digest: str | None = Field(
+        default=None, pattern=r"^[a-f0-9]{16,128}$",
+    )
 
 
 class TaskSubmission(BaseModel):

@@ -97,6 +97,11 @@ sqlite_tables:
       - { name: lease_token, owner: daemon.benchmark-service, derived: false }
       - { name: lease_expires_at, owner: daemon.benchmark-service, derived: false }
       - { name: lease_fence, owner: daemon.benchmark-service, derived: false }
+      - { name: schedule_rank, owner: daemon.benchmark-service, derived: false }
+      - { name: eligibility_generation, owner: daemon.benchmark-service, derived: false }
+      - { name: seed_control, owner: daemon.benchmark-service, derived: false }
+      - { name: admission_effect_id, owner: daemon.benchmark-service, derived: false }
+      - { name: admission_reservation_id, owner: daemon.benchmark-service, derived: false }
   - table: benchmark_baselines
     authority: daemon.benchmark-service
     purpose: "Benchmark execution record: benchmark baselines."
@@ -118,6 +123,8 @@ sqlite_tables:
     purpose: "Benchmark execution record: benchmark gate evaluations."
     writers:
       - benchmarks.records
+      - benchmarks.repository
+      - database
     fields:
       - { name: id, owner: daemon.benchmark-service, derived: false }
       - { name: baseline_id, owner: daemon.benchmark-service, derived: false }
@@ -125,9 +132,12 @@ sqlite_tables:
       - { name: status, owner: daemon.benchmark-service, derived: false }
       - { name: report, owner: daemon.benchmark-service, derived: false }
       - { name: report_checksum, owner: daemon.benchmark-service, derived: false }
-      - { name: created_at, owner: daemon.benchmark-service, derived: false }
       - { name: invariant_digest, owner: daemon.benchmark-service, derived: false }
       - { name: display_exceptions, owner: daemon.benchmark-service, derived: false }
+      - { name: evaluation_version, owner: daemon.benchmark-service, derived: false }
+      - { name: superseded_at, owner: daemon.benchmark-service, derived: false }
+      - { name: superseded_by, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
   - table: benchmark_human_reviews
     authority: daemon.benchmark-service
     purpose: "Benchmark execution record: benchmark human reviews."
@@ -183,6 +193,68 @@ sqlite_tables:
       - { name: priority, owner: daemon.benchmark-service, derived: false }
       - { name: scoring_status, owner: daemon.benchmark-service, derived: false }
       - { name: analysis_status, owner: daemon.benchmark-service, derived: false }
+      - { name: priority_band, owner: daemon.benchmark-service, derived: false }
+      - { name: dispatch_tickets, owner: daemon.benchmark-service, derived: false }
+      - { name: starvation_wait, owner: daemon.benchmark-service, derived: false }
+      - { name: cost_status, owner: daemon.benchmark-service, derived: false }
+      - { name: budget_id, owner: daemon.benchmark-service, derived: false }
+      - { name: authority_run_id, owner: daemon.benchmark-service, derived: false }
+      - { name: authority_fence, owner: daemon.benchmark-service, derived: false }
+      - name: settled_cost
+        owner: daemon.benchmark-service
+        derived: true
+        reconstruction: "Sum the settled benchmark_cost_charges amounts for the run."
+      - name: cost_bound
+        owner: daemon.benchmark-service
+        derived: true
+        reconstruction: "Sum the settled charges and accepted unknown bounds for the run."
+      - { name: cost_settled_at, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_dispatch_ranks
+    authority: daemon.benchmark-service
+    purpose: "Immutable dispatch rank per attempt eligibility generation."
+    writers:
+      - benchmarks.repository
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: run_id, owner: daemon.benchmark-service, derived: false }
+      - { name: attempt_id, owner: daemon.benchmark-service, derived: false }
+      - { name: eligibility_generation, owner: daemon.benchmark-service, derived: false }
+      - { name: priority_band, owner: daemon.benchmark-service, derived: false }
+      - { name: arm_position, owner: daemon.benchmark-service, derived: false }
+      - { name: ticket, owner: daemon.benchmark-service, derived: false }
+      - name: tie_break_digest
+        owner: daemon.benchmark-service
+        derived: true
+        reconstruction: "Hash the run, attempt, and generation identity."
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_scheduler_events
+    authority: daemon.benchmark-service
+    purpose: "Durable scheduler events such as priority promotions."
+    writers:
+      - benchmarks.repository
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: run_id, owner: daemon.benchmark-service, derived: false }
+      - { name: event_type, owner: daemon.benchmark-service, derived: false }
+      - { name: payload, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
+  - table: benchmark_cost_charges
+    authority: daemon.benchmark-service
+    purpose: "Exact run cost evidence: estimates, charges, and unknowns."
+    writers:
+      - benchmarks.repository
+    fields:
+      - { name: id, owner: daemon.benchmark-service, derived: false }
+      - { name: run_id, owner: daemon.benchmark-service, derived: false }
+      - { name: attempt_id, owner: daemon.benchmark-service, derived: false }
+      - { name: provider, owner: daemon.benchmark-service, derived: false }
+      - { name: kind, owner: daemon.benchmark-service, derived: false }
+      - { name: currency, owner: daemon.benchmark-service, derived: false }
+      - { name: amount_nanos, owner: daemon.benchmark-service, derived: false }
+      - { name: source_text, owner: daemon.benchmark-service, derived: false }
+      - { name: source_kind, owner: daemon.benchmark-service, derived: false }
+      - { name: evidence, owner: daemon.benchmark-service, derived: false }
+      - { name: created_at, owner: daemon.benchmark-service, derived: false }
   - table: benchmark_runtime_qualifications
     authority: daemon.benchmark-service
     purpose: "Benchmark execution record: benchmark runtime qualifications."

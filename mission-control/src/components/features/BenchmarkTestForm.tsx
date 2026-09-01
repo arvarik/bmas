@@ -25,6 +25,7 @@ export function BenchmarkTestForm({ testId }: { testId?: string }) {
   const [maxConcurrency, setMaxConcurrency] = useState(1);
   const [timeoutSeconds, setTimeoutSeconds] = useState(3600);
   const [costLimit, setCostLimit] = useState("");
+  const [attemptCostLimit, setAttemptCostLimit] = useState("");
   const [practicalDifference, setPracticalDifference] = useState(0.01);
   const [arms, setArms] = useState<ArmDraft[]>([
     { key: "arm-1", name: "Classic", runtime_id: "classic", configuration: "{}" },
@@ -64,7 +65,9 @@ export function BenchmarkTestForm({ testId }: { testId?: string }) {
         seed,
         max_concurrency: maxConcurrency,
         timeout_seconds: timeoutSeconds,
-        cost_limit_usd: costLimit ? Number(costLimit) : null,
+        // The daemon parses monetary limits as exact decimal strings.
+        cost_limit_usd: costLimit.trim() ? costLimit.trim() : null,
+        attempt_cost_limit_usd: attemptCostLimit.trim() ? attemptCostLimit.trim() : null,
         practical_difference: practicalDifference,
         arms: arms.map((arm) => ({
           name: arm.name.trim(),
@@ -76,7 +79,7 @@ export function BenchmarkTestForm({ testId }: { testId?: string }) {
     } catch {
       return null;
     }
-  }, [arms, costLimit, datasetVersionId, description, maxConcurrency, name, practicalDifference, repetitions, seed, selectedScorers, timeoutSeconds]);
+  }, [arms, attemptCostLimit, costLimit, datasetVersionId, description, maxConcurrency, name, practicalDifference, repetitions, seed, selectedScorers, timeoutSeconds]);
 
   const validate = () => {
     if (!payload) return "Each arm configuration must contain valid JSON.";
@@ -125,10 +128,11 @@ export function BenchmarkTestForm({ testId }: { testId?: string }) {
         <label><span>Dataset</span><Select value={datasetVersionId} onChange={(event) => { setDatasetVersionId(event.target.value); setPreflight(null); }}><option value="">Select a dataset</option>{datasets.map((dataset) => <option key={dataset.id} value={dataset.latest_version_id ?? ""}>{dataset.name} · v{dataset.latest_version}</option>)}</Select></label>
         <label className="benchmark-form__wide"><span>Description</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2} /></label>
         <label><span>Repetitions</span><input type="number" min={1} max={20} value={repetitions} onChange={(event) => { setRepetitions(Number(event.target.value)); setPreflight(null); }} /></label>
-        <label><span>Random seed</span><input type="number" min={0} value={seed} onChange={(event) => { setSeed(Number(event.target.value)); setPreflight(null); }} /></label>
+        <label><span>Random seed (shared per case and repetition across arms)</span><input type="number" min={0} value={seed} onChange={(event) => { setSeed(Number(event.target.value)); setPreflight(null); }} /></label>
         <label><span>Maximum concurrency</span><input type="number" min={1} max={16} value={maxConcurrency} onChange={(event) => { setMaxConcurrency(Number(event.target.value)); setPreflight(null); }} /></label>
         <label><span>Attempt timeout in seconds</span><input type="number" min={30} value={timeoutSeconds} onChange={(event) => { setTimeoutSeconds(Number(event.target.value)); setPreflight(null); }} /></label>
-        <label><span>Run cost limit in USD</span><input type="number" min="0.01" step="0.01" value={costLimit} placeholder="No limit" onChange={(event) => { setCostLimit(event.target.value); setPreflight(null); }} /></label>
+        <label><span>Run cost limit in USD</span><input type="text" inputMode="decimal" value={costLimit} placeholder="No limit" onChange={(event) => { setCostLimit(event.target.value); setPreflight(null); }} /></label>
+        <label><span>Attempt cost limit in USD</span><input type="text" inputMode="decimal" value={attemptCostLimit} placeholder="Derived from the run limit" onChange={(event) => { setAttemptCostLimit(event.target.value); setPreflight(null); }} /></label>
         <label><span>Minimum practical score difference</span><input type="number" min="0" max="1" step="0.01" value={practicalDifference} onChange={(event) => { setPracticalDifference(Number(event.target.value)); setPreflight(null); }} /><small>Effects below this score difference do not count as practically meaningful.</small></label>
       </div>
 

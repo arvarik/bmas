@@ -534,6 +534,68 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.benchmark-statistical-oracle
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the statistical engine matches the versioned oracle
+      fixtures from the independent reference: the family-stratified
+      weighted case bootstrap with uniform draws, the paired sign-flip
+      test, exact McNemar after the predeclared binary reduction,
+      Wilson diagnostics, sealed outcome slots, and the named
+      bmas-analysis-rng sequences.
+    argv: ["python3", "-m", "pytest", "tests/test_benchmark_statistical_oracle.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.benchmark-schedule-fairness
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove paired trial slots share the item and repetition seed
+      across arms, the stored arm-order schedule decides dispatch
+      order, each dispatch stores one immutable rank per eligibility
+      generation, and the weighted round-robin promotes a starving run
+      with a durable scheduler event.
+    argv: ["python3", "-m", "pytest", "tests/test_benchmark_schedule_fairness.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.benchmark-resource-ledger
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove every monetary field uses Money with exact nanos,
+      reservations stop concurrent overshoot, unknown prices stay
+      unknown, run cost moves through provisional, settling, and
+      settled, a cost-sensitive final gate waits for settlement, and a
+      late charge supersedes the stored gate version.
+    argv: ["python3", "-m", "pytest", "tests/test_benchmark_resource_ledger.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.benchmark-admission-recovery
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove benchmark task admission runs through the shared Foundation
+      effect ledger under one stable idempotency key: every declared
+      crash point recovers idempotently with one external task, the
+      raw admission response stores before parsing, a lost fence cannot
+      link, and an unknown outcome charges pessimistically until proof
+      or operator approval.
+    argv: ["python3", "-m", "pytest", "tests/test_benchmark_admission_recovery.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
   # ── Agent ────────────────────────────────────────────────────────
   - id: agent.tests
     state: active_required
@@ -779,6 +841,10 @@ profiles:
         - daemon.release-gates
         - daemon.complete-stack-journey
         - daemon.foundation-release-gate
+        - daemon.benchmark-statistical-oracle
+        - daemon.benchmark-schedule-fairness
+        - daemon.benchmark-resource-ledger
+        - daemon.benchmark-admission-recovery
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

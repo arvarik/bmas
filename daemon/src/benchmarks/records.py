@@ -11,6 +11,7 @@ from benchmarks import repository
 from benchmarks.gates import (
     TERMINAL_RUN_STATUSES,
     GateCompatibilityError,
+    GateSettlementError,
     GateTerminalityError,
     evaluate_gate,
     validate_display_exceptions,
@@ -208,15 +209,22 @@ async def evaluate_baseline(
             "active run instead"
         )
     async with db._connect() as connection:  # noqa: SLF001
-        cursor = await connection.execute(
+        rows = await connection.execute_fetchall(
             "SELECT * FROM benchmark_gate_evaluations "
-            "WHERE baseline_id = ? AND candidate_run_id = ?",
+            "WHERE baseline_id = ? AND candidate_run_id = ? "
+            "ORDER BY evaluation_version",
             (baseline_id, candidate_run_id),
         )
-        existing = await cursor.fetchone()
-    if existing:
-        return _decode(existing, "report", "display_exceptions"), False
+    current = [row for row in rows if row["superseded_at"] is None]
+    if current:
+        # The current decision is terminal; only a superseding event,
+        # such as a late charge, opens the next evaluation version.
+        return _decode(current[-1], "report", "display_exceptions"), False
+    next_version = (
+        max((int(row["evaluation_version"]) for row in rows), default=0) + 1
+    )
     exceptions = display_exceptions or []
+    cost_evidence = await _cost_evidence(candidate)
     try:
         validate_display_exceptions(exceptions, primary_metric=None)
         report = evaluate_gate(
@@ -228,9 +236,15 @@ async def evaluate_baseline(
                 baseline.get("treatment_declaration") or [],
             ),
             display_exceptions=exceptions,
+            cost_evidence=cost_evidence,
             now=await db.database_utc_now(),
         )
-    except (GateCompatibilityError, GateTerminalityError, ValueError) as error:
+    except (
+        GateCompatibilityError,
+        GateSettlementError,
+        GateTerminalityError,
+        ValueError,
+    ) as error:
         raise repository.BenchmarkConflict(str(error)) from error
     evaluation_id = f"gate-{uuid.uuid4().hex}"
     try:
@@ -238,8 +252,9 @@ async def evaluate_baseline(
             await connection.execute(
                 "INSERT INTO benchmark_gate_evaluations "
                 "(id, baseline_id, candidate_run_id, status, report, "
-                "report_checksum, invariant_digest, display_exceptions) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "report_checksum, invariant_digest, display_exceptions, "
+                "evaluation_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     evaluation_id,
                     baseline_id,
@@ -250,6 +265,7 @@ async def evaluate_baseline(
                     report["candidate_invariant_digest"],
                     json.dumps(exceptions, separators=(",", ":"),
                                sort_keys=True),
+                    next_version,
                 ),
             )
             await connection.commit()
@@ -259,7 +275,9 @@ async def evaluate_baseline(
         async with db._connect() as connection:  # noqa: SLF001
             cursor = await connection.execute(
                 "SELECT * FROM benchmark_gate_evaluations "
-                "WHERE baseline_id = ? AND candidate_run_id = ?",
+                "WHERE baseline_id = ? AND candidate_run_id = ? "
+                "AND superseded_at IS NULL "
+                "ORDER BY evaluation_version DESC LIMIT 1",
                 (baseline_id, candidate_run_id),
             )
             existing = await cursor.fetchone()
@@ -275,7 +293,23 @@ async def evaluate_baseline(
         "report_checksum": report["report_checksum"],
         "invariant_digest": report["candidate_invariant_digest"],
         "display_exceptions": exceptions,
+        "evaluation_version": next_version,
     }, True
+
+
+async def _cost_evidence(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    """Collect the candidate run cost state for cost-sensitive gates."""
+    from benchmarks import costs
+
+    cost_status = candidate.get("cost_status")
+    if cost_status is None:
+        return None
+    charges = await repository.list_cost_charges(str(candidate["id"]))
+    summary = costs.summarize_charges(charges)
+    return {
+        "cost_status": str(cost_status),
+        "unbounded_unknown": bool(summary["unbounded_unknown"]),
+    }
 
 
 async def save_qualification(report: dict[str, Any]) -> tuple[dict[str, Any], bool]:

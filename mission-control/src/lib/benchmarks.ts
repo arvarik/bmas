@@ -124,6 +124,10 @@ export interface BenchmarkRun {
   started_at: string | null;
   completed_at: string | null;
   priority?: number;
+  priority_band?: "expedited" | "standard" | "deferred";
+  cost_status?: "provisional" | "settling" | "settled";
+  settled_cost?: BenchmarkMoney | null;
+  cost_bound?: BenchmarkMoney | null;
   dataset_name?: string;
   attempts?: BenchmarkAttempt[];
   scores?: BenchmarkScore[];
@@ -494,9 +498,35 @@ export function primaryMetric(run: BenchmarkRun): BenchmarkNamedMetric | null {
   return null;
 }
 
+/** One exact monetary amount: an ISO currency code and integer nanos. */
+export interface BenchmarkMoney {
+  currency: string;
+  amount_nanos: number;
+}
+
+/** Render one exact amount without floating-point arithmetic. */
+export function formatMoney(money: BenchmarkMoney): string {
+  const negative = money.amount_nanos < 0;
+  const magnitude = negative ? -money.amount_nanos : money.amount_nanos;
+  const units = Math.trunc(magnitude / 1e9);
+  const nanos = magnitude % 1e9;
+  const fraction = String(nanos).padStart(9, "0").replace(/0+$/, "");
+  const text = fraction ? `${units}.${fraction}` : String(units);
+  return `${negative ? "-" : ""}${text} ${money.currency}`;
+}
+
 /** Label a scoring failure so failed work never looks complete. */
 export function scoringBadge(run: BenchmarkRun): string | null {
   if (run.scoring_status === "failed") return "Scoring failed";
   if (run.analysis_status === "blocked") return "Analysis blocked";
+  return null;
+}
+
+/** Describe the run cost settlement state for operators. */
+export function costBadge(run: BenchmarkRun): string | null {
+  if (run.cost_status === "settled" && run.settled_cost) {
+    return `Cost settled: ${formatMoney(run.settled_cost)}`;
+  }
+  if (run.cost_status === "settling") return "Cost settling";
   return null;
 }
