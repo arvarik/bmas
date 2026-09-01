@@ -170,14 +170,14 @@ def test_legacy_pairs_prove_compatibility_not_native(directory, key):
 def test_a_native_adapter_that_regresses_a_capability_fails(directory):
     # If a native adapter dropped its signed acknowledgement, the
     # protocol case fails, so the column cannot pass.
+    import dataclasses
+
     record = directory.get(REFERENCE)
-    broken = cap.RuntimeCapabilityRecord(
-        **{
-            **_record_fields(record),
-            "capabilities": {
-                **record.capabilities,
-                "signed_activation_acknowledgement": "legacy_unavailable",
-            },
+    broken = dataclasses.replace(
+        record,
+        capabilities={
+            **record.capabilities,
+            "signed_activation_acknowledgement": "legacy_unavailable",
         },
     )
     adapter = kit.ConformanceAdapter(broken)
@@ -197,8 +197,3 @@ def test_reference_scoring_evidence_replays_deterministically():
     # The scorer returns a versioned result document.
     assert b'"contract_version":"1.0.0"' in first["result_bytes"]
 
-
-def _record_fields(record):
-    from capability_publication import _record_fields as fields
-
-    return fields(record)

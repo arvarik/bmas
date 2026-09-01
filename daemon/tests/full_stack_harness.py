@@ -184,6 +184,9 @@ class StackHarness:
                 reason=str(error),
             )
             return
+        # The child holds its own dup of the log file descriptor, so the
+        # parent closes its copy to avoid leaking the handle.
+        log_handle.close()
         ready = wait_for_port(port, timeout_seconds=10.0)
         self.services["redis"] = ServiceHandle(
             name="redis",

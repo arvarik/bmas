@@ -164,13 +164,20 @@ async def _journal_goal_projection(
 
 async def _detect_cycle(
     connection: aiosqlite.Connection,
+    run_id: str,
     goal_id: str,
     dependency_ids: tuple[str, ...],
     parent_goal_id: str | None,
 ) -> None:
-    """Reject one dependency cycle before persistence."""
+    """Reject one dependency cycle before persistence.
+
+    The scan reads only the run's goals. A goal dependency graph stays
+    inside one run, so this scoping is exact and avoids a global scan.
+    """
     cursor = await connection.execute(
-        "SELECT goal_id, dependency_ids, parent_goal_id FROM goal_index",
+        "SELECT goal_id, dependency_ids, parent_goal_id FROM goal_index "
+        "WHERE run_id = ?",
+        (run_id,),
     )
     edges: dict[str, set[str]] = {}
     for row in await cursor.fetchall():
@@ -223,7 +230,7 @@ async def create_goal(
         connection: aiosqlite.Connection, journal_cursor: int, now: str,
     ) -> None:
         await _detect_cycle(
-            connection, goal_id, dependency_ids, parent_goal_id,
+            connection, run_id, goal_id, dependency_ids, parent_goal_id,
         )
         await connection.execute(
             "INSERT INTO goal_index ("
@@ -309,6 +316,7 @@ async def update_goal(
         if "dependency_ids" in changes:
             await _detect_cycle(
                 connection,
+                run_id,
                 goal_id,
                 tuple(changes["dependency_ids"]),
                 row["parent_goal_id"],
@@ -582,7 +590,9 @@ async def rollback_goals_for_claim(
     """Roll back or mark every goal that requires one invalid claim."""
     async with db._connect() as connection:  # noqa: SLF001
         cursor = await connection.execute(
-            "SELECT goal_id, state, completion_evidence FROM goal_index",
+            "SELECT goal_id, state, completion_evidence FROM goal_index "
+            "WHERE run_id = ?",
+            (run_id,),
         )
         rows = [dict(row) for row in await cursor.fetchall()]
     affected = [

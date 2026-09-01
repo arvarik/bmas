@@ -113,8 +113,9 @@ class ConformanceAdapter:
     def __init__(self, record: RuntimeCapabilityRecord) -> None:
         self.record = record
         self.runtime_key = record.runtime_key
-        # A legacy adapter never writes native authority records. This
-        # log proves the suite created none for a legacy execution.
+        # A legacy adapter never writes native authority records, so
+        # this list stays empty. The suite asserts it is empty to prove
+        # the compatibility execution created no native authority row.
         self.native_authority_writes: list[str] = []
 
     def observe_capability(self, capability: str) -> str:
@@ -131,9 +132,6 @@ class ConformanceAdapter:
 
     def is_native_contract(self) -> bool:
         return self.record.agent_protocol_version == "2"
-
-    def note_native_authority_write(self, authority: str) -> None:
-        self.native_authority_writes.append(authority)
 
 
 # ── The reference scorer bridge ──────────────────────────────────────
