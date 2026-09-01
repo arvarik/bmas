@@ -464,6 +464,76 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.cross-runtime-conformance
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the shared conformance suite against the deterministic
+      reference adapter and the Classic v1, PatchBoard v1, and
+      Stigmergic v1 compatibility adapters, and that each v1 pair
+      asserts its declared matrix value with no v2 authority record.
+    argv: ["python3", "-m", "pytest", "tests/test_cross_runtime_conformance.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.populated-migration
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove populated upgrade keeps v1 behavior, the legacy event
+      writer stays v1-only, every v2 write uses one authority, cutover
+      preserves existing pairs, legacy retirement refuses with an
+      active reader, and an unsafe downgrade refuses.
+    argv: ["python3", "-m", "pytest", "tests/test_populated_migration.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.release-gates
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove no new writer enables until its conformance column and the
+      migration, downgrade, and security gates pass, and its feature
+      flag stays disabled by default.
+    argv: ["python3", "-m", "pytest", "tests/test_release_gates.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.complete-stack-journey
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the harness allocates isolated ports, readies, logs, and
+      tears down, and the unmocked fifteen-step journey runs admission,
+      agent protocol negotiation, nested effect grants, authenticated
+      receipts, a daemon-created envelope, and Recovery Center
+      resolution.
+    argv: ["python3", "-m", "pytest", "tests/test_complete_stack_journey.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 900
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.foundation-release-gate
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the Foundation release gate: CI and local share the same
+      required groups, every adapter passes conformance, upgrade and
+      downgrade hold, golden fixtures stay frozen, and no v2 writer
+      enables in Stage 0.
+    argv: ["python3", "-m", "pytest", "tests/test_foundation_release_gate.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
   # ── Agent ────────────────────────────────────────────────────────
   - id: agent.tests
     state: active_required
@@ -704,6 +774,11 @@ profiles:
         - daemon.privacy-boundary
         - daemon.security-matrix
         - daemon.recovery-center
+        - daemon.cross-runtime-conformance
+        - daemon.populated-migration
+        - daemon.release-gates
+        - daemon.complete-stack-journey
+        - daemon.foundation-release-gate
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

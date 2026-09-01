@@ -458,8 +458,12 @@ class RunControlService:
         return await db.set_run_pause_state(self._authority.run_id, paused)
 
     async def clear_clock_fault(self, new_task_fence: str) -> bool:
+        # The corrected watermark restarts at the authority's database
+        # clock, so an injected clock stays authoritative here too.
         return await db.clear_run_clock_fault(
-            self._authority.run_id, new_task_fence,
+            self._authority.run_id,
+            new_task_fence,
+            database_time=await self._authority.database_time(),
         )
 
 
