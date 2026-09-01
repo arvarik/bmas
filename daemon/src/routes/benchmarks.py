@@ -42,6 +42,7 @@ class BenchmarkScorerInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,128}$")
     configuration: dict[str, Any] = Field(default_factory=dict)
+    required: bool = True
 
 
 class BenchmarkTestInput(BaseModel):
@@ -84,6 +85,18 @@ class RegressionRuleInput(BaseModel):
         "upper_confidence_bound",
         "holm_sign_test",
     ] = "point_estimate"
+    direction: Literal["improvement", "reduction"] | None = None
+    practical_size: float | None = Field(default=None, ge=0)
+
+
+class DisplayExceptionInput(BaseModel):
+    """Excuse one unavailable secondary display metric, narrowly."""
+
+    model_config = ConfigDict(extra="forbid")
+    scope: str = Field(min_length=1, max_length=400)
+    author: str = Field(min_length=1, max_length=200)
+    expires_at: str = Field(min_length=1, max_length=64)
+    reason: str = Field(min_length=1, max_length=2000)
 
 
 class BenchmarkBaselineInput(BaseModel):
@@ -94,6 +107,9 @@ class BenchmarkBaselineInput(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=2000)
     rules: list[RegressionRuleInput] = Field(min_length=1, max_length=100)
+    treatment_declaration: list[
+        Literal["runtime", "model", "prompt", "configuration"]
+    ] = Field(default_factory=list, max_length=4)
 
 
 class BenchmarkGateInput(BaseModel):
@@ -101,6 +117,9 @@ class BenchmarkGateInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     candidate_run_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,128}$")
+    display_exceptions: list[DisplayExceptionInput] = Field(
+        default_factory=list, max_length=20,
+    )
 
 
 class RuntimeQualificationInput(BaseModel):
@@ -172,6 +191,7 @@ async def _prepare(payload: BenchmarkTestInput) -> dict[str, Any]:
                 "version": scorers[item.id]["version"],
                 "configuration": item.configuration,
                 "configuration_checksum": content_checksum(item.configuration),
+                "required": item.required,
             }
             for item in payload.scorers
         ],
@@ -401,6 +421,7 @@ async def create_baseline_endpoint(
             description=payload.description.strip(),
             rules=[rule.model_dump() for rule in payload.rules],
             created_by=(operator_id or "operator")[:200],
+            treatment_declaration=list(payload.treatment_declaration),
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -416,6 +437,28 @@ async def get_baseline_endpoint(baseline_id: str):
     return baseline
 
 
+@router.post("/baselines/{baseline_id}/preview")
+async def preview_baseline_endpoint(
+    request: Request,
+    baseline_id: str,
+    payload: BenchmarkGateInput,
+):
+    """Evaluate one candidate without saving a gate decision."""
+    require_api_key(request, BMAS_API_KEY)
+    try:
+        report = await records.preview_baseline(
+            baseline_id,
+            payload.candidate_run_id,
+            display_exceptions=[
+                exception.model_dump()
+                for exception in payload.display_exceptions
+            ],
+        )
+        return {"report": report, "saved": False}
+    except (repository.BenchmarkNotFound, repository.BenchmarkConflict) as error:
+        raise _repository_error(error) from error
+
+
 @router.post("/baselines/{baseline_id}/evaluate")
 async def evaluate_baseline_endpoint(
     request: Request,
@@ -425,7 +468,12 @@ async def evaluate_baseline_endpoint(
     require_api_key(request, BMAS_API_KEY)
     try:
         evaluation, created = await records.evaluate_baseline(
-            baseline_id, payload.candidate_run_id
+            baseline_id,
+            payload.candidate_run_id,
+            display_exceptions=[
+                exception.model_dump()
+                for exception in payload.display_exceptions
+            ],
         )
         return {**evaluation, "created": created}
     except (repository.BenchmarkNotFound, repository.BenchmarkConflict) as error:

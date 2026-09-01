@@ -8,7 +8,7 @@ import { ActionButton } from "@/components/ui/ActionButton";
 import { BenchmarkRunReportPanel } from "@/components/features/BenchmarkRunReportPanel";
 import { BenchmarkHumanReviewForm } from "@/components/features/BenchmarkHumanReviewForm";
 import { ResourceState } from "@/components/ui/ResourceState";
-import { runProgress, scoreSummary, statusLabel, type BenchmarkRun, type BenchmarkScore } from "@/lib/benchmarks";
+import { primaryMetric, runProgress, scoringBadge, statusLabel, type BenchmarkRun, type BenchmarkScore } from "@/lib/benchmarks";
 
 export function RunDetailClient({ runId }: { runId: string }) {
   const [run, setRun] = useState<BenchmarkRun | null>(null);
@@ -58,7 +58,8 @@ export function RunDetailClient({ runId }: { runId: string }) {
   };
   if (!run && !error) return <div className="page-loading">Loading run…</div>;
   if (!run) return <ResourceState kind="unavailable" title="Run unavailable" description={error ?? "The run is unavailable."} onRetry={load} />;
-  const average = scoreSummary(run);
+  const primary = primaryMetric(run);
+  const badge = scoringBadge(run);
   return (
     <div className="benchmarks-page">
       <BackLink href="/runs" label="Runs" />
@@ -74,10 +75,11 @@ export function RunDetailClient({ runId }: { runId: string }) {
       </header>
       {error ? <p className="benchmark-message benchmark-message--error" role="alert">{error}</p> : null}
       <section className="benchmark-run-overview" aria-label="Run summary">
-        <div><span>Status</span><strong className={`benchmark-status benchmark-status--${run.status}`}>{statusLabel(run.status)}</strong></div>
-        <div><span>Progress</span><strong>{runProgress(run)}%</strong><small>{run.completed_attempts} of {run.total_attempts} attempts</small></div>
-        <div><span>Average score</span><strong>{average === null ? "Pending" : `${(average * 100).toFixed(1)}%`}</strong></div>
-        <div><span>Cost</span><strong>${Number(run.total_cost_usd ?? 0).toFixed(4)}</strong></div>
+        <div><span>Status</span><strong className={`benchmark-status benchmark-status--${run.status}`}>{statusLabel(run.status)}</strong>{badge ? <small className="benchmark-status benchmark-status--failed">{badge}</small> : null}</div>
+        <div><span>Progress</span><strong>{runProgress(run)}%</strong><small>{run.completed_attempts} of {run.total_attempts} attempts · {run.aggregates?.failed_attempts ?? 0} failed</small></div>
+        <div><span>{primary ? primary.scorer_name : "Primary metric"}</span><strong>{primary?.mean == null ? "Pending" : `${(primary.mean * 100).toFixed(1)}%`}</strong><small>{primary ? `${primary.count} scored` : "No primary scorer"}</small></div>
+        <div><span>Cost</span><strong>${Number(run.aggregates?.total_cost_usd ?? run.total_cost_usd ?? 0).toFixed(4)}</strong></div>
+        {(run.aggregates?.secondary_metrics ?? []).map((metric) => <div key={metric.scorer_id}><span>{metric.scorer_name}</span><strong>{metric.mean == null ? "Pending" : `${(metric.mean * 100).toFixed(1)}%`}</strong><small>{metric.count} scored</small></div>)}
       </section>
       <BenchmarkRunReportPanel run={run} />
       <section className="benchmark-catalog">

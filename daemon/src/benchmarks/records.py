@@ -8,7 +8,15 @@ from typing import Any
 
 import database as db
 from benchmarks import repository
-from benchmarks.gates import evaluate_gate, validate_rules
+from benchmarks.gates import (
+    TERMINAL_RUN_STATUSES,
+    GateCompatibilityError,
+    GateTerminalityError,
+    evaluate_gate,
+    validate_display_exceptions,
+    validate_rules,
+    validate_treatment_declaration,
+)
 from benchmarks.provenance import content_checksum
 
 
@@ -20,21 +28,35 @@ async def create_baseline(
     description: str,
     rules: list[dict[str, Any]],
     created_by: str,
+    treatment_declaration: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Pin one completed run and one immutable rule set."""
+    """Pin one completed run, one immutable rule set, and its treatments.
+
+    The treatment declaration lists every experimental axis a
+    candidate may change. An empty declaration allows no treatment
+    difference, which preserves the previous same-revision behavior.
+    """
     validate_rules(rules)
+    declaration = sorted(treatment_declaration or [])
+    validate_treatment_declaration(declaration)
     run = await repository.get_run(run_id)
     if run is None:
         raise repository.BenchmarkNotFound("The baseline run does not exist")
     if run["status"] != "completed":
         raise repository.BenchmarkConflict("Only a completed run can become a baseline")
+    if str(run.get("analysis_status") or "valid") == "blocked":
+        raise repository.BenchmarkConflict(
+            "A run with a failed required scorer has no valid analysis "
+            "and cannot become a baseline"
+        )
     rules_checksum = content_checksum(rules)
     try:
         async with db._connect() as connection:  # noqa: SLF001
             await connection.execute(
                 "INSERT INTO benchmark_baselines "
-                "(id, test_id, run_id, name, description, rules, rules_checksum, created_by) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, test_id, run_id, name, description, rules, rules_checksum, "
+                "created_by, treatment_declaration) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     baseline_id,
                     run["test_id"],
@@ -44,6 +66,7 @@ async def create_baseline(
                     json.dumps(rules, separators=(",", ":"), sort_keys=True),
                     rules_checksum,
                     created_by,
+                    json.dumps(declaration, separators=(",", ":")),
                 ),
             )
             await connection.commit()
@@ -85,7 +108,7 @@ async def list_baselines(test_id: str | None = None) -> list[dict[str, Any]]:
             f"{clause} ORDER BY baseline.created_at DESC",
             parameters,
         )
-    return [_decode(row, "rules") for row in rows]
+    return [_decode(row, "rules", "treatment_declaration") for row in rows]
 
 
 async def get_baseline(baseline_id: str) -> dict[str, Any] | None:
@@ -107,16 +130,17 @@ async def get_baseline(baseline_id: str) -> dict[str, Any] | None:
             "ORDER BY created_at DESC",
             (baseline_id,),
         )
-    result = _decode(row, "rules")
-    result["evaluations"] = [_decode(item, "report") for item in evaluations]
+    result = _decode(row, "rules", "treatment_declaration")
+    result["evaluations"] = [
+        _decode(item, "report", "display_exceptions")
+        for item in evaluations
+    ]
     return result
 
 
-async def evaluate_baseline(
-    baseline_id: str,
-    candidate_run_id: str,
-) -> tuple[dict[str, Any], bool]:
-    """Evaluate and save one candidate exactly once."""
+async def _load_gate_pair(
+    baseline_id: str, candidate_run_id: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     baseline = await get_baseline(baseline_id)
     if baseline is None:
         raise repository.BenchmarkNotFound("The benchmark baseline does not exist")
@@ -127,6 +151,62 @@ async def evaluate_baseline(
         raise repository.BenchmarkConflict(
             "The candidate and baseline must belong to the same test"
         )
+    baseline_run = await repository.get_run(str(baseline["run_id"]))
+    if baseline_run is None:
+        raise repository.BenchmarkNotFound("The pinned baseline run does not exist")
+    return baseline, baseline_run, candidate
+
+
+async def preview_baseline(
+    baseline_id: str,
+    candidate_run_id: str,
+    *,
+    display_exceptions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Evaluate one candidate without saving anything.
+
+    A preview inspects an active run early. It never persists, so it
+    can never block or preempt the later final decision.
+    """
+    baseline, baseline_run, candidate = await _load_gate_pair(
+        baseline_id, candidate_run_id,
+    )
+    try:
+        return evaluate_gate(
+            baseline_run,
+            candidate,
+            list(baseline["rules"]),
+            mode="preview",
+            treatment_declaration=list(
+                baseline.get("treatment_declaration") or [],
+            ),
+            display_exceptions=display_exceptions or [],
+            now=await db.database_utc_now(),
+        )
+    except (GateCompatibilityError, ValueError) as error:
+        raise repository.BenchmarkConflict(str(error)) from error
+
+
+async def evaluate_baseline(
+    baseline_id: str,
+    candidate_run_id: str,
+    *,
+    display_exceptions: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """Evaluate and save one terminal candidate exactly once.
+
+    The final gate stores only terminal decisions: a nonterminal
+    candidate or a blocked analysis rejects, and an incompatible
+    revision fails before any rule evaluates.
+    """
+    baseline, baseline_run, candidate = await _load_gate_pair(
+        baseline_id, candidate_run_id,
+    )
+    if str(candidate.get("status")) not in TERMINAL_RUN_STATUSES:
+        raise repository.BenchmarkConflict(
+            "A final gate accepts only a terminal candidate; preview an "
+            "active run instead"
+        )
     async with db._connect() as connection:  # noqa: SLF001
         cursor = await connection.execute(
             "SELECT * FROM benchmark_gate_evaluations "
@@ -135,18 +215,31 @@ async def evaluate_baseline(
         )
         existing = await cursor.fetchone()
     if existing:
-        return _decode(existing, "report"), False
-    baseline_run = await repository.get_run(str(baseline["run_id"]))
-    if baseline_run is None:
-        raise repository.BenchmarkNotFound("The pinned baseline run does not exist")
-    report = evaluate_gate(baseline_run, candidate, list(baseline["rules"]))
+        return _decode(existing, "report", "display_exceptions"), False
+    exceptions = display_exceptions or []
+    try:
+        validate_display_exceptions(exceptions, primary_metric=None)
+        report = evaluate_gate(
+            baseline_run,
+            candidate,
+            list(baseline["rules"]),
+            mode="final",
+            treatment_declaration=list(
+                baseline.get("treatment_declaration") or [],
+            ),
+            display_exceptions=exceptions,
+            now=await db.database_utc_now(),
+        )
+    except (GateCompatibilityError, GateTerminalityError, ValueError) as error:
+        raise repository.BenchmarkConflict(str(error)) from error
     evaluation_id = f"gate-{uuid.uuid4().hex}"
     try:
         async with db._connect() as connection:  # noqa: SLF001
             await connection.execute(
                 "INSERT INTO benchmark_gate_evaluations "
-                "(id, baseline_id, candidate_run_id, status, report, report_checksum) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(id, baseline_id, candidate_run_id, status, report, "
+                "report_checksum, invariant_digest, display_exceptions) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     evaluation_id,
                     baseline_id,
@@ -154,6 +247,9 @@ async def evaluate_baseline(
                     report["status"],
                     json.dumps(report, separators=(",", ":"), sort_keys=True),
                     report["report_checksum"],
+                    report["candidate_invariant_digest"],
+                    json.dumps(exceptions, separators=(",", ":"),
+                               sort_keys=True),
                 ),
             )
             await connection.commit()
@@ -168,7 +264,7 @@ async def evaluate_baseline(
             )
             existing = await cursor.fetchone()
         if existing:
-            return _decode(existing, "report"), False
+            return _decode(existing, "report", "display_exceptions"), False
         raise
     return {
         "id": evaluation_id,
@@ -177,6 +273,8 @@ async def evaluate_baseline(
         "status": report["status"],
         "report": report,
         "report_checksum": report["report_checksum"],
+        "invariant_digest": report["candidate_invariant_digest"],
+        "display_exceptions": exceptions,
     }, True
 
 

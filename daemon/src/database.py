@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -2228,6 +2228,45 @@ async def _migrate_add_typed_indexes(db: aiosqlite.Connection) -> None:
     logger.info("Migration 18 applied: typed index and recovery tables")
 
 
+BENCHMARK_STATUS_COLUMNS = (
+    ("benchmark_runs", "scoring_status", "TEXT NOT NULL DEFAULT 'pending'"),
+    ("benchmark_runs", "analysis_status", "TEXT NOT NULL DEFAULT 'pending'"),
+    ("benchmark_test_revision_scorers", "required",
+     "INTEGER NOT NULL DEFAULT 1"),
+    ("benchmark_baselines", "treatment_declaration",
+     "TEXT NOT NULL DEFAULT '[]'"),
+    ("benchmark_gate_evaluations", "invariant_digest", "TEXT"),
+    ("benchmark_gate_evaluations", "display_exceptions",
+     "TEXT NOT NULL DEFAULT '[]'"),
+)
+
+
+async def _migrate_add_benchmark_status_contracts(
+    db: aiosqlite.Connection,
+) -> None:
+    """Expand migration: separated benchmark status and gate contracts.
+
+    Runs gain a scoring status and an analysis status separate from
+    execution status. Revision scorer links gain a required flag.
+    Baselines gain a treatment declaration, and gate evaluations gain
+    the invariant digest and display exceptions. Every column is
+    additive with a compatible default, so existing rows keep their
+    behavior and readers derive effective statuses for legacy rows.
+    """
+    db.row_factory = aiosqlite.Row
+    for table, column, definition in BENCHMARK_STATUS_COLUMNS:
+        cursor = await db.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in await cursor.fetchall()}
+        if column not in existing:
+            await db.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+            )
+    await db.commit()
+    logger.info(
+        "Migration 19 applied: benchmark status and gate contract columns"
+    )
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -2248,6 +2287,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         16: _migrate_add_budget_authority,
         17: _migrate_add_activation_effect_protocol,
         18: _migrate_add_typed_indexes,
+        19: _migrate_add_benchmark_status_contracts,
     }
     fn = migrations.get(version)
     if fn is None:

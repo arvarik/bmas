@@ -140,7 +140,7 @@ async def create_test_revision(
             await connection.executemany(
                 "INSERT INTO benchmark_test_revision_scorers "
                 "(test_revision_id, scorer_id, sort_order, configuration, "
-                "configuration_checksum) VALUES (?, ?, ?, ?, ?)",
+                "configuration_checksum, required) VALUES (?, ?, ?, ?, ?, ?)",
                 [
                     (
                         revision_id,
@@ -152,6 +152,9 @@ async def create_test_revision(
                             sort_keys=True,
                         ),
                         content_checksum(scorer.get("configuration", {})),
+                        # A required scorer blocks a valid analysis
+                        # when it fails; an optional scorer does not.
+                        int(bool(scorer.get("required", True))),
                     )
                     for index, scorer in enumerate(scorers)
                 ],
@@ -443,13 +446,120 @@ async def create_run(
     return result, True
 
 
+# One shared cost aggregation for the run list and the run detail. It
+# sums every attempt's task cost, so failed attempts and retries count.
+_RUN_COST_SQL = (
+    "COALESCE((SELECT SUM(task.total_cost_usd) "
+    "FROM benchmark_attempts AS attempt "
+    "JOIN benchmark_trials AS trial ON trial.id = attempt.trial_id "
+    "JOIN tasks AS task ON task.id = attempt.task_id "
+    "WHERE trial.run_id = run.id), 0)"
+)
+
+# The named primary metric: the first required scorer by sort order.
+_PRIMARY_SCORER_SQL = (
+    "(SELECT link.scorer_id FROM benchmark_test_revision_scorers AS link "
+    "WHERE link.test_revision_id = run.test_revision_id "
+    "AND link.required = 1 "
+    "ORDER BY link.sort_order, link.scorer_id LIMIT 1)"
+)
+
+# One row per current attempt: the highest retry per repetition slot.
+_CURRENT_ATTEMPT_SQL = (
+    "attempt.retry_index = (SELECT MAX(candidate.retry_index) "
+    "FROM benchmark_attempts AS candidate "
+    "WHERE candidate.trial_id = attempt.trial_id "
+    "AND candidate.repeat_index = attempt.repeat_index)"
+)
+
+_PRIMARY_METRIC_MEAN_SQL = (
+    "(SELECT AVG(score.score) FROM benchmark_scores AS score "
+    "JOIN benchmark_attempts AS attempt ON attempt.id = score.attempt_id "
+    "JOIN benchmark_trials AS trial ON trial.id = attempt.trial_id "
+    "WHERE trial.run_id = run.id AND score.status = 'scored' "
+    "AND score.score IS NOT NULL "
+    f"AND score.scorer_id = {_PRIMARY_SCORER_SQL} "
+    f"AND {_CURRENT_ATTEMPT_SQL})"
+)
+
+_PRIMARY_METRIC_COUNT_SQL = _PRIMARY_METRIC_MEAN_SQL.replace(
+    "AVG(score.score)", "COUNT(score.score)", 1,
+)
+
+_FAILED_ATTEMPT_COUNT_SQL = (
+    "(SELECT COUNT(*) FROM benchmark_attempts AS attempt "
+    "JOIN benchmark_trials AS trial ON trial.id = attempt.trial_id "
+    "WHERE trial.run_id = run.id AND attempt.status = 'failed' "
+    f"AND {_CURRENT_ATTEMPT_SQL})"
+)
+
+# One current attempt of a required scorer failed to score.
+_REQUIRED_SCORER_ERROR_SQL = (
+    "EXISTS(SELECT 1 FROM benchmark_scores AS score "
+    "JOIN benchmark_attempts AS attempt ON attempt.id = score.attempt_id "
+    "JOIN benchmark_trials AS trial ON trial.id = attempt.trial_id "
+    "JOIN benchmark_test_revision_scorers AS link "
+    "ON link.test_revision_id = run.test_revision_id "
+    "AND link.scorer_id = score.scorer_id "
+    "WHERE trial.run_id = run.id AND link.required = 1 "
+    "AND score.status = 'error' "
+    f"AND {_CURRENT_ATTEMPT_SQL})"
+)
+
+_TERMINAL_RUN_STATUSES = {"completed", "partial", "failed", "cancelled"}
+
+
+def _effective_statuses(
+    run_status: str,
+    scoring_status: str,
+    analysis_status: str,
+    has_required_scorer_error: bool,
+) -> tuple[str, str]:
+    """Derive the effective scoring and analysis statuses of one run.
+
+    Execution completion stays a separate state. A failed required
+    scorer fails scoring and blocks a valid analysis immediately. A
+    legacy terminal row with the pending default derives completed
+    scoring, so a pre-migration run keeps its old behavior.
+    """
+    terminal = run_status in _TERMINAL_RUN_STATUSES
+    scoring = scoring_status
+    if has_required_scorer_error:
+        scoring = "failed"
+    elif terminal and scoring == "pending":
+        scoring = "completed"
+    analysis = analysis_status
+    if scoring == "failed":
+        analysis = "blocked"
+    elif terminal and scoring == "completed":
+        analysis = "valid"
+    return scoring, analysis
+
+
+def _apply_effective_statuses(record: dict[str, Any]) -> dict[str, Any]:
+    scoring, analysis = _effective_statuses(
+        str(record.get("status") or ""),
+        str(record.get("scoring_status") or "pending"),
+        str(record.get("analysis_status") or "pending"),
+        bool(record.pop("has_required_scorer_error", 0)),
+    )
+    record["scoring_status"] = scoring
+    record["analysis_status"] = analysis
+    return record
+
+
 async def list_runs(
     *,
     status: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Return one benchmark run page with test identity."""
+    """Return one benchmark run page with server aggregates.
+
+    Each row carries the shared cost total, the named primary metric,
+    the failed-work count, and the effective scoring and analysis
+    statuses, so no browser computes its own aggregate.
+    """
     clauses = ["run.archived_at IS NULL"]
     params: list[Any] = []
     if status:
@@ -466,10 +576,14 @@ async def list_runs(
         rows = await connection.execute_fetchall(
             "SELECT run.*, test.id AS test_id, test.name AS test_name, "
             "revision.revision, dataset.name AS dataset_name, "
-            "COALESCE((SELECT SUM(task.total_cost_usd) FROM benchmark_attempts AS attempt "
-            "JOIN benchmark_trials AS trial ON trial.id = attempt.trial_id "
-            "JOIN tasks AS task ON task.id = attempt.task_id "
-            "WHERE trial.run_id = run.id), 0) AS total_cost_usd "
+            f"{_RUN_COST_SQL} AS total_cost_usd, "
+            f"{_PRIMARY_SCORER_SQL} AS primary_scorer_id, "
+            "(SELECT scorer.name FROM benchmark_scorers AS scorer "
+            f"WHERE scorer.id = {_PRIMARY_SCORER_SQL}) AS primary_scorer_name, "
+            f"{_PRIMARY_METRIC_MEAN_SQL} AS primary_metric_mean, "
+            f"{_PRIMARY_METRIC_COUNT_SQL} AS primary_metric_count, "
+            f"{_FAILED_ATTEMPT_COUNT_SQL} AS failed_attempts, "
+            f"{_REQUIRED_SCORER_ERROR_SQL} AS has_required_scorer_error "
             "FROM benchmark_runs AS run "
             "JOIN benchmark_test_revisions AS revision ON revision.id = run.test_revision_id "
             "JOIN benchmark_tests AS test ON test.id = revision.test_id "
@@ -479,20 +593,35 @@ async def list_runs(
             [*params, bounded_limit, bounded_offset],
         )
     return (
-        [_record(row, "execution_plan") for row in rows],
+        [
+            _apply_effective_statuses(_record(row, "execution_plan"))
+            for row in rows
+        ],
         int(count_row["count"] if count_row else 0),
     )
 
 
 async def get_run(run_id: str) -> dict[str, Any] | None:
-    """Return one run with trials, attempts, scores, and provenance."""
+    """Return one run with trials, attempts, scores, and provenance.
+
+    The detail row uses the same shared cost and primary-metric
+    aggregation as the run list, so the two totals always match.
+    """
     async with db._connect() as connection:  # noqa: SLF001
         run_cursor = await connection.execute(
             "SELECT run.*, test.id AS test_id, test.name AS test_name, "
             "revision.revision, revision.configuration AS test_configuration, "
             "revision.configuration_checksum AS test_configuration_checksum, "
             "dataset.id AS dataset_id, dataset.name AS dataset_name, "
-            "version.version AS dataset_version, version.checksum AS dataset_checksum "
+            "version.version AS dataset_version, version.checksum AS dataset_checksum, "
+            f"{_RUN_COST_SQL} AS total_cost_usd, "
+            f"{_PRIMARY_SCORER_SQL} AS primary_scorer_id, "
+            "(SELECT scorer.name FROM benchmark_scorers AS scorer "
+            f"WHERE scorer.id = {_PRIMARY_SCORER_SQL}) AS primary_scorer_name, "
+            f"{_PRIMARY_METRIC_MEAN_SQL} AS primary_metric_mean, "
+            f"{_PRIMARY_METRIC_COUNT_SQL} AS primary_metric_count, "
+            f"{_FAILED_ATTEMPT_COUNT_SQL} AS failed_attempts, "
+            f"{_REQUIRED_SCORER_ERROR_SQL} AS has_required_scorer_error "
             "FROM benchmark_runs AS run "
             "JOIN benchmark_test_revisions AS revision ON revision.id = run.test_revision_id "
             "JOIN benchmark_tests AS test ON test.id = revision.test_id "
@@ -504,6 +633,21 @@ async def get_run(run_id: str) -> dict[str, Any] | None:
         run_row = await run_cursor.fetchone()
         if not run_row:
             return None
+        scorer_links = await connection.execute_fetchall(
+            "SELECT scorer.id, scorer.name, scorer.version, "
+            "link.configuration_checksum, link.sort_order, link.required "
+            "FROM benchmark_test_revision_scorers AS link "
+            "JOIN benchmark_scorers AS scorer ON scorer.id = link.scorer_id "
+            "WHERE link.test_revision_id = ? "
+            "ORDER BY link.sort_order, scorer.id",
+            (str(run_row["test_revision_id"]),),
+        )
+        arm_rows = await connection.execute_fetchall(
+            "SELECT id, name, slug, runtime_id, configuration, "
+            "configuration_checksum FROM benchmark_test_arms "
+            "WHERE test_revision_id = ? ORDER BY sort_order, id",
+            (str(run_row["test_revision_id"]),),
+        )
         rows = await connection.execute_fetchall(
             "SELECT trial.id AS trial_id, trial.status AS trial_status, "
             "item.id AS dataset_item_id, item.item_key, item.input, "
@@ -538,13 +682,70 @@ async def get_run(run_id: str) -> dict[str, Any] | None:
             "WHERE trial.run_id = ? ORDER BY review.created_at, review.id",
             (run_id,),
         )
-    result = _record(run_row, "execution_plan", "test_configuration")
+    result = _apply_effective_statuses(
+        _record(run_row, "execution_plan", "test_configuration"),
+    )
     result["attempts"] = [
         _record(row, "execution_snapshot", "tags") for row in rows
     ]
     result["scores"] = [_record(row, "evidence") for row in scores]
     result["human_reviews"] = [dict(row) for row in reviews]
+    result["revision_scorers"] = [dict(row) for row in scorer_links]
+    result["arms"] = [_record(row, "configuration") for row in arm_rows]
+    result["aggregates"] = _run_aggregates(result)
     return result
+
+
+def _run_aggregates(run: dict[str, Any]) -> dict[str, Any]:
+    """Build the server aggregates for one run detail.
+
+    The primary metric names the first required scorer. Every other
+    scorer reports separately as a secondary metric; no aggregate ever
+    averages unrelated scorers together.
+    """
+    latest: dict[tuple[str, int], dict[str, Any]] = {}
+    for attempt in run.get("attempts") or []:
+        key = (str(attempt["trial_id"]), int(attempt.get("repeat_index") or 1))
+        current = latest.get(key)
+        if current is None or int(attempt.get("retry_index") or 0) > int(
+            current.get("retry_index") or 0,
+        ):
+            latest[key] = attempt
+    current_ids = {str(attempt["id"]) for attempt in latest.values()}
+    by_scorer: dict[str, list[float]] = {}
+    for score in run.get("scores") or []:
+        if (
+            str(score["attempt_id"]) in current_ids
+            and score.get("status") == "scored"
+            and score.get("score") is not None
+        ):
+            by_scorer.setdefault(str(score["scorer_id"]), []).append(
+                float(score["score"]),
+            )
+    names = {
+        str(link["id"]): str(link.get("name") or link["id"])
+        for link in run.get("revision_scorers") or []
+    }
+    primary_id = run.get("primary_scorer_id")
+    metrics = {
+        scorer_id: {
+            "scorer_id": scorer_id,
+            "scorer_name": names.get(scorer_id, scorer_id),
+            "mean": sum(values) / len(values),
+            "count": len(values),
+        }
+        for scorer_id, values in sorted(by_scorer.items())
+    }
+    return {
+        "total_cost_usd": float(run.get("total_cost_usd") or 0),
+        "failed_attempts": int(run.get("failed_attempts") or 0),
+        "primary_metric": metrics.get(str(primary_id)) if primary_id else None,
+        "secondary_metrics": [
+            metric
+            for scorer_id, metric in metrics.items()
+            if scorer_id != str(primary_id)
+        ],
+    }
 
 
 async def create_human_review(
@@ -1160,14 +1361,56 @@ async def _refresh_run(connection: Any, run_id: str) -> None:
             next_status = "failed"
         else:
             next_status = "partial"
+    error_cursor = await connection.execute(
+        "SELECT EXISTS(SELECT 1 FROM benchmark_scores AS score "
+        "JOIN benchmark_attempts AS attempt ON attempt.id = score.attempt_id "
+        "JOIN benchmark_trials AS trial ON trial.id = attempt.trial_id "
+        "JOIN benchmark_test_revision_scorers AS link "
+        "ON link.test_revision_id = "
+        "(SELECT test_revision_id FROM benchmark_runs WHERE id = ?) "
+        "AND link.scorer_id = score.scorer_id "
+        "WHERE trial.run_id = ? AND link.required = 1 "
+        "AND score.status = 'error' "
+        "AND attempt.retry_index = (SELECT MAX(candidate.retry_index) "
+        "FROM benchmark_attempts AS candidate "
+        "WHERE candidate.trial_id = attempt.trial_id "
+        "AND candidate.repeat_index = attempt.repeat_index)) AS has_error",
+        (run_id, run_id),
+    )
+    error_row = await error_cursor.fetchone()
+    has_required_error = bool(error_row["has_error"] if error_row else 0)
+    terminal_next = next_status in _TERMINAL_RUN_STATUSES
+    if has_required_error:
+        scoring_status = "failed"
+    elif terminal_next:
+        scoring_status = "completed"
+    elif any(status == "running" for status in statuses):
+        scoring_status = "running"
+    else:
+        scoring_status = "pending"
+    if scoring_status == "failed":
+        analysis_status = "blocked"
+    elif terminal_next and scoring_status == "completed":
+        analysis_status = "valid"
+    else:
+        analysis_status = "pending"
     await connection.execute(
         "UPDATE benchmark_runs SET status = ?, completed_attempts = ?, "
+        "scoring_status = ?, analysis_status = ?, "
         "completed_trials = (SELECT COUNT(*) FROM benchmark_trials "
         "WHERE run_id = ? AND status IN ('completed','failed','cancelled','excluded')), "
         "completed_at = CASE WHEN ? THEN "
         "strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END, "
         "state_revision = state_revision + 1 WHERE id = ?",
-        (next_status, complete_count, run_id, int(bool(completed_at)), run_id),
+        (
+            next_status,
+            complete_count,
+            scoring_status,
+            analysis_status,
+            run_id,
+            int(bool(completed_at)),
+            run_id,
+        ),
     )
 
 

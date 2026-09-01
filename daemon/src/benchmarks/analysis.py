@@ -488,12 +488,26 @@ def build_run_report(
     for score in score_rows:
         scores_by_attempt[str(score["attempt_id"])].append(score)
 
+    configuration = run.get("test_configuration") or {}
     practical_difference = float(
-        (run.get("test_configuration") or {}).get("practical_difference", 0.01)
+        configuration.get("practical_difference", 0.01)
     )
+    # The declared infrastructure exclusion policy. Only a predeclared
+    # failure category can leave the unconditional denominator, and
+    # every exclusion carries the policy reason.
+    exclusion_policy = configuration.get("infrastructure_exclusions") or {}
+    excluded_categories = set(exclusion_policy.get("categories") or [])
+    exclusion_reason = str(
+        exclusion_policy.get("reason") or "predeclared infrastructure policy"
+    )
+    repetitions = int(configuration.get("repetitions") or 1)
     arm_attempts: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for attempt in latest:
         arm_attempts[str(attempt["arm_id"])].append(attempt)
+    all_filtered_attempts: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for attempt in run.get("attempts") or []:
+        if _matches_filters(attempt, selected_filters):
+            all_filtered_attempts[str(attempt["arm_id"])].append(attempt)
     arms: list[dict[str, Any]] = []
     error_categories: list[dict[str, Any]] = []
     for arm_id, attempts in arm_attempts.items():
@@ -515,6 +529,65 @@ def build_run_report(
                 "count": count,
                 "rate": count / len(attempts),
             })
+        # Denominators over the arm's planned repetition slots. A slot
+        # is one (case, repetition) pair; retries stay inside it.
+        slot_items = {str(attempt["dataset_item_id"]) for attempt in attempts}
+        planned = len(slot_items) * repetitions
+        slots_present = {
+            (str(attempt["dataset_item_id"]),
+             int(attempt.get("repeat_index") or 1))
+            for attempt in attempts
+        }
+        missing = max(planned - len(slots_present), 0)
+        admitted = sum(
+            attempt.get("status") != "queued" for attempt in attempts
+        )
+        exclusions = [
+            {
+                "dataset_item_id": str(attempt["dataset_item_id"]),
+                "repeat_index": int(attempt.get("repeat_index") or 1),
+                "category": str(attempt.get("failure_category")),
+                "reason": exclusion_reason,
+            }
+            for attempt in failures
+            if str(attempt.get("failure_category")) in excluded_categories
+        ]
+        excluded_slot_count = len(exclusions)
+        # Every planned non-infrastructure-excluded slot counts. An
+        # agent failure, a timeout, or a treatment-caused budget stop
+        # stays a task failure with zero success.
+        unconditional_denominator = max(planned - excluded_slot_count, 0)
+        denominators = {
+            "planned": planned,
+            "admitted": admitted,
+            "missing": missing,
+            "completed": len(completed),
+            "failed": len(failures) - excluded_slot_count,
+            "excluded": excluded_slot_count,
+            "exclusions": exclusions,
+            "unconditional_denominator": unconditional_denominator,
+        }
+        # Resources count every attempt and retry, not only the
+        # current completed attempts.
+        arm_all = all_filtered_attempts.get(arm_id, attempts)
+        resource_totals = {
+            "attempt_count": len(arm_all),
+            "cost_usd": sum(
+                float(attempt["total_cost_usd"])
+                for attempt in arm_all
+                if attempt.get("total_cost_usd") is not None
+            ),
+            "tokens": sum(
+                int(attempt["total_tokens"])
+                for attempt in arm_all
+                if attempt.get("total_tokens") is not None
+            ),
+            "duration_ms": sum(
+                int(attempt["duration_ms"])
+                for attempt in arm_all
+                if attempt.get("duration_ms") is not None
+            ),
+        }
         score_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for attempt in attempts:
             for score in scores_by_attempt.get(str(attempt["id"]), []):
@@ -527,6 +600,7 @@ def build_run_report(
                 if score.get("status") == "scored" and score.get("score") is not None
             ]
             values = [float(score["score"]) for score in scored]
+            passed_count = sum(bool(score.get("passed")) for score in scored)
             scorer_metrics.append({
                 "scorer_id": scorer_id,
                 "scorer_name": scores[0].get("scorer_name"),
@@ -537,9 +611,21 @@ def build_run_report(
                     lower=0.0,
                     upper=1.0,
                 ),
-                "passed": sum(bool(score.get("passed")) for score in scored),
+                "passed": passed_count,
                 "failed": sum(not bool(score.get("passed")) for score in scored),
                 "excluded": sum(score.get("status") != "scored" for score in scores),
+                # Unconditional success spans every planned slot the
+                # policy did not exclude; a failed attempt scores zero.
+                "unconditional_success_rate": (
+                    passed_count / unconditional_denominator
+                    if unconditional_denominator
+                    else None
+                ),
+                # Conditional answer quality covers completed scored
+                # attempts only.
+                "conditional_success_rate": (
+                    passed_count / len(scored) if scored else None
+                ),
             })
         arms.append({
             "arm_id": arm_id,
@@ -565,6 +651,8 @@ def build_run_report(
                 for attempt in completed
                 if attempt.get("total_tokens") is not None
             ], f"arm:{arm_id}:tokens"),
+            "denominators": denominators,
+            "resource_totals": resource_totals,
             "scorers": scorer_metrics,
         })
 
@@ -665,6 +753,12 @@ def build_run_report(
         )
     if not statistical_metrics:
         warnings.append("No paired scorer comparison is available")
+    scoring_status = str(run.get("scoring_status") or "pending")
+    analysis_status = str(run.get("analysis_status") or "pending")
+    if analysis_status == "blocked":
+        warnings.append(
+            "A required scorer failed, so no valid analysis exists"
+        )
     diagnostics = _review_diagnostics(
         score_rows,
         [
@@ -711,6 +805,35 @@ def build_run_report(
         },
         "warnings": warnings,
         "complete": run.get("status") == "completed",
+        "scoring": {
+            "scoring_status": scoring_status,
+            "analysis_status": analysis_status,
+        },
+        "analysis_valid": analysis_status != "blocked",
+        "denominators": {
+            "policy": {
+                "excluded_categories": sorted(excluded_categories),
+                "reason": exclusion_reason,
+            },
+            "planned": sum(
+                arm["denominators"]["planned"] for arm in sorted_arms
+            ),
+            "admitted": sum(
+                arm["denominators"]["admitted"] for arm in sorted_arms
+            ),
+            "missing": sum(
+                arm["denominators"]["missing"] for arm in sorted_arms
+            ),
+            "excluded": sum(
+                arm["denominators"]["excluded"] for arm in sorted_arms
+            ),
+            "completed": sum(
+                arm["denominators"]["completed"] for arm in sorted_arms
+            ),
+            "failed": sum(
+                arm["denominators"]["failed"] for arm in sorted_arms
+            ),
+        },
     }
     return {**report, "report_checksum": content_checksum(report)}
 
