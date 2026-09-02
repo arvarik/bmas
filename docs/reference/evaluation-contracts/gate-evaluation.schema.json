@@ -1,0 +1,196 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/gate-evaluation",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "baseline_analysis_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "candidate_analysis_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "display_exceptions": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "author": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expires_at": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "scope": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "author",
+          "scope",
+          "expires_at",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "evaluation_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "invariant_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "rules": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_method": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "direction": {
+            "enum": [
+              "improvement",
+              "reduction"
+            ]
+          },
+          "id": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+            "type": "string"
+          },
+          "metric": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "operator": {
+            "enum": [
+              "gte",
+              "lte",
+              "max_drop",
+              "max_increase_ratio"
+            ]
+          },
+          "practical_size": {
+            "minimum": 0,
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "value": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "metric",
+          "operator",
+          "value",
+          "direction"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "schema_id": {
+      "const": "gate-evaluation"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "treatment": {
+      "additionalProperties": false,
+      "properties": {
+        "declaration": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "baseline_digest": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "candidate_digest": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "field_path": {
+                "pattern": "^[a-zA-Z0-9_.-]+(\\.[a-zA-Z0-9_.-]+)*$",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 20000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "field_path",
+              "baseline_digest",
+              "candidate_digest",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "declaration",
+        "digest"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "evaluation_id",
+    "baseline_analysis_checksum",
+    "candidate_analysis_checksum",
+    "invariant_digest",
+    "treatment",
+    "rules",
+    "display_exceptions"
+  ],
+  "title": "One final terminal gate decision",
+  "type": "object"
+}

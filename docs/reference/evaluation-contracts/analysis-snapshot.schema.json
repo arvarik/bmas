@@ -1,0 +1,245 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/analysis-snapshot",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "engine": {
+      "additionalProperties": false,
+      "properties": {
+        "build_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "dependency_lock_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "runtime_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "source_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "toolchain_versions": {
+          "additionalProperties": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "source_digest",
+        "build_digest",
+        "dependency_lock_digest",
+        "toolchain_versions"
+      ],
+      "type": "object"
+    },
+    "estimand": {
+      "type": "object"
+    },
+    "evidence_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "filters": {
+      "type": "object"
+    },
+    "io_checksums": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "output": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "input",
+        "output"
+      ],
+      "type": "object"
+    },
+    "methods": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence_level": {
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "estimator": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "interval_method": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "estimator",
+        "interval_method",
+        "confidence_level"
+      ],
+      "type": "object"
+    },
+    "missingness_policy": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "multiplicity_groups": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "random_source": {
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "derivation_schedule": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "implementation_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "master_seed": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "algorithm",
+        "implementation_digest",
+        "master_seed",
+        "derivation_schedule"
+      ],
+      "type": "object"
+    },
+    "report_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "resampling": {
+      "additionalProperties": false,
+      "properties": {
+        "cluster_order": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "resample_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "small_cluster_policy": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "cluster_order",
+        "small_cluster_policy",
+        "resample_count"
+      ],
+      "type": "object"
+    },
+    "results_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "run_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "schema_id": {
+      "const": "analysis-snapshot"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "snapshot_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "unit_hierarchy": {
+      "items": {
+        "enum": [
+          "family",
+          "case",
+          "repetition"
+        ]
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "snapshot_id",
+    "run_checksum",
+    "evidence_checksum",
+    "filters",
+    "missingness_policy",
+    "estimand",
+    "unit_hierarchy",
+    "resampling",
+    "methods",
+    "multiplicity_groups",
+    "results_digest",
+    "report_checksum",
+    "engine",
+    "random_source",
+    "io_checksums"
+  ],
+  "title": "One frozen report computation",
+  "type": "object"
+}

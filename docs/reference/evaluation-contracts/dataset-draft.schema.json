@@ -1,0 +1,171 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/dataset-draft",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "asset_policy": {
+      "type": "object"
+    },
+    "created_from": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "source_import",
+            "published_version",
+            "empty_template",
+            "test_package"
+          ]
+        },
+        "reference": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "draft_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "effective_restrictions": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "behavior": {
+            "enum": [
+              "hard",
+              "reviewable"
+            ]
+          },
+          "name": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "behavior"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "parent_version_id": {
+      "anyOf": [
+        {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schema_id": {
+      "const": "dataset-draft"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "source_ids": {
+      "items": {
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "trust_inputs": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "level": {
+            "enum": [
+              "built_in_verified",
+              "publisher_verified",
+              "owner_uploaded",
+              "public_untrusted",
+              "unknown"
+            ]
+          },
+          "policy_version": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "level",
+          "policy_version"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "validation_issues": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+            "type": "string"
+          },
+          "code": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 20000,
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "draft_id",
+    "created_from",
+    "source_ids",
+    "trust_inputs",
+    "effective_restrictions",
+    "validation_issues"
+  ],
+  "title": "One editable dataset draft with its trust inputs",
+  "type": "object"
+}

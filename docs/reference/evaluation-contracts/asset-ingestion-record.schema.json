@@ -1,0 +1,167 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/asset-ingestion-record",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "archive": {
+      "additionalProperties": false,
+      "properties": {
+        "compression_ratio": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "depth": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entry_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expanded_bytes": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "entry_count",
+        "depth",
+        "expanded_bytes",
+        "compression_ratio"
+      ],
+      "type": "object"
+    },
+    "declared_media_type": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "detected_media_type": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "extraction": {
+      "additionalProperties": false,
+      "properties": {
+        "image_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "output_manifest_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "policy_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "image_digest",
+        "policy_digest",
+        "output_manifest_digest"
+      ],
+      "type": "object"
+    },
+    "ingestion_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "original_name": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "scanner": {
+      "additionalProperties": false,
+      "properties": {
+        "completed_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+          "type": "string"
+        },
+        "engine": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "result": {
+          "enum": [
+            "clean",
+            "flagged",
+            "failed"
+          ]
+        },
+        "signature_version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "signature_version",
+        "result",
+        "completed_at"
+      ],
+      "type": "object"
+    },
+    "schema_id": {
+      "const": "asset-ingestion-record"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "size_bytes": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "state": {
+      "enum": [
+        "quarantined",
+        "accepted",
+        "rejected",
+        "deleted"
+      ]
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "ingestion_id",
+    "original_name",
+    "declared_media_type",
+    "detected_media_type",
+    "size_bytes",
+    "digest",
+    "scanner",
+    "state"
+  ],
+  "title": "The quarantine and acceptance record of one asset",
+  "type": "object"
+}

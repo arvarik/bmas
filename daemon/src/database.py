@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -2503,6 +2503,500 @@ async def _migrate_add_benchmark_scorer_and_mapping_contracts(
     )
 
 
+EVALUATION_CONTRACT_DDL = """
+CREATE TABLE IF NOT EXISTS benchmark_sources (
+    id              TEXT PRIMARY KEY,
+    schema_version  INTEGER NOT NULL CHECK (schema_version > 0),
+    record          TEXT NOT NULL,
+    record_checksum TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TRIGGER IF NOT EXISTS benchmark_sources_immutable_update
+BEFORE UPDATE ON benchmark_sources
+BEGIN
+    SELECT RAISE(ABORT, 'benchmark sources are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS benchmark_sources_immutable_delete
+BEFORE DELETE ON benchmark_sources
+BEGIN
+    SELECT RAISE(ABORT, 'benchmark sources are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS asset_ingestion_records (
+    id               TEXT PRIMARY KEY,
+    schema_version   INTEGER NOT NULL CHECK (schema_version > 0),
+    state            TEXT NOT NULL DEFAULT 'quarantined'
+                     CHECK (state IN
+                     ('quarantined','accepted','rejected','deleted')),
+    record           TEXT NOT NULL,
+    record_checksum  TEXT NOT NULL,
+    created_at       TEXT NOT NULL
+                     DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    state_changed_at TEXT
+);
+
+CREATE TRIGGER IF NOT EXISTS asset_ingestion_content_immutable
+BEFORE UPDATE ON asset_ingestion_records
+WHEN NEW.record != OLD.record OR NEW.record_checksum != OLD.record_checksum
+BEGIN
+    SELECT RAISE(ABORT, 'ingestion record content is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS asset_ingestion_state_machine
+BEFORE UPDATE ON asset_ingestion_records
+WHEN NEW.state != OLD.state AND NOT (
+    (OLD.state = 'quarantined'
+     AND NEW.state IN ('accepted','rejected','deleted'))
+    OR (OLD.state IN ('accepted','rejected') AND NEW.state = 'deleted')
+)
+BEGIN
+    SELECT RAISE(ABORT, 'undeclared ingestion state transition');
+END;
+
+CREATE TRIGGER IF NOT EXISTS asset_ingestion_immutable_delete
+BEFORE DELETE ON asset_ingestion_records
+BEGIN
+    SELECT RAISE(ABORT, 'ingestion records are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS dataset_drafts (
+    id                TEXT PRIMARY KEY,
+    schema_version    INTEGER NOT NULL CHECK (schema_version > 0),
+    status            TEXT NOT NULL DEFAULT 'editing'
+                      CHECK (status IN ('editing','published','discarded')),
+    source_id         TEXT REFERENCES benchmark_sources(id),
+    parent_version_id TEXT REFERENCES dataset_versions(id),
+    record            TEXT NOT NULL,
+    record_checksum   TEXT NOT NULL,
+    created_at        TEXT NOT NULL
+                      DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    published_at      TEXT
+);
+
+CREATE TRIGGER IF NOT EXISTS dataset_drafts_published_immutable_update
+BEFORE UPDATE ON dataset_drafts
+WHEN OLD.status = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published dataset drafts are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS dataset_drafts_published_immutable_delete
+BEFORE DELETE ON dataset_drafts
+WHEN OLD.status = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published dataset drafts are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS dataset_draft_cases (
+    id              TEXT PRIMARY KEY,
+    draft_id        TEXT NOT NULL
+                    REFERENCES dataset_drafts(id) ON DELETE CASCADE,
+    case_id         TEXT NOT NULL,
+    schema_version  INTEGER NOT NULL CHECK (schema_version > 0),
+    record          TEXT NOT NULL,
+    record_checksum TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(draft_id, case_id)
+);
+
+CREATE TRIGGER IF NOT EXISTS dataset_draft_cases_frozen_insert
+BEFORE INSERT ON dataset_draft_cases
+WHEN (SELECT status FROM dataset_drafts WHERE id = NEW.draft_id)
+     = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published draft cases are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS dataset_draft_cases_frozen_update
+BEFORE UPDATE ON dataset_draft_cases
+WHEN (SELECT status FROM dataset_drafts WHERE id = OLD.draft_id)
+     = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published draft cases are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS dataset_draft_cases_frozen_delete
+BEFORE DELETE ON dataset_draft_cases
+WHEN (SELECT status FROM dataset_drafts WHERE id = OLD.draft_id)
+     = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published draft cases are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS dataset_transform_recipes (
+    id              TEXT PRIMARY KEY,
+    draft_id        TEXT NOT NULL
+                    REFERENCES dataset_drafts(id) ON DELETE CASCADE,
+    position        INTEGER NOT NULL CHECK (position >= 0),
+    schema_version  INTEGER NOT NULL CHECK (schema_version > 0),
+    record          TEXT NOT NULL,
+    record_checksum TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(draft_id, position)
+);
+
+CREATE TRIGGER IF NOT EXISTS dataset_transform_recipes_frozen_insert
+BEFORE INSERT ON dataset_transform_recipes
+WHEN (SELECT status FROM dataset_drafts WHERE id = NEW.draft_id)
+     = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published draft recipes are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS dataset_transform_recipes_frozen_update
+BEFORE UPDATE ON dataset_transform_recipes
+WHEN (SELECT status FROM dataset_drafts WHERE id = OLD.draft_id)
+     = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published draft recipes are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS dataset_transform_recipes_frozen_delete
+BEFORE DELETE ON dataset_transform_recipes
+WHEN (SELECT status FROM dataset_drafts WHERE id = OLD.draft_id)
+     = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published draft recipes are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS evaluation_case_assets (
+    id           TEXT PRIMARY KEY,
+    draft_id     TEXT NOT NULL
+                 REFERENCES dataset_drafts(id) ON DELETE CASCADE,
+    case_id      TEXT NOT NULL,
+    ingestion_id TEXT NOT NULL REFERENCES asset_ingestion_records(id),
+    created_at   TEXT NOT NULL
+                 DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(draft_id, case_id, ingestion_id)
+);
+
+CREATE TRIGGER IF NOT EXISTS evaluation_case_assets_frozen_insert
+BEFORE INSERT ON evaluation_case_assets
+WHEN (SELECT status FROM dataset_drafts WHERE id = NEW.draft_id)
+     = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published draft assets are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS evaluation_case_assets_frozen_update
+BEFORE UPDATE ON evaluation_case_assets
+BEGIN
+    SELECT RAISE(ABORT, 'case asset links are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS evaluation_case_assets_frozen_delete
+BEFORE DELETE ON evaluation_case_assets
+WHEN (SELECT status FROM dataset_drafts WHERE id = OLD.draft_id)
+     = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published draft assets are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS scorer_versions (
+    id               TEXT PRIMARY KEY,
+    legacy_scorer_id TEXT REFERENCES benchmark_scorers(id),
+    schema_version   INTEGER NOT NULL CHECK (schema_version > 0),
+    status           TEXT NOT NULL DEFAULT 'draft'
+                     CHECK (status IN ('draft','published')),
+    record           TEXT NOT NULL,
+    record_checksum  TEXT NOT NULL,
+    created_at       TEXT NOT NULL
+                     DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    published_at     TEXT
+);
+
+CREATE TRIGGER IF NOT EXISTS scorer_versions_published_immutable_update
+BEFORE UPDATE ON scorer_versions
+WHEN OLD.status = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published scorer versions are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS scorer_versions_published_immutable_delete
+BEFORE DELETE ON scorer_versions
+WHEN OLD.status = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published scorer versions are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS run_plans (
+    id               TEXT PRIMARY KEY,
+    test_revision_id TEXT REFERENCES benchmark_test_revisions(id),
+    run_id           TEXT REFERENCES benchmark_runs(id),
+    schema_version   INTEGER NOT NULL CHECK (schema_version > 0),
+    status           TEXT NOT NULL DEFAULT 'draft'
+                     CHECK (status IN ('draft','published')),
+    record           TEXT NOT NULL,
+    record_checksum  TEXT NOT NULL,
+    created_at       TEXT NOT NULL
+                     DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    published_at     TEXT
+);
+
+CREATE TRIGGER IF NOT EXISTS run_plans_published_immutable_update
+BEFORE UPDATE ON run_plans
+WHEN OLD.status = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published run plans are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS run_plans_published_immutable_delete
+BEFORE DELETE ON run_plans
+WHEN OLD.status = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published run plans are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS attempt_evidence_bundles (
+    id              TEXT PRIMARY KEY,
+    attempt_id      TEXT NOT NULL UNIQUE
+                    REFERENCES benchmark_attempts(id),
+    schema_version  INTEGER NOT NULL CHECK (schema_version > 0),
+    record          TEXT NOT NULL,
+    record_checksum TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TRIGGER IF NOT EXISTS attempt_evidence_immutable_update
+BEFORE UPDATE ON attempt_evidence_bundles
+BEGIN
+    SELECT RAISE(ABORT, 'attempt evidence bundles are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS attempt_evidence_immutable_delete
+BEFORE DELETE ON attempt_evidence_bundles
+BEGIN
+    SELECT RAISE(ABORT, 'attempt evidence bundles are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS analysis_snapshots (
+    id              TEXT PRIMARY KEY,
+    run_id          TEXT NOT NULL REFERENCES benchmark_runs(id),
+    schema_version  INTEGER NOT NULL CHECK (schema_version > 0),
+    record          TEXT NOT NULL,
+    record_checksum TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TRIGGER IF NOT EXISTS analysis_snapshots_immutable_update
+BEFORE UPDATE ON analysis_snapshots
+BEGIN
+    SELECT RAISE(ABORT, 'analysis snapshots are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS analysis_snapshots_immutable_delete
+BEFORE DELETE ON analysis_snapshots
+BEGIN
+    SELECT RAISE(ABORT, 'analysis snapshots are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS gate_display_exceptions (
+    id                 TEXT PRIMARY KEY,
+    gate_evaluation_id TEXT NOT NULL
+                       REFERENCES benchmark_gate_evaluations(id),
+    author             TEXT NOT NULL,
+    scope              TEXT NOT NULL,
+    expires_at         TEXT NOT NULL,
+    reason             TEXT NOT NULL,
+    created_at         TEXT NOT NULL
+                       DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TRIGGER IF NOT EXISTS gate_display_exceptions_immutable_update
+BEFORE UPDATE ON gate_display_exceptions
+BEGIN
+    SELECT RAISE(ABORT, 'gate display exceptions are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS gate_display_exceptions_immutable_delete
+BEFORE DELETE ON gate_display_exceptions
+BEGIN
+    SELECT RAISE(ABORT, 'gate display exceptions are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS interaction_specs (
+    id              TEXT PRIMARY KEY,
+    schema_version  INTEGER NOT NULL CHECK (schema_version > 0),
+    status          TEXT NOT NULL DEFAULT 'draft'
+                    CHECK (status IN ('draft','published')),
+    record          TEXT NOT NULL,
+    record_checksum TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    published_at    TEXT
+);
+
+CREATE TRIGGER IF NOT EXISTS interaction_specs_published_immutable_update
+BEFORE UPDATE ON interaction_specs
+WHEN OLD.status = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published interaction specs are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS interaction_specs_published_immutable_delete
+BEFORE DELETE ON interaction_specs
+WHEN OLD.status = 'published'
+BEGIN
+    SELECT RAISE(ABORT, 'published interaction specs are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS contamination_rights_records (
+    id                 TEXT PRIMARY KEY,
+    dataset_version_id TEXT NOT NULL UNIQUE
+                       REFERENCES dataset_versions(id),
+    schema_version     INTEGER NOT NULL CHECK (schema_version > 0),
+    record             TEXT NOT NULL,
+    record_checksum    TEXT NOT NULL,
+    created_at         TEXT NOT NULL
+                       DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TRIGGER IF NOT EXISTS contamination_rights_immutable_update
+BEFORE UPDATE ON contamination_rights_records
+BEGIN
+    SELECT RAISE(ABORT, 'contamination and rights records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS contamination_rights_immutable_delete
+BEFORE DELETE ON contamination_rights_records
+BEGIN
+    SELECT RAISE(ABORT, 'contamination and rights records are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS metric_definitions (
+    id                TEXT PRIMARY KEY,
+    schema_version    INTEGER NOT NULL CHECK (schema_version > 0),
+    lifecycle_state   TEXT NOT NULL DEFAULT 'draft'
+                      CHECK (lifecycle_state IN
+                      ('draft','validated','published','deprecated',
+                       'withdrawn')),
+    calibration_state TEXT NOT NULL DEFAULT 'due'
+                      CHECK (calibration_state IN
+                      ('current','due','expired','failed')),
+    record            TEXT NOT NULL,
+    record_checksum   TEXT NOT NULL,
+    created_at        TEXT NOT NULL
+                      DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    published_at      TEXT
+);
+
+CREATE TRIGGER IF NOT EXISTS metric_definitions_published_immutable
+BEFORE UPDATE ON metric_definitions
+WHEN OLD.lifecycle_state = 'published'
+     AND NEW.lifecycle_state NOT IN ('deprecated','withdrawn')
+BEGIN
+    SELECT RAISE(ABORT, 'published metric definitions are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS metric_definitions_terminal_immutable
+BEFORE UPDATE ON metric_definitions
+WHEN OLD.lifecycle_state IN ('deprecated','withdrawn')
+BEGIN
+    SELECT RAISE(ABORT, 'deprecated and withdrawn metric definitions stay readable and unchanged');
+END;
+
+CREATE TRIGGER IF NOT EXISTS metric_definitions_immutable_delete
+BEFORE DELETE ON metric_definitions
+WHEN OLD.lifecycle_state != 'draft'
+BEGIN
+    SELECT RAISE(ABORT, 'only a draft metric definition can delete');
+END;
+
+CREATE TABLE IF NOT EXISTS cost_settlement_versions (
+    id                 TEXT PRIMARY KEY,
+    run_id             TEXT NOT NULL REFERENCES benchmark_runs(id),
+    settlement_version INTEGER NOT NULL CHECK (settlement_version > 0),
+    schema_version     INTEGER NOT NULL CHECK (schema_version > 0),
+    record             TEXT NOT NULL,
+    record_checksum    TEXT NOT NULL,
+    created_at         TEXT NOT NULL
+                       DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(run_id, settlement_version)
+);
+
+CREATE TRIGGER IF NOT EXISTS cost_settlement_versions_immutable_update
+BEFORE UPDATE ON cost_settlement_versions
+BEGIN
+    SELECT RAISE(ABORT, 'cost settlement versions are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS cost_settlement_versions_immutable_delete
+BEFORE DELETE ON cost_settlement_versions
+BEGIN
+    SELECT RAISE(ABORT, 'cost settlement versions are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS dispatch_rank_history (
+    id                     TEXT PRIMARY KEY,
+    attempt_id             TEXT NOT NULL
+                           REFERENCES benchmark_attempts(id),
+    eligibility_generation INTEGER NOT NULL
+                           CHECK (eligibility_generation > 0),
+    schema_version         INTEGER NOT NULL CHECK (schema_version > 0),
+    record                 TEXT NOT NULL,
+    record_checksum        TEXT NOT NULL,
+    created_at             TEXT NOT NULL
+                           DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(attempt_id, eligibility_generation)
+);
+
+CREATE TRIGGER IF NOT EXISTS dispatch_rank_history_immutable_update
+BEFORE UPDATE ON dispatch_rank_history
+BEGIN
+    SELECT RAISE(ABORT, 'dispatch rank history is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS dispatch_rank_history_immutable_delete
+BEFORE DELETE ON dispatch_rank_history
+BEGIN
+    SELECT RAISE(ABORT, 'dispatch rank history is immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS evaluation_readonly_archive (
+    id          TEXT PRIMARY KEY,
+    record_kind TEXT NOT NULL,
+    source_table TEXT NOT NULL,
+    record      TEXT NOT NULL,
+    archived_at TEXT NOT NULL
+                DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TRIGGER IF NOT EXISTS evaluation_readonly_archive_immutable_update
+BEFORE UPDATE ON evaluation_readonly_archive
+BEGIN
+    SELECT RAISE(ABORT, 'archived evaluation records are read-only');
+END;
+"""
+
+
+async def _migrate_add_evaluation_contract_storage(
+    db: aiosqlite.Connection,
+) -> None:
+    """Expand migration: additive evaluation contract storage.
+
+    The evaluation record tables add beside the current schema. The
+    migration deletes, renames, and reinterprets nothing: every
+    existing column keeps its meaning, the new tables carry validated
+    canonical records with required foreign keys, and immutable
+    publication triggers protect every published or historical record.
+    The read-only archive stays empty until a downgrade preserves
+    V2-only records inside it.
+    """
+    await db.executescript(EVALUATION_CONTRACT_DDL)
+    db.row_factory = aiosqlite.Row
+    await db.commit()
+    logger.info(
+        "Migration 22 applied: additive evaluation contract storage"
+    )
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -2526,6 +3020,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         19: _migrate_add_benchmark_status_contracts,
         20: _migrate_add_benchmark_schedule_and_cost,
         21: _migrate_add_benchmark_scorer_and_mapping_contracts,
+        22: _migrate_add_evaluation_contract_storage,
     }
     fn = migrations.get(version)
     if fn is None:

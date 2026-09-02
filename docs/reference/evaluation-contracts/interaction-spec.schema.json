@@ -1,0 +1,297 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/interaction-spec",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "allowed": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "environment_operations": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tools": {
+          "items": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "initial_messages": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "invalid_transition_behavior": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "limits": {
+      "additionalProperties": false,
+      "properties": {
+        "max_actions": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_cost": {
+          "$ref": "#/$defs/money"
+        },
+        "max_seconds": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_tokens": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_turns": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_turns"
+      ],
+      "type": "object"
+    },
+    "observation_rules": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "participants": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "role": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "channel"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "protocol": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "recovery_rules": {
+      "additionalProperties": false,
+      "properties": {
+        "missing_turn": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "retry": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "timeout": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "schema_id": {
+      "const": "interaction-spec"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "secrets": {
+      "additionalProperties": false,
+      "properties": {
+        "canary_references": {
+          "items": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "classes": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "classes",
+        "canary_references"
+      ],
+      "type": "object"
+    },
+    "simulator": {
+      "additionalProperties": false,
+      "properties": {
+        "dependency_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "image_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "implementation_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "model": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "prompt_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "implementation_id",
+        "prompt_digest",
+        "model",
+        "image_digest",
+        "dependency_digest"
+      ],
+      "type": "object"
+    },
+    "spec_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "stop_conditions": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "trajectory_assertions": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "event_selector": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "missing_evidence_result": {
+            "enum": [
+              "fail",
+              "warn",
+              "unknown"
+            ]
+          },
+          "predicate": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "quantifier": {
+            "enum": [
+              "all",
+              "any",
+              "none",
+              "at_least"
+            ]
+          },
+          "severity": {
+            "enum": [
+              "blocking",
+              "warning"
+            ]
+          },
+          "verifier_id": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verifier_id",
+          "event_selector",
+          "quantifier",
+          "predicate",
+          "severity",
+          "missing_evidence_result"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "spec_id",
+    "protocol",
+    "participants",
+    "simulator",
+    "initial_messages",
+    "limits",
+    "allowed",
+    "stop_conditions",
+    "secrets",
+    "trajectory_assertions",
+    "recovery_rules"
+  ],
+  "title": "One versioned multi-turn interaction specification",
+  "type": "object"
+}
