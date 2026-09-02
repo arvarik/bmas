@@ -3,10 +3,11 @@
 This document is the organized index of every external paper,
 standard, and practice source that bmas design and code build on.
 Each entry gives a short description and names the exact place where
-bmas uses it. The plan-time audit narratives live in
-[docs/plans/RESEARCH_RECORD.md](../plans/RESEARCH_RECORD.md). This
-index stays current: add one entry in the matching category when a
-new source shapes a design or an implementation.
+bmas uses it. The plan-time audit narratives live in the local
+planning workspace at `docs/plans/RESEARCH_RECORD.md`, which stays
+outside version control. This index stays current: add one entry in
+the matching category when a new source shapes a design or an
+implementation.
 
 Most 2026 architecture and evaluation papers remain preprints. Treat
 their reported results as design evidence, not settled guarantees.
