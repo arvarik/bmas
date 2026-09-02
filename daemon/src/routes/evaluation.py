@@ -661,6 +661,263 @@ async def list_environment_drivers_endpoint():
     return {"drivers": environment_drivers.list_drivers()}
 
 
+# ── Judge calibration, failure taxonomy, and the resource ledger ─────
+
+
+class CalibrationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    judge_id: str = Field(pattern=ID_PATTERN)
+    judge_version: str = Field(min_length=1, max_length=100)
+    judge_model: str = Field(min_length=1, max_length=200)
+    prompt_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    scorer_id: str = Field(pattern=ID_PATTERN)
+    scorer_version: str = Field(min_length=1, max_length=100)
+    label_set: dict[str, Any]
+    judge_outputs: dict[str, Any]
+    candidate_models: list[str] = Field(default_factory=list)
+    threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    calibrated_at: str = "1970-01-01T00:00:00Z"
+
+
+class ClassificationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    classes: list[dict[str, Any]]
+    classifier: str = Field(min_length=1, max_length=200)
+    evidence_references: list[str] = Field(default_factory=list)
+    classified_at: str = "1970-01-01T00:00:00Z"
+
+
+class CorrectionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    classes: list[dict[str, Any]]
+    reviewer: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=4000)
+    classified_at: str = "1970-01-01T00:00:00Z"
+
+
+class ResourceEventInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    record: dict[str, Any]
+
+
+class ReconciliationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    currency: str = Field(min_length=3, max_length=3)
+    cost_rules: list[dict[str, Any]] = Field(default_factory=list)
+    unconditional_successes: int | None = Field(default=None, ge=0)
+    late_charge: dict[str, Any] | None = None
+    reconciled_at: str = "1970-01-01T00:00:00Z"
+
+
+async def _governed_call(
+    operation: Any, *error_types: type[Exception],
+) -> Any:
+    try:
+        return await operation
+    except error_types as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except (
+        EvaluationContractError,
+        evaluation_records.EvaluationStorageError,
+        facade.FacadeCommandError,
+        aiosqlite.IntegrityError,
+    ) as error:
+        raise _facade_error(error) from error
+
+
+@router.post("/judges/calibrations", status_code=201)
+async def calibrate_judge_endpoint(
+    request: Request, payload: CalibrationInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import judge_calibration
+
+    try:
+        previous = await judge_calibration.latest_calibration(
+            payload.judge_id, payload.judge_version,
+        )
+        record = judge_calibration.calibrate(
+            judge_id=payload.judge_id,
+            judge_version=payload.judge_version,
+            judge_model=payload.judge_model,
+            prompt_digest=payload.prompt_digest,
+            scorer_id=payload.scorer_id,
+            scorer_version=payload.scorer_version,
+            label_set=judge_calibration.pinned_label_set(
+                str(payload.label_set.get("dataset_id") or "labels"),
+                str(payload.label_set.get("version") or "1"),
+                list(payload.label_set.get("items") or []),
+            ),
+            judge_outputs=payload.judge_outputs,
+            candidate_models=payload.candidate_models,
+            previous=previous,
+            threshold=payload.threshold,
+            now=payload.calibrated_at,
+        )
+    except (judge_calibration.JudgeCalibrationError, KeyError,
+            EvaluationContractError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return await _governed_call(
+        judge_calibration.store_calibration(record),
+        judge_calibration.JudgeCalibrationError,
+    )
+
+
+@router.get("/judges/{judge_id}/versions/{judge_version}/calibration")
+async def read_calibration_endpoint(judge_id: str, judge_version: str):
+    from benchmarks import judge_calibration
+
+    record = await judge_calibration.latest_calibration(
+        judge_id, judge_version,
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="Calibration not found")
+    return record
+
+
+@router.get("/scores/{score_id}/judge-view")
+async def judge_view_endpoint(score_id: str):
+    from benchmarks import judge_calibration
+
+    stored = await evaluation_records.get_record("score-record", score_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Score not found")
+    record = stored["record"]
+    calibration = None
+    version = record.get("calibration_version")
+    if version:
+        calibration = await judge_calibration.latest_calibration(
+            str(record["scorer"]["scorer_id"]), str(version),
+        )
+    return judge_calibration.judge_result_view(record, calibration)
+
+
+@router.get("/failure-taxonomy")
+async def failure_taxonomy_endpoint():
+    from benchmarks import failure_taxonomy
+
+    return failure_taxonomy.taxonomy_document()
+
+
+@router.post("/attempts/{attempt_id}/failure-classifications",
+             status_code=201)
+async def classify_failure_endpoint(
+    request: Request, attempt_id: str, payload: ClassificationInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import failure_taxonomy
+
+    try:
+        record = failure_taxonomy.classification_record(
+            attempt_id=attempt_id,
+            classes=payload.classes,
+            source="automatic",
+            classifier=payload.classifier,
+            evidence_references=payload.evidence_references,
+            now=payload.classified_at,
+        )
+    except (failure_taxonomy.FailureTaxonomyError,
+            EvaluationContractError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return await _governed_call(
+        failure_taxonomy.record_classification(record),
+        failure_taxonomy.FailureTaxonomyError,
+    )
+
+
+@router.post("/failure-classifications/{classification_id}/corrections",
+             status_code=201)
+async def correct_failure_endpoint(
+    request: Request, classification_id: str, payload: CorrectionInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import failure_taxonomy
+
+    return await _governed_call(
+        failure_taxonomy.correct_classification(
+            classification_id,
+            classes=payload.classes,
+            reviewer=payload.reviewer,
+            reason=payload.reason,
+            now=payload.classified_at,
+        ),
+        failure_taxonomy.FailureTaxonomyError,
+    )
+
+
+@router.get("/attempts/{attempt_id}/failure-classifications")
+async def failure_history_endpoint(attempt_id: str):
+    from benchmarks import failure_taxonomy
+
+    return await failure_taxonomy.classification_history(attempt_id)
+
+
+@router.post("/runs/{run_id}/resource-events", status_code=201)
+async def record_resource_event_endpoint(
+    request: Request, run_id: str, payload: ResourceEventInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import resource_ledger
+
+    record = dict(payload.record)
+    if (record.get("references") or {}).get("run_id") != run_id:
+        raise HTTPException(
+            status_code=422,
+            detail="The entry references the run in its path",
+        )
+    try:
+        from benchmarks.evaluation_contracts import validate_record
+
+        validate_record(record)
+    except EvaluationContractError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return await _governed_call(
+        resource_ledger.record_event(record),
+        resource_ledger.ResourceLedgerError,
+    )
+
+
+@router.get("/runs/{run_id}/resource-ledger")
+async def read_resource_ledger_endpoint(run_id: str, currency: str = "USD"):
+    from benchmarks import resource_ledger
+
+    entries = await resource_ledger.list_entries(run_id)
+    try:
+        summary = resource_ledger.summarize(entries, currency=currency)
+    except resource_ledger.ResourceLedgerError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return {"run_id": run_id, "entries": entries, "summary": summary}
+
+
+@router.post("/runs/{run_id}/reconciliations", status_code=201)
+async def reconcile_run_endpoint(
+    request: Request, run_id: str, payload: ReconciliationInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import resource_ledger
+
+    if payload.late_charge is not None:
+        operation = resource_ledger.apply_late_charge(
+            run_id,
+            currency=payload.currency,
+            entry=payload.late_charge,
+            cost_rules=payload.cost_rules,
+            unconditional_successes=payload.unconditional_successes,
+            now=payload.reconciled_at,
+        )
+    else:
+        operation = resource_ledger.reconcile_run(
+            run_id,
+            currency=payload.currency,
+            cost_rules=payload.cost_rules,
+            unconditional_successes=payload.unconditional_successes,
+            now=payload.reconciled_at,
+        )
+    return await _governed_call(
+        operation, resource_ledger.ResourceLedgerError,
+    )
+
+
 # ── Analyses, gates, exports, and the authority view ─────────────────
 
 

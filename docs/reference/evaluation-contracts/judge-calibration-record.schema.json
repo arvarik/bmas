@@ -1,0 +1,313 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/judge-calibration-record",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "abstention": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rate": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "count",
+        "rate"
+      ],
+      "type": "object"
+    },
+    "agreement": {
+      "additionalProperties": false,
+      "properties": {
+        "interval": {
+          "additionalProperties": false,
+          "properties": {
+            "high": {
+              "type": "number"
+            },
+            "low": {
+              "type": "number"
+            },
+            "method": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "low",
+            "high",
+            "method"
+          ],
+          "type": "object"
+        },
+        "kappa": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "kappa_defined": {
+          "type": "boolean"
+        },
+        "raw": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "raw",
+        "kappa",
+        "kappa_defined",
+        "interval"
+      ],
+      "type": "object"
+    },
+    "calibrated_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+      "type": "string"
+    },
+    "calibration_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "dataset": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "item_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "label_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset_id",
+        "version",
+        "label_digest",
+        "item_count"
+      ],
+      "type": "object"
+    },
+    "disagreement": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "item_ids": {
+          "items": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "count",
+        "item_ids"
+      ],
+      "type": "object"
+    },
+    "drift": {
+      "additionalProperties": false,
+      "properties": {
+        "exceeds_policy": {
+          "type": "boolean"
+        },
+        "previous_version": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "raw_agreement_delta": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "previous_version",
+        "raw_agreement_delta"
+      ],
+      "type": "object"
+    },
+    "independence": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_models": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "independent": {
+          "type": "boolean"
+        },
+        "reason": {
+          "maxLength": 20000,
+          "type": "string"
+        }
+      },
+      "required": [
+        "independent",
+        "candidate_models",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "invalid_output": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rate": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "count",
+        "rate"
+      ],
+      "type": "object"
+    },
+    "judge": {
+      "additionalProperties": false,
+      "properties": {
+        "judge_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "model": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "prompt_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "judge_id",
+        "version",
+        "model",
+        "prompt_digest"
+      ],
+      "type": "object"
+    },
+    "schema_id": {
+      "const": "judge-calibration-record"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "scorer": {
+      "additionalProperties": false,
+      "properties": {
+        "scorer_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "scorer_id",
+        "version"
+      ],
+      "type": "object"
+    },
+    "state": {
+      "enum": [
+        "current",
+        "failed"
+      ]
+    },
+    "threshold": {
+      "maximum": 1,
+      "minimum": 0,
+      "type": "number"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "calibration_id",
+    "judge",
+    "scorer",
+    "dataset",
+    "independence",
+    "agreement",
+    "disagreement",
+    "invalid_output",
+    "abstention",
+    "drift",
+    "state",
+    "calibrated_at"
+  ],
+  "title": "One judge calibration against pinned human labels",
+  "type": "object"
+}
