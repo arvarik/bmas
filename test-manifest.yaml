@@ -649,6 +649,39 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.source-adapters
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the public source adapter registry: pinned revisions with
+      immutable bytes and complete provenance, the trust policy
+      enforced before preview or execution, public content denied
+      secrets, network, and unsafe tools by default, operator-only
+      capability increases, inert dataset text, and every documented
+      SSRF and credential case blocked by the egress broker.
+    argv: ["python3", "-m", "pytest", "tests/test_import_worker.py", "tests/test_source_adapters.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.source-adapters-live
+    state: active_optional
+    owner: daemon
+    purpose: >-
+      Run the small scheduled live smoke against the official Hugging
+      Face endpoints through the safe egress broker. The recorded
+      contract tests stay authoritative; this optional group only
+      confirms the live endpoints still match them.
+    argv: ["python3", "-m", "pytest", "tests/test_source_adapters_live.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+    environment:
+      set:
+        BMAS_LIVE_SOURCE_SMOKE: "1"
+
   # ── Agent ────────────────────────────────────────────────────────
   - id: agent.tests
     state: active_required
@@ -901,6 +934,7 @@ profiles:
         - daemon.benchmark-data-contracts
         - daemon.evaluation-contracts
         - daemon.evaluation-authority
+        - daemon.source-adapters
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

@@ -362,7 +362,22 @@ Canonical methods the analysis engine implements:
 - [OWASP SSRF prevention](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html)
   and [RFC 9110, HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110)
   — Outbound request safety and redirect-credential rules. Used for:
-  the URL guard (`daemon/src/core/url_guard.py`).
+  the URL guard (`daemon/src/core/url_guard.py`) and the egress
+  broker (`daemon/src/benchmarks/import_worker.py`).
+- [SSRF protection that resolves DNS: pinning and
+  redirects](https://lyrashieldai.com/blog/ssrf-protection-dns-redirects)
+  and the [SSRF practitioner guide
+  (2026)](https://techearl.com/server-side-request-forgery) — Current
+  practice: resolve once, validate every answer, dial the exact
+  pinned address with the Host header and TLS hostname preserved, and
+  reapply the whole policy on every redirect. Used for: the pinned
+  connections, peer revalidation, and per-hop revalidation in the
+  egress broker.
+- [DNS rebinding against SSRF
+  filters](https://aydinnyunus.github.io/2026/03/14/ssrf-dns-rebinding-vulnerability/)
+  — Shows the validation-to-connection race that a short-TTL record
+  exploits. Used for: the design decision that the transport never
+  resolves again after validation.
 - [WASI](https://wasi.dev/) and
   [Wasmtime deterministic execution](https://docs.wasmtime.dev/examples-deterministic-wasm-execution.html)
   — Capability-scoped, deterministic sandboxing. Used for: the
