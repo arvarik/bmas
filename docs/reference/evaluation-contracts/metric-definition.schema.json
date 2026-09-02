@@ -1,0 +1,250 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/metric-definition",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "calibration": {
+      "additionalProperties": false,
+      "properties": {
+        "calibrated_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+          "type": "string"
+        },
+        "dataset": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "drift_policy": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "expires_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+          "type": "string"
+        },
+        "method": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "result": {
+          "type": "object"
+        },
+        "state": {
+          "enum": [
+            "current",
+            "due",
+            "expired",
+            "failed"
+          ]
+        },
+        "version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "state",
+        "method",
+        "version"
+      ],
+      "type": "object"
+    },
+    "exclusions": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "labels": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_contract": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "source": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "evidence_contract"
+      ],
+      "type": "object"
+    },
+    "lifecycle_state": {
+      "enum": [
+        "draft",
+        "validated",
+        "published",
+        "deprecated",
+        "withdrawn"
+      ]
+    },
+    "measurement": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregation": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "denominator": {
+          "maxLength": 20000,
+          "type": "string"
+        },
+        "direction": {
+          "enum": [
+            "higher_is_better",
+            "lower_is_better",
+            "target"
+          ]
+        },
+        "numerator": {
+          "maxLength": 20000,
+          "type": "string"
+        },
+        "range": {
+          "additionalProperties": false,
+          "properties": {
+            "maximum": {
+              "type": "number"
+            },
+            "minimum": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "minimum",
+            "maximum"
+          ],
+          "type": "object"
+        },
+        "unit": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "numerator",
+        "denominator",
+        "unit",
+        "range",
+        "direction",
+        "aggregation"
+      ],
+      "type": "object"
+    },
+    "metric_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "missingness": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "population": {
+      "additionalProperties": false,
+      "properties": {
+        "inclusion_rule": {
+          "maxLength": 20000,
+          "type": "string"
+        },
+        "target": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "inclusion_rule"
+      ],
+      "type": "object"
+    },
+    "schema_id": {
+      "const": "metric-definition"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "scorer": {
+      "additionalProperties": false,
+      "properties": {
+        "configuration_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "scorer_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "scorer_id",
+        "version",
+        "configuration_digest"
+      ],
+      "type": "object"
+    },
+    "uncertainty_method": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "metric_id",
+    "lifecycle_state",
+    "calibration",
+    "population",
+    "measurement",
+    "labels",
+    "scorer",
+    "missingness",
+    "uncertainty_method"
+  ],
+  "title": "One complete immutable metric definition",
+  "type": "object"
+}

@@ -1,0 +1,338 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/run-plan",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "arm_mappings": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "mapping_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "mapping_id": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+            "type": "string"
+          },
+          "runtime_contract_version": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "runtime_id": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtime_id",
+          "runtime_contract_version",
+          "mapping_id",
+          "mapping_digest"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "arm_order": {
+      "additionalProperties": false,
+      "properties": {
+        "rotation": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "strategy": {
+          "enum": [
+            "rotated_interleave",
+            "randomized"
+          ]
+        }
+      },
+      "required": [
+        "strategy"
+      ],
+      "type": "object"
+    },
+    "case_ids": {
+      "items": {
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "digests": {
+      "additionalProperties": false,
+      "properties": {
+        "contamination_policy": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "dataset": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "interaction": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "metric_definitions": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "runtime": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "schema": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "scorers": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset",
+        "runtime",
+        "scorers",
+        "schema"
+      ],
+      "type": "object"
+    },
+    "dispatch": {
+      "additionalProperties": false,
+      "properties": {
+        "fairness_policy": {
+          "const": "weighted_round_robin"
+        },
+        "starvation_limit": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "fairness_policy",
+        "starvation_limit"
+      ],
+      "type": "object"
+    },
+    "estimand": {
+      "type": "object"
+    },
+    "limits": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_cost": {
+          "$ref": "#/$defs/money"
+        },
+        "max_concurrency": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "run_cost": {
+          "$ref": "#/$defs/money"
+        },
+        "timeout_seconds": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "outcome_mapping_set_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "plan_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "repetitions": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "resource_estimate": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_cost": {
+          "$ref": "#/$defs/money"
+        },
+        "pricing_version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "expected_cost",
+        "pricing_version"
+      ],
+      "type": "object"
+    },
+    "retry_rules": {
+      "additionalProperties": false,
+      "properties": {
+        "infrastructure_exclusions": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "maxLength": 20000,
+          "type": "string"
+        }
+      },
+      "required": [
+        "infrastructure_exclusions"
+      ],
+      "type": "object"
+    },
+    "schema_id": {
+      "const": "run-plan"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "seed_schedule": {
+      "additionalProperties": false,
+      "properties": {
+        "base_seed": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scope": {
+          "const": "item-repetition"
+        }
+      },
+      "required": [
+        "base_seed",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "settlement": {
+      "additionalProperties": false,
+      "properties": {
+        "maximum_wait_seconds": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "policy": {
+          "enum": [
+            "strict",
+            "operator_bounded"
+          ]
+        }
+      },
+      "required": [
+        "policy",
+        "maximum_wait_seconds"
+      ],
+      "type": "object"
+    },
+    "trust_policy": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "trust": {
+          "additionalProperties": false,
+          "properties": {
+            "level": {
+              "enum": [
+                "built_in_verified",
+                "publisher_verified",
+                "owner_uploaded",
+                "public_untrusted",
+                "unknown"
+              ]
+            },
+            "policy_version": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "level",
+            "policy_version"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "trust",
+        "capabilities"
+      ],
+      "type": "object"
+    },
+    "unit_hierarchy": {
+      "items": {
+        "enum": [
+          "family",
+          "case",
+          "repetition"
+        ]
+      },
+      "minItems": 1,
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "plan_id",
+    "digests",
+    "outcome_mapping_set_digest",
+    "arm_mappings",
+    "case_ids",
+    "seed_schedule",
+    "arm_order",
+    "repetitions",
+    "limits",
+    "retry_rules",
+    "unit_hierarchy",
+    "estimand",
+    "trust_policy",
+    "resource_estimate",
+    "settlement",
+    "dispatch"
+  ],
+  "title": "The frozen experimental design of one run",
+  "type": "object"
+}

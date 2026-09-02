@@ -607,6 +607,7 @@ sqlite_tables:
     purpose: "Applied storage migration level."
     writers:
       - database
+      - benchmarks.evaluation_records
     fields:
       - { name: version, owner: daemon.storage-migrations, derived: false }
       - { name: applied_at, owner: daemon.storage-migrations, derived: false }
@@ -1377,6 +1378,266 @@ sqlite_tables:
       - { name: actor, owner: daemon.task-lifecycle, derived: false }
       - { name: rationale, owner: daemon.task-lifecycle, derived: false }
       - { name: phase, owner: daemon.task-lifecycle, derived: false }
+  - table: benchmark_sources
+    authority: daemon.evaluation-service
+    purpose: "Immutable origin records for imported evaluation content."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: asset_ingestion_records
+    authority: daemon.evaluation-service
+    purpose: "Quarantine and acceptance records for uploaded assets."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: state, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+      - { name: state_changed_at, owner: daemon.evaluation-service, derived: false }
+  - table: dataset_drafts
+    authority: daemon.evaluation-service
+    purpose: "Editable dataset drafts with trust inputs; published drafts freeze."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: status, owner: daemon.evaluation-service, derived: false }
+      - { name: source_id, owner: daemon.evaluation-service, derived: false }
+      - { name: parent_version_id, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+      - { name: published_at, owner: daemon.evaluation-service, derived: false }
+  - table: dataset_draft_cases
+    authority: daemon.evaluation-service
+    purpose: "Versioned evaluation cases inside one draft."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: draft_id, owner: daemon.evaluation-service, derived: false }
+      - { name: case_id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: dataset_transform_recipes
+    authority: daemon.evaluation-service
+    purpose: "Ordered transformation recipe steps for one draft."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: draft_id, owner: daemon.evaluation-service, derived: false }
+      - { name: position, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: evaluation_case_assets
+    authority: daemon.evaluation-service
+    purpose: "Immutable links from draft cases to ingested assets."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: draft_id, owner: daemon.evaluation-service, derived: false }
+      - { name: case_id, owner: daemon.evaluation-service, derived: false }
+      - { name: ingestion_id, owner: daemon.evaluation-service, derived: false }
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: scorer_versions
+    authority: daemon.evaluation-service
+    purpose: "Versioned scorer specifications; published versions freeze."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: legacy_scorer_id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: status, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+      - { name: published_at, owner: daemon.evaluation-service, derived: false }
+  - table: run_plans
+    authority: daemon.evaluation-service
+    purpose: "Frozen experimental designs; published plans freeze."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: test_revision_id, owner: daemon.evaluation-service, derived: false }
+      - { name: run_id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: status, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+      - { name: published_at, owner: daemon.evaluation-service, derived: false }
+  - table: attempt_evidence_bundles
+    authority: daemon.evaluation-service
+    purpose: "Immutable evidence bundles per benchmark attempt."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: attempt_id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: analysis_snapshots
+    authority: daemon.evaluation-service
+    purpose: "Immutable frozen report computations per run."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: run_id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: gate_display_exceptions
+    authority: daemon.evaluation-service
+    purpose: "Immutable narrow display exceptions per gate decision."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: gate_evaluation_id, owner: daemon.evaluation-service, derived: false }
+      - { name: author, owner: daemon.evaluation-service, derived: false }
+      - { name: scope, owner: daemon.evaluation-service, derived: false }
+      - { name: expires_at, owner: daemon.evaluation-service, derived: false }
+      - { name: reason, owner: daemon.evaluation-service, derived: false }
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: interaction_specs
+    authority: daemon.evaluation-service
+    purpose: "Versioned interaction specifications; published specs freeze."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: status, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+      - { name: published_at, owner: daemon.evaluation-service, derived: false }
+  - table: contamination_rights_records
+    authority: daemon.evaluation-service
+    purpose: "Immutable contamination and rights records per version."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: dataset_version_id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: metric_definitions
+    authority: daemon.evaluation-service
+    purpose: "Metric definitions with the declared lifecycle states."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: lifecycle_state, owner: daemon.evaluation-service, derived: false }
+      - { name: calibration_state, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+      - { name: published_at, owner: daemon.evaluation-service, derived: false }
+  - table: cost_settlement_versions
+    authority: daemon.evaluation-service
+    purpose: "Immutable cost settlement versions per run."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: run_id, owner: daemon.evaluation-service, derived: false }
+      - { name: settlement_version, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: dispatch_rank_history
+    authority: daemon.evaluation-service
+    purpose: "Immutable dispatch rank history per attempt generation."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: attempt_id, owner: daemon.evaluation-service, derived: false }
+      - { name: eligibility_generation, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: evaluation_readonly_archive
+    authority: daemon.evaluation-service
+    purpose: "Read-only records a downgrade preserved."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: record_kind, owner: daemon.evaluation-service, derived: false }
+      - { name: source_table, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - { name: archived_at, owner: daemon.evaluation-service, derived: false }
 transient_migration_tables:
   - board_entries_v3
 redis_domains:

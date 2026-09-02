@@ -1,0 +1,225 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/scorer-spec",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "configuration_schema": {
+      "type": "object"
+    },
+    "description": {
+      "maxLength": 20000,
+      "type": "string"
+    },
+    "determinism": {
+      "enum": [
+        "deterministic",
+        "seeded",
+        "nondeterministic"
+      ]
+    },
+    "direction": {
+      "enum": [
+        "higher_is_better",
+        "lower_is_better",
+        "target"
+      ]
+    },
+    "execution_digests": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "dependencies": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "locale": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "random_source": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "runtime": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "time_source": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact",
+        "runtime",
+        "dependencies"
+      ],
+      "type": "object"
+    },
+    "implementation_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "input_evidence_contract": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "judge": {
+      "additionalProperties": false,
+      "properties": {
+        "calibration_reference": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "model": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object"
+    },
+    "output_dimensions": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "enum": [
+              "higher_is_better",
+              "lower_is_better",
+              "target"
+            ]
+          },
+          "name": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+            "type": "string"
+          },
+          "scale": {
+            "enum": [
+              "unit_interval",
+              "count",
+              "ratio",
+              "categorical"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "scale",
+          "direction"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "required_evidence": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "sandbox": {
+      "additionalProperties": false,
+      "properties": {
+        "policy_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "policy_version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "policy_version",
+        "policy_digest"
+      ],
+      "type": "object"
+    },
+    "scale": {
+      "enum": [
+        "unit_interval",
+        "count",
+        "ratio",
+        "categorical"
+      ]
+    },
+    "schema_id": {
+      "const": "scorer-spec"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "scorer_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "trust_class": {
+      "enum": [
+        "built_in",
+        "reviewed",
+        "sandboxed_untrusted"
+      ]
+    },
+    "version": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "scorer_id",
+    "version",
+    "implementation_digest",
+    "description",
+    "input_evidence_contract",
+    "configuration_schema",
+    "output_dimensions",
+    "scale",
+    "direction",
+    "determinism",
+    "required_evidence",
+    "trust_class",
+    "sandbox",
+    "execution_digests"
+  ],
+  "title": "One complete scorer declaration",
+  "type": "object"
+}

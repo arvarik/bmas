@@ -1,0 +1,177 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/dataset-version",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "asset_digests": {
+      "items": {
+        "pattern": "^[a-f0-9]{64}$",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "attribution_bundle_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "canonical_schema_version": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "case_manifest_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "contamination_record_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "content_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "effective_restrictions": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "behavior": {
+            "enum": [
+              "hard",
+              "reviewable"
+            ]
+          },
+          "name": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "behavior"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "parent_version_id": {
+      "anyOf": [
+        {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "policy_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "schema_id": {
+      "const": "dataset-version"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "source_lineage": {
+      "items": {
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "split_manifest": {
+      "additionalProperties": {
+        "items": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "type": "object"
+    },
+    "transformation_recipe_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "trust_inputs": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "level": {
+            "enum": [
+              "built_in_verified",
+              "publisher_verified",
+              "owner_uploaded",
+              "public_untrusted",
+              "unknown"
+            ]
+          },
+          "policy_version": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "level",
+          "policy_version"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "validation_report_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "version_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "version_id",
+    "canonical_schema_version",
+    "source_lineage",
+    "trust_inputs",
+    "effective_restrictions",
+    "policy_digest",
+    "case_manifest_digest",
+    "transformation_recipe_digest",
+    "split_manifest",
+    "asset_digests",
+    "content_digest",
+    "validation_report_digest",
+    "contamination_record_digest",
+    "attribution_bundle_digest"
+  ],
+  "title": "The frozen publication record of one dataset version",
+  "type": "object"
+}

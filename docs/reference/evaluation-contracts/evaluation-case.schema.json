@@ -1,0 +1,172 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/evaluation-case",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "case_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "classification": {
+      "additionalProperties": false,
+      "properties": {
+        "human_minutes": {
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "intrinsic_horizon": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "split": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "task_family": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_family",
+        "split"
+      ],
+      "type": "object"
+    },
+    "contamination": {
+      "type": "object"
+    },
+    "environment": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "expected": {
+      "additionalProperties": false,
+      "properties": {
+        "final_state": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "reference_answer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rubric_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "limits": {
+      "type": "object"
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "schema_id": {
+      "const": "evaluation-case"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "task": {
+      "additionalProperties": false,
+      "properties": {
+        "assets": {
+          "items": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "instructions": {
+          "maxLength": 20000,
+          "type": "string"
+        },
+        "messages": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "instructions"
+      ],
+      "type": "object"
+    },
+    "tools": {
+      "items": {
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "case_id",
+    "task",
+    "expected",
+    "classification"
+  ],
+  "title": "One versioned evaluation case envelope",
+  "type": "object"
+}

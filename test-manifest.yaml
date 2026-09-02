@@ -613,6 +613,23 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.evaluation-contracts
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the evaluation contract expansion: every documented record
+      validates against its published JSON Schema with unknown fields
+      rejected and canonical Money enforced, the additive storage
+      keeps one write authority with required foreign keys and
+      immutable publication triggers, a populated legacy database
+      upgrades untouched, and the predestructive downgrade preserves
+      every record in the read-only archive.
+    argv: ["python3", "-m", "pytest", "tests/test_evaluation_contracts.py", "tests/test_evaluation_storage.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
   # ── Agent ────────────────────────────────────────────────────────
   - id: agent.tests
     state: active_required
@@ -863,6 +880,7 @@ profiles:
         - daemon.benchmark-resource-ledger
         - daemon.benchmark-admission-recovery
         - daemon.benchmark-data-contracts
+        - daemon.evaluation-contracts
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

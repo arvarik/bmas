@@ -285,7 +285,48 @@ Canonical methods the analysis engine implements:
   planned Hugging Face import (work package 2.2) with exact revision
   pinning.
 
-## 9. Standards
+## 9. Data contracts and schema evolution
+
+- [Expand and Contract: A Pattern to Apply Breaking Changes to
+  Persistent Data with Zero
+  Downtime](https://www.tim-wellhausen.de/papers/ExpandAndContract/ExpandAndContract.html)
+  — The canonical pattern paper: expand additively first, backfill,
+  and contract only after every consumer moved. Used for: the
+  evaluation storage expansion (migration adds tables beside V1,
+  deletes and renames nothing) and the phased plan in
+  `daemon/src/benchmarks/evaluation_records.py`.
+- [Schema changes and the power of expand-contract
+  (pgroll)](https://xata.io/blog/pgroll-expand-contract) — A current
+  implementation of multi-phase schema evolution where both
+  generations stay readable during the transition. Used for: keeping
+  V1 records readable while the V2 tables exist, and the deletion
+  gates before any contract phase.
+- [Zero-Downtime Database Migrations: Expand/Contract, Triggers, and
+  Shadow Reads](https://thebackenddevelopers.substack.com/p/zero-downtime-database-migrations)
+  — Practice guide: additive changes, trigger-enforced invariants,
+  and verified reads before cutover. Used for: the immutable
+  publication triggers on every published or historical evaluation
+  record.
+- [Data Contracts in Practice: Schema Versioning, Evolution, and
+  Producer-Consumer
+  Agreements](https://www.datasops.com/blog/data-contracts-versioning)
+  — A published schema version is immutable; a change creates the
+  next version. Used for: the published schema files under
+  `docs/reference/evaluation-contracts/` and the contract generation
+  in record metadata.
+- [Schema Registry Data Contracts
+  (Confluent)](https://docs.confluent.io/platform/current/schema-registry/fundamentals/data-contracts.html)
+  — A registry as the single source of truth with validation and
+  declared migration rules. Used for: one definitions module as the
+  schema authority, with generated published files and a freshness
+  check (`scripts/generate-evaluation-contract-schemas.py`).
+- [Data Contracts: Implementation Guide with Schema and CI/CD
+  Examples (2026)](https://datadef.io/guides/en/data-contracts) —
+  Contracts are enforceable only when the pipeline validates them.
+  Used for: contract validation at the write boundary and in the
+  registered manifest group `daemon.evaluation-contracts`.
+
+## 10. Standards
 
 - [RFC 8785, JSON Canonicalization Scheme](https://www.rfc-editor.org/rfc/rfc8785)
   — Deterministic JSON bytes for hashing and signing. Used for: the

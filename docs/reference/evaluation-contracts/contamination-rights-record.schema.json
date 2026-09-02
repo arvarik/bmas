@@ -1,0 +1,282 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/contamination-rights-record",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "attribution": {
+      "additionalProperties": false,
+      "properties": {
+        "links": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "text": {
+          "maxLength": 20000,
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "canaries": {
+      "additionalProperties": false,
+      "properties": {
+        "identifiers": {
+          "items": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rotation_history": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "identifiers"
+      ],
+      "type": "object"
+    },
+    "dataset_version_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "holdout_access": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "accessed_at": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+            "type": "string"
+          },
+          "actor": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor",
+          "accessed_at"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "license_decisions": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "enum": [
+              "approved",
+              "restricted",
+              "unresolved"
+            ]
+          },
+          "note": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "decision"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "matches": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+            "type": "string"
+          },
+          "decision": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "content_hash",
+              "exact_match",
+              "approximate_overlap"
+            ]
+          },
+          "reviewer": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "kind",
+          "decision"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "record_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "schema_id": {
+      "const": "contamination-rights-record"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "screening": {
+      "additionalProperties": false,
+      "properties": {
+        "corpus": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "implementation": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "result": {
+          "enum": [
+            "screened",
+            "suspected",
+            "confirmed",
+            "unknown"
+          ]
+        },
+        "thresholds": {
+          "type": "object"
+        },
+        "version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "implementation",
+        "corpus",
+        "thresholds",
+        "version",
+        "result"
+      ],
+      "type": "object"
+    },
+    "split_rules": {
+      "additionalProperties": false,
+      "properties": {
+        "development": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "hidden_test": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "validation": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "use_decisions": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_use": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "export": {
+          "enum": [
+            "allowed",
+            "denied"
+          ]
+        },
+        "modification": {
+          "enum": [
+            "allowed",
+            "denied"
+          ]
+        },
+        "redistribution": {
+          "enum": [
+            "allowed",
+            "denied"
+          ]
+        }
+      },
+      "required": [
+        "allowed_use",
+        "redistribution",
+        "modification",
+        "export"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "record_id",
+    "dataset_version_id",
+    "split_rules",
+    "screening",
+    "matches",
+    "holdout_access",
+    "canaries",
+    "license_decisions",
+    "attribution",
+    "use_decisions"
+  ],
+  "title": "The contamination and rights record of one version",
+  "type": "object"
+}

@@ -1,0 +1,203 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/benchmark-source",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "adapter": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "type": "object"
+    },
+    "configuration": {
+      "additionalProperties": false,
+      "properties": {
+        "selected_configuration": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "selected_splits": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "content_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "documentation_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "execution_restrictions": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "behavior": {
+            "enum": [
+              "hard",
+              "reviewable"
+            ]
+          },
+          "name": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "behavior"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "fetched_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+      "type": "string"
+    },
+    "imported_by": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "license": {
+      "additionalProperties": false,
+      "properties": {
+        "citation": {
+          "maxLength": 20000,
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "url": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "locator": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "pinned_revision": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "schema_id": {
+      "const": "benchmark-source"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "source_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "source_type": {
+      "enum": [
+        "local_upload",
+        "hugging_face",
+        "https_file",
+        "built_in_catalog",
+        "git_repository",
+        "test_package"
+      ]
+    },
+    "trust": {
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "enum": [
+            "built_in_verified",
+            "publisher_verified",
+            "owner_uploaded",
+            "public_untrusted",
+            "unknown"
+          ]
+        },
+        "policy_version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "level",
+        "policy_version"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "source_id",
+    "source_type",
+    "locator",
+    "pinned_revision",
+    "content_checksum",
+    "license",
+    "adapter",
+    "fetched_at",
+    "imported_by",
+    "configuration",
+    "documentation_digest",
+    "trust",
+    "execution_restrictions"
+  ],
+  "title": "The origin record for imported evaluation content",
+  "type": "object"
+}
