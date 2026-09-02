@@ -1681,6 +1681,58 @@ sqlite_tables:
       - { name: attempt_id, owner: daemon.evaluation-service, derived: false }
       - { name: scorer_version_id, owner: daemon.evaluation-service, derived: false }
       - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: judge_calibration_records
+    authority: daemon.evaluation-service
+    purpose: "Immutable judge calibrations against pinned human labels."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: judge_id, owner: daemon.evaluation-service, derived: false }
+      - { name: judge_version, owner: daemon.evaluation-service, derived: false }
+      - { name: state, owner: daemon.evaluation-service, derived: false }
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: failure_classification_records
+    authority: daemon.evaluation-service
+    purpose: "Immutable multi-label failure classifications with human corrections."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: attempt_id, owner: daemon.evaluation-service, derived: false }
+      - { name: source, owner: daemon.evaluation-service, derived: false }
+      - { name: supersedes, owner: daemon.evaluation-service, derived: false }
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: resource_ledger_entries
+    authority: daemon.evaluation-service
+    purpose: "Immutable resource ledger entries with separate estimates and charges."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: resource_class, owner: daemon.evaluation-service, derived: false }
+      - { name: charge_state, owner: daemon.evaluation-service, derived: false }
+      - { name: run_id, owner: daemon.evaluation-service, derived: false }
+      - { name: reconciliation_id, owner: daemon.evaluation-service, derived: false }
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
 transient_migration_tables:
   - board_entries_v3
 redis_domains:

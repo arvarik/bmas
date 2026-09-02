@@ -147,6 +147,45 @@ _STORABLE_KINDS: dict[str, dict[str, Any]] = {
         "required_links": ("attempt_id", "scorer_version_id"),
         "column_values": {"status": ("status",)},
     },
+    "judge-calibration-record": {
+        "insert_sql": (
+            "INSERT INTO judge_calibration_records (id, schema_version, record, record_checksum, judge_id, judge_version, state) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        ),
+        "table": "judge_calibration_records",
+        "id_field": "calibration_id",
+        "links": (),
+        "column_values": {
+            "judge_id": ("judge", "judge_id"),
+            "judge_version": ("judge", "version"),
+            "state": ("state",),
+        },
+    },
+    "failure-classification-record": {
+        "insert_sql": (
+            "INSERT INTO failure_classification_records (id, schema_version, record, record_checksum, source, attempt_id, supersedes) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        ),
+        "table": "failure_classification_records",
+        "id_field": "classification_id",
+        "links": ("attempt_id", "supersedes"),
+        "required_links": ("attempt_id",),
+        "match_fields": {"attempt_id": "attempt_id",
+                         "supersedes": "supersedes"},
+        "column_values": {"source": ("source",)},
+    },
+    "resource-ledger-entry": {
+        "insert_sql": (
+            "INSERT INTO resource_ledger_entries (id, schema_version, record, record_checksum, resource_class, charge_state, run_id, reconciliation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        ),
+        "table": "resource_ledger_entries",
+        "id_field": "entry_id",
+        "links": ("run_id", "reconciliation_id"),
+        "required_links": ("run_id",),
+        "match_fields": {"reconciliation_id": "reconciliation_id"},
+        "column_values": {
+            "resource_class": ("resource_class",),
+            "charge_state": ("charge_state",),
+        },
+    },
 }
 
 _PUBLISH_SQL = {
@@ -180,6 +219,9 @@ _PUBLISH_SQL = {
 EXPANSION_BASE_VERSION = 21
 
 EXPANSION_TABLES = (
+    ("resource_ledger_entries", "resource-ledger-entry"),
+    ("failure_classification_records", "failure-classification-record"),
+    ("judge_calibration_records", "judge-calibration-record"),
     ("evaluation_case_assets", "case-asset-link"),
     ("dataset_draft_cases", "evaluation-case"),
     ("dataset_transform_recipes", "transform-recipe"),

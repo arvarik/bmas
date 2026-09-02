@@ -708,6 +708,27 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.evaluation-calibration-ledger
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove judge calibration, the failure taxonomy, and the complete
+      resource ledger: every judge version calibrates against pinned
+      human labels with raw agreement, kappa only when defined,
+      disagreement, invalid output, abstention, independence, and
+      drift, review panels stay blind and never turn a tie into a
+      pass, the taxonomy carries the research-record families with
+      multi-label classifications and superseding human corrections,
+      and the ledger keeps estimates, reservations, actual charges,
+      and reconciliations separate in Money, never replaces an
+      estimate, keeps unknown amounts unknown, and supersedes gates
+      when a late charge changes a cost rule.
+    argv: ["python3", "-m", "pytest", "tests/test_judge_calibration.py", "tests/test_failure_taxonomy.py", "tests/test_resource_ledger_reconciliation.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
   - id: daemon.source-adapters-live
     state: active_optional
     owner: daemon
@@ -980,6 +1001,7 @@ profiles:
         - daemon.source-adapters
         - daemon.evaluation-editing
         - daemon.evaluation-scoring
+        - daemon.evaluation-calibration-ledger
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

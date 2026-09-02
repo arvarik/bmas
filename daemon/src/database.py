@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -3110,6 +3110,111 @@ async def _migrate_add_score_record_storage(
     )
 
 
+CALIBRATION_FAILURE_LEDGER_DDL = """
+CREATE TABLE IF NOT EXISTS judge_calibration_records (
+    id              TEXT PRIMARY KEY,
+    schema_version  INTEGER NOT NULL CHECK (schema_version > 0),
+    record          TEXT NOT NULL,
+    record_checksum TEXT NOT NULL,
+    judge_id        TEXT NOT NULL,
+    judge_version   TEXT NOT NULL,
+    state           TEXT NOT NULL CHECK (state IN ('current','failed')),
+    created_at      TEXT NOT NULL
+                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_judge_calibration_records_judge
+ON judge_calibration_records(judge_id, judge_version, created_at);
+
+CREATE TRIGGER IF NOT EXISTS judge_calibration_records_immutable_update
+BEFORE UPDATE ON judge_calibration_records
+BEGIN
+    SELECT RAISE(ABORT, 'judge calibration records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS judge_calibration_records_immutable_delete
+BEFORE DELETE ON judge_calibration_records
+BEGIN
+    SELECT RAISE(ABORT, 'judge calibration records are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS failure_classification_records (
+    id              TEXT PRIMARY KEY,
+    schema_version  INTEGER NOT NULL CHECK (schema_version > 0),
+    record          TEXT NOT NULL,
+    record_checksum TEXT NOT NULL,
+    attempt_id      TEXT NOT NULL REFERENCES benchmark_attempts(id),
+    source          TEXT NOT NULL CHECK (source IN ('automatic','human')),
+    supersedes      TEXT REFERENCES failure_classification_records(id),
+    created_at      TEXT NOT NULL
+                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_failure_classification_records_attempt
+ON failure_classification_records(attempt_id, created_at);
+
+CREATE TRIGGER IF NOT EXISTS failure_classification_records_immutable_update
+BEFORE UPDATE ON failure_classification_records
+BEGIN
+    SELECT RAISE(ABORT, 'failure classification records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS failure_classification_records_immutable_delete
+BEFORE DELETE ON failure_classification_records
+BEGIN
+    SELECT RAISE(ABORT, 'failure classification records are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS resource_ledger_entries (
+    id                TEXT PRIMARY KEY,
+    schema_version    INTEGER NOT NULL CHECK (schema_version > 0),
+    record            TEXT NOT NULL,
+    record_checksum   TEXT NOT NULL,
+    resource_class    TEXT NOT NULL,
+    charge_state      TEXT NOT NULL CHECK (charge_state IN
+                      ('estimated','confirmed','unknown','not_billable')),
+    run_id            TEXT NOT NULL REFERENCES benchmark_runs(id),
+    reconciliation_id TEXT REFERENCES cost_settlement_versions(id),
+    created_at        TEXT NOT NULL
+                      DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_resource_ledger_entries_run
+ON resource_ledger_entries(run_id, created_at);
+
+CREATE TRIGGER IF NOT EXISTS resource_ledger_entries_immutable_update
+BEFORE UPDATE ON resource_ledger_entries
+BEGIN
+    SELECT RAISE(ABORT, 'resource ledger entries are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS resource_ledger_entries_immutable_delete
+BEFORE DELETE ON resource_ledger_entries
+BEGIN
+    SELECT RAISE(ABORT, 'resource ledger entries are immutable');
+END;
+"""
+
+
+async def _migrate_add_calibration_failure_ledger_storage(
+    db: aiosqlite.Connection,
+) -> None:
+    """Expand migration: calibration, failure, and ledger storage.
+
+    Judge calibrations, multi-label failure classifications, and
+    resource ledger entries store as immutable records. A human
+    correction supersedes a classification through a new row, and
+    every ledger entry references its run and, once reconciled, its
+    reconciliation version.
+    """
+    await db.executescript(CALIBRATION_FAILURE_LEDGER_DDL)
+    db.row_factory = aiosqlite.Row
+    await db.commit()
+    logger.info(
+        "Migration 25 applied: calibration, failure, and ledger storage"
+    )
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -3136,6 +3241,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         22: _migrate_add_evaluation_contract_storage,
         23: _migrate_add_evaluation_authority_state,
         24: _migrate_add_score_record_storage,
+        25: _migrate_add_calibration_failure_ledger_storage,
     }
     fn = migrations.get(version)
     if fn is None:

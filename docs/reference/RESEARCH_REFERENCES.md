@@ -92,6 +92,16 @@ their reported results as design evidence, not settled guarantees.
   the effect-grant authority chain and `validate_before_transport`
   checks (`daemon/src/effect_service.py`).
 
+- [Why Do Multi-Agent LLM Systems Fail? (MAST, 2026
+  update)](https://arxiv.org/abs/2503.13657) and [When Errors Become
+  Narratives: A Longitudinal Taxonomy of Silent Failures in a
+  Production LLM Agent Runtime](https://arxiv.org/pdf/2606.14589) —
+  MAST names fourteen failure modes across specification and design,
+  inter-agent misalignment, and task verification with expert kappa
+  of 0.88; the longitudinal study shows silent failures need explicit
+  classes in the trace. Used for: the multi-agent families and their
+  classes in `daemon/src/benchmarks/failure_taxonomy.py`.
+
 ## 3. Long-horizon agent evaluation
 
 - [The Long-Horizon Task Mirage? Diagnosing Where and Why Agentic
@@ -142,6 +152,27 @@ their reported results as design evidence, not settled guarantees.
   accuracy-cost reporting. Used for: cost as a first-class benchmark
   metric, the exact `Money` resource ledger, and cost-sensitive gates
   (`daemon/src/benchmarks/costs.py`).
+
+- [How to Calibrate Your LLM Judge With Human
+  Annotations](https://galileo.ai/blog/calibrate-llm-judge-human-annotations)
+  and [LLM-as-a-Judge in 2026: How It Works, When It
+  Fails](https://futureagi.com/blog/llm-as-a-judge/) — Current
+  practice: validate every judge against a representative
+  human-labeled sample, report Cohen's kappa for two raters and
+  Krippendorff's alpha for more, and treat a kappa below 0.4 as an
+  ambiguous rubric. Used for: the calibration record with raw
+  agreement, kappa only when defined, and the agreement threshold in
+  `daemon/src/benchmarks/judge_calibration.py`.
+- [Reliability without Validity: A Systematic, Large-Scale Evaluation
+  of LLM-as-a-Judge Models Across Agreement, Consistency, and
+  Bias](https://arxiv.org/html/2606.19544v1) and [The Coin Flip
+  Judge? Reliability and Bias in LLM-as-a-Judge
+  Evaluation](https://arxiv.org/pdf/2606.13685) — Large-scale 2026
+  evidence that cross-judge agreement sits near kappa 0.5 on
+  subjective tasks and that self-preference bias appears when a judge
+  shares a candidate's model. Used for: the recorded judge
+  independence check, the drift policy between judge versions, and
+  the visible abstention and invalid-output rates.
 
 ## 5. Statistics for paired benchmark evaluation
 
@@ -284,6 +315,17 @@ Canonical methods the analysis engine implements:
   — Official APIs for revision-pinned dataset access. Used for: the
   planned Hugging Face import (work package 2.2) with exact revision
   pinning.
+
+- [FinOps for AI in 2026: why traditional FinOps breaks on AI
+  workloads](https://leanopstech.com/blog/finops-for-ai-2026/) and
+  [Bringing FinOps to Your LLMs: understanding and tracking OpenAI
+  spend](https://www.finout.io/blog/track-openai-spend) — Every
+  provider bills differently, actual invoices arrive late, and the
+  FOCUS specification normalizes billing into one schema with
+  separate estimate and invoice datasets. Used for: the resource
+  ledger entry shape with separate estimate and actual objects,
+  provider text kept as evidence, pricing versions, and reconciliation
+  versions in `daemon/src/benchmarks/resource_ledger.py`.
 
 ## 9. Data contracts and schema evolution
 

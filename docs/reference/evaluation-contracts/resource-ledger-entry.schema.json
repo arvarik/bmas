@@ -1,0 +1,258 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/resource-ledger-entry",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "actual": {
+      "additionalProperties": false,
+      "properties": {
+        "charged_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+          "type": "string"
+        },
+        "evidence": {
+          "additionalProperties": false,
+          "properties": {
+            "invoice_reference": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            "provider_text": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            "source": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider_text",
+            "source"
+          ],
+          "type": "object"
+        },
+        "value": {
+          "$ref": "#/$defs/money"
+        }
+      },
+      "required": [
+        "value",
+        "evidence",
+        "charged_at"
+      ],
+      "type": "object"
+    },
+    "charge_state": {
+      "enum": [
+        "estimated",
+        "confirmed",
+        "unknown",
+        "not_billable"
+      ]
+    },
+    "entry_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "estimate": {
+      "additionalProperties": false,
+      "properties": {
+        "estimated_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+          "type": "string"
+        },
+        "method": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/money"
+        }
+      },
+      "required": [
+        "value",
+        "method",
+        "estimated_at"
+      ],
+      "type": "object"
+    },
+    "estimate_entry_id": {
+      "anyOf": [
+        {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "not_billable_evidence": {
+      "maxLength": 20000,
+      "type": "string"
+    },
+    "pricing_version": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "provider": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "quantity": {
+      "additionalProperties": false,
+      "properties": {
+        "unit": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "value": {
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "type": "object"
+    },
+    "reconciliation_id": {
+      "anyOf": [
+        {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "recorded_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+      "type": "string"
+    },
+    "references": {
+      "additionalProperties": false,
+      "properties": {
+        "activation_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "attempt_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "import_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "retry_of": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "run_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "scorer_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "region": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "reservation_id": {
+      "anyOf": [
+        {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "resource_class": {
+      "enum": [
+        "runtime",
+        "control_plane",
+        "scorer",
+        "judge",
+        "environment",
+        "external_tool",
+        "import",
+        "transformation",
+        "storage",
+        "human_review"
+      ]
+    },
+    "schema_id": {
+      "const": "resource-ledger-entry"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "service": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "entry_id",
+    "resource_class",
+    "provider",
+    "service",
+    "region",
+    "quantity",
+    "pricing_version",
+    "charge_state",
+    "references",
+    "reservation_id",
+    "reconciliation_id",
+    "estimate_entry_id",
+    "recorded_at"
+  ],
+  "title": "One immutable resource ledger entry",
+  "type": "object"
+}

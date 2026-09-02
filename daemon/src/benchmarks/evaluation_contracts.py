@@ -1336,6 +1336,298 @@ RECORD_SCHEMAS: dict[str, dict[str, Any]] = {
             },
         },
     ),
+    "judge-calibration-record": _record_schema(
+        "judge-calibration-record",
+        title="One judge calibration against pinned human labels",
+        required=[
+            "calibration_id",
+            "judge",
+            "scorer",
+            "dataset",
+            "independence",
+            "agreement",
+            "disagreement",
+            "invalid_output",
+            "abstention",
+            "drift",
+            "state",
+            "calibrated_at",
+        ],
+        properties={
+            "calibration_id": _IDENTIFIER,
+            "judge": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["judge_id", "version", "model",
+                             "prompt_digest"],
+                "properties": {
+                    "judge_id": _IDENTIFIER,
+                    "version": _NAME,
+                    "model": _NAME,
+                    "prompt_digest": _DIGEST,
+                },
+            },
+            "scorer": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["scorer_id", "version"],
+                "properties": {
+                    "scorer_id": _IDENTIFIER,
+                    "version": _NAME,
+                },
+            },
+            "dataset": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["dataset_id", "version", "label_digest",
+                             "item_count"],
+                "properties": {
+                    "dataset_id": _IDENTIFIER,
+                    "version": _NAME,
+                    "label_digest": _DIGEST,
+                    "item_count": _COUNT,
+                },
+            },
+            # The judge is independent only when no candidate shares
+            # its model and no candidate content shaped its prompt.
+            "independence": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["independent", "candidate_models",
+                             "reason"],
+                "properties": {
+                    "independent": {"type": "boolean"},
+                    "candidate_models": _STRING_LIST,
+                    "reason": _TEXT,
+                },
+            },
+            "agreement": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["raw", "kappa", "kappa_defined",
+                             "interval"],
+                "properties": {
+                    "raw": {"type": "number", "minimum": 0,
+                            "maximum": 1},
+                    # Kappa reports only when its calculation defines
+                    # it; otherwise it stays null with the flag false.
+                    "kappa": {"type": ["number", "null"]},
+                    "kappa_defined": {"type": "boolean"},
+                    "interval": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["low", "high", "method"],
+                        "properties": {
+                            "low": {"type": "number"},
+                            "high": {"type": "number"},
+                            "method": _NAME,
+                        },
+                    },
+                },
+            },
+            "disagreement": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["count", "item_ids"],
+                "properties": {
+                    "count": _COUNT,
+                    "item_ids": _IDENTIFIER_LIST,
+                },
+            },
+            "invalid_output": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["count", "rate"],
+                "properties": {
+                    "count": _COUNT,
+                    "rate": {"type": "number", "minimum": 0,
+                             "maximum": 1},
+                },
+            },
+            "abstention": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["count", "rate"],
+                "properties": {
+                    "count": _COUNT,
+                    "rate": {"type": "number", "minimum": 0,
+                             "maximum": 1},
+                },
+            },
+            "drift": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["previous_version", "raw_agreement_delta"],
+                "properties": {
+                    "previous_version": {
+                        "anyOf": [_NAME, {"type": "null"}],
+                    },
+                    "raw_agreement_delta": {"type": ["number", "null"]},
+                    "exceeds_policy": {"type": "boolean"},
+                },
+            },
+            "state": {"enum": ["current", "failed"]},
+            "threshold": {"type": "number", "minimum": 0,
+                          "maximum": 1},
+            "calibrated_at": _TIMESTAMP,
+        },
+    ),
+    "failure-classification-record": _record_schema(
+        "failure-classification-record",
+        title="One multi-label failure classification of one attempt",
+        required=[
+            "classification_id",
+            "attempt_id",
+            "classes",
+            "source",
+            "classifier",
+            "evidence_references",
+            "supersedes",
+            "classified_at",
+        ],
+        properties={
+            "classification_id": _IDENTIFIER,
+            "attempt_id": _IDENTIFIER,
+            # Multiple classes apply at once; each names its family
+            # from the documented taxonomy.
+            "classes": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["family", "name"],
+                    "properties": {
+                        "family": _NAME,
+                        "name": _NAME,
+                        "confidence": {
+                            "type": ["number", "null"],
+                            "minimum": 0,
+                            "maximum": 1,
+                        },
+                    },
+                },
+            },
+            "source": {"enum": ["automatic", "human"]},
+            "classifier": _NAME,
+            "evidence_references": _IDENTIFIER_LIST,
+            # A human correction supersedes the prior record and keeps
+            # it readable; the prior never changes.
+            "supersedes": {"anyOf": [_IDENTIFIER, {"type": "null"}]},
+            "correction": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["reviewer", "reason"],
+                "properties": {
+                    "reviewer": _NAME,
+                    "reason": _TEXT,
+                },
+            },
+            "classified_at": _TIMESTAMP,
+        },
+    ),
+    "resource-ledger-entry": _record_schema(
+        "resource-ledger-entry",
+        title="One immutable resource ledger entry",
+        required=[
+            "entry_id",
+            "resource_class",
+            "provider",
+            "service",
+            "region",
+            "quantity",
+            "pricing_version",
+            "charge_state",
+            "references",
+            "reservation_id",
+            "reconciliation_id",
+            "estimate_entry_id",
+            "recorded_at",
+        ],
+        properties={
+            "entry_id": _IDENTIFIER,
+            "resource_class": {
+                "enum": [
+                    "runtime", "control_plane", "scorer", "judge",
+                    "environment", "external_tool", "import",
+                    "transformation", "storage", "human_review",
+                ],
+            },
+            "provider": _NAME,
+            "service": _NAME,
+            "region": _NAME,
+            "quantity": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["value", "unit"],
+                "properties": {
+                    "value": {"type": "number", "minimum": 0},
+                    "unit": _NAME,
+                },
+            },
+            "pricing_version": _NAME,
+            # An estimate and an actual charge live in separate
+            # objects and never replace each other.
+            "estimate": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["value", "method", "estimated_at"],
+                "properties": {
+                    "value": _MONEY_REF,
+                    "method": _NAME,
+                    "estimated_at": _TIMESTAMP,
+                },
+            },
+            "actual": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["value", "evidence", "charged_at"],
+                "properties": {
+                    "value": _MONEY_REF,
+                    "evidence": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["provider_text", "source"],
+                        "properties": {
+                            # The original provider string stays as
+                            # evidence; the Money value is the
+                            # authority.
+                            "provider_text": _NAME,
+                            "source": _NAME,
+                            "invoice_reference": _NAME,
+                        },
+                    },
+                    "charged_at": _TIMESTAMP,
+                },
+            },
+            "charge_state": {
+                "enum": ["estimated", "confirmed", "unknown",
+                         "not_billable"],
+            },
+            "not_billable_evidence": _TEXT,
+            "references": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["run_id"],
+                "properties": {
+                    "run_id": _IDENTIFIER,
+                    "attempt_id": _IDENTIFIER,
+                    "activation_id": _IDENTIFIER,
+                    "scorer_id": _IDENTIFIER,
+                    "import_id": _IDENTIFIER,
+                    "retry_of": _IDENTIFIER,
+                },
+            },
+            "reservation_id": {"anyOf": [_IDENTIFIER, {"type": "null"}]},
+            "reconciliation_id": {
+                "anyOf": [_IDENTIFIER, {"type": "null"}],
+            },
+            "estimate_entry_id": {
+                "anyOf": [_IDENTIFIER, {"type": "null"}],
+            },
+            "recorded_at": _TIMESTAMP,
+        },
+    ),
 }
 
 

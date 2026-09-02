@@ -445,6 +445,82 @@ def valid_asset_ingestion() -> dict:
     }
 
 
+def valid_judge_calibration() -> dict:
+    return {
+        **_envelope("judge-calibration-record"),
+        "calibration_id": "calibration-alpha",
+        "judge": {"judge_id": "judge-rubric", "version": "3",
+                  "model": "judge-model-a", "prompt_digest": DIGEST},
+        "scorer": {"scorer_id": "scorer-rubric", "version": "2"},
+        "dataset": {"dataset_id": "labels-alpha", "version": "1",
+                    "label_digest": DIGEST, "item_count": 40},
+        "independence": {"independent": True,
+                         "candidate_models": ["model-a", "model-b"],
+                         "reason": "judge model differs from candidates"},
+        "agreement": {"raw": 0.9, "kappa": 0.8, "kappa_defined": True,
+                      "interval": {"low": 0.77, "high": 0.96,
+                                   "method": "wilson"}},
+        "disagreement": {"count": 4, "item_ids": ["item-3"]},
+        "invalid_output": {"count": 1, "rate": 0.025},
+        "abstention": {"count": 2, "rate": 0.05},
+        "drift": {"previous_version": "2", "raw_agreement_delta": -0.02,
+                  "exceeds_policy": False},
+        "state": "current",
+        "threshold": 0.7,
+        "calibrated_at": WHEN,
+    }
+
+
+def valid_failure_classification() -> dict:
+    return {
+        **_envelope("failure-classification-record"),
+        "classification_id": "classification-alpha",
+        "attempt_id": "attempt-alpha",
+        "classes": [
+            {"family": "long_horizon", "name": "planning",
+             "confidence": 0.8},
+            {"family": "multi_agent_misalignment",
+             "name": "step_repetition", "confidence": None},
+        ],
+        "source": "automatic",
+        "classifier": "trajectory-classifier",
+        "evidence_references": ["attempt-alpha"],
+        "supersedes": None,
+        "classified_at": WHEN,
+    }
+
+
+def valid_resource_ledger_entry() -> dict:
+    return {
+        **_envelope("resource-ledger-entry"),
+        "entry_id": "ledger-alpha",
+        "resource_class": "runtime",
+        "provider": "provider-a",
+        "service": "chat-completions",
+        "region": "us-east",
+        "quantity": {"value": 1200, "unit": "tokens"},
+        "pricing_version": "pricing-2026-09",
+        "estimate": {
+            "value": {"currency": "USD", "amount_nanos": 250_000_000},
+            "method": "list_price",
+            "estimated_at": WHEN,
+        },
+        "actual": {
+            "value": {"currency": "USD", "amount_nanos": 262_000_000},
+            "evidence": {"provider_text": "0.262",
+                         "source": "usage_report",
+                         "invoice_reference": "inv-1"},
+            "charged_at": WHEN,
+        },
+        "charge_state": "confirmed",
+        "references": {"run_id": "run-alpha", "attempt_id": "attempt-a"},
+        "reservation_id": "reservation-a",
+        "reconciliation_id": None,
+        "estimate_entry_id": None,
+        "recorded_at": WHEN,
+    }
+
+
 VALID_RECORDS = {
     "benchmark-source": valid_benchmark_source,
     "evaluation-case": valid_evaluation_case,
@@ -460,6 +536,9 @@ VALID_RECORDS = {
     "contamination-rights-record": valid_contamination_record,
     "metric-definition": valid_metric_definition,
     "asset-ingestion-record": valid_asset_ingestion,
+    "judge-calibration-record": valid_judge_calibration,
+    "failure-classification-record": valid_failure_classification,
+    "resource-ledger-entry": valid_resource_ledger_entry,
 }
 
 
