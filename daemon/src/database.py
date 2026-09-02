@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -3058,6 +3058,58 @@ async def _migrate_add_evaluation_authority_state(
     )
 
 
+SCORE_RECORD_DDL = """
+CREATE TABLE IF NOT EXISTS score_records (
+    id                TEXT PRIMARY KEY,
+    schema_version    INTEGER NOT NULL CHECK (schema_version > 0),
+    record            TEXT NOT NULL,
+    record_checksum   TEXT NOT NULL,
+    status            TEXT NOT NULL
+                      CHECK (status IN ('scored','error','excluded')),
+    attempt_id        TEXT NOT NULL
+                      REFERENCES attempt_evidence_bundles(id),
+    scorer_version_id TEXT NOT NULL REFERENCES scorer_versions(id),
+    created_at        TEXT NOT NULL
+                      DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_score_records_attempt
+ON score_records(attempt_id);
+
+CREATE INDEX IF NOT EXISTS idx_score_records_scorer
+ON score_records(scorer_version_id);
+
+CREATE TRIGGER IF NOT EXISTS score_records_immutable_update
+BEFORE UPDATE ON score_records
+BEGIN
+    SELECT RAISE(ABORT, 'score records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS score_records_immutable_delete
+BEFORE DELETE ON score_records
+BEGIN
+    SELECT RAISE(ABORT, 'score records are immutable');
+END;
+"""
+
+
+async def _migrate_add_score_record_storage(
+    db: aiosqlite.Connection,
+) -> None:
+    """Expand migration: canonical score record storage.
+
+    Every stored score references one immutable attempt evidence
+    bundle and one pinned scorer specification version through
+    enforced foreign keys, and the stored record never changes.
+    """
+    await db.executescript(SCORE_RECORD_DDL)
+    db.row_factory = aiosqlite.Row
+    await db.commit()
+    logger.info(
+        "Migration 24 applied: canonical score record storage"
+    )
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -3083,6 +3135,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         21: _migrate_add_benchmark_scorer_and_mapping_contracts,
         22: _migrate_add_evaluation_contract_storage,
         23: _migrate_add_evaluation_authority_state,
+        24: _migrate_add_score_record_storage,
     }
     fn = migrations.get(version)
     if fn is None:

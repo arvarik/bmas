@@ -685,6 +685,29 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.evaluation-scoring
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove evidence capture and isolated scorer execution: every
+      attempt evidence bundle captures complete, redacted, immutable
+      sections with content-addressed artifacts, the deterministic
+      local environment reproduces equal final-state digests, every
+      scorer plugin validates its evidence and returns one clear
+      unavailable result when evidence is missing, the WASI boundary
+      rejects every undeclared import and enforces deterministic
+      fuel, memory, table, and output limits with NaN
+      canonicalization, a wall-time kill never claims byte-identical
+      replay, the native microVM specification rejects publication
+      with any missing pin and denies network, files, credentials,
+      clocks, and randomness, and every stored score traces to
+      immutable evidence and one pinned scorer specification.
+    argv: ["python3", "-m", "pytest", "tests/test_evidence_capture.py", "tests/test_environment_drivers.py", "tests/test_scorer_plugins.py", "tests/test_scorer_sandbox.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
   - id: daemon.source-adapters-live
     state: active_optional
     owner: daemon
@@ -956,6 +979,7 @@ profiles:
         - daemon.evaluation-authority
         - daemon.source-adapters
         - daemon.evaluation-editing
+        - daemon.evaluation-scoring
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

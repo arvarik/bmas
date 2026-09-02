@@ -720,6 +720,31 @@ RECORD_SCHEMAS: dict[str, dict[str, Any]] = {
                 },
             },
             "calibration_version": _NAME,
+            # A sandboxed execution records its boundary policy and
+            # every pinned runtime digest, so the score stays
+            # replayable on a qualified host.
+            "sandbox": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["boundary", "policy_digest",
+                             "runtime_digest"],
+                "properties": {
+                    "boundary": {
+                        "enum": ["trusted_service", "wasi_component",
+                                 "native_microvm"],
+                    },
+                    "policy_digest": _DIGEST,
+                    "runtime_digest": _DIGEST,
+                    "component_digest": _DIGEST,
+                    "wit_digest": _DIGEST,
+                    "compiler_digest": _DIGEST,
+                    "dependency_lock_digest": _DIGEST,
+                    "output_schema_digest": _DIGEST,
+                    "terminal_class": _NAME,
+                    "replay_eligible": {"type": "boolean"},
+                    "fuel_used": _COUNT,
+                },
+            },
             "status": {"enum": ["scored", "error", "excluded"]},
             "error": {"anyOf": [_TEXT, {"type": "null"}]},
         },

@@ -27,9 +27,8 @@ from benchmarks.evaluation_contracts import (
 )
 
 # The storable record kinds. A contract without its own table in this
-# expansion (for example the dataset-version and score-record models)
-# validates through the contracts module and persists in a later
-# phase.
+# expansion (for example the dataset-version model) validates through
+# the contracts module and persists in a later phase.
 _STORABLE_KINDS: dict[str, dict[str, Any]] = {
     "benchmark-source": {
         "insert_sql": (
@@ -136,6 +135,18 @@ _STORABLE_KINDS: dict[str, dict[str, Any]] = {
         "links": (),
         "column_values": {"state": ("state",)},
     },
+    "score-record": {
+        "insert_sql": (
+            "INSERT INTO score_records (id, schema_version, record, record_checksum, status, attempt_id, scorer_version_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        ),
+        "table": "score_records",
+        "id_field": "score_id",
+        # The enforced links make every score trace to one immutable
+        # attempt evidence bundle and one pinned scorer version.
+        "links": ("attempt_id", "scorer_version_id"),
+        "required_links": ("attempt_id", "scorer_version_id"),
+        "column_values": {"status": ("status",)},
+    },
 }
 
 _PUBLISH_SQL = {
@@ -174,6 +185,9 @@ EXPANSION_TABLES = (
     ("dataset_transform_recipes", "transform-recipe"),
     ("dataset_drafts", "dataset-draft"),
     ("benchmark_sources", "benchmark-source"),
+    # Score records reference scorer versions and evidence bundles,
+    # so they archive and remove before those parents.
+    ("score_records", "score-record"),
     ("scorer_versions", "scorer-spec"),
     ("run_plans", "run-plan"),
     ("attempt_evidence_bundles", "attempt-evidence"),

@@ -110,6 +110,64 @@
         "null"
       ]
     },
+    "sandbox": {
+      "additionalProperties": false,
+      "properties": {
+        "boundary": {
+          "enum": [
+            "trusted_service",
+            "wasi_component",
+            "native_microvm"
+          ]
+        },
+        "compiler_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "component_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "dependency_lock_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "fuel_used": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "output_schema_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "policy_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "replay_eligible": {
+          "type": "boolean"
+        },
+        "runtime_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "terminal_class": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "wit_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "boundary",
+        "policy_digest",
+        "runtime_digest"
+      ],
+      "type": "object"
+    },
     "schema_id": {
       "const": "score-record"
     },

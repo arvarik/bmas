@@ -551,6 +551,116 @@ async def read_attempt_evidence_endpoint(attempt_id: str):
     return result
 
 
+# ── Evidence capture, scoring, and environment drivers ───────────────
+
+
+class EvidenceCaptureInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    run_manifest: dict[str, Any]
+    runtime_specification: dict[str, Any]
+    case: dict[str, Any]
+    trace_events: list[dict[str, Any]] | None = None
+    final_output: str | None = None
+    final_state: dict[str, Any] | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    resources: dict[str, Any]
+    seed_evidence: dict[str, Any]
+    ledger_references: dict[str, Any] = Field(default_factory=dict)
+    failure_classification: str | None = None
+    versions: dict[str, str] = Field(default_factory=dict)
+
+
+class ScoreAttemptInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scorer_id: str = Field(pattern=ID_PATTERN)
+    scorer_version: str = Field(min_length=1, max_length=100)
+    plugin_type: str = Field(min_length=1, max_length=100)
+    configuration: dict[str, Any] = Field(default_factory=dict)
+    extra_evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/attempts/{attempt_id}/evidence", status_code=201)
+async def capture_evidence_endpoint(
+    request: Request, attempt_id: str, payload: EvidenceCaptureInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import evidence_capture
+
+    try:
+        return await evidence_capture.capture_attempt_evidence(
+            attempt_id=attempt_id,
+            run_manifest=payload.run_manifest,
+            runtime_specification=payload.runtime_specification,
+            case=payload.case,
+            trace_events=payload.trace_events,
+            final_output=payload.final_output,
+            final_state=payload.final_state,
+            tool_calls=payload.tool_calls,
+            resources=payload.resources,
+            seed_evidence=payload.seed_evidence,
+            ledger_references=payload.ledger_references,
+            failure_classification=payload.failure_classification,
+            versions=payload.versions,
+        )
+    except (
+        evidence_capture.EvidenceCaptureError,
+        EvaluationContractError,
+        evaluation_records.EvaluationStorageError,
+        facade.FacadeCommandError,
+        aiosqlite.IntegrityError,
+    ) as error:
+        raise _facade_error(error) from error
+
+
+@router.post("/attempts/{attempt_id}/scores", status_code=201)
+async def score_attempt_endpoint(
+    request: Request, attempt_id: str, payload: ScoreAttemptInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import score_execution, scorer_plugins
+
+    try:
+        result = await score_execution.score_attempt(
+            attempt_id=attempt_id,
+            scorer_id=payload.scorer_id,
+            scorer_version=payload.scorer_version,
+            plugin_type=payload.plugin_type,
+            configuration=payload.configuration,
+            extra_evidence=payload.extra_evidence,
+        )
+    except (
+        score_execution.ScoreExecutionError,
+        scorer_plugins.ScorerPluginError,
+    ) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except (
+        EvaluationContractError,
+        evaluation_records.EvaluationStorageError,
+        facade.FacadeCommandError,
+        aiosqlite.IntegrityError,
+    ) as error:
+        raise _facade_error(error) from error
+    return {key: result[key] for key in (
+        "score_id", "status", "terminal_class", "replay_eligible",
+        "record_checksum",
+    )}
+
+
+@router.get("/scores/{score_id}")
+async def read_score_endpoint(score_id: str):
+    stored = await evaluation_records.get_record("score-record", score_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Score not found")
+    return stored
+
+
+@router.get("/environment-drivers")
+async def list_environment_drivers_endpoint():
+    from benchmarks import environment_drivers
+
+    return {"drivers": environment_drivers.list_drivers()}
+
+
 # ── Analyses, gates, exports, and the authority view ─────────────────
 
 

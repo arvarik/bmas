@@ -100,6 +100,7 @@ _CURRENT_COMMANDS = {
     "record_contamination_rights",
     "transition_asset_state",
     "record_attempt_evidence",
+    "record_score",
     "record_analysis_snapshot",
     "record_gate_display_exception",
     "record_cost_settlement_version",
@@ -300,6 +301,16 @@ async def _record_attempt_evidence(payload: dict[str, Any]) -> Any:
     )
 
 
+async def _record_score(payload: dict[str, Any]) -> Any:
+    return await evaluation_records.save_record(
+        payload["record"],
+        links={
+            "attempt_id": payload["attempt_id"],
+            "scorer_version_id": payload["scorer_version_id"],
+        },
+    )
+
+
 async def _record_analysis_snapshot(payload: dict[str, Any]) -> Any:
     return await evaluation_records.save_record(
         payload["record"], links={"run_id": payload["run_id"]},
@@ -356,6 +367,7 @@ _HANDLERS = {
     "record_contamination_rights": _record_contamination_rights,
     "transition_asset_state": _transition_asset_state,
     "record_attempt_evidence": _record_attempt_evidence,
+    "record_score": _record_score,
     "record_analysis_snapshot": _record_analysis_snapshot,
     "record_gate_display_exception": _record_gate_display_exception,
     "record_cost_settlement_version": _record_cost_settlement_version,
