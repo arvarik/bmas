@@ -414,8 +414,44 @@ Canonical methods the analysis engine implements:
   resolves again after validation.
 - [WASI](https://wasi.dev/) and
   [Wasmtime deterministic execution](https://docs.wasmtime.dev/examples-deterministic-wasm-execution.html)
-  — Capability-scoped, deterministic sandboxing. Used for: the
-  planned scorer plugin sandbox (work package 3.3).
+  — Capability-scoped, deterministic sandboxing: fuel interruption is
+  fully deterministic, NaN canonicalization gives one canonical NaN,
+  and deterministic execution requires virtualized clocks and
+  filesystems. Used for: the scorer sandbox boundary contract
+  (`daemon/src/benchmarks/scorer_sandbox.py`) with its fuel
+  accounting, NaN canonicalization, disabled relaxed SIMD, and
+  logical-time and deterministic-random interfaces.
+- [Wasmtime security](https://docs.wasmtime.dev/security.html) and
+  [safe module termination with epoch
+  interruption](https://www.systemshardening.com/articles/wasm/wasmtime-epoch-interruption-security/)
+  — Epoch or deadline interruption is a safety mechanism, not a
+  deterministic limit. Used for: the rule that a host deadline is
+  only a last-resort kill, records `sandbox_wall_time_kill`, and
+  never enters a byte-identical replay claim.
+- [The state of microVM isolation in
+  2026](https://emirb.github.io/blog/microvm-2026/) and
+  [sandboxing AI agents in 2026
+  (Northflank)](https://northflank.com/blog/how-to-sandbox-ai-agents)
+  — Current consensus: a normal container is not a sandbox for
+  untrusted code, and microVMs with their own guest kernel are the
+  production-safe isolation layer. Used for: the
+  `NativeScorerSandboxSpec` requirement that approved native scorers
+  run in a pinned microVM and that a container is never the only
+  isolation boundary.
+- [From Agent Traces to Trust: A Survey of Evidence Tracing and
+  Execution Provenance in LLM
+  Agents](https://arxiv.org/abs/2606.04990) — Surveys agent trace
+  artifacts and maps them onto provenance models such as W3C
+  PROV-DM: instructions, tool calls, observations, claims, and final
+  responses all need recorded derivation. Used for: the complete
+  attempt evidence bundle sections in
+  `daemon/src/benchmarks/evidence_capture.py`.
+- [Evidence-Ledger Adjudication for Claim-Evidence
+  Traceability](https://arxiv.org/html/2607.26512v1) — Argues for an
+  explicit ledger connecting every claim to its supporting evidence
+  before any adjudication. Used for: the claims-and-verification
+  section of the evidence bundle and the rule that every stored
+  score references immutable evidence through enforced links.
 
 ## Update rule
 

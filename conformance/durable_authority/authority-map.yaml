@@ -1664,6 +1664,23 @@ sqlite_tables:
       - { name: event_type, owner: daemon.evaluation-service, derived: false }
       - { name: payload, owner: daemon.evaluation-service, derived: false }
       - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: score_records
+    authority: daemon.evaluation-service
+    purpose: "Immutable named-dimension scores traced to evidence and pinned scorers."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: status, owner: daemon.evaluation-service, derived: false }
+      - { name: attempt_id, owner: daemon.evaluation-service, derived: false }
+      - { name: scorer_version_id, owner: daemon.evaluation-service, derived: false }
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
 transient_migration_tables:
   - board_entries_v3
 redis_domains:
