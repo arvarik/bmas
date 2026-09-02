@@ -18,10 +18,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from auth import require_api_key
 from benchmarks import (
+    asset_ingestion,
+    draft_editor,
     evaluation_migration,
     evaluation_records,
     facade,
     repository,
+    rights_screening,
     source_adapters,
 )
 from benchmarks.evaluation_contracts import EvaluationContractError
@@ -66,6 +69,12 @@ def _facade_error(error: Exception) -> HTTPException:
         return HTTPException(status_code=422, detail=str(error))
     if isinstance(error, source_adapters.TrustPolicyError):
         return HTTPException(status_code=403, detail=str(error))
+    if isinstance(error, rights_screening.RightsPolicyError):
+        return HTTPException(status_code=403, detail=str(error))
+    if isinstance(error, asset_ingestion.AssetIngestionError):
+        return HTTPException(status_code=422, detail=str(error))
+    if isinstance(error, draft_editor.DraftEditorError):
+        return HTTPException(status_code=409, detail=str(error))
     if isinstance(error, (
         source_adapters.SourceAdapterError,
         ImportFetchError,
@@ -183,6 +192,214 @@ async def publish_draft_endpoint(
             "description": payload.description,
         },
     )
+
+
+# ── Draft editor: edits, undo, previews, and governed publishing ─────
+
+
+class CaseEditInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case: dict[str, Any]
+
+
+class CaseDuplicateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    new_case_id: str = Field(pattern=ID_PATTERN)
+
+
+class TransformPreviewInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    recipe: dict[str, Any]
+    limit: int = Field(default=10, ge=1, le=100)
+
+
+class GovernedPublishInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dataset_id: str = Field(pattern=ID_PATTERN)
+    version_id: str = Field(pattern=ID_PATTERN)
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=4000)
+    recipe: dict[str, Any] | None = None
+    screening_corpus: dict[str, Any] | None = None
+    operator_decisions: dict[str, str] = Field(default_factory=dict)
+    approved_promotions: list[str] = Field(default_factory=list)
+
+
+class ScreeningInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    cases: list[dict[str, Any]]
+    corpus: dict[str, Any]
+
+
+async def _editor_call(operation: Any) -> Any:
+    try:
+        return await operation
+    except (
+        draft_editor.DraftEditorError,
+        rights_screening.RightsPolicyError,
+        EvaluationContractError,
+        evaluation_records.EvaluationStorageError,
+        facade.FacadeCommandError,
+        aiosqlite.IntegrityError,
+    ) as error:
+        raise _facade_error(error) from error
+
+
+@router.put("/drafts/{draft_id}/editor/cases")
+async def edit_case_endpoint(
+    request: Request, draft_id: str, payload: CaseEditInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    return await _editor_call(
+        draft_editor.edit_case(draft_id, payload.case),
+    )
+
+
+@router.delete("/drafts/{draft_id}/editor/cases/{case_id}")
+async def delete_case_endpoint(
+    request: Request, draft_id: str, case_id: str,
+):
+    require_api_key(request, BMAS_API_KEY)
+    return await _editor_call(
+        draft_editor.delete_case(draft_id, case_id),
+    )
+
+
+@router.post("/drafts/{draft_id}/editor/cases/{case_id}/duplicate")
+async def duplicate_case_endpoint(
+    request: Request, draft_id: str, case_id: str,
+    payload: CaseDuplicateInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    return await _editor_call(
+        draft_editor.duplicate_case(
+            draft_id, case_id, payload.new_case_id,
+        ),
+    )
+
+
+@router.post("/drafts/{draft_id}/editor/undo")
+async def undo_endpoint(request: Request, draft_id: str):
+    require_api_key(request, BMAS_API_KEY)
+    return await _editor_call(draft_editor.undo(draft_id))
+
+
+@router.post("/drafts/{draft_id}/editor/redo")
+async def redo_endpoint(request: Request, draft_id: str):
+    require_api_key(request, BMAS_API_KEY)
+    return await _editor_call(draft_editor.redo(draft_id))
+
+
+@router.get("/drafts/{draft_id}/validation")
+async def validation_endpoint(draft_id: str):
+    issues = await _editor_call(
+        draft_editor.validation_issues(draft_id),
+    )
+    return {"draft_id": draft_id, "issues": issues}
+
+
+@router.post("/drafts/{draft_id}/preview/transform")
+async def transform_preview_endpoint(
+    request: Request, draft_id: str, payload: TransformPreviewInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    try:
+        return await draft_editor.transform_preview(
+            draft_id, payload.recipe, limit=payload.limit,
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=422, detail=str(error),
+        ) from error
+
+
+@router.get("/drafts/{draft_id}/preview/distributions")
+async def distribution_preview_endpoint(draft_id: str):
+    return await _editor_call(
+        draft_editor.distribution_preview(draft_id),
+    )
+
+
+@router.get("/drafts/{draft_id}/difference/{version_id}")
+async def version_difference_endpoint(draft_id: str, version_id: str):
+    return await _editor_call(
+        draft_editor.version_difference(draft_id, version_id),
+    )
+
+
+@router.get("/drafts/{draft_id}/publish-confirmation")
+async def publish_confirmation_endpoint(draft_id: str):
+    return await _editor_call(
+        draft_editor.publish_confirmation(draft_id),
+    )
+
+
+@router.post("/drafts/{draft_id}/publish-governed")
+async def publish_governed_endpoint(
+    request: Request, draft_id: str, payload: GovernedPublishInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    return await _editor_call(
+        draft_editor.publish_governed(
+            draft_id,
+            dataset_id=payload.dataset_id,
+            version_id=payload.version_id,
+            name=payload.name,
+            description=payload.description,
+            recipe=payload.recipe,
+            screening_corpus=payload.screening_corpus,
+            operator_decisions=payload.operator_decisions,
+            approved_promotions=set(payload.approved_promotions),
+        ),
+    )
+
+
+# ── Screening and asset ingestion ────────────────────────────────────
+
+
+class AssetUploadInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    original_name: str = Field(min_length=1, max_length=200)
+    declared_media_type: str = Field(min_length=3, max_length=100)
+    content_base64: str = Field(min_length=1, max_length=70_000_000)
+
+
+@router.post("/screening")
+async def screening_endpoint(request: Request, payload: ScreeningInput):
+    require_api_key(request, BMAS_API_KEY)
+    return rights_screening.screen_cases(payload.cases, payload.corpus)
+
+
+@router.post("/assets", status_code=201)
+async def ingest_asset_endpoint(
+    request: Request, payload: AssetUploadInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    import base64
+    import binascii
+
+    try:
+        content = base64.b64decode(payload.content_base64, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise HTTPException(
+            status_code=422, detail="Invalid base64 content",
+        ) from error
+    outcome = asset_ingestion.ingest_asset(
+        original_name=payload.original_name,
+        declared_media_type=payload.declared_media_type,
+        content=content,
+    )
+    return await _editor_call(asset_ingestion.store_ingestion(outcome))
+
+
+@router.get("/assets/{ingestion_id}")
+async def get_asset_endpoint(ingestion_id: str):
+    stored = await evaluation_records.get_record(
+        "asset-ingestion-record", ingestion_id,
+    )
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return stored
 
 
 # ── Interactions, metrics, and scorers ───────────────────────────────

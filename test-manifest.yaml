@@ -665,6 +665,26 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.evaluation-editing
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove draft editing, portable transforms, lineage, rights, and
+      asset ingestion: the bmas-transform fixtures reproduce byte for
+      byte under every locale and time zone, undo and redo restore
+      exact case content, publication reruns the recipe from the
+      pinned source and blocks on a digest mismatch, derivation
+      preserves or strengthens every source restriction, promotions
+      bind to exact content and child versions, hidden-test content
+      stays outside every preview, unresolved licenses block
+      publication and denied redistribution blocks export, and only
+      an accepted asset ever links into a dataset.
+    argv: ["python3", "-m", "pytest", "tests/test_transform_profile.py", "tests/test_draft_lineage.py", "tests/test_rights_screening.py", "tests/test_asset_ingestion.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
   - id: daemon.source-adapters-live
     state: active_optional
     owner: daemon
@@ -935,6 +955,7 @@ profiles:
         - daemon.evaluation-contracts
         - daemon.evaluation-authority
         - daemon.source-adapters
+        - daemon.evaluation-editing
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

@@ -341,17 +341,51 @@ Canonical methods the analysis engine implements:
   with digest checks, the dual-read fallback evidence, and the
   measured deletion gates before the contract phase.
 
-## 10. Standards
+## 10. Dataset lineage and deterministic transformation
+
+- [Data Lineage Tools in 2026: Where Lineage
+  Lives](https://datahub.com/blog/data-lineage-tools/) — Surveys
+  current lineage practice: lineage lives with the data platform,
+  captures column-level derivation, and stays queryable at decision
+  time. Used for: the lineage carried by every publication (sources,
+  parent version, recipe digest, and content digest) in
+  `daemon/src/benchmarks/draft_editor.py`.
+- [Data Lineage for Machine Learning: Why It
+  Matters](https://datahub.com/blog/data-lineage-for-ml/) — Argues
+  that ML datasets need end-to-end lineage from raw source to
+  training or evaluation artifact, because a model inherits every
+  upstream defect. Used for: the publish confirmation view and the
+  frozen version lineage in the draft editor, and the rule that trust
+  restrictions derive through that lineage.
+- [A Deterministic Forensic Preprocessing Framework for Heterogeneous
+  Network Datasets](https://arxiv.org/abs/2606.11565) — Formalizes
+  preprocessing as deterministic, order-stable transformations whose
+  outputs verify by content hash across independent runs. Used for:
+  the `bmas-transform` profile design (pinned rules, stable ordering,
+  and digest verification on rebuild) in
+  `daemon/src/benchmarks/transform_profile.py`.
+- [Koji: Automating pipelines with mixed-semantics data
+  sources](https://arxiv.org/abs/1901.01908) — Uses causal hashing:
+  a target's hash derives from the hashes of its inputs and its
+  transformation, so equal inputs and recipes give equal outputs.
+  Used for: the dataset digest over ordered case digests and the
+  recipe digest binding in `apply_recipe`, and the publish-time
+  rebuild check that blocks on a digest mismatch.
+
+## 11. Standards
 
 - [RFC 8785, JSON Canonicalization Scheme](https://www.rfc-editor.org/rfc/rfc8785)
   — Deterministic JSON bytes for hashing and signing. Used for: the
   Foundation digest profile and every content checksum
   (`daemon/src/core/digest_profile.py`), including the
-  `bmas/outcome-mapping-set` digest.
+  `bmas/outcome-mapping-set` digest, and the portable
+  `bmas-transform` canonicalization with ECMAScript number rendering
+  (`daemon/src/benchmarks/transform_profile.py`).
 - [RFC 6901, JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901)
   and [RFC 6902, JSON Patch](https://www.rfc-editor.org/rfc/rfc6902)
   — Addressing and mutation of JSON documents. Used for: the
-  PatchBoard mutation contract.
+  PatchBoard mutation contract and the template binding pointers in
+  the `bmas-transform` grammar.
 - [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12)
   — Configuration validation. Used for: runtime configuration
   schemas, scorer configuration schemas, and the generated

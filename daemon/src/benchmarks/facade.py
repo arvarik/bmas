@@ -97,6 +97,7 @@ _CURRENT_COMMANDS = {
     "register_metric_definition",
     "transition_metric_lifecycle",
     "record_asset_ingestion",
+    "record_contamination_rights",
     "transition_asset_state",
     "record_attempt_evidence",
     "record_analysis_snapshot",
@@ -279,6 +280,13 @@ async def _record_asset_ingestion(payload: dict[str, Any]) -> Any:
     return await evaluation_records.save_record(payload["record"])
 
 
+async def _record_contamination_rights(payload: dict[str, Any]) -> Any:
+    return await evaluation_records.save_record(
+        payload["record"],
+        links={"dataset_version_id": payload["dataset_version_id"]},
+    )
+
+
 async def _transition_asset_state(payload: dict[str, Any]) -> Any:
     await evaluation_records.transition_asset_state(
         payload["record_id"], payload["state"],
@@ -345,6 +353,7 @@ _HANDLERS = {
     "register_metric_definition": _register_metric_definition,
     "transition_metric_lifecycle": _transition_metric_lifecycle,
     "record_asset_ingestion": _record_asset_ingestion,
+    "record_contamination_rights": _record_contamination_rights,
     "transition_asset_state": _transition_asset_state,
     "record_attempt_evidence": _record_attempt_evidence,
     "record_analysis_snapshot": _record_analysis_snapshot,
