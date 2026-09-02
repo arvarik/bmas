@@ -585,6 +585,7 @@ RECORD_SCHEMAS: dict[str, dict[str, Any]] = {
             "trace_digest",
             "final_output_digest",
             "resources",
+            "completeness",
             "seed_evidence",
             "versions",
             "ledger_references",
@@ -602,8 +603,12 @@ RECORD_SCHEMAS: dict[str, dict[str, Any]] = {
                     "asset_ids": _IDENTIFIER_LIST,
                 },
             },
-            "trace_digest": _DIGEST,
-            "final_output_digest": _DIGEST,
+            # A legacy adapter marks an unavailable section
+            # explicitly instead of fabricating a digest.
+            "trace_digest": {"anyOf": [_DIGEST, {"type": "null"}]},
+            "final_output_digest": {
+                "anyOf": [_DIGEST, {"type": "null"}],
+            },
             "final_state_digest": _DIGEST,
             "board_state_reference": _IDENTIFIER,
             "tool_calls_digest": _DIGEST,
@@ -614,9 +619,20 @@ RECORD_SCHEMAS: dict[str, dict[str, Any]] = {
                 "additionalProperties": False,
                 "required": ["cost", "tokens", "latency_ms"],
                 "properties": {
-                    "cost": _MONEY_REF,
+                    # An unknown legacy cost stays null; it never
+                    # becomes a zero amount.
+                    "cost": {"anyOf": [_MONEY_REF, {"type": "null"}]},
                     "tokens": _COUNT,
                     "latency_ms": _COUNT,
+                },
+            },
+            "completeness": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["level", "unavailable_sections"],
+                "properties": {
+                    "level": {"enum": ["complete", "partial_legacy"]},
+                    "unavailable_sections": _STRING_LIST,
                 },
             },
             "recovery_events": {"type": "array", "items": _OPEN_MAP},
@@ -1409,11 +1425,46 @@ def validate_record(record: Any) -> dict[str, Any]:
             f"{location or 'the record root'}: {first.message}"
         )
     _walk_money_rules(record, "")
+    if schema_id == "attempt-evidence":
+        _validate_evidence_completeness(record)
     return {
         "schema_id": str(schema_id),
         "schema_version": int(record["schema_version"]),
         "record_checksum": content_checksum(record),
     }
+
+
+def _validate_evidence_completeness(record: dict[str, Any]) -> None:
+    """Require an explicit mark for every unavailable evidence section.
+
+    A complete bundle carries every digest. A partial legacy bundle
+    names each unavailable section instead of fabricating a digest,
+    and it never claims completeness.
+    """
+    unavailable = []
+    if record.get("trace_digest") is None:
+        unavailable.append("trace")
+    if record.get("final_output_digest") is None:
+        unavailable.append("final_output")
+    if (record.get("resources") or {}).get("cost") is None:
+        unavailable.append("resources.cost")
+    completeness = record.get("completeness") or {}
+    declared = set(completeness.get("unavailable_sections") or [])
+    if unavailable and completeness.get("level") != "partial_legacy":
+        raise EvaluationContractError(
+            "An evidence bundle with a missing section declares the "
+            "partial_legacy level"
+        )
+    missing = [name for name in unavailable if name not in declared]
+    if missing:
+        raise EvaluationContractError(
+            "Every unavailable evidence section is marked explicitly; "
+            f"unmarked: {sorted(missing)}"
+        )
+    if completeness.get("level") == "complete" and declared:
+        raise EvaluationContractError(
+            "A complete evidence bundle declares no unavailable section"
+        )
 
 
 def canonical_record_json(record: dict[str, Any]) -> str:

@@ -13,7 +13,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from auth import require_api_key
-from benchmarks import records, repository
+from benchmarks import facade, records, repository
 from benchmarks import scheduler as benchmark_scheduler
 from benchmarks.analysis import build_run_report, report_csv_rows, safe_csv_cell
 from benchmarks.provenance import content_checksum
@@ -292,15 +292,19 @@ async def create_test_endpoint(request: Request, payload: BenchmarkTestInput):
 async def _create_revision(test_id: str, payload: BenchmarkTestInput):
     prepared = await _prepare(payload)
     try:
-        return await repository.create_test_revision(
-            test_id=test_id,
-            revision_id=f"testrev-{uuid.uuid4().hex}",
-            name=payload.name.strip(),
-            description=payload.description.strip(),
-            dataset_version_id=payload.dataset_version_id,
-            configuration=prepared["configuration"],
-            arms=prepared["arms"],
-            scorers=prepared["scorers"],
+        return await facade.execute(
+            "create_test_revision",
+            {
+                "test_id": test_id,
+                "revision_id": f"testrev-{uuid.uuid4().hex}",
+                "name": payload.name.strip(),
+                "description": payload.description.strip(),
+                "dataset_version_id": payload.dataset_version_id,
+                "configuration": prepared["configuration"],
+                "arms": prepared["arms"],
+                "scorers": prepared["scorers"],
+            },
+            generation="legacy",
         )
     except (repository.BenchmarkNotFound, repository.BenchmarkConflict) as error:
         raise _repository_error(error) from error
@@ -336,13 +340,19 @@ async def create_run_endpoint(
     if not ID_PATTERN.fullmatch(test_id) or not ID_PATTERN.fullmatch(revision_id):
         raise HTTPException(status_code=422, detail="The benchmark identifier is invalid")
     try:
-        run, created = await repository.create_run(
-            run_id=f"run-{uuid.uuid4().hex}",
-            revision_id=revision_id,
-            test_id=test_id,
-            idempotency_key=idempotency_key[:200] if idempotency_key else None,
-            operator_note=payload.operator_note,
-            priority=payload.priority,
+        run, created = await facade.execute(
+            "create_run",
+            {
+                "run_id": f"run-{uuid.uuid4().hex}",
+                "revision_id": revision_id,
+                "test_id": test_id,
+                "idempotency_key": (
+                    idempotency_key[:200] if idempotency_key else None
+                ),
+                "operator_note": payload.operator_note,
+                "priority": payload.priority,
+            },
+            generation="legacy",
         )
     except (repository.BenchmarkNotFound, repository.BenchmarkConflict) as error:
         raise _repository_error(error) from error
@@ -384,14 +394,18 @@ async def create_human_review_endpoint(
     if not idempotency_key:
         raise HTTPException(status_code=422, detail="X-Idempotency-Key is required")
     try:
-        review, created = await repository.create_human_review(
-            review_id=f"review-{uuid.uuid4().hex}",
-            attempt_id=attempt_id,
-            reviewer_id=(operator_id or "operator")[:200],
-            score=payload.score,
-            passed=payload.passed,
-            note=payload.note.strip(),
-            idempotency_key=idempotency_key[:200],
+        review, created = await facade.execute(
+            "create_human_review",
+            {
+                "review_id": f"review-{uuid.uuid4().hex}",
+                "attempt_id": attempt_id,
+                "reviewer_id": (operator_id or "operator")[:200],
+                "score": payload.score,
+                "passed": payload.passed,
+                "note": payload.note.strip(),
+                "idempotency_key": idempotency_key[:200],
+            },
+            generation="legacy",
         )
         return {**review, "created": created}
     except (repository.BenchmarkNotFound, repository.BenchmarkConflict) as error:
@@ -473,14 +487,20 @@ async def create_baseline_endpoint(
 ):
     require_api_key(request, BMAS_API_KEY)
     try:
-        return await records.create_baseline(
-            baseline_id=f"baseline-{uuid.uuid4().hex}",
-            run_id=payload.run_id,
-            name=payload.name.strip(),
-            description=payload.description.strip(),
-            rules=[rule.model_dump() for rule in payload.rules],
-            created_by=(operator_id or "operator")[:200],
-            treatment_declaration=list(payload.treatment_declaration),
+        return await facade.execute(
+            "create_baseline",
+            {
+                "baseline_id": f"baseline-{uuid.uuid4().hex}",
+                "run_id": payload.run_id,
+                "name": payload.name.strip(),
+                "description": payload.description.strip(),
+                "rules": [rule.model_dump() for rule in payload.rules],
+                "created_by": (operator_id or "operator")[:200],
+                "treatment_declaration": list(
+                    payload.treatment_declaration,
+                ),
+            },
+            generation="legacy",
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -505,13 +525,17 @@ async def preview_baseline_endpoint(
     """Evaluate one candidate without saving a gate decision."""
     require_api_key(request, BMAS_API_KEY)
     try:
-        report = await records.preview_baseline(
-            baseline_id,
-            payload.candidate_run_id,
-            display_exceptions=[
-                exception.model_dump()
-                for exception in payload.display_exceptions
-            ],
+        report = await facade.execute(
+            "preview_gate",
+            {
+                "baseline_id": baseline_id,
+                "candidate_run_id": payload.candidate_run_id,
+                "display_exceptions": [
+                    exception.model_dump()
+                    for exception in payload.display_exceptions
+                ],
+            },
+            generation="legacy",
         )
         return {"report": report, "saved": False}
     except (repository.BenchmarkNotFound, repository.BenchmarkConflict) as error:
@@ -526,13 +550,17 @@ async def evaluate_baseline_endpoint(
 ):
     require_api_key(request, BMAS_API_KEY)
     try:
-        evaluation, created = await records.evaluate_baseline(
-            baseline_id,
-            payload.candidate_run_id,
-            display_exceptions=[
-                exception.model_dump()
-                for exception in payload.display_exceptions
-            ],
+        evaluation, created = await facade.execute(
+            "evaluate_gate",
+            {
+                "baseline_id": baseline_id,
+                "candidate_run_id": payload.candidate_run_id,
+                "display_exceptions": [
+                    exception.model_dump()
+                    for exception in payload.display_exceptions
+                ],
+            },
+            generation="legacy",
         )
         return {**evaluation, "created": created}
     except (repository.BenchmarkNotFound, repository.BenchmarkConflict) as error:
@@ -568,7 +596,9 @@ async def qualify_runtime_endpoint(
             raise HTTPException(status_code=404, detail="The qualification run does not exist")
     try:
         report = await qualify_runtime(runtime_id, run)
-        qualification, created = await records.save_qualification(report)
+        qualification, created = await facade.execute(
+            "save_qualification", {"report": report}, generation="legacy",
+        )
         return {**qualification, "created": created}
     except UnknownVariantError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -583,9 +613,15 @@ async def update_run_endpoint(
     require_api_key(request, BMAS_API_KEY)
     try:
         if action == "retry":
-            count = await repository.retry_failed_attempts(run_id)
+            count = await facade.execute(
+                "retry_failed_attempts", {"run_id": run_id},
+                generation="legacy",
+            )
             return {"run_id": run_id, "status": "queued", "retried_attempts": count}
-        task_ids = await repository.set_run_state(run_id, action)
+        task_ids = await facade.execute(
+            "set_run_state", {"run_id": run_id, "action": action},
+            generation="legacy",
+        )
         if action == "cancel":
             for task_id in task_ids:
                 await submit.abort_scheduled_task(task_id, "benchmark_cancelled")

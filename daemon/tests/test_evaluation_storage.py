@@ -387,8 +387,11 @@ async def test_the_predestructive_downgrade_preserves_every_record(
     before = await _legacy_snapshot()
 
     outcome = await evaluation_records.downgrade_evaluation_expansion()
-    assert outcome["archived_records"] == 3
-    assert outcome["schema_version"] == db.SCHEMA_VERSION - 1
+    # Three evaluation records plus the single migration-state row.
+    assert outcome["archived_records"] == 4
+    assert outcome["schema_version"] == (
+        evaluation_records.EXPANSION_BASE_VERSION
+    )
 
     # Every legacy-compatible record stays byte-identical, the expansion
     # tables are gone, and the recorded version lowered.
@@ -401,14 +404,16 @@ async def test_the_predestructive_downgrade_preserves_every_record(
             "SELECT MAX(version) AS version FROM schema_version",
         )
         row = await cursor.fetchone()
-        assert int(row["version"]) == db.SCHEMA_VERSION - 1
+        assert int(row["version"]) == (
+            evaluation_records.EXPANSION_BASE_VERSION
+        )
         archived_rows = await connection.execute_fetchall(
             "SELECT * FROM evaluation_readonly_archive ORDER BY id",
         )
     # The expansion-only records survive as explicit read-only records; no
     # expansion-only field silently discards.
     archived = {row["id"]: dict(row) for row in archived_rows}
-    assert len(archived) == 3
+    assert len(archived) == 4
     draft_row = archived[f"dataset_drafts:{draft['id']}"]
     preserved = json.loads(draft_row["record"])
     assert json.loads(preserved["record"])["draft_id"] == "draft-alpha"
@@ -435,5 +440,5 @@ async def test_the_predestructive_downgrade_preserves_every_record(
             "FROM evaluation_readonly_archive",
         )
         row = await cursor.fetchone()
-        assert int(row["rows_present"]) == 3
+        assert int(row["rows_present"]) == 4
     assert await _legacy_snapshot() == before

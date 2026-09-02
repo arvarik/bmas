@@ -475,6 +475,7 @@ sqlite_tables:
     purpose: "Immutable rows of one dataset version."
     writers:
       - database
+      - benchmarks.evaluation_records
     fields:
       - { name: id, owner: daemon.dataset-registry, derived: false }
       - { name: dataset_version_id, owner: daemon.dataset-registry, derived: false }
@@ -492,6 +493,7 @@ sqlite_tables:
     purpose: "Immutable published dataset versions."
     writers:
       - database
+      - benchmarks.evaluation_records
     fields:
       - { name: id, owner: daemon.dataset-registry, derived: false }
       - { name: dataset_id, owner: daemon.dataset-registry, derived: false }
@@ -512,6 +514,7 @@ sqlite_tables:
     purpose: "Benchmark dataset registry heads."
     writers:
       - database
+      - benchmarks.evaluation_records
     fields:
       - { name: id, owner: daemon.dataset-registry, derived: false }
       - { name: name, owner: daemon.dataset-registry, derived: false }
@@ -1638,6 +1641,29 @@ sqlite_tables:
       - { name: source_table, owner: daemon.evaluation-service, derived: false }
       - { name: record, owner: daemon.evaluation-service, derived: false }
       - { name: archived_at, owner: daemon.evaluation-service, derived: false }
+  - table: evaluation_migration_state
+    authority: daemon.evaluation-service
+    purpose: "The durable migration phase, cursors, and deletion gates."
+    writers:
+      - benchmarks.evaluation_migration
+      - database
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: phase, owner: daemon.evaluation-service, derived: false }
+      - { name: legacy_readonly, owner: daemon.evaluation-service, derived: false }
+      - { name: cursors, owner: daemon.evaluation-service, derived: false }
+      - { name: gates, owner: daemon.evaluation-service, derived: false }
+      - { name: updated_at, owner: daemon.evaluation-service, derived: false }
+  - table: evaluation_migration_events
+    authority: daemon.evaluation-service
+    purpose: "Immutable migration evidence: fallbacks, mismatches, exports."
+    writers:
+      - benchmarks.evaluation_migration
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: event_type, owner: daemon.evaluation-service, derived: false }
+      - { name: payload, owner: daemon.evaluation-service, derived: false }
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
 transient_migration_tables:
   - board_entries_v3
 redis_domains:
