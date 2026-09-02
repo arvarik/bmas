@@ -59,6 +59,30 @@
       ],
       "type": "object"
     },
+    "completeness": {
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "enum": [
+            "complete",
+            "partial_legacy"
+          ]
+        },
+        "unavailable_sections": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "level",
+        "unavailable_sections"
+      ],
+      "type": "object"
+    },
     "failure_classification": {
       "anyOf": [
         {
@@ -72,8 +96,15 @@
       ]
     },
     "final_output_digest": {
-      "pattern": "^[a-f0-9]{64}$",
-      "type": "string"
+      "anyOf": [
+        {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "final_state_digest": {
       "pattern": "^[a-f0-9]{64}$",
@@ -110,7 +141,14 @@
       "additionalProperties": false,
       "properties": {
         "cost": {
-          "$ref": "#/$defs/money"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/money"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "latency_ms": {
           "minimum": 0,
@@ -173,8 +211,15 @@
       "type": "string"
     },
     "trace_digest": {
-      "pattern": "^[a-f0-9]{64}$",
-      "type": "string"
+      "anyOf": [
+        {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "verification_decisions_digest": {
       "pattern": "^[a-f0-9]{64}$",
@@ -199,6 +244,7 @@
     "trace_digest",
     "final_output_digest",
     "resources",
+    "completeness",
     "seed_evidence",
     "versions",
     "ledger_references"

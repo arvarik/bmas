@@ -23,6 +23,7 @@ from routes import (
     benchmarks,
     capabilities,
     datasets,
+    evaluation,
     events,
     files,
     health,
@@ -85,6 +86,7 @@ app = FastAPI(title=f"{PROJECT_NAME} — bMAS Daemon", version="1.0.0", lifespan
 # Register route modules
 app.include_router(submit.router)
 app.include_router(benchmarks.router)
+app.include_router(evaluation.router)
 app.include_router(capabilities.router)
 app.include_router(datasets.router)
 app.include_router(tasks.router)

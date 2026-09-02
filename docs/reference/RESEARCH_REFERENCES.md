@@ -325,6 +325,21 @@ Canonical methods the analysis engine implements:
   Contracts are enforceable only when the pipeline validates them.
   Used for: contract validation at the write boundary and in the
   registered manifest group `daemon.evaluation-contracts`.
+- [Expand and Contract: the strangler fig
+  migration](https://oneuptime.com/blog/post/2026-01-24-strangler-fig-migration-pattern/view)
+  and the [pattern
+  overview](https://firstprinciplesengineering.tech/01-fundamentals/01-concepts/02-architecture/05-strangler-fig)
+  — One facade routes both generations while legacy and current
+  implementations co-exist, with a rollback path at every step. Used
+  for: the version-aware evaluation facade
+  (`daemon/src/benchmarks/facade.py`) and the phased migration with
+  declared rollbacks (`daemon/src/benchmarks/evaluation_migration.py`).
+- [Data strangulation playbook: backfill, read cutover, write
+  cutover](https://www.catio.tech/blog/strangler-fig-pattern) — The
+  data half of the migration proceeds per domain with validation
+  before each irreversible step. Used for: the idempotent backfill
+  with digest checks, the dual-read fallback evidence, and the
+  measured deletion gates before the contract phase.
 
 ## 10. Standards
 

@@ -630,6 +630,25 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.evaluation-authority
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove one facade and one evaluation authority: every generation
+      routes through one writer, backfill runs twice with idempotent
+      cursors and digest checks, dual-read selects one complete source
+      and records every fallback, an injected digest mismatch stops
+      cutover with the exact source row, rollback follows the declared
+      rules on both sides of cutover, the destructive contract refuses
+      before every deletion gate, the draft publication creates its
+      legacy projection in one transaction, and the legacy eval
+      package performs no canonical write.
+    argv: ["python3", "-m", "pytest", "tests/test_evaluation_authority.py", "tests/test_evaluation_resources.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
   # ── Agent ────────────────────────────────────────────────────────
   - id: agent.tests
     state: active_required
@@ -881,6 +900,7 @@ profiles:
         - daemon.benchmark-admission-recovery
         - daemon.benchmark-data-contracts
         - daemon.evaluation-contracts
+        - daemon.evaluation-authority
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

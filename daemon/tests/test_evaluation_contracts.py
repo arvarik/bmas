@@ -216,6 +216,8 @@ def valid_attempt_evidence() -> dict:
             "tokens": 1200,
             "latency_ms": 4200,
         },
+        "completeness": {"level": "complete",
+                         "unavailable_sections": []},
         "seed_evidence": {
             "requested_seed": 7001,
             "seed_control": "recorded",
@@ -585,7 +587,7 @@ def test_a_binary_floating_point_amount_rejects():
         validate_record(record)
     record = valid_attempt_evidence()
     record["resources"]["cost"]["amount_nanos"] = True
-    with pytest.raises(EvaluationContractError, match="integer"):
+    with pytest.raises(EvaluationContractError, match="integer|valid"):
         validate_record(record)
 
 

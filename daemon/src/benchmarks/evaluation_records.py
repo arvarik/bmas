@@ -164,6 +164,10 @@ _PUBLISH_SQL = {
 # Every expansion table, in child-before-parent order for the
 # downgrade. The read-only archive is the preservation vehicle and
 # never removes.
+# The schema version before the evaluation expansion began. The
+# downgrade returns to it and preserves every record.
+EXPANSION_BASE_VERSION = 21
+
 EXPANSION_TABLES = (
     ("evaluation_case_assets", "case-asset-link"),
     ("dataset_draft_cases", "evaluation-case"),
@@ -181,6 +185,8 @@ EXPANSION_TABLES = (
     ("cost_settlement_versions", "cost-settlement-version"),
     ("dispatch_rank_history", "dispatch-rank"),
     ("asset_ingestion_records", "asset-ingestion-record"),
+    ("evaluation_migration_events", "migration-event"),
+    ("evaluation_migration_state", "migration-state"),
 )
 
 
@@ -351,15 +357,22 @@ async def transition_metric_lifecycle(
 
 
 async def save_gate_display_exception(
-    gate_evaluation_id: str, exception: dict[str, Any],
+    gate_evaluation_id: str,
+    exception: dict[str, Any],
+    *,
+    exception_id: str | None = None,
 ) -> str:
-    """Save one immutable gate display exception row."""
+    """Save one immutable gate display exception row.
+
+    A caller with a deterministic identity, such as the idempotent
+    backfill, passes its own identifier.
+    """
     for field in ("author", "scope", "expires_at", "reason"):
         if not exception.get(field):
             raise EvaluationContractError(
                 f"A display exception requires {field}"
             )
-    exception_id = f"display-exception-{uuid.uuid4().hex}"
+    exception_id = exception_id or f"display-exception-{uuid.uuid4().hex}"
     async with db._connect() as connection:  # noqa: SLF001
         await connection.execute(
             "INSERT INTO gate_display_exceptions "
@@ -501,7 +514,7 @@ async def downgrade_evaluation_expansion() -> dict[str, Any]:
     negotiation.evaluate_downgrade(
         negotiation.DowngradePlan(
             from_schema_version=db.SCHEMA_VERSION,
-            to_schema_version=db.SCHEMA_VERSION - 1,
+            to_schema_version=EXPANSION_BASE_VERSION,
             new_writes_present=new_writes_present,
             # The archive preserves every expansion-only record as an
             # explicit read-only record.
@@ -536,8 +549,8 @@ async def downgrade_evaluation_expansion() -> dict[str, Any]:
                     archived += 1
                 await connection.execute(f"DROP TABLE {table}")
             await connection.execute(
-                "DELETE FROM schema_version WHERE version = ?",
-                (db.SCHEMA_VERSION,),
+                "DELETE FROM schema_version WHERE version > ?",
+                (EXPANSION_BASE_VERSION,),
             )
             await connection.commit()
         except BaseException:
@@ -546,5 +559,142 @@ async def downgrade_evaluation_expansion() -> dict[str, Any]:
     return {
         "archived_records": archived,
         "removed_tables": [table for table, _kind in EXPANSION_TABLES],
-        "schema_version": db.SCHEMA_VERSION - 1,
+        "schema_version": EXPANSION_BASE_VERSION,
+    }
+
+
+async def publish_draft_with_projection(
+    draft_id: str,
+    *,
+    dataset_id: str,
+    version_id: str,
+    name: str,
+    description: str = "",
+) -> dict[str, Any]:
+    """Publish one draft and its legacy projection in one transaction.
+
+    One unit of work freezes the draft, creates the compatible legacy
+    dataset version with every projected case, and records the content
+    digest. The projection is a compatibility view of the one
+    canonical publication, never a second authority, and a crash
+    leaves either both records or neither.
+    """
+    from benchmarks.legacy_adapters import legacy_item_from_case
+    from benchmarks.provenance import content_checksum
+
+    async with db._connect() as connection:  # noqa: SLF001
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            draft_cursor = await connection.execute(
+                "SELECT * FROM dataset_drafts WHERE id = ?", (draft_id,),
+            )
+            draft_row = await draft_cursor.fetchone()
+            if draft_row is None:
+                raise EvaluationStorageError(
+                    f"The draft {draft_id} does not exist"
+                )
+            if str(draft_row["status"]) != "editing":
+                raise EvaluationStorageError(
+                    f"The draft {draft_id} is not an editable draft"
+                )
+            case_rows = await connection.execute_fetchall(
+                "SELECT * FROM dataset_draft_cases WHERE draft_id = ? "
+                "ORDER BY case_id",
+                (draft_id,),
+            )
+            if not case_rows:
+                raise EvaluationStorageError(
+                    f"The draft {draft_id} publishes at least one case"
+                )
+            cases = [json.loads(row["record"]) for row in case_rows]
+            items = []
+            for index, case in enumerate(cases):
+                projected = legacy_item_from_case(case)
+                items.append({
+                    **projected,
+                    "id": f"{version_id}:{projected['item_key']}",
+                    "sort_order": index,
+                })
+            content_digest = content_checksum(cases)
+            await connection.execute(
+                "INSERT INTO datasets (id, name, description, metadata) "
+                "VALUES (?, ?, ?, '{}') "
+                "ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+                (dataset_id, name, description),
+            )
+            version_cursor = await connection.execute(
+                "SELECT COALESCE(MAX(version), 0) + 1 AS next_version "
+                "FROM dataset_versions WHERE dataset_id = ?",
+                (dataset_id,),
+            )
+            version_row = await version_cursor.fetchone()
+            assert version_row is not None  # An aggregate returns one row.
+            await connection.execute(
+                "INSERT INTO dataset_versions "
+                "(id, dataset_id, version, status, checksum, item_count, "
+                "schema_json, source_filename, source_mime, "
+                "source_checksum, source_path, metadata) "
+                "VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    version_id,
+                    dataset_id,
+                    int(version_row["next_version"]),
+                    content_digest,
+                    len(items),
+                    json.dumps({"version": "2", "source_format": "draft"},
+                               sort_keys=True),
+                    f"{draft_id}.draft",
+                    "application/x-bmas-draft",
+                    str(draft_row["record_checksum"]),
+                    f"draft://{draft_id}",
+                    json.dumps({"published_from_draft": draft_id},
+                               sort_keys=True),
+                ),
+            )
+            await connection.executemany(
+                "INSERT INTO dataset_items "
+                "(id, dataset_version_id, item_key, input, "
+                "expected_output, subject, split, tags, metadata, "
+                "sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        item["id"],
+                        version_id,
+                        item["item_key"],
+                        item["input"],
+                        item["expected_output"],
+                        item["subject"],
+                        item["split"],
+                        json.dumps(item["tags"], sort_keys=True),
+                        json.dumps(item["metadata"], sort_keys=True),
+                        item["sort_order"],
+                    )
+                    for item in items
+                ],
+            )
+            # Publication happens after the items land, while the
+            # version row is still a draft, so the immutability
+            # trigger sees one legal draft-to-published change.
+            await connection.execute(
+                "UPDATE dataset_versions SET status = 'published', "
+                "published_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                "WHERE id = ? AND status = 'draft'",
+                (version_id,),
+            )
+            await connection.execute(
+                "UPDATE dataset_drafts SET status = 'published', "
+                "published_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                "WHERE id = ? AND status = 'editing'",
+                (draft_id,),
+            )
+            await connection.commit()
+        except BaseException:
+            await connection.rollback()
+            raise
+    return {
+        "draft_id": draft_id,
+        "dataset_id": dataset_id,
+        "version_id": version_id,
+        "content_digest": content_digest,
+        "item_count": len(items),
     }

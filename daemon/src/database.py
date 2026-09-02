@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -2997,6 +2997,67 @@ async def _migrate_add_evaluation_contract_storage(
     )
 
 
+EVALUATION_AUTHORITY_DDL = """
+CREATE TABLE IF NOT EXISTS evaluation_migration_state (
+    id              TEXT PRIMARY KEY CHECK (id = 'authority'),
+    phase           TEXT NOT NULL DEFAULT 'expand'
+                    CHECK (phase IN
+                    ('expand','backfill','dual_read','cutover','contract')),
+    legacy_readonly INTEGER NOT NULL DEFAULT 0
+                    CHECK (legacy_readonly IN (0,1)),
+    cursors         TEXT NOT NULL DEFAULT '{}',
+    gates           TEXT NOT NULL DEFAULT '{}',
+    updated_at      TEXT NOT NULL
+                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+INSERT OR IGNORE INTO evaluation_migration_state (id) VALUES ('authority');
+
+CREATE TABLE IF NOT EXISTS evaluation_migration_events (
+    id         TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL CHECK (event_type IN
+               ('phase_change','fallback','digest_mismatch',
+                'backfill_run','export','direct_legacy_call')),
+    payload    TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+               DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_evaluation_migration_events_type
+ON evaluation_migration_events(event_type, created_at);
+
+CREATE TRIGGER IF NOT EXISTS evaluation_migration_events_immutable_update
+BEFORE UPDATE ON evaluation_migration_events
+BEGIN
+    SELECT RAISE(ABORT, 'migration events are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS evaluation_migration_events_immutable_delete
+BEFORE DELETE ON evaluation_migration_events
+BEGIN
+    SELECT RAISE(ABORT, 'migration events are immutable');
+END;
+"""
+
+
+async def _migrate_add_evaluation_authority_state(
+    db: aiosqlite.Connection,
+) -> None:
+    """Expand migration: durable evaluation migration authority state.
+
+    One durable row tracks the migration phase, the idempotent
+    backfill cursors, and the deletion gates. One immutable event
+    table records every phase change, dual-read fallback, backfill
+    digest mismatch, export, and direct legacy call.
+    """
+    await db.executescript(EVALUATION_AUTHORITY_DDL)
+    db.row_factory = aiosqlite.Row
+    await db.commit()
+    logger.info(
+        "Migration 23 applied: evaluation migration authority state"
+    )
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -3021,6 +3082,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         20: _migrate_add_benchmark_schedule_and_cost,
         21: _migrate_add_benchmark_scorer_and_mapping_contracts,
         22: _migrate_add_evaluation_contract_storage,
+        23: _migrate_add_evaluation_authority_state,
     }
     fn = migrations.get(version)
     if fn is None:
