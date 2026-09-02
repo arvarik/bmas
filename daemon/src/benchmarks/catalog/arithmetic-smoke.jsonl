@@ -1,0 +1,3 @@
+{"id": "arithmetic-add", "input": "What is 20 plus 22?", "expected_output": "42", "subject": "arithmetic", "split": "test", "tags": ["smoke"]}
+{"id": "arithmetic-multiply", "input": "What is 6 times 7?", "expected_output": "42", "subject": "arithmetic", "split": "test", "tags": ["smoke"]}
+{"id": "arithmetic-subtract", "input": "What is 50 minus 8?", "expected_output": "42", "subject": "arithmetic", "split": "test", "tags": ["smoke"]}

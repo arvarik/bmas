@@ -13,13 +13,21 @@ from __future__ import annotations
 from typing import Any
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from auth import require_api_key
-from benchmarks import evaluation_migration, evaluation_records, facade, repository
+from benchmarks import (
+    evaluation_migration,
+    evaluation_records,
+    facade,
+    repository,
+    source_adapters,
+)
 from benchmarks.evaluation_contracts import EvaluationContractError
+from benchmarks.import_worker import ImportFetchError
 from config import BMAS_API_KEY
+from core.url_guard import UrlValidationError
 
 router = APIRouter(prefix="/api/evaluation", tags=["evaluation"])
 
@@ -55,6 +63,14 @@ class MetricTransitionInput(BaseModel):
 
 def _facade_error(error: Exception) -> HTTPException:
     if isinstance(error, EvaluationContractError):
+        return HTTPException(status_code=422, detail=str(error))
+    if isinstance(error, source_adapters.TrustPolicyError):
+        return HTTPException(status_code=403, detail=str(error))
+    if isinstance(error, (
+        source_adapters.SourceAdapterError,
+        ImportFetchError,
+        UrlValidationError,
+    )):
         return HTTPException(status_code=422, detail=str(error))
     if isinstance(error, aiosqlite.IntegrityError):
         # A trigger or constraint rejection is a state conflict, for
@@ -391,3 +407,155 @@ async def export_run_endpoint(request: Request, run_id: str):
 async def authority_endpoint():
     snapshot = await evaluation_migration.authority_snapshot()
     return {**snapshot, "facade": facade.metrics_snapshot()}
+
+
+# ── Source adapters ──────────────────────────────────────────────────
+
+
+class AdapterRequest(BaseModel):
+    """One adapter operation request with its selection controls."""
+
+    model_config = ConfigDict(extra="forbid")
+    request: dict[str, Any]
+    configuration: str | None = None
+    split: str | None = None
+    limit: int = Field(default=10, ge=1, le=100)
+    row_limit: int | None = Field(default=None, ge=1, le=100_000)
+
+
+class CapabilityPromotionInput(BaseModel):
+    """One operator decision that lifts one reviewable restriction."""
+
+    model_config = ConfigDict(extra="forbid")
+    trust_level: str
+    restriction_name: str
+    evidence: str = Field(min_length=1, max_length=4000)
+
+
+def _resolution_view(resolution: Any) -> dict[str, Any]:
+    """Return one resolution without its transport payloads."""
+    return {
+        "adapter_id": resolution.adapter_id,
+        "adapter_version": resolution.adapter_version,
+        "source_type": resolution.source_type,
+        "locator": resolution.locator,
+        "pinned_revision": resolution.pinned_revision,
+        "trust_level": resolution.trust_level,
+        "trust_policy_version": resolution.trust_policy_version,
+    }
+
+
+async def _adapter_call(operation: Any) -> Any:
+    try:
+        return await operation
+    except (
+        source_adapters.SourceAdapterError,
+        ImportFetchError,
+        UrlValidationError,
+        EvaluationContractError,
+        evaluation_records.EvaluationStorageError,
+    ) as error:
+        raise _facade_error(error) from error
+
+
+@router.get("/adapters")
+async def list_adapters_endpoint():
+    return {"adapters": source_adapters.list_adapters()}
+
+
+@router.post("/adapters/{adapter_id}/resolve")
+async def resolve_source_endpoint(
+    request: Request, adapter_id: str, payload: AdapterRequest,
+):
+    require_api_key(request, BMAS_API_KEY)
+    try:
+        adapter = source_adapters.get_adapter(adapter_id)
+    except source_adapters.SourceAdapterError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    resolution = await _adapter_call(adapter.resolve(payload.request))
+    return _resolution_view(resolution)
+
+
+@router.post("/adapters/{adapter_id}/preview")
+async def preview_source_endpoint(
+    request: Request, adapter_id: str, payload: AdapterRequest,
+):
+    require_api_key(request, BMAS_API_KEY)
+    try:
+        adapter = source_adapters.get_adapter(adapter_id)
+    except source_adapters.SourceAdapterError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    resolution = await _adapter_call(adapter.resolve(payload.request))
+    options = await _adapter_call(adapter.list_options(resolution))
+    preview = await _adapter_call(
+        adapter.preview(
+            resolution,
+            configuration=payload.configuration,
+            split=payload.split,
+            limit=payload.limit,
+        ),
+    )
+    return {
+        "resolution": _resolution_view(resolution),
+        "options": options,
+        "preview": preview,
+    }
+
+
+@router.post("/adapters/{adapter_id}/import", status_code=201)
+async def import_source_endpoint(
+    request: Request,
+    adapter_id: str,
+    payload: AdapterRequest,
+    operator_id: str | None = Header(default=None, alias="X-Operator-Id"),
+):
+    require_api_key(request, BMAS_API_KEY)
+    return await _adapter_call(
+        source_adapters.import_through_registry(
+            adapter_id,
+            payload.request,
+            configuration=payload.configuration,
+            split=payload.split,
+            row_limit=payload.row_limit,
+            imported_by=(operator_id or "operator")[:200],
+        ),
+    )
+
+
+@router.post("/capability-promotions")
+async def promote_capability_endpoint(
+    request: Request,
+    payload: CapabilityPromotionInput,
+    operator_id: str | None = Header(default=None, alias="X-Operator-Id"),
+):
+    """Lift one reviewable restriction through one operator action.
+
+    The authenticated operator identity is the authority. Dataset
+    text or an agent request never reaches this decision, a hard
+    restriction never lifts, and the promoted profile applies only to
+    a new version.
+    """
+    require_api_key(request, BMAS_API_KEY)
+    try:
+        profile = source_adapters.capability_profile_for(
+            payload.trust_level,
+        )
+        promoted = source_adapters.authorize_capability_increase(
+            profile,
+            payload.restriction_name,
+            operator_id=(operator_id or "").strip(),
+            evidence=payload.evidence,
+        )
+    except source_adapters.TrustPolicyError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    from benchmarks.provenance import content_checksum
+
+    decision = {
+        "trust_level": payload.trust_level,
+        "restriction_name": payload.restriction_name,
+        "actor": operator_id,
+        "evidence": payload.evidence,
+        "prior_profile": profile,
+        "promoted_profile": promoted,
+    }
+    return {**decision, "decision_digest": content_checksum(decision)}
