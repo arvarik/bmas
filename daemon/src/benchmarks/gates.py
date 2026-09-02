@@ -162,6 +162,8 @@ def invariant_digest(run: dict[str, Any]) -> str:
     model, prompt, and configuration treatments stay outside it.
     """
     configuration = run.get("test_configuration") or {}
+    plan = run.get("execution_plan") or {}
+    mapping_set = plan.get("outcome_mapping_set") or {}
     scorers = sorted(
         (
             {
@@ -186,7 +188,10 @@ def invariant_digest(run: dict[str, Any]) -> str:
         "primary_metric": primary_scorer_id(run),
         "environments": configuration.get("environments") or [],
         "tools": configuration.get("tools") or [],
-        "outcome_mapping_set": configuration.get("outcome_mappings") or {},
+        # Only the complete mapping-set digest enters the invariant.
+        # The member list and the mapping contents stay outside, so
+        # equal sets compare equal whatever member order produced them.
+        "outcome_mapping_set": str(mapping_set.get("digest") or ""),
         "statistics": {
             "practical_difference": configuration.get(
                 "practical_difference", 0.01,

@@ -596,6 +596,23 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.benchmark-data-contracts
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the version, scorer, and outcome-mapping data contracts:
+      every scorer declares its direction, scale, and schema, an
+      invalid configuration blocks publication, every stored score
+      carries its configuration checksum, dataset distributions
+      describe the admitted immutable revision, and every run plan
+      pins one sorted outcome-mapping set that rejects an unknown
+      reason or a stale mapping before analysis.
+    argv: ["python3", "-m", "pytest", "tests/test_benchmark_data_contracts.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
   # ── Agent ────────────────────────────────────────────────────────
   - id: agent.tests
     state: active_required
@@ -845,6 +862,7 @@ profiles:
         - daemon.benchmark-schedule-fairness
         - daemon.benchmark-resource-ledger
         - daemon.benchmark-admission-recovery
+        - daemon.benchmark-data-contracts
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

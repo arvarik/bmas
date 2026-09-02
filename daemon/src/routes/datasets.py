@@ -228,13 +228,22 @@ async def import_dataset_endpoint(
 
 
 @router.get("/{dataset_id}")
-async def get_dataset_endpoint(dataset_id: str):
-    """Return one dataset and all immutable versions."""
+async def get_dataset_endpoint(dataset_id: str, version_id: str | None = None):
+    """Return one dataset with the selected version's distributions.
+
+    Every version carries its own subject and split distribution. The
+    optional selection returns the admitted immutable revision's
+    distribution at the top level instead of the latest upload's.
+    """
     if not DATASET_ID_PATTERN.fullmatch(dataset_id):
         raise HTTPException(status_code=400, detail="The dataset identifier is invalid")
-    dataset = await db.get_dataset(dataset_id)
+    dataset = await db.get_dataset(
+        dataset_id, distribution_version_id=version_id,
+    )
     if dataset is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
+    if version_id is not None and dataset["distribution_version_id"] != version_id:
+        raise HTTPException(status_code=404, detail="Dataset version not found")
     return {
         "dataset": dataset,
         "max_upload_bytes": MAX_DATASET_UPLOAD_BYTES,

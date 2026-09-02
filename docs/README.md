@@ -36,6 +36,7 @@ This documentation describes the current Classic, Patchboard, Stigmergic workspa
 | Reference | Purpose |
 |:---|:---|
 | [Generated configuration schema](reference/config.schema.json) | Validate `bmas.yaml` in an editor or a tool. |
+| [Research References](reference/RESEARCH_REFERENCES.md) | Find every paper and standard behind the design, with its exact use. |
 | [Hermes API](HERMES_API.md) | Integrate an advanced Hermes node. |
 
 The generated schema follows `daemon/src/config_schema.py`. Run `make docs-check` after each documentation or configuration change.

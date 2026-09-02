@@ -51,30 +51,74 @@ def _letter_answer(text: str) -> str | None:
     return None
 
 
+def _within_tolerance(extracted: str, expected: str, tolerance: str) -> bool:
+    """Compare two numbers exactly or inside one decimal tolerance."""
+    try:
+        left = Decimal(extracted.strip().replace(",", ""))
+        right = Decimal(expected.strip().replace(",", ""))
+        bound = Decimal(tolerance)
+    except InvalidOperation:
+        return False
+    return abs(left - right) <= bound
+
+
 def score_output(
     *,
     scorer: dict[str, Any],
     expected_output: str,
     actual_output: str,
 ) -> dict[str, Any]:
-    """Return one score result without changing source records."""
+    """Score one output under the complete effective configuration.
+
+    The effective configuration is the validated per-revision scorer
+    configuration. It changes scorer behavior, and its checksum
+    travels with every stored score.
+    """
     kind = str(scorer.get("kind") or "")
+    configuration = scorer.get("configuration") or {}
+    if not isinstance(configuration, dict):
+        raise ValueError("The scorer configuration must be one object")
     extracted: str | None
     passed: bool
     method: str
     if kind == "numeric_match":
+        tolerance = str(configuration.get("tolerance") or "0")
         extracted = _numeric_answer(actual_output)
-        passed = extracted is not None and (
-            _normalized_number(extracted) == _normalized_number(expected_output)
-        )
-        method = "numeric_match" if extracted is not None else "no_answer"
+        if extracted is None:
+            passed = False
+            method = "no_answer"
+        elif tolerance != "0":
+            passed = _within_tolerance(extracted, expected_output, tolerance)
+            method = "numeric_match_within_tolerance"
+        else:
+            passed = _normalized_number(extracted) == _normalized_number(
+                expected_output,
+            )
+            method = "numeric_match"
     elif kind == "letter_match":
+        choices = str(configuration.get("choices") or "ABCD").upper()
         extracted = _letter_answer(actual_output)
-        passed = extracted is not None and extracted == expected_output.strip().upper()
+        if extracted is not None and extracted not in choices:
+            extracted = None
+        passed = extracted is not None and (
+            extracted == expected_output.strip().upper()
+        )
         method = "letter_match" if extracted is not None else "no_answer"
     elif kind == "exact_match":
+        case_sensitive = bool(configuration.get("case_sensitive", True))
+        normalize_whitespace = bool(
+            configuration.get("normalize_whitespace", False),
+        )
         extracted = actual_output.strip()
-        passed = extracted == expected_output.strip()
+        expected = expected_output.strip()
+        compared_extracted = extracted
+        if normalize_whitespace:
+            compared_extracted = " ".join(compared_extracted.split())
+            expected = " ".join(expected.split())
+        if not case_sensitive:
+            compared_extracted = compared_extracted.lower()
+            expected = expected.lower()
+        passed = compared_extracted == expected
         method = "exact_match"
     else:
         raise ValueError(f"Unsupported scorer kind: {kind or 'missing'}")
@@ -85,10 +129,12 @@ def score_output(
         "passed": passed,
         "extracted_output": extracted,
         "explanation": method,
+        "configuration_checksum": scorer.get("configuration_checksum"),
         "evidence": {
             "expected_output": expected_output,
             "actual_output": actual_output,
             "method": method,
             "scorer_version": scorer.get("version"),
+            "effective_configuration": configuration,
         },
     }

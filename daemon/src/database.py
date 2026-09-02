@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -2423,6 +2423,86 @@ async def _migrate_add_benchmark_schedule_and_cost(
     )
 
 
+BENCHMARK_SCORER_CONTRACT_COLUMNS = (
+    ("benchmark_scorers", "description", "TEXT NOT NULL DEFAULT ''"),
+    ("benchmark_scorers", "scale",
+     "TEXT NOT NULL DEFAULT 'unit_interval'"),
+    ("benchmark_scorers", "direction",
+     "TEXT NOT NULL DEFAULT 'higher_is_better'"),
+    ("benchmark_scorers", "evidence_requirements",
+     "TEXT NOT NULL DEFAULT '[]'"),
+    ("benchmark_scores", "configuration_checksum", "TEXT"),
+)
+
+
+# The complete scorer contracts: description, scale, direction,
+# evidence requirements, and one configuration schema per scorer kind.
+# Publication validates each revision's scorer configuration against
+# the schema, and every stored score carries the configuration
+# checksum it used.
+BENCHMARK_SCORER_CONTRACTS = (
+    (
+        "scorer-exact-match-v1",
+        "Compare the extracted answer text with the reference answer.",
+        '["expected_output","actual_output","method"]',
+        '{"type":"object","additionalProperties":false,"properties":{'
+        '"case_sensitive":{"type":"boolean"},'
+        '"normalize_whitespace":{"type":"boolean"}}}',
+    ),
+    (
+        "scorer-gsm8k-numeric-v1",
+        "Extract the final numeric answer and compare it exactly or "
+        "inside the declared tolerance.",
+        '["expected_output","actual_output","method"]',
+        '{"type":"object","additionalProperties":false,"properties":{'
+        '"tolerance":{"type":"string","pattern":'
+        '"^[0-9]+(\\\\.[0-9]+)?$"}}}',
+    ),
+    (
+        "scorer-mmlu-letter-v1",
+        "Extract the selected choice letter and compare it with the "
+        "reference letter.",
+        '["expected_output","actual_output","method"]',
+        '{"type":"object","additionalProperties":false,"properties":{'
+        '"choices":{"type":"string","pattern":"^[A-Z]{2,8}$"}}}',
+    ),
+)
+
+
+async def _migrate_add_benchmark_scorer_and_mapping_contracts(
+    db: aiosqlite.Connection,
+) -> None:
+    """Expand migration: complete scorer and outcome-mapping contracts.
+
+    Scorers gain a description, a scale, a direction, and evidence
+    requirements, and the seeded scorers gain real configuration
+    schemas. Every stored score gains the checksum of the effective
+    scorer configuration it used. Every column is additive with a
+    compatible default, so existing rows keep their behavior.
+    """
+    db.row_factory = aiosqlite.Row
+    for table, column, definition in BENCHMARK_SCORER_CONTRACT_COLUMNS:
+        cursor = await db.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in await cursor.fetchall()}
+        if column not in existing:
+            await db.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+            )
+    for scorer_id, description, evidence, schema in (
+        BENCHMARK_SCORER_CONTRACTS
+    ):
+        await db.execute(
+            "UPDATE benchmark_scorers SET description = ?, "
+            "evidence_requirements = ?, configuration_schema = ? "
+            "WHERE id = ? AND description = ''",
+            (description, evidence, schema, scorer_id),
+        )
+    await db.commit()
+    logger.info(
+        "Migration 21 applied: scorer and outcome-mapping contracts"
+    )
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -2445,6 +2525,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         18: _migrate_add_typed_indexes,
         19: _migrate_add_benchmark_status_contracts,
         20: _migrate_add_benchmark_schedule_and_cost,
+        21: _migrate_add_benchmark_scorer_and_mapping_contracts,
     }
     fn = migrations.get(version)
     if fn is None:
@@ -4781,8 +4862,19 @@ async def list_datasets(
     )
 
 
-async def get_dataset(dataset_id: str) -> dict | None:
-    """Return one dataset with all versions and latest field summaries."""
+async def get_dataset(
+    dataset_id: str,
+    *,
+    distribution_version_id: str | None = None,
+) -> dict | None:
+    """Return one dataset with per-version field distributions.
+
+    Every immutable version carries its own subject and split
+    distribution, so a consumer that admitted one exact revision reads
+    the distribution of that revision, never of a later upload. The
+    top-level distribution describes the selected version, or the
+    latest version when no selection exists.
+    """
     async with _connect() as connection:
         dataset_cursor = await connection.execute(
             "SELECT * FROM datasets WHERE id = ?",
@@ -4800,31 +4892,60 @@ async def get_dataset(dataset_id: str) -> dict | None:
             (dataset_id,),
         )
         subject_rows = await connection.execute_fetchall(
-            "SELECT item.subject, COUNT(*) AS count FROM dataset_items AS item "
-            "JOIN dataset_versions AS version ON version.id = item.dataset_version_id "
-            "WHERE version.dataset_id = ? AND version.version = ("
-            "SELECT MAX(version) FROM dataset_versions WHERE dataset_id = ?) "
-            "GROUP BY item.subject ORDER BY count DESC, item.subject",
-            (dataset_id, dataset_id),
+            "SELECT item.dataset_version_id, item.subject, COUNT(*) AS count "
+            "FROM dataset_items AS item "
+            "JOIN dataset_versions AS version "
+            "ON version.id = item.dataset_version_id "
+            "WHERE version.dataset_id = ? "
+            "GROUP BY item.dataset_version_id, item.subject "
+            "ORDER BY count DESC, item.subject",
+            (dataset_id,),
         )
         split_rows = await connection.execute_fetchall(
-            "SELECT item.split, COUNT(*) AS count FROM dataset_items AS item "
-            "JOIN dataset_versions AS version ON version.id = item.dataset_version_id "
-            "WHERE version.dataset_id = ? AND version.version = ("
-            "SELECT MAX(version) FROM dataset_versions WHERE dataset_id = ?) "
-            "GROUP BY item.split ORDER BY count DESC, item.split",
-            (dataset_id, dataset_id),
+            "SELECT item.dataset_version_id, item.split, COUNT(*) AS count "
+            "FROM dataset_items AS item "
+            "JOIN dataset_versions AS version "
+            "ON version.id = item.dataset_version_id "
+            "WHERE version.dataset_id = ? "
+            "GROUP BY item.dataset_version_id, item.split "
+            "ORDER BY count DESC, item.split",
+            (dataset_id,),
         )
     dataset = _decode_json_columns(dict(dataset_row), ("metadata",))
-    dataset["versions"] = [
-        _decode_json_columns(dict(row), ("schema_json", "metadata")) for row in version_rows
-    ]
-    dataset["subjects"] = {
-        str(row["subject"] or "Unspecified"): int(row["count"]) for row in subject_rows
-    }
-    dataset["splits"] = {
-        str(row["split"] or "Unspecified"): int(row["count"]) for row in split_rows
-    }
+    subjects_by_version: dict[str, dict[str, int]] = {}
+    for row in subject_rows:
+        subjects_by_version.setdefault(str(row["dataset_version_id"]), {})[
+            str(row["subject"] or "Unspecified")
+        ] = int(row["count"])
+    splits_by_version: dict[str, dict[str, int]] = {}
+    for row in split_rows:
+        splits_by_version.setdefault(str(row["dataset_version_id"]), {})[
+            str(row["split"] or "Unspecified")
+        ] = int(row["count"])
+    versions = []
+    for row in version_rows:
+        version = _decode_json_columns(dict(row), ("schema_json", "metadata"))
+        version["subjects"] = subjects_by_version.get(str(row["id"]), {})
+        version["splits"] = splits_by_version.get(str(row["id"]), {})
+        versions.append(version)
+    dataset["versions"] = versions
+    selected = None
+    if distribution_version_id is not None:
+        selected = next(
+            (
+                version
+                for version in versions
+                if str(version["id"]) == distribution_version_id
+            ),
+            None,
+        )
+    if selected is None:
+        selected = versions[0] if versions else None
+    dataset["distribution_version_id"] = (
+        str(selected["id"]) if selected else None
+    )
+    dataset["subjects"] = dict(selected["subjects"]) if selected else {}
+    dataset["splits"] = dict(selected["splits"]) if selected else {}
     return dataset
 
 

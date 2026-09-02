@@ -996,6 +996,15 @@ def build_run_report(
     )
     repetitions = int(configuration.get("repetitions") or 1)
     estimand = _run_estimand(run)
+    # Every terminal reason resolves through the pinned mapping set.
+    # An unknown reason or a stale mapping rejects before any number
+    # computes.
+    from benchmarks.outcome_mappings import validate_run_outcome_contract
+
+    validate_run_outcome_contract(run)
+    mapping_set = (run.get("execution_plan") or {}).get(
+        "outcome_mapping_set",
+    ) or {}
     # One representative per arm, case, and repetition slot: the
     # sealed first valid substantive outcome, or the latest in-flight
     # attempt for progress accounting. A late or duplicate attempt
@@ -1345,6 +1354,12 @@ def build_run_report(
             "practical_difference": practical_difference,
             "statistical_unit": "case",
             "estimand": estimand,
+            "outcome_mapping_set": {
+                "digest": str(mapping_set.get("digest") or ""),
+                "contract_version": str(
+                    mapping_set.get("contract_version") or "",
+                ),
+            },
         },
         "interval_method": "deterministic_bca_bootstrap_95",
         "run": {
