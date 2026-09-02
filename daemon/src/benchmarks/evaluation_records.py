@@ -394,7 +394,27 @@ async def save_gate_display_exception(
 async def link_case_asset(
     draft_id: str, case_id: str, ingestion_id: str,
 ) -> str:
-    """Link one accepted asset to one draft case."""
+    """Link one accepted asset to one draft case.
+
+    A quarantined, rejected, or deleted asset never links, so it can
+    never reach an executable dataset, an agent, a scorer, or an
+    export.
+    """
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "SELECT state FROM asset_ingestion_records WHERE id = ?",
+            (ingestion_id,),
+        )
+        row = await cursor.fetchone()
+    if row is None:
+        raise EvaluationStorageError(
+            f"The ingestion record {ingestion_id} does not exist"
+        )
+    if str(row["state"]) != "accepted":
+        raise EvaluationStorageError(
+            f"The asset {ingestion_id} is {row['state']}; only an "
+            "accepted asset links into a dataset"
+        )
     link_id = f"case-asset-{uuid.uuid4().hex}"
     async with db._connect() as connection:  # noqa: SLF001
         await connection.execute(
@@ -404,6 +424,79 @@ async def link_case_asset(
         )
         await connection.commit()
     return link_id
+
+
+async def update_draft_record(
+    draft_id: str, record: dict[str, Any],
+) -> None:
+    """Update one editable draft record in place.
+
+    The record revalidates against the dataset-draft contract, and the
+    published-draft immutability trigger blocks any late change.
+    """
+    summary = validate_record(record)
+    if summary["schema_id"] != "dataset-draft":
+        raise EvaluationStorageError(
+            "Only a dataset-draft record updates here"
+        )
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "UPDATE dataset_drafts SET record = ?, record_checksum = ? "
+            "WHERE id = ? AND status = 'editing'",
+            (
+                canonical_record_json(record),
+                summary["record_checksum"],
+                draft_id,
+            ),
+        )
+        await connection.commit()
+        if cursor.rowcount != 1:
+            raise EvaluationStorageError(
+                f"The draft {draft_id} is not an editable draft"
+            )
+
+
+async def upsert_draft_case(
+    draft_id: str, case: dict[str, Any],
+) -> dict[str, Any]:
+    """Insert or replace one case inside one editable draft."""
+    summary = validate_record(case)
+    if summary["schema_id"] != "evaluation-case":
+        raise EvaluationStorageError(
+            "Only an evaluation-case record upserts here"
+        )
+    identity = f"{draft_id}:{case['case_id']}"
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "UPDATE dataset_draft_cases SET record = ?, "
+            "record_checksum = ?, schema_version = ? WHERE id = ?",
+            (
+                canonical_record_json(case),
+                summary["record_checksum"],
+                summary["schema_version"],
+                identity,
+            ),
+        )
+        await connection.commit()
+        updated = cursor.rowcount == 1
+    if updated:
+        return {"id": identity, "table": "dataset_draft_cases", **summary}
+    return await save_record(case, links={"draft_id": draft_id})
+
+
+async def delete_draft_case(draft_id: str, case_id: str) -> None:
+    """Delete one case from one editable draft."""
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "DELETE FROM dataset_draft_cases "
+            "WHERE draft_id = ? AND case_id = ?",
+            (draft_id, case_id),
+        )
+        await connection.commit()
+        if cursor.rowcount != 1:
+            raise EvaluationStorageError(
+                f"The case {case_id} does not exist in draft {draft_id}"
+            )
 
 
 async def save_transform_recipe(

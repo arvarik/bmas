@@ -1,0 +1,173 @@
+{
+ "case_digests": [
+  "9923fac12bcc4341cd68760ae78968448f758a9a8ac02ba300468130c5059a5e",
+  "10d711da8f8c11d0a8f8e36a2e7b50f099a6718dd90deb470b6b61ce92d38072",
+  "9b12a0f6131397401a9ba763549e49d8746258f91ab61fc9cc90cb272d2b0093",
+  "5077fd5f5579fcb74a7636b72d2f17fbdcdef0d799815339ebd3f2c05b9d8561",
+  "6a0fb41c03b42ae41a4929d0969c435df8922bfac5b535d34c542cad615785d1",
+  "66d4eced0b40a0f575483e05b69814d72f5325c3a55874e7b0e13782c048911a",
+  "6c3124f977c80e5603e070cb00cad1ecedbfdd206935861b1588802828cdea3f",
+  "2087f1b611e1e31fea12ca9170135a3f71f75c83a03ff60a9834af1d19aefbec"
+ ],
+ "cases": [
+  {
+   "case_id": "case-alpha",
+   "expected_output": "42",
+   "input": "Question alpha",
+   "weight": 0
+  },
+  {
+   "case_id": "case-bravo",
+   "expected_output": "42",
+   "input": "Question bravo",
+   "weight": 1
+  },
+  {
+   "case_id": "case-charlie",
+   "expected_output": "42",
+   "input": "Question charlie",
+   "weight": 2
+  },
+  {
+   "case_id": "case-delta",
+   "expected_output": "42",
+   "input": "Question delta",
+   "weight": 3
+  },
+  {
+   "case_id": "case-echo",
+   "expected_output": "42",
+   "input": "Question echo",
+   "weight": 4
+  },
+  {
+   "case_id": "case-foxtrot",
+   "expected_output": "42",
+   "input": "Question foxtrot",
+   "weight": 5
+  },
+  {
+   "case_id": "case-golf",
+   "expected_output": "42",
+   "input": "Question golf",
+   "weight": 6
+  },
+  {
+   "case_id": "case-hotel",
+   "expected_output": "42",
+   "input": "Question hotel",
+   "weight": 7
+  }
+ ],
+ "fixture_version": "1",
+ "numbers": [
+  {
+   "expected": "0.5",
+   "value": 0.5
+  },
+  {
+   "expected": "0",
+   "value": -0.0
+  },
+  {
+   "expected": "5",
+   "value": 5.0
+  },
+  {
+   "expected": "1e+21",
+   "value": 1e+21
+  },
+  {
+   "expected": "1e-7",
+   "value": 1e-07
+  },
+  {
+   "expected": "10000000000000000",
+   "value": 1e+16
+  },
+  {
+   "expected": "0.000001",
+   "value": 1e-06
+  },
+  {
+   "expected": "333333333.3333333",
+   "value": 333333333.3333333
+  },
+  {
+   "expected": "9007199254740991",
+   "value": 9007199254740991
+  }
+ ],
+ "profile": "bmas-transform",
+ "profile_version": 1,
+ "rank_vectors": [
+  {
+   "case_id": "case-alpha",
+   "counter": 0,
+   "operation_index": 0,
+   "rank": "d2d9c76f7aca3bf140a95215a4758086ef587d03cea2278137fefeccf7bbcc0c",
+   "seed": 0
+  },
+  {
+   "case_id": "case-alpha",
+   "counter": 0,
+   "operation_index": 0,
+   "rank": "3d9b0a464c30163320a554e440641614b3f5ce9afe0267ad641c9fb4df5c4ae6",
+   "seed": 7
+  },
+  {
+   "case_id": "case-alpha",
+   "counter": 0,
+   "operation_index": 1,
+   "rank": "07eeb2e258fbddb274aa2da1229c861fcb0a88992b044a9986971be3e174ab00",
+   "seed": 7
+  },
+  {
+   "case_id": "case-bravo",
+   "counter": 0,
+   "operation_index": 0,
+   "rank": "6b94b652b9b14d85c40d8edbb5e092a0da65729ac404453a46b22c58ec7b9759",
+   "seed": 7
+  },
+  {
+   "case_id": "case-alpha",
+   "counter": 3,
+   "operation_index": 0,
+   "rank": "0a906b8a81c7d4d933d5fc5cd26229e931c534a020be8cd1ddbc9d86943bb123",
+   "seed": 7
+  },
+  {
+   "case_id": "case-alpha",
+   "counter": 0,
+   "operation_index": 0,
+   "rank": "1e1eaac0f0602bc616cc1f47de9d9fdc8c5d98f9f7e83dfa03afb7e2e3252842",
+   "seed": 18446744073709551615
+  }
+ ],
+ "sample": {
+  "count": 3,
+  "seed": 7,
+  "selected_case_ids": [
+   "case-alpha",
+   "case-charlie",
+   "case-delta"
+  ]
+ },
+ "split": {
+  "assignment": {
+   "case-alpha": "train",
+   "case-bravo": "train",
+   "case-charlie": "test",
+   "case-delta": "train",
+   "case-echo": "test",
+   "case-foxtrot": "test",
+   "case-golf": "test",
+   "case-hotel": "test"
+  },
+  "seed": 7,
+  "weights": {
+   "test": 1,
+   "train": 2
+  }
+ }
+}
