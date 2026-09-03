@@ -753,6 +753,29 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.evaluation-studies-replay
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove study authoring, the metric definition authority, bounded
+      interaction execution, and safe replay bundles: studies freeze
+      treatments, invariants, estimands, and gates with estimates
+      shown first, every displayed metric resolves to one immutable
+      published definition with complete numerator, denominator,
+      label source, scorer version, missingness, and calibration,
+      expired or failed calibration blocks a new terminal gate, the
+      joint privacy gate never passes zero disclosure with lost facts,
+      interaction runs enforce role, turn, action, token, time, cost,
+      capability, stop, retry, and canary contracts with no production
+      secret reaching a simulator, and a clean environment imports an
+      inert quarantined bundle and rebuilds the report to equal
+      digests after authenticated approval.
+    argv: ["python3", "-m", "pytest", "tests/test_study_authoring.py", "tests/test_metric_registry.py", "tests/test_interaction_execution.py", "tests/test_replay_bundle.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
   - id: daemon.source-adapters-live
     state: active_optional
     owner: daemon
@@ -1027,6 +1050,7 @@ profiles:
         - daemon.evaluation-scoring
         - daemon.evaluation-calibration-ledger
         - daemon.evaluation-frozen-analysis
+        - daemon.evaluation-studies-replay
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

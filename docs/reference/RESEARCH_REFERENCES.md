@@ -352,6 +352,34 @@ Canonical methods the analysis engine implements:
   provider text kept as evidence, pricing versions, and reconciliation
   versions in `daemon/src/benchmarks/resource_ledger.py`.
 
+- [Synthetic Users, Real Differences: an Evaluation Framework for
+  User Simulation in Multi-Turn
+  Conversations](https://arxiv.org/pdf/2605.02624) and [VISTA: A
+  Versatile Interactive User Simulation Toolkit for Agent
+  Evaluation](https://arxiv.org/pdf/2606.11079) — Multi-turn agent
+  evaluation needs simulated users with pinned behavior and explicit
+  turn control, and different simulator behaviors lead agents down
+  different paths. Used for: the registered simulator versions with
+  pinned prompt, model, image, dependency, and random-schedule digests
+  in `daemon/src/benchmarks/interaction_execution.py`.
+- [Multi-Turn LLM Evaluation in 2026 (Confident
+  AI)](https://www.confident-ai.com/blog/multi-turn-llm-evaluation-in-2026)
+  — Practice guide for bounded multi-turn evaluation with turn
+  limits, scenario stop conditions, and per-turn verdicts. Used for:
+  the turn, action, token, time, and cost limits and the declared
+  stop conditions of the interaction executor.
+- [ISSTA 2026 artifact
+  evaluation](https://conf.researchr.org/track/issta-2026/issta-2026-artifact-evaluation)
+  and [A Reproducibility Protocol for Cross-Implementation Evaluation
+  of Post-Quantum ACVP Test
+  Vectors](https://arxiv.org/html/2608.13784v1) — Release artifacts
+  carry machine-readable manifests with per-member digests, frozen
+  toolchain summaries, file allowlists, and prohibited-pattern scans
+  so reviewers detect drift. Used for: the replay bundle member
+  manifest, digest verification before publication, quarantine of
+  executable members, and the toolchain member in
+  `daemon/src/benchmarks/replay_bundle.py`.
+
 ## 9. Data contracts and schema evolution
 
 - [Expand and Contract: A Pattern to Apply Breaking Changes to
