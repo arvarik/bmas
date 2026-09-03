@@ -32,7 +32,10 @@ components:
     resolve: ["playwright-browser", "chromium"]
   redis:
     required: true
-    pin: "8"
+    # The Ubuntu release worker installs Redis 7.0 from apt; the
+    # developer toolchain runs Redis 8. Both lines are accepted
+    # explicitly until the worker image pins Redis 8.
+    pin: ["7", "8"]
     resolve: ["redis-server", "--version"]
   sqlite:
     required: true
