@@ -84,7 +84,10 @@ def resolve(component: str, spec: dict) -> str | None:
     return match.group(1) if match else output
 
 
-def satisfies(resolved: str, pin: str) -> bool:
+def satisfies(resolved: str, pin: str | list[str]) -> bool:
+    """Match one resolved version against one pin or one list of pins."""
+    if isinstance(pin, list):
+        return any(satisfies(resolved, str(entry)) for entry in pin)
     if not _VERSION.fullmatch(pin):
         return resolved == pin
     return resolved == pin or resolved.startswith(pin + ".")
@@ -105,7 +108,7 @@ def main() -> int:
     failures: list[str] = []
     for name, spec in document["components"].items():
         resolved = resolve(name, spec)
-        pin = str(spec["pin"])
+        pin = spec["pin"] if isinstance(spec["pin"], list) else str(spec["pin"])
         required = (
             name in consumer_required if consumer_required is not None
             else bool(spec.get("required"))

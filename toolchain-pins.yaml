@@ -18,7 +18,9 @@ components:
     resolve: ["node", "--version"]
   npm:
     required: true
-    pin: "11"
+    # Node.js 22 bundles npm 10 on the release worker; the developer
+    # toolchain resolves npm 11. Both lines are accepted explicitly.
+    pin: ["10", "11"]
     resolve: ["npm", "--version"]
   playwright:
     required: true
