@@ -65,7 +65,7 @@ groups:
       Resolve every pinned toolchain component on this host, record the
       exact resolved versions, and fail before tests when a required
       component is absent or violates its pin.
-    argv: ["python3", "scripts/check-toolchain.py", "--require", "python,sqlite,statistics", "--report", "test-results/toolchain-daemon.json"]
+    argv: ["python3", "scripts/check-toolchain.py", "--require", "python,sqlite,statistics,numpy,wasmtime", "--report", "test-results/toolchain-daemon.json"]
     working_directory: "."
     timeout_seconds: 300
     tools: [python]
@@ -601,7 +601,7 @@ groups:
       unknown, run cost moves through provisional, settling, and
       settled, a cost-sensitive final gate waits for settlement, and a
       late charge supersedes the stored gate version.
-    argv: ["python3", "-m", "pytest", "tests/test_benchmark_resource_ledger.py", "-q", "--tb=short"]
+    argv: ["python3", "-m", "pytest", "tests/test_benchmark_resource_ledger.py", "tests/test_late_charge_recompute.py", "tests/test_ledger_emission.py", "-q", "--tb=short"]
     working_directory: daemon
     timeout_seconds: 300
     tools: [python, pytest]
@@ -729,7 +729,7 @@ groups:
       with any missing pin and denies network, files, credentials,
       clocks, and randomness, and every stored score traces to
       immutable evidence and one pinned scorer specification.
-    argv: ["python3", "-m", "pytest", "tests/test_evidence_capture.py", "tests/test_environment_drivers.py", "tests/test_scorer_plugins.py", "tests/test_scorer_sandbox.py", "-q", "--tb=short"]
+    argv: ["python3", "-m", "pytest", "tests/test_evidence_capture.py", "tests/test_environment_drivers.py", "tests/test_scorer_plugins.py", "tests/test_scorer_sandbox.py", "tests/test_sandbox_backends.py", "tests/test_model_backed.py", "-q", "--tb=short"]
     working_directory: daemon
     timeout_seconds: 300
     tools: [python, pytest]
@@ -774,7 +774,7 @@ groups:
       pin every engine and random-source digest, replay from stored
       evidence reproduces equal checksums without an execution claim,
       and every analytics view traces to named fields.
-    argv: ["python3", "-m", "pytest", "tests/test_analysis_rng.py", "tests/test_frozen_analysis.py", "tests/test_analytics_views.py", "-q", "--tb=short"]
+    argv: ["python3", "-m", "pytest", "tests/test_analysis_rng.py", "tests/test_analysis_engine.py", "tests/test_frozen_analysis.py", "tests/test_frozen_gates.py", "tests/test_frozen_report.py", "tests/test_analytics_views.py", "-q", "--tb=short"]
     working_directory: daemon
     timeout_seconds: 300
     tools: [python, pytest]
@@ -797,7 +797,7 @@ groups:
       secret reaching a simulator, and a clean environment imports an
       inert quarantined bundle and rebuilds the report to equal
       digests after authenticated approval.
-    argv: ["python3", "-m", "pytest", "tests/test_study_authoring.py", "tests/test_metric_registry.py", "tests/test_interaction_execution.py", "tests/test_replay_bundle.py", "-q", "--tb=short"]
+    argv: ["python3", "-m", "pytest", "tests/test_study_authoring.py", "tests/test_study_publication.py", "tests/test_metric_registry.py", "tests/test_interaction_execution.py", "tests/test_replay_bundle.py", "-q", "--tb=short"]
     working_directory: daemon
     timeout_seconds: 300
     tools: [python, pytest]
@@ -831,7 +831,7 @@ groups:
       error score, a large dataset pages with stable offsets, a large
       trace reads back intact, artifact erasure leaves a durable
       redacted record, and every export policy strips secrets.
-    argv: ["python3", "-m", "pytest", "tests/test_hardening_faults.py", "-q", "--tb=short"]
+    argv: ["python3", "-m", "pytest", "tests/test_hardening_faults.py", "tests/test_data_classes.py", "-q", "--tb=short"]
     working_directory: daemon
     timeout_seconds: 600
     tools: [python, pytest]
@@ -959,6 +959,21 @@ groups:
     argv: ["npm", "run", "test:run"]
     working_directory: mission-control
     timeout_seconds: 900
+    tools: [node, npm]
+    depends_on: [mission-control.install]
+
+  - id: mission-control.conformance-fixtures
+    state: active_required
+    owner: mission-control
+    purpose: >-
+      Run the TypeScript second implementation of the bmas-transform
+      and bmas-analysis-rng profiles against the published daemon
+      fixtures, so every supported implementation has one real second
+      consumer that reproduces every digest, rank, draw, and oracle
+      aggregate byte for byte.
+    argv: ["npx", "vitest", "run", "src/__tests__/conformance-fixtures.test.ts"]
+    working_directory: mission-control
+    timeout_seconds: 300
     tools: [node, npm]
     depends_on: [mission-control.install]
 
@@ -1211,6 +1226,7 @@ profiles:
         - mission-control.lint
         - mission-control.typecheck
         - mission-control.tests
+        - mission-control.conformance-fixtures
         - mission-control.build
         - mission-control.browser-install
         - mission-control.toolchain-pins

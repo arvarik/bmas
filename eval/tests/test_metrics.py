@@ -13,7 +13,7 @@ import json
 import pytest
 
 from eval.metrics import RunMetrics, _percentile, compute_run_metrics
-from eval.scorer import ScoredResult
+from eval.scored_result import ScoredResult
 
 
 class TestComputeRunMetrics:

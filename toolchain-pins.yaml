@@ -42,10 +42,23 @@ components:
     pin: "3"
     resolve: ["python-sqlite"]
   wasmtime:
-    required: false
-    pin: "24"
-    resolve: ["wasmtime", "--version"]
-  statistics:
+    # The wasmtime-py wheel bundles the Wasmtime runtime; the daemon
+    # executes scorer components through it, so the pin resolves the
+    # installed Python distribution instead of a separate binary.
     required: true
-    pin: "python-stdlib-binary64"
-    resolve: ["constant", "python-stdlib-binary64"]
+    pin: "48"
+    resolve: ["python-distribution", "wasmtime"]
+  numpy:
+    # The vectorized frozen-analysis engine. The reference engine
+    # stays available, so a host without NumPy still analyzes, but
+    # the performance gate needs the vector toolchain.
+    required: true
+    pin: "2"
+    resolve: ["python-distribution", "numpy"]
+  statistics:
+    # The arithmetic contract both analysis engines honour: binary64
+    # operations in the published order with left-to-right
+    # accumulation. The engine choice never changes a number.
+    required: true
+    pin: "binary64-sequential-summation"
+    resolve: ["python-statistics-contract"]

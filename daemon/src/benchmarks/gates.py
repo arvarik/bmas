@@ -69,11 +69,19 @@ def rule_is_cost_sensitive(rule: dict[str, Any]) -> bool:
     """Report whether one rule reads a monetary or resource metric."""
     metric = str(rule.get("metric") or "")
     return ".cost_usd" in metric or ".resource" in metric
+# The frozen methods read the predeclared non-inferiority or
+# superiority decision of the frozen analysis engine instead of the
+# legacy report engine. ``max_drop`` with the frozen non-inferiority
+# method declares the margin; ``gte`` with the frozen superiority
+# method declares strict improvement.
+FROZEN_METHODS = {"frozen_non_inferiority", "frozen_superiority"}
+FROZEN_METRIC_PREFIX = "frozen."
 ANALYSIS_METHODS = {
     "point_estimate",
     "lower_confidence_bound",
     "upper_confidence_bound",
     "holm_sign_test",
+    *FROZEN_METHODS,
 }
 
 
@@ -127,7 +135,7 @@ def _resolved_metric(rule: dict[str, Any]) -> str:
     """Resolve one rule method into an exact report metric path."""
     metric = str(rule["metric"])
     method = str(rule.get("analysis_method") or "point_estimate")
-    if method == "point_estimate":
+    if method == "point_estimate" or method in FROZEN_METHODS:
         return metric
     suffix = {
         "lower_confidence_bound": "ci_low",
@@ -370,10 +378,32 @@ def validate_rules(rules: list[dict[str, Any]]) -> None:
         value = rule.get("value")
         if not rule_id or rule_id in identifiers:
             raise ValueError("Each regression rule needs a unique identifier")
-        if not metric.startswith(("arm.", "comparison.")):
+        if not metric.startswith(("arm.", "comparison.", FROZEN_METRIC_PREFIX)):
             raise ValueError(f"Regression rule {rule_id} has an invalid metric")
         if method not in ANALYSIS_METHODS:
             raise ValueError(f"Regression rule {rule_id} has an invalid analysis method")
+        if metric.startswith(FROZEN_METRIC_PREFIX) != (method in FROZEN_METHODS):
+            raise ValueError(
+                f"Regression rule {rule_id} pairs a frozen metric with a "
+                "frozen analysis method"
+            )
+        if method == "frozen_non_inferiority" and operator != "max_drop":
+            raise ValueError(
+                f"Regression rule {rule_id} declares its non-inferiority "
+                "margin through the max_drop operator"
+            )
+        if method == "frozen_superiority" and operator != "gte":
+            raise ValueError(
+                f"Regression rule {rule_id} declares superiority through "
+                "the gte operator"
+            )
+        if method in FROZEN_METHODS and rule.get("direction") not in (
+            EFFECT_DIRECTIONS
+        ):
+            raise ValueError(
+                f"Regression rule {rule_id} needs an effect direction: "
+                f"{' or '.join(EFFECT_DIRECTIONS)}"
+            )
         if method == "holm_sign_test" and not metric.startswith("comparison."):
             raise ValueError(
                 f"Regression rule {rule_id} needs a comparison metric for a sign test"
@@ -469,6 +499,202 @@ def _direction_guard(
     return None
 
 
+# ── Frozen comparisons across two runs ───────────────────────────────
+
+
+def _frozen_arm(run: dict[str, Any], requested: str | None) -> str:
+    arms = run.get("arms") or []
+    slugs = [str(arm.get("slug") or arm.get("arm_slug") or "") for arm in arms]
+    if not slugs:
+        slugs = sorted({
+            str(attempt.get("arm_slug") or attempt.get("arm_id") or "")
+            for attempt in run.get("attempts") or []
+        })
+    if requested:
+        if requested not in slugs:
+            raise ValueError(
+                f"The run {run.get('id')} has no arm {requested!r}"
+            )
+        return requested
+    if not slugs:
+        raise ValueError(f"The run {run.get('id')} has no arms")
+    return slugs[0]
+
+
+def _attempt_arm(attempt: dict[str, Any]) -> str:
+    return str(attempt.get("arm_slug") or attempt.get("arm_id") or "")
+
+
+def frozen_input_for_runs(
+    baseline_run: dict[str, Any],
+    candidate_run: dict[str, Any],
+    *,
+    arm: str | None = None,
+) -> dict[str, Any]:
+    """Merge one arm of two runs into a two-arm run for the frozen engine.
+
+    The baseline run's attempts become the ``baseline`` arm and the
+    candidate run's attempts become the ``candidate`` arm. Cases pair
+    by dataset item, families follow the item subject, and the
+    planned repetitions equal the largest repeat index either run
+    planned.
+    """
+    baseline_arm = _frozen_arm(baseline_run, arm)
+    candidate_arm = _frozen_arm(candidate_run, arm)
+    attempts: list[dict[str, Any]] = []
+    scores: list[dict[str, Any]] = []
+    families: dict[str, set[str]] = {}
+    planned = 1
+    for role, run, slug in (
+        ("baseline", baseline_run, baseline_arm),
+        ("candidate", candidate_run, candidate_arm),
+    ):
+        kept_ids: set[str] = set()
+        for attempt in run.get("attempts") or []:
+            if _attempt_arm(attempt) != slug:
+                continue
+            case_id = str(attempt.get("dataset_item_id") or attempt.get("item_key") or "")
+            if not case_id:
+                continue
+            kept_ids.add(str(attempt["id"]))
+            family = str(attempt.get("subject") or "cases")
+            families.setdefault(family, set()).add(case_id)
+            planned = max(planned, int(attempt.get("repeat_index") or 1))
+            attempts.append({**attempt, "arm_id": role,
+                             "dataset_item_id": case_id})
+        for score in run.get("scores") or []:
+            if str(score.get("attempt_id")) in kept_ids:
+                scores.append(dict(score))
+    return {
+        "run": {
+            "id": f"gate:{baseline_run.get('id')}:{candidate_run.get('id')}",
+            "attempts": attempts,
+            "scores": scores,
+        },
+        "families": {
+            family: sorted(case_ids) for family, case_ids in sorted(families.items())
+        },
+        "planned_repetitions": planned,
+        "baseline_arm": baseline_arm,
+        "candidate_arm": candidate_arm,
+    }
+
+
+def _frozen_rule_result(
+    rule: dict[str, Any],
+    baseline_run: dict[str, Any],
+    candidate_run: dict[str, Any],
+) -> dict[str, Any]:
+    """Decide one frozen rule through the frozen analysis engine."""
+    import hashlib
+
+    from benchmarks import frozen_analysis
+
+    metric = str(rule["metric"])
+    parts = metric[len(FROZEN_METRIC_PREFIX):].split(".")
+    scorer_id = parts[0]
+    arm = parts[1] if len(parts) > 1 and parts[1] else None
+    method = str(rule["analysis_method"])
+    direction = (
+        "lower_is_better" if rule.get("direction") == "reduction"
+        else "higher_is_better"
+    )
+    merged = frozen_input_for_runs(baseline_run, candidate_run, arm=arm)
+    seed_material = (
+        f"{baseline_run.get('id')}\x00{candidate_run.get('id')}\x00"
+        f"{rule['id']}"
+    ).encode("utf-8")
+    master_seed = int.from_bytes(
+        hashlib.sha256(seed_material).digest()[:8], "big",
+    )
+    comparison = {
+        "comparison_id": str(rule["id"]),
+        "metric": scorer_id,
+        "baseline_arm": "baseline",
+        "candidate_arm": "candidate",
+        "direction": direction,
+        "hypothesis": (
+            "non_inferiority" if method == "frozen_non_inferiority"
+            else "superiority"
+        ),
+        "non_inferiority_margin": (
+            float(rule["value"]) if method == "frozen_non_inferiority"
+            else None
+        ),
+        "minimum_usable_cases": int(rule.get("minimum_usable_cases") or 1),
+    }
+    frozen_block: dict[str, Any]
+    status = "indeterminate"
+    candidate_value = None
+    boundary = None
+    present_arms = {
+        str(attempt["arm_id"]) for attempt in merged["run"]["attempts"]
+    }
+    if not merged["families"] or present_arms != {"baseline", "candidate"}:
+        frozen_block = {
+            "engine": frozen_analysis.ENGINE_NAME,
+            "reason": "no paired cases exist between the runs",
+        }
+    else:
+        specification = frozen_analysis.freeze_specification(
+            families=merged["families"],
+            scorer_id=scorer_id,
+            master_seed=master_seed,
+            comparison_family={
+                "family_id": f"gate-{rule['id']}",
+                "comparisons": [comparison],
+            },
+            resample_count=int(rule.get("resample_count") or 999),
+            min_family_cases=1,
+            confidence_level=float(rule.get("confidence_level") or 0.95),
+        )
+        frozen_input = frozen_analysis.freeze_input(
+            merged["run"], specification,
+            planned_repetitions=int(merged["planned_repetitions"]),
+        )
+        report = frozen_analysis.compute_report(specification, frozen_input)
+        decided = report["comparisons"][0]
+        gate = decided["gate"]
+        status = str(gate["status"])
+        candidate_value = decided["estimate"]
+        boundary = gate.get("bound")
+        frozen_block = {
+            "engine": report["engine"],
+            "engine_version": report["engine_version"],
+            "specification_digest": specification["specification_digest"],
+            "input_digest": frozen_input["input_digest"],
+            "results_digest": report["results_digest"],
+            "baseline_arm": merged["baseline_arm"],
+            "candidate_arm": merged["candidate_arm"],
+            "estimate": decided["estimate"],
+            "interval": decided["interval"],
+            "test": decided["test"],
+            "p_value_adjusted": decided["p_value_adjusted"],
+            "gate": gate,
+            "counts": decided["counts"],
+            "statistical_unit": decided["statistical_unit"],
+        }
+    return {
+        "id": rule["id"],
+        "label": rule.get("label") or rule["id"],
+        "metric": metric,
+        "resolved_metric": metric,
+        "analysis_method": method,
+        "operator": str(rule["operator"]),
+        "threshold": float(rule["value"]),
+        "direction": rule.get("direction"),
+        "practical_size": rule.get("practical_size"),
+        "classification": None,
+        "baseline_value": None,
+        "candidate_value": candidate_value,
+        "boundary": boundary,
+        "direction_guard": None,
+        "display_exception": None,
+        "status": status,
+        "frozen": frozen_block,
+    }
+
+
 def evaluate_gate(
     baseline_run: dict[str, Any],
     candidate_run: dict[str, Any],
@@ -531,6 +757,9 @@ def evaluate_gate(
     results: list[dict[str, Any]] = []
     for rule in rules:
         metric = str(rule["metric"])
+        if str(rule.get("analysis_method") or "") in FROZEN_METHODS:
+            results.append(_frozen_rule_result(rule, baseline_run, candidate_run))
+            continue
         resolved_metric = _resolved_metric(rule)
         operator = str(rule["operator"])
         threshold = float(rule["value"])
@@ -627,5 +856,9 @@ def evaluate_gate(
         **compatibility,
         "display_exceptions": exceptions,
         "rules": results,
+        "engines": sorted({
+            "bmas-frozen-analysis" if "frozen" in result else "legacy-report"
+            for result in results
+        }),
     }
     return {**report, "report_checksum": content_checksum(report)}

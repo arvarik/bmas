@@ -49,6 +49,23 @@
         "token": "v0 (version-token)"
       }
     ],
+    "daemon/src/benchmarks/analysis_rng.py": [
+      {
+        "count": 4,
+        "kind": "identifier",
+        "token": "_MASK32 (numeric-suffix)"
+      },
+      {
+        "count": 5,
+        "kind": "identifier",
+        "token": "_MASK64 (numeric-suffix)"
+      },
+      {
+        "count": 6,
+        "kind": "identifier",
+        "token": "mix64 (numeric-suffix)"
+      }
+    ],
     "daemon/src/config.py": [
       {
         "count": 1,
@@ -300,6 +317,13 @@
         "count": 1,
         "kind": "identifier",
         "token": "all_v2_event_names (version-token)"
+      }
+    ],
+    "daemon/tests/test_analysis_rng.py": [
+      {
+        "count": 1,
+        "kind": "identifier",
+        "token": "mix64 (numeric-suffix)"
       }
     ],
     "daemon/tests/test_artifacts.py": [
@@ -740,18 +764,6 @@
         "token": "test_accuracy_100 (numeric-suffix)"
       }
     ],
-    "eval/tests/test_scorer.py": [
-      {
-        "count": 1,
-        "kind": "identifier",
-        "token": "test_correct_dollar_5 (numeric-suffix)"
-      },
-      {
-        "count": 1,
-        "kind": "identifier",
-        "token": "test_correct_with_hash_marker_10 (numeric-suffix)"
-      }
-    ],
     "mission-control/e2e/benchmarks.spec.ts": [
       {
         "count": 1,
@@ -961,6 +973,23 @@
         "count": 2,
         "kind": "identifier",
         "token": "CheckCircle2 (numeric-suffix)"
+      }
+    ],
+    "scripts/generate-analysis-rng-fixtures.py": [
+      {
+        "count": 2,
+        "kind": "identifier",
+        "token": "MASK32 (numeric-suffix)"
+      },
+      {
+        "count": 6,
+        "kind": "identifier",
+        "token": "MASK64 (numeric-suffix)"
+      },
+      {
+        "count": 3,
+        "kind": "identifier",
+        "token": "mix64 (numeric-suffix)"
       }
     ]
   }

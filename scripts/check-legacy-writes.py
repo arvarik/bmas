@@ -47,6 +47,15 @@ EVALUATION_TABLES = (
     "judge_calibration_records", "failure_classification_records",
     "resource_ledger_entries", "evaluation_migration_state",
     "evaluation_migration_events", "evaluation_readonly_archive",
+    "dataset_version_records", "analysis_snapshot_supersessions",
+    "judge_anchor_sets", "evaluation_studies",
+)
+# Modules the deprecation cycle removed after the fallback window
+# measured zero legacy use. The record in conformance/evaluation
+# names the window; a module that reappears fails the guard.
+REMOVED_LEGACY_MODULES = (
+    "eval/scorer.py",
+    "eval/ab_harness.py",
 )
 DECLARED_WRITERS = {
     "benchmarks/evaluation_records.py",
@@ -87,8 +96,20 @@ def scan_daemon_writers() -> list[str]:
     return findings
 
 
+def scan_removed_modules() -> list[str]:
+    """Fail when a module the deprecation cycle removed reappears."""
+    return [
+        f"{path}: the deprecation cycle removed this module; see "
+        "conformance/evaluation/legacy_removal.json"
+        for path in REMOVED_LEGACY_MODULES
+        if (ROOT / path).exists()
+    ]
+
+
 def main() -> int:
-    findings = scan_legacy_package() + scan_daemon_writers()
+    findings = (
+        scan_legacy_package() + scan_daemon_writers() + scan_removed_modules()
+    )
     if findings:
         print("FAIL: direct legacy or canonical evaluation writes:")
         for finding in findings:

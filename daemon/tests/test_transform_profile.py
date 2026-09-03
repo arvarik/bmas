@@ -80,7 +80,7 @@ def test_rank_vectors_match_the_reference(vector):
         if case["case_id"] == vector["case_id"]
     )
     rank = rank_bytes(
-        seed=vector["seed"],
+        seed=int(vector["seed"]),
         operation_index=vector["operation_index"],
         case_digest_value=bytes.fromhex(case_digest(case)),
         counter=vector["counter"],
@@ -95,7 +95,7 @@ def test_sample_selection_matches_the_reference():
         _recipe(
             [{"operation": "sample",
               "parameters": {"count": plan["count"]}}],
-            seed=plan["seed"],
+            seed=int(plan["seed"]),
         ),
     )
     selected = [case["case_id"] for case in outcome["cases"]]
@@ -112,7 +112,7 @@ def test_split_assignment_matches_the_reference():
                 {"operation": "split",
                  "parameters": {"weights": plan["weights"]}},
             ],
-            seed=plan["seed"],
+            seed=int(plan["seed"]),
         ),
     )
     assigned = {

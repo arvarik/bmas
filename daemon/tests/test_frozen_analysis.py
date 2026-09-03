@@ -47,7 +47,14 @@ from benchmarks.frozen_analysis import (
 FIXTURES = json.loads(
     (Path(__file__).parent / "fixtures" / "analysis_rng.json").read_text(),
 )
-ORACLE = FIXTURES["weighted_bootstrap_oracle"]
+ORACLES = {
+    int(entry["algorithm_version"]): entry["weighted_bootstrap_oracle"]
+    for entry in FIXTURES["versions"]
+}
+ALGORITHM_VERSIONS = sorted(ORACLES)
+# The oracle cases and weights are equal across versions; only the
+# derived draws differ.
+ORACLE = ORACLES[ALGORITHM_VERSIONS[-1]]
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -156,7 +163,10 @@ def test_specification_freezes_before_any_data():
     assert spec["case_weights"]["algebra"] == {"a": 0.5, "b": 0.5}
     assert spec["cluster_order"] == ["algebra", "geometry"]
     assert spec["resampling"]["algorithm"] == "bmas-analysis-rng"
-    assert spec["resampling"]["algorithm_version"] == 1
+    assert spec["resampling"]["algorithm_version"] == 2
+    assert spec["resampling"]["implementation"] == (
+        "keyed-counter-splitmix64"
+    )
     assert spec["reduction"]["order"] == "slots_before_weights"
     assert spec["comparison_family"]["multiplicity"] == "holm"
     assert len(spec["specification_digest"]) == 64
@@ -321,17 +331,20 @@ def test_point_estimate_matches_the_oracle():
         )
 
 
-def test_every_replicate_draw_and_aggregate_matches_the_oracle():
-    _, spec, frozen = oracle_spec()
+@pytest.mark.parametrize("version", ALGORITHM_VERSIONS)
+def test_every_replicate_draw_and_aggregate_matches_the_oracle(version):
+    oracle = ORACLES[version]
+    _, spec, frozen = oracle_spec(algorithm_version=version)
     paired = pair_cases(spec, frozen, baseline_arm="left",
                         candidate_arm="right")
     result = bootstrap(
         spec, paired, FIXTURES["input_digest"], record_draws=True,
     )
     assert result["algorithm"] == "bmas-analysis-rng"
-    assert len(result["replicates"]) == ORACLE["replicates"]
+    assert result["algorithm_version"] == version
+    assert len(result["replicates"]) == oracle["replicates"]
     for record, expected in zip(
-        result["replicates"], ORACLE["replicate_records"], strict=True,
+        result["replicates"], oracle["replicate_records"], strict=True,
     ):
         assert record["draws"] == expected["draws"]
         for family, aggregate in expected["family_aggregates"].items():
@@ -570,7 +583,12 @@ async def test_snapshot_pins_every_digest_and_replays(snapshot_db):
     assert record["engine"]["toolchain_versions"]["python"]
     random_source = record["random_source"]
     assert random_source["algorithm"] == "bmas-analysis-rng"
-    assert random_source["algorithm_version"] == 1
+    assert random_source["algorithm_version"] == 2
+    assert random_source["implementation"] == "keyed-counter-splitmix64"
+    assert record["engine"]["toolchain_versions"]["statistics"] == (
+        "binary64-sequential-summation"
+    )
+    assert record["engine"]["toolchain_versions"]["vector_engine"]
     assert random_source["master_seed"] == 7
     assert random_source["derivation_schedule"]
     assert record["io_checksums"]["input"] == (

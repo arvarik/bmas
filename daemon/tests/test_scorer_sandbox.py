@@ -683,7 +683,7 @@ async def test_score_traces_to_evidence_and_pinned_scorer(scoring_db):
                  "wit_digest", "compiler_digest",
                  "dependency_lock_digest", "output_schema_digest"):
         assert len(sandbox[name]) == 64, name
-    assert sandbox["boundary"] == "wasi_component"
+    assert sandbox["boundary"] == "trusted_service"
     assert sandbox["replay_eligible"] is True
 
 

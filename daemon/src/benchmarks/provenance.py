@@ -5,32 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-SENSITIVE_KEY_PARTS = (
-    "api_key",
-    "authorization",
-    "credential",
-    "password",
-    "secret",
-    "token",
-)
-
-# Token counts are usage measurements, never credentials. A key that
-# names a count keeps its value so cost and budget arithmetic can read
-# it after redaction.
-_COUNT_KEY_MARKERS = (
-    "tokens", "token_count", "token_limit", "token_budget", "token_threshold",
-    "token_ceiling", "per_token", "token_sets",
-)
-
-
-def _is_sensitive_key(normalized: str) -> bool:
-    if any(marker in normalized for marker in _COUNT_KEY_MARKERS):
-        return False
-    return any(part in normalized for part in SENSITIVE_KEY_PARTS)
-
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 def canonical_json(value: Any) -> str:
     """Return deterministic JSON for checksums and stored contracts."""
@@ -42,21 +20,17 @@ def content_checksum(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def redact_secrets(value: Any) -> Any:
-    """Remove secret values while preserving the configuration structure."""
-    if isinstance(value, Mapping):
-        redacted: dict[str, Any] = {}
-        for raw_key, item in value.items():
-            key = str(raw_key)
-            normalized = key.lower().replace("-", "_")
-            if _is_sensitive_key(normalized):
-                redacted[key] = "[redacted]"
-            else:
-                redacted[key] = redact_secrets(item)
-        return redacted
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [redact_secrets(item) for item in value]
-    return value
+def redact_secrets(value: Any, *, view: str = "internal") -> Any:
+    """Redact one value under the data-class policy, keeping its structure.
+
+    The declarative policy in ``benchmarks.data_classes`` classifies
+    every field by name, by measurement marker, and by value shape.
+    Secret and sensitive values become the redaction marker,
+    prohibited values drop, and usage measurements stay readable.
+    """
+    from benchmarks.data_classes import redact
+
+    return redact(value, view=view)
 
 
 def build_execution_snapshot(

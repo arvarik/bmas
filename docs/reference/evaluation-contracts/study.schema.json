@@ -1,0 +1,145 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/study",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "arms": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "type": "object"
+          },
+          "configuration_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "slug": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+            "type": "string"
+          },
+          "treatment": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "slug",
+          "treatment",
+          "configuration_digest",
+          "configuration"
+        ],
+        "type": "object"
+      },
+      "minItems": 2,
+      "type": "array"
+    },
+    "authored_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+      "type": "string"
+    },
+    "estimand": {
+      "type": "object"
+    },
+    "estimates": {
+      "type": "object"
+    },
+    "expansion_rule": {
+      "type": "object"
+    },
+    "gates": {
+      "type": "object"
+    },
+    "invariants": {
+      "type": "object"
+    },
+    "name": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "run_plan_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "sample_plan": {
+      "type": "object"
+    },
+    "schema_id": {
+      "const": "study"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "study_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "study_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "study_type": {
+      "enum": [
+        "one_factor_ablation",
+        "parameter_grid",
+        "preset_comparison",
+        "runtime_comparison",
+        "model_family_comparison"
+      ]
+    },
+    "test_revision_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "treatment_paths": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "study_id",
+    "study_type",
+    "name",
+    "arms",
+    "expansion_rule",
+    "invariants",
+    "estimand",
+    "gates",
+    "sample_plan",
+    "estimates",
+    "treatment_paths",
+    "study_digest",
+    "run_plan_id",
+    "test_revision_id",
+    "authored_at"
+  ],
+  "title": "One authored study with its run plan and test revision",
+  "type": "object"
+}

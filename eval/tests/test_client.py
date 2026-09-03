@@ -10,11 +10,9 @@ beside the original file, and replay never repeats an execution.
 from __future__ import annotations
 
 import json
-import warnings
 
 import pytest
 
-from eval import scorer
 from eval.client import API_PREFIX, EvaluationClient
 from eval.legacy_results import find_summaries, migrate_directory
 
@@ -61,7 +59,7 @@ def test_replay_without_actor_stays_inert():
     assert "approval" not in body
 
 
-def test_scorer_shim_delegates_to_the_daemon_when_configured(monkeypatch):
+def test_score_answer_scores_through_the_daemon_only():
     transport = FakeTransport({
         f"{API_PREFIX}/scorers/preview": {
             "terminal_class": "completed",
@@ -71,24 +69,26 @@ def test_scorer_shim_delegates_to_the_daemon_when_configured(monkeypatch):
                                        "category": "42"}]},
         },
     })
-    monkeypatch.setattr(scorer, "SCORER_CLIENT",
-                        EvaluationClient(transport=transport))
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        extracted, correct, method = scorer.score_gsm8k("42", "#### 42")
-    assert (extracted, correct, method) == ("42", True, "numeric_match")
+    client = EvaluationClient(transport=transport)
+    assert client.score_answer("gsm8k", "42", "#### 42") == (
+        "42", True, "numeric_match",
+    )
     configuration = transport.calls[0][2]["configuration"]
     assert configuration == {"comparison": "last_number"}
-
-
-def test_scorer_shim_warns_and_records_local_fallback(monkeypatch):
-    recorded: list[str] = []
-    monkeypatch.setattr(scorer, "SCORER_CLIENT", None)
-    monkeypatch.setattr(scorer, "FALLBACK_RECORDER", recorded.append)
-    with pytest.warns(DeprecationWarning, match="deprecation cycle"):
-        extracted, correct, _ = scorer.score_gsm8k("7", "The answer is 7")
-    assert (extracted, correct) == ("7", True)
-    assert recorded == ["eval.scorer.score_gsm8k"]
+    assert client.score_answer("mmlu", "B", "The answer is B")[1] is True
+    assert transport.calls[1][2]["configuration"]["comparison"] == (
+        "multiple_choice"
+    )
+    assert client.score_answer("unknown", "x", "y") == (
+        None, False, "unknown_dataset",
+    )
+    unavailable = EvaluationClient(transport=FakeTransport({
+        f"{API_PREFIX}/scorers/preview": {"terminal_class": "trap",
+                                          "result": None},
+    }))
+    assert unavailable.score_answer("gsm8k", "42", "#### 42") == (
+        None, False, "trap",
+    )
 
 
 def test_legacy_summaries_migrate_beside_the_original(tmp_path):

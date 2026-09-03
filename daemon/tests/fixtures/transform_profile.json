@@ -59,7 +59,7 @@
    "weight": 7
   }
  ],
- "fixture_version": "1",
+ "fixture_version": "2",
  "numbers": [
   {
    "expected": "0.5",
@@ -106,47 +106,47 @@
    "counter": 0,
    "operation_index": 0,
    "rank": "d2d9c76f7aca3bf140a95215a4758086ef587d03cea2278137fefeccf7bbcc0c",
-   "seed": 0
+   "seed": "0"
   },
   {
    "case_id": "case-alpha",
    "counter": 0,
    "operation_index": 0,
    "rank": "3d9b0a464c30163320a554e440641614b3f5ce9afe0267ad641c9fb4df5c4ae6",
-   "seed": 7
+   "seed": "7"
   },
   {
    "case_id": "case-alpha",
    "counter": 0,
    "operation_index": 1,
    "rank": "07eeb2e258fbddb274aa2da1229c861fcb0a88992b044a9986971be3e174ab00",
-   "seed": 7
+   "seed": "7"
   },
   {
    "case_id": "case-bravo",
    "counter": 0,
    "operation_index": 0,
    "rank": "6b94b652b9b14d85c40d8edbb5e092a0da65729ac404453a46b22c58ec7b9759",
-   "seed": 7
+   "seed": "7"
   },
   {
    "case_id": "case-alpha",
    "counter": 3,
    "operation_index": 0,
    "rank": "0a906b8a81c7d4d933d5fc5cd26229e931c534a020be8cd1ddbc9d86943bb123",
-   "seed": 7
+   "seed": "7"
   },
   {
    "case_id": "case-alpha",
    "counter": 0,
    "operation_index": 0,
    "rank": "1e1eaac0f0602bc616cc1f47de9d9fdc8c5d98f9f7e83dfa03afb7e2e3252842",
-   "seed": 18446744073709551615
+   "seed": "18446744073709551615"
   }
  ],
  "sample": {
   "count": 3,
-  "seed": 7,
+  "seed": "7",
   "selected_case_ids": [
    "case-alpha",
    "case-charlie",
@@ -164,7 +164,7 @@
    "case-golf": "test",
    "case-hotel": "test"
   },
-  "seed": 7,
+  "seed": "7",
   "weights": {
    "test": 1,
    "train": 2

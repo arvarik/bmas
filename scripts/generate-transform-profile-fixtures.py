@@ -20,7 +20,7 @@ import hashlib
 import json
 from pathlib import Path
 
-FIXTURE_VERSION = "1"
+FIXTURE_VERSION = "2"
 PROFILE_NAME = "bmas-transform"
 PROFILE_VERSION = 1
 
@@ -131,7 +131,7 @@ def main() -> None:
         ],
         "rank_vectors": [
             {
-                "seed": seed,
+                "seed": str(seed),
                 "operation_index": index,
                 "case_id": case["case_id"],
                 "counter": counter,
@@ -149,12 +149,12 @@ def main() -> None:
             )
         ],
         "sample": {
-            "seed": 7,
+            "seed": "7",
             "count": 3,
             "selected_case_ids": sample_selection(cases, 7, 3),
         },
         "split": {
-            "seed": 7,
+            "seed": "7",
             "weights": weights,
             "assignment": split_assignment(cases, 7, weights),
         },

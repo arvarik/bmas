@@ -364,10 +364,20 @@ async def test_history_rows_are_unique_and_immutable(storage_db):
 
 @pytest.mark.asyncio
 async def test_model_only_kinds_validate_without_storage(storage_db):
-    from test_evaluation_contracts import valid_dataset_version
+    from test_evaluation_contracts import (
+        valid_dataset_version,
+        valid_gate_evaluation,
+    )
 
     with pytest.raises(
         evaluation_records.EvaluationStorageError, match="no table",
+    ):
+        await evaluation_records.save_record(valid_gate_evaluation())
+    # The dataset version record stores now, and only with its
+    # dataset link.
+    with pytest.raises(
+        evaluation_records.EvaluationStorageError,
+        match="requires the dataset_id link",
     ):
         await evaluation_records.save_record(valid_dataset_version())
 

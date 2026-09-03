@@ -28,6 +28,9 @@ CALIBRATION_METHOD = "raw-agreement-cohen-kappa"
 DEFAULT_AGREEMENT_THRESHOLD = 0.7
 DEFAULT_DRIFT_TOLERANCE = 0.1
 ABSTAIN = "abstain"
+# The anchor schedule: every release and weekly during active use.
+DEFAULT_CALIBRATION_INTERVAL_DAYS = 7
+CALIBRATION_LOOP_SECONDS = 3600.0
 
 
 class JudgeCalibrationError(ValueError):
@@ -241,6 +244,241 @@ def calibrate(
     }
     validate_record(record)
     return record
+
+
+# ── Anchor sets and the weekly calibration schedule ──────────────────
+
+
+def next_due(after: str, interval_days: int) -> str:
+    """The next due timestamp one interval after ``after``."""
+    from datetime import UTC, datetime, timedelta
+
+    text = str(after)
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    moment = datetime.fromisoformat(text)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    due = moment.astimezone(UTC) + timedelta(days=int(interval_days))
+    return due.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def anchor_set_record(
+    *,
+    anchor_id: str,
+    judge_id: str,
+    judge_version: str,
+    judge_model: str,
+    prompt_digest: str,
+    scorer_id: str,
+    scorer_version: str,
+    label_set: dict[str, Any],
+    candidate_models: list[str],
+    now: str,
+    interval_days: int = DEFAULT_CALIBRATION_INTERVAL_DAYS,
+    threshold: float = DEFAULT_AGREEMENT_THRESHOLD,
+    drift_tolerance: float = DEFAULT_DRIFT_TOLERANCE,
+) -> dict[str, Any]:
+    """Build one validating anchor set with its calibration schedule.
+
+    The first calibration is due immediately, so a new anchor set
+    calibrates on the next scheduler pass and then every interval.
+    """
+    record = {
+        "schema_id": "judge-anchor-set",
+        "schema_version": 2,
+        "anchor_id": anchor_id,
+        "judge": {
+            "judge_id": judge_id,
+            "version": judge_version,
+            "model": judge_model,
+            "prompt_digest": prompt_digest,
+        },
+        "scorer": {"scorer_id": scorer_id, "version": scorer_version},
+        "label_set": label_set,
+        "candidate_models": list(candidate_models),
+        "schedule": {
+            "interval_days": int(interval_days),
+            "next_due_at": now,
+            "created_at": now,
+        },
+        "threshold": float(threshold),
+        "drift_tolerance": float(drift_tolerance),
+        "state": "active",
+    }
+    validate_record(record)
+    return record
+
+
+async def register_anchor_set(record: dict[str, Any]) -> dict[str, Any]:
+    """Store one anchor set through the one facade."""
+    from benchmarks import facade
+
+    saved = await facade.execute("record_judge_anchor_set", {"record": record})
+    return {"anchor_id": saved["id"], "record": record}
+
+
+async def list_anchor_sets(*, now: str | None = None) -> list[dict[str, Any]]:
+    """List every anchor set with its schedule state."""
+    async with db._connect() as connection:  # noqa: SLF001
+        rows = await connection.execute_fetchall(
+            "SELECT * FROM judge_anchor_sets ORDER BY next_due_at, id",
+        )
+    listed = []
+    for row in rows:
+        entry = {**dict(row), "record": json.loads(row["record"])}
+        entry["due"] = bool(
+            now is not None and str(row["state"]) == "active"
+            and str(row["next_due_at"]) <= now
+        )
+        listed.append(entry)
+    return listed
+
+
+async def _anchor_items(label_set: dict[str, Any]) -> list[dict[str, Any]]:
+    """Join the pinned labels with the dataset items they label."""
+    items_by_id: dict[str, dict[str, Any]] = {}
+    version_id = str(label_set.get("dataset_id") or "")
+    if version_id:
+        offset = 0
+        while True:
+            page, total = await db.list_dataset_items(
+                version_id, limit=200, offset=offset,
+            )
+            for item in page:
+                items_by_id[str(item.get("item_key") or item.get("id"))] = item
+                items_by_id.setdefault(str(item.get("id")), item)
+            offset += len(page)
+            if not page or offset >= int(total):
+                break
+    joined = []
+    for pinned in label_set["items"]:
+        item = items_by_id.get(str(pinned["item_id"])) or {}
+        joined.append({
+            "item_id": str(pinned["item_id"]),
+            "label": str(pinned["label"]),
+            "input": item.get("input"),
+            "expected_output": item.get("expected_output"),
+        })
+    return joined
+
+
+async def calibrate_anchor_set(
+    anchor: dict[str, Any], *, judge: Any, now: str,
+) -> dict[str, Any]:
+    """Run the judge over one anchor set and store the calibration.
+
+    The judge labels every anchor item inside the pinned vocabulary,
+    the calibration compares the labels with the pinned human labels,
+    and the schedule advances one interval whatever the outcome, so a
+    failing judge stays visible instead of silently retried.
+    """
+    record = anchor.get("record", anchor)
+    label_set = record["label_set"]
+    vocabulary = sorted({str(item["label"]) for item in label_set["items"]})
+    outputs: dict[str, str] = {}
+    for item in await _anchor_items(label_set):
+        outputs[item["item_id"]] = judge.label(item, vocabulary)
+    judge_info = record["judge"]
+    previous = await latest_calibration(
+        judge_info["judge_id"], judge_info["version"],
+    )
+    calibration = calibrate(
+        judge_id=judge_info["judge_id"],
+        judge_version=judge_info["version"],
+        judge_model=judge_info["model"],
+        prompt_digest=judge_info["prompt_digest"],
+        scorer_id=record["scorer"]["scorer_id"],
+        scorer_version=record["scorer"]["version"],
+        label_set=label_set,
+        judge_outputs=outputs,
+        candidate_models=list(record["candidate_models"]),
+        previous=previous,
+        threshold=float(record["threshold"]),
+        drift_tolerance=float(record["drift_tolerance"]),
+        now=now,
+    )
+    stored = await store_calibration(calibration)
+    from benchmarks import facade
+
+    due = next_due(now, int(record["schedule"]["interval_days"]))
+    await facade.execute("advance_anchor_schedule", {
+        "anchor_id": record["anchor_id"],
+        "last_calibrated_at": now,
+        "next_due_at": due,
+        "state": "active",
+    })
+    return {
+        "anchor_id": record["anchor_id"],
+        "calibration_id": stored["calibration_id"],
+        "state": calibration["state"],
+        "raw_agreement": calibration["agreement"]["raw"],
+        "next_due_at": due,
+        "judge_outputs": outputs,
+    }
+
+
+async def run_due_calibrations(
+    *, now: str, judge_factory: Any,
+) -> list[dict[str, Any]]:
+    """Calibrate every anchor set whose schedule is due."""
+    from benchmarks import evaluation_records
+
+    outcomes = []
+    for anchor in await evaluation_records.due_anchor_sets(now):
+        judge = judge_factory(anchor["record"])
+        if judge is None:
+            outcomes.append({
+                "anchor_id": anchor["record"]["anchor_id"],
+                "state": "skipped",
+                "reason": "no judge transport is configured",
+            })
+            continue
+        outcomes.append(await calibrate_anchor_set(anchor, judge=judge, now=now))
+    return outcomes
+
+
+def default_judge_factory(record: dict[str, Any]) -> Any:
+    """Build the model-backed judge one anchor set pins, when possible."""
+    from benchmarks import model_backed
+
+    settings = model_backed.gateway_settings_from_environment()
+    if settings is None:
+        return None
+    judge = record["judge"]
+    transport = model_backed.ModelTransport(settings, model=judge["model"])
+    return model_backed.ModelBackedJudge(
+        transport, judge_id=judge["judge_id"], version=judge["version"],
+    )
+
+
+async def calibration_loop(
+    *,
+    interval_seconds: float = CALIBRATION_LOOP_SECONDS,
+    judge_factory: Any = None,
+    iterations: int | None = None,
+) -> None:
+    """Run due calibrations on a fixed cadence until cancelled."""
+    import asyncio
+    import logging
+
+    logger = logging.getLogger("bmas.daemon.calibration")
+    factory = judge_factory or default_judge_factory
+    completed = 0
+    while iterations is None or completed < iterations:
+        try:
+            now = await db.database_utc_now()
+            outcomes = await run_due_calibrations(now=now, judge_factory=factory)
+            if outcomes:
+                logger.info("Anchor calibrations: %s", outcomes)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 - the loop survives one failure
+            logger.warning("Anchor calibration pass failed: %s", error)
+        completed += 1
+        if iterations is not None and completed >= iterations:
+            break
+        await asyncio.sleep(interval_seconds)
 
 
 async def store_calibration(record: dict[str, Any]) -> dict[str, Any]:

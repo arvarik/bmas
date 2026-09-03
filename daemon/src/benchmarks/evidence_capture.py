@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import database as db
+from benchmarks.data_classes import policy_digest as redaction_policy_digest
 from benchmarks.provenance import content_checksum, redact_secrets
 
 # The sections whose absence downgrades completeness. Optional
@@ -54,6 +55,10 @@ def _persist_section(
 
     redacted = redact_secrets(value)
     payload = canonical_json(redacted).encode("utf-8")
+    _PERSISTED_BYTES[attempt_id] = _PERSISTED_BYTES.get(attempt_id, 0) + len(
+        payload,
+    )
+    _PERSISTED_COUNT[attempt_id] = _PERSISTED_COUNT.get(attempt_id, 0) + 1
     return persist_protected_artifact(
         store,
         payload,
@@ -62,6 +67,11 @@ def _persist_section(
         data_class=DataClass.INTERNAL,
         referenced_by=f"{attempt_id}:{section}",
     )
+
+
+# Bytes and artifacts persisted per attempt inside one capture call.
+_PERSISTED_BYTES: dict[str, int] = {}
+_PERSISTED_COUNT: dict[str, int] = {}
 
 
 def host_versions() -> dict[str, str]:
@@ -196,6 +206,7 @@ async def capture_attempt_evidence(
     if recovery_events is not None:
         record["recovery_events"] = redact_secrets(recovery_events)
     record["seed_evidence"] = dict(seed_evidence)
+    record["redaction_policy_digest"] = redaction_policy_digest()
     record["failure_classification"] = failure_classification
     record["versions"] = {**host_versions(), **(versions or {})}
     record["ledger_references"] = dict(ledger_references)
@@ -203,6 +214,13 @@ async def capture_attempt_evidence(
     saved = await facade.execute(
         "record_attempt_evidence",
         {"record": record, "attempt_id": attempt_id},
+    )
+    from benchmarks import resource_ledger
+
+    await resource_ledger.emit_storage(
+        attempt_id=attempt_id,
+        byte_count=_PERSISTED_BYTES.pop(attempt_id, 0),
+        artifact_count=_PERSISTED_COUNT.pop(attempt_id, 0),
     )
     return {
         "attempt_id": attempt_id,

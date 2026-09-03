@@ -80,13 +80,29 @@ Linux worker with eight logical CPUs, 16 GiB memory, and local SSD.
 ## The pinned toolchain
 
 `toolchain-pins.yaml` pins Python, Node.js, npm, Playwright, the
-Chromium build, Redis, SQLite, Wasmtime, and the statistical runtime.
+Chromium build, Redis, SQLite, Wasmtime, NumPy, and the statistical
+arithmetic contract. Wasmtime and NumPy resolve as installed Python
+distributions, because the daemon executes scorer components through
+the `wasmtime` wheel and the vectorized analysis engine through NumPy.
+The statistics component pins `binary64-sequential-summation`: the
+reference engine and the vectorized engine both honour it, so the
+engine choice never changes a number.
 `scripts/check-toolchain.py` resolves every component, records the
 exact versions, and fails before tests when a component this
 consumer requires is absent or when any resolved component violates
 its pin. The daemon partition requires the Python-side components and
 the Mission Control partition requires the browser-side components
 after the browser install.
+
+## The second implementation of the portable profiles
+
+`mission-control/src/lib/transform-profile.ts` and
+`mission-control/src/lib/analysis-rng.ts` implement `bmas-transform`
+and `bmas-analysis-rng` in TypeScript. The
+`mission-control.conformance-fixtures` group runs them against the
+published daemon fixtures, so every digest, rank, sample, split,
+candidate, sign-flip bit, and oracle aggregate has one real second
+consumer that reproduces it byte for byte.
 
 ## Release gates and the default generation
 

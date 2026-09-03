@@ -2,7 +2,7 @@
 
 import pytest
 
-from eval.scorer import ScoredResult
+from eval.scored_result import ScoredResult
 
 
 @pytest.fixture

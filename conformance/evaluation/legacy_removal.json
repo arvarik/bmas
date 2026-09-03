@@ -1,0 +1,29 @@
+{
+  "schema_id": "bmas.legacy_removal",
+  "metadata": {
+    "contract_version": 1
+  },
+  "removed_modules": [
+    "eval/scorer.py",
+    "eval/ab_harness.py"
+  ],
+  "removed_tests": [
+    "eval/tests/test_scorer.py",
+    "eval/tests/test_ab_harness.py"
+  ],
+  "replacements": {
+    "eval/scorer.py": "eval/client.py EvaluationClient.score_answer through the daemon scorer plugins",
+    "eval/ab_harness.py": "the evaluation study API: POST /api/evaluation/studies",
+    "eval.scorer.ScoredResult": "eval/scored_result.py"
+  },
+  "fallback_window": {
+    "window_start": "2026-09-02T00:00:00Z",
+    "measured_at": "2026-09-03T00:00:00Z",
+    "threshold": 0,
+    "fallback_events": 0,
+    "direct_legacy_call_events": 0,
+    "measurement": "GET /api/evaluation/authority/removal-gates on the release daemon after the consolidation merge; the continuous integration daemons recorded no fallback and no direct legacy call inside the window",
+    "re-measure": "POST /api/evaluation/authority/removal-gates/fallback-window with the window start"
+  },
+  "guard": "scripts/check-legacy-writes.py fails when a removed module reappears"
+}

@@ -106,9 +106,13 @@ class RegressionRuleInput(BaseModel):
         "lower_confidence_bound",
         "upper_confidence_bound",
         "holm_sign_test",
+        "frozen_non_inferiority",
+        "frozen_superiority",
     ] = "point_estimate"
     direction: Literal["improvement", "reduction"] | None = None
     practical_size: float | None = Field(default=None, ge=0)
+    minimum_usable_cases: int | None = Field(default=None, ge=1)
+    resample_count: int | None = Field(default=None, ge=1, le=100_000)
 
 
 class DisplayExceptionInput(BaseModel):
@@ -432,20 +436,54 @@ async def get_run_report_endpoint(
     split: str | None = None,
     tag: str | None = None,
     scorer_id: str | None = None,
+    engine: str = "frozen",
+    allow_unresolved: bool = False,
 ):
+    """Serve the current frozen snapshot, or the legacy report before one exists.
+
+    The frozen report recomputes from the stored specification and
+    evidence, verifies the snapshot digests, and resolves every
+    displayed metric to one published definition. The legacy engine
+    serves only while no frozen snapshot exists or when a caller asks
+    for it explicitly, and it says so.
+    """
     run = await repository.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="The benchmark run does not exist")
+    from benchmarks import frozen_analysis, metric_registry
     from benchmarks.outcome_mappings import OutcomeMappingError
 
+    if engine not in ("frozen", "legacy"):
+        raise HTTPException(status_code=422, detail="engine is frozen or legacy")
+    if engine == "frozen":
+        try:
+            served = await frozen_analysis.served_report(
+                run_id, allow_unresolved=allow_unresolved,
+            )
+        except metric_registry.MetricRegistryError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except frozen_analysis.FrozenAnalysisError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if served is not None:
+            return served
     try:
-        return build_run_report(
+        legacy = build_run_report(
             run, _report_filters(subject, split, tag, scorer_id),
         )
     except OutcomeMappingError as error:
         # A broken outcome contract rejects before analysis; the run
         # needs a new mapping set and run plan, not a report.
         raise HTTPException(status_code=409, detail=str(error)) from error
+    return {
+        **legacy,
+        "engine": "legacy-report",
+        "frozen_snapshot": None,
+        "statement": (
+            "No frozen snapshot exists for this run yet; freeze one through "
+            "POST /api/evaluation/runs/{run_id}/analyses/freeze"
+            if engine == "frozen" else "The caller requested the legacy engine"
+        ),
+    }
 
 
 @router.get("/runs/{run_id}/report.csv")

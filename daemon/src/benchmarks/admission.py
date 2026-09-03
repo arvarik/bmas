@@ -559,6 +559,11 @@ async def admit_attempt(attempt: dict[str, Any]) -> dict[str, str]:
     """
     authority = await ensure_run_authority(attempt)
     attempt_id = str(attempt["id"])
+    # A run authored as a study admits only while its study
+    # conditions hold; a run without a study plan admits unchanged.
+    from benchmarks import study_authoring
+
+    await study_authoring.enforce_study_admission(str(attempt["run_id"]))
     digest = request_digest_for(attempt)
     reservation_id = f"benchmark-reservation-{attempt_id}"
     intent = await effects.create_effect_intent(
@@ -944,6 +949,12 @@ async def settle_attempt_admission(attempt: dict[str, Any]) -> None:
         usage=usage,
         task_fence=fence,
     )
+    # The resource ledger receives the runtime use automatically; the
+    # entry id derives from the attempt, so a repeated settlement
+    # never doubles it.
+    from benchmarks import resource_ledger
+
+    await resource_ledger.emit_runtime_usage({**attempt, "run_id": run_id})
 
 
 async def try_settle_run(run_id: str) -> bool:

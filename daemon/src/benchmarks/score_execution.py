@@ -64,6 +64,24 @@ class ScoreExecutionError(ValueError):
     """The execution request violates the scoring contract."""
 
 
+# The boundary each plugin type records. A repository-reviewed plugin
+# runs in-process inside the deterministic boundary as one trusted
+# service; a component runs inside Wasmtime; a native scorer runs
+# inside the pinned microVM.
+BOUNDARY_FOR_PLUGIN = {
+    "wasi_component": "wasi_component",
+    "native_microvm": "native_microvm",
+}
+DEFAULT_BOUNDARY = "trusted_service"
+
+
+def boundary_for(plugin: Any) -> str:
+    """Name the isolation boundary one plugin executes inside."""
+    return BOUNDARY_FOR_PLUGIN.get(
+        str(getattr(plugin, "plugin_type", "")), DEFAULT_BOUNDARY,
+    )
+
+
 def _component_for(plugin: Any) -> dict[str, Any]:
     """Pin one reviewed plugin as a boundary component manifest.
 
@@ -132,6 +150,92 @@ def run_deterministic_in_boundary(
             "configuration": configuration,
         },
         guest=guest,
+        clock=clock,
+    )
+
+
+def component_policy_for(
+    artifact: Any, configuration: dict[str, Any],
+) -> scorer_sandbox.WasiScorerPolicy:
+    """Build the pinned policy for one compiled component."""
+    from benchmarks import sandbox_backends
+
+    limits = dict(configuration.get("limits") or {})
+    return scorer_sandbox.WasiScorerPolicy(
+        component_digest=artifact.digest,
+        wit_digest=sandbox_backends.wit_digest(),
+        wasi_version="preview-2",
+        compiler_digest=str(
+            configuration.get("compiler_digest")
+            or content_checksum({"compiler": "wasm-component-text", "generation": 1})
+        ),
+        dependency_lock_digest=str(
+            configuration.get("dependency_lock_digest")
+            or content_checksum({"dependencies": [], "lock": "component-only"})
+        ),
+        output_schema=SCORER_OUTPUT_SCHEMA,
+        fuel_limit=int(limits.get("fuel_limit", 1_000_000)),
+        memory_limit_bytes=int(limits.get("memory_limit_bytes", 16_777_216)),
+        table_limit_entries=int(limits.get("table_limit_entries", 1_024)),
+        output_limit_bytes=int(limits.get("output_limit_bytes", 65_536)),
+        wall_time_limit_seconds=float(
+            limits.get("wall_time_limit_seconds", 30.0),
+        ),
+        random_seed=int(configuration.get("seed", 0)),
+    )
+
+
+def run_component_in_wasmtime(
+    *,
+    plugin: Any,
+    evidence: dict[str, Any],
+    configuration: dict[str, Any],
+) -> dict[str, Any]:
+    """Run one compiled component inside the pinned Wasmtime runtime."""
+    from benchmarks import sandbox_backends
+
+    policy = component_policy_for(plugin.component, configuration)
+    runner = sandbox_backends.WasmtimeComponentRunner()
+    return runner.execute(
+        artifact=plugin.component,
+        policy=policy,
+        evidence_input={"evidence": evidence, "configuration": configuration},
+    )
+
+
+def run_native_in_microvm(
+    *,
+    plugin: Any,
+    evidence: dict[str, Any],
+    configuration: dict[str, Any],
+) -> dict[str, Any]:
+    """Run one native scorer inside the pinned microVM boundary."""
+    return plugin.runner.execute(
+        evidence_input={"evidence": evidence, "configuration": configuration},
+        request_token=str(configuration.get("request_token") or ""),
+        output_schema=SCORER_OUTPUT_SCHEMA,
+    )
+
+
+def run_in_boundary(
+    *,
+    plugin: Any,
+    evidence: dict[str, Any],
+    configuration: dict[str, Any],
+    clock: Any = None,
+) -> dict[str, Any]:
+    """Dispatch one plugin to the boundary its type declares."""
+    plugin_type = str(getattr(plugin, "plugin_type", ""))
+    if plugin_type == "wasi_component":
+        return run_component_in_wasmtime(
+            plugin=plugin, evidence=evidence, configuration=configuration,
+        )
+    if plugin_type == "native_microvm":
+        return run_native_in_microvm(
+            plugin=plugin, evidence=evidence, configuration=configuration,
+        )
+    return run_deterministic_in_boundary(
+        plugin=plugin, evidence=evidence, configuration=configuration,
         clock=clock,
     )
 
@@ -233,6 +337,8 @@ async def score_attempt(
     extra_evidence: dict[str, Any] | None = None,
     judge: Any = None,
     clock: Any = None,
+    component: Any = None,
+    microvm: Any = None,
 ) -> dict[str, Any]:
     """Score one stored evidence bundle and persist the record.
 
@@ -266,13 +372,29 @@ async def score_attempt(
         **(extra_evidence or {}),
     }
     configuration = dict(configuration or {})
-    plugin = scorer_plugins.plugin_for(plugin_type, judge=judge)
-    outcome = run_deterministic_in_boundary(
-        plugin=plugin,
-        evidence=evidence,
-        configuration=configuration,
-        clock=clock,
+    if judge is None and plugin_type == "rubric_judge":
+        from benchmarks import model_backed
+
+        judge = model_backed.judge_for(configuration)
+    plugin = scorer_plugins.plugin_for(
+        plugin_type, judge=judge, component=component, microvm=microvm,
     )
+    if plugin_type == "rubric_judge":
+        # A judge transport may block on the network; the boundary
+        # runs on a worker thread so the event loop stays responsive.
+        import asyncio
+
+        outcome = await asyncio.to_thread(
+            run_in_boundary, plugin=plugin, evidence=evidence,
+            configuration=configuration, clock=clock,
+        )
+    else:
+        outcome = run_in_boundary(
+            plugin=plugin,
+            evidence=evidence,
+            configuration=configuration,
+            clock=clock,
+        )
     record = _record_from_outcome(
         score_id=f"score-{uuid.uuid4().hex}",
         scorer_id=scorer_id,
@@ -280,7 +402,7 @@ async def score_attempt(
         configuration=configuration,
         attempt_id=attempt_id,
         outcome=outcome,
-        boundary="wasi_component",
+        boundary=boundary_for(plugin),
     )
     saved = await facade.execute(
         "record_score",
@@ -290,6 +412,17 @@ async def score_attempt(
             "scorer_version_id": scorer_version_id,
         },
     )
+    from benchmarks import resource_ledger
+
+    await resource_ledger.emit_scorer_execution(
+        attempt_id=attempt_id, scorer_id=scorer_id, outcome=outcome,
+        boundary=boundary_for(plugin),
+    )
+    if record.get("judge"):
+        await resource_ledger.emit_judge_usage(
+            attempt_id=attempt_id, scorer_id=scorer_id,
+            judge=record["judge"],
+        )
     return {
         "score_id": record["score_id"],
         "status": record["status"],

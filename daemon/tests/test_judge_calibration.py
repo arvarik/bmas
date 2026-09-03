@@ -204,7 +204,7 @@ def test_judge_result_view_exposes_everything():
     score["judge"] = {"request_digest": DIGEST, "response_digest": DIGEST}
     score["calibration_version"] = "3"
     score["sandbox"] = {
-        "boundary": "wasi_component",
+        "boundary": "trusted_service",
         "policy_digest": DIGEST,
         "runtime_digest": DIGEST,
     }

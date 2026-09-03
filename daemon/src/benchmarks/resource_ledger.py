@@ -23,7 +23,7 @@ import uuid
 from typing import Any
 
 import database as db
-from benchmarks.costs import money_from_json, money_to_json
+from benchmarks.costs import BENCHMARK_CURRENCY, money_from_json, money_to_json
 from benchmarks.evaluation_contracts import validate_record
 from core.money import Money
 
@@ -83,6 +83,7 @@ def ledger_entry(
     reservation_id: str | None = None,
     estimate_entry_id: str | None = None,
     now: str = "1970-01-01T00:00:00Z",
+    entry_id: str | None = None,
 ) -> dict[str, Any]:
     """Build one validating ledger entry with its derived charge state.
 
@@ -136,7 +137,7 @@ def ledger_entry(
     record: dict[str, Any] = {
         "schema_id": "resource-ledger-entry",
         "schema_version": 2,
-        "entry_id": f"ledger-{uuid.uuid4().hex}",
+        "entry_id": entry_id or f"ledger-{uuid.uuid4().hex}",
         "resource_class": resource_class,
         "provider": provider,
         "service": service,
@@ -182,9 +183,15 @@ def actual_from_provider_text(
 
 
 async def record_event(record: dict[str, Any]) -> dict[str, Any]:
-    """Store one ledger entry through the one facade."""
-    from benchmarks import facade
+    """Store one ledger entry through the one facade.
 
+    The entry redacts under the data-class policy before it stores,
+    so provider evidence never carries a credential into the ledger.
+    """
+    from benchmarks import facade
+    from benchmarks.data_classes import redact
+
+    record = redact(record)
     saved = await facade.execute(
         "record_resource_event",
         {
@@ -194,6 +201,251 @@ async def record_event(record: dict[str, Any]) -> dict[str, Any]:
         },
     )
     return {"entry_id": saved["id"], "record": record}
+
+
+# ── Automatic emission from the execution paths ──────────────────────
+
+# The pricing basis of an entry the daemon derives from observed use.
+USAGE_PRICING_VERSION = "observed-usage"
+RUNTIME_PROVIDER = "litellm-gateway"
+LOCAL_COMPUTE_EVIDENCE = (
+    "local compute inside the daemon boundary; no provider invoice"
+)
+LOCAL_STORAGE_EVIDENCE = (
+    "content-addressed local artifact store; no provider invoice"
+)
+
+
+async def attempt_run_id(attempt_id: str) -> str | None:
+    """Resolve the run of one attempt through its trial."""
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "SELECT trial.run_id AS run_id FROM benchmark_attempts AS attempt "
+            "JOIN benchmark_trials AS trial ON trial.id = attempt.trial_id "
+            "WHERE attempt.id = ?",
+            (attempt_id,),
+        )
+        row = await cursor.fetchone()
+    return str(row["run_id"]) if row else None
+
+
+async def _entry_exists(entry_id: str) -> bool:
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "SELECT 1 FROM resource_ledger_entries WHERE id = ?", (entry_id,),
+        )
+        return await cursor.fetchone() is not None
+
+
+async def _now(now: str | None) -> str:
+    return now or await db.database_utc_now()
+
+
+async def emit_entry(record: dict[str, Any]) -> dict[str, Any] | None:
+    """Store one derived entry exactly once by its deterministic id."""
+    if await _entry_exists(str(record["entry_id"])):
+        return None
+    return await record_event(record)
+
+
+def _decimal_text(value: float) -> str:
+    return f"{float(value):.9f}"
+
+
+async def emit_runtime_usage(
+    attempt: dict[str, Any], *, now: str | None = None,
+) -> dict[str, Any] | None:
+    """Record the runtime use of one finished attempt.
+
+    The observed task cost becomes the actual charge with the reported
+    provider text as evidence; a task with no reported usage records
+    an unknown price that never becomes zero.
+    """
+    attempt_id = str(attempt["id"])
+    run_id = str(attempt.get("run_id") or await attempt_run_id(attempt_id) or "")
+    if not run_id:
+        return None
+    tokens = attempt.get("total_tokens")
+    raw_cost = attempt.get("total_cost_usd")
+    when = await _now(now)
+    arguments: dict[str, Any] = {
+        "run_id": run_id,
+        "resource_class": "runtime",
+        "provider": RUNTIME_PROVIDER,
+        "service": str(attempt.get("model_used") or "unknown-model"),
+        "region": "unspecified",
+        "quantity": float(tokens) if tokens is not None else 1.0,
+        "unit": "tokens" if tokens is not None else "attempts",
+        "pricing_version": USAGE_PRICING_VERSION,
+        "attempt_id": attempt_id,
+        "reservation_id": f"benchmark-reservation-{attempt_id}",
+        "retry_of": attempt.get("retry_of") or None,
+        "now": when,
+        "entry_id": f"ledger-runtime-{attempt_id}",
+    }
+    if raw_cost is not None:
+        text = _decimal_text(float(raw_cost))
+        arguments["actual"] = Money.from_decimal_string(
+            BENCHMARK_CURRENCY, text,
+        )
+        arguments["actual_provider_text"] = text
+        arguments["actual_source"] = "usage_report"
+    else:
+        arguments["price_unknown"] = True
+    return await emit_entry(ledger_entry(**arguments))
+
+
+async def emit_scorer_execution(
+    *,
+    attempt_id: str,
+    scorer_id: str,
+    outcome: dict[str, Any],
+    boundary: str,
+    now: str | None = None,
+) -> dict[str, Any] | None:
+    """Record the scorer compute of one score execution."""
+    run_id = await attempt_run_id(attempt_id)
+    if run_id is None:
+        return None
+    resources = outcome.get("resources") or {}
+    fuel = resources.get("fuel_used")
+    cpu_seconds = resources.get("cpu_seconds")
+    if boundary == "native_microvm" and cpu_seconds is not None:
+        quantity, unit = float(cpu_seconds), "vcpu-seconds"
+    else:
+        quantity, unit = float(fuel or 0), "fuel"
+    return await emit_entry(ledger_entry(
+        run_id=run_id,
+        resource_class="scorer",
+        provider="daemon",
+        service=boundary,
+        region="local",
+        quantity=quantity,
+        unit=unit,
+        pricing_version=USAGE_PRICING_VERSION,
+        not_billable_evidence=LOCAL_COMPUTE_EVIDENCE,
+        attempt_id=attempt_id,
+        scorer_id=scorer_id,
+        now=await _now(now),
+        entry_id=f"ledger-scorer-{attempt_id}-{scorer_id}-{outcome.get('result_digest') or outcome.get('terminal_class')}"[:200],
+    ))
+
+
+async def emit_judge_usage(
+    *,
+    attempt_id: str,
+    scorer_id: str,
+    judge: dict[str, Any],
+    now: str | None = None,
+) -> dict[str, Any] | None:
+    """Record the judge model use behind one rubric score."""
+    run_id = await attempt_run_id(attempt_id)
+    if run_id is None:
+        return None
+    usage = judge.get("usage") or {}
+    tokens = usage.get("total_tokens")
+    arguments: dict[str, Any] = {
+        "run_id": run_id,
+        "resource_class": "judge",
+        "provider": str(judge.get("provider") or RUNTIME_PROVIDER),
+        "service": str(judge.get("model") or "judge-model"),
+        "region": "unspecified",
+        "quantity": float(tokens) if tokens is not None else 1.0,
+        "unit": "tokens" if tokens is not None else "requests",
+        "pricing_version": USAGE_PRICING_VERSION,
+        "attempt_id": attempt_id,
+        "scorer_id": scorer_id,
+        "now": await _now(now),
+        "entry_id": f"ledger-judge-{attempt_id}-{judge.get('request_digest') or scorer_id}"[:200],
+    }
+    cost_text = usage.get("provider_cost_text")
+    if cost_text:
+        arguments["actual"] = Money.from_decimal_string(
+            BENCHMARK_CURRENCY, str(cost_text),
+        )
+        arguments["actual_provider_text"] = str(cost_text)
+    else:
+        arguments["price_unknown"] = True
+    return await emit_entry(ledger_entry(**arguments))
+
+
+async def emit_storage(
+    *,
+    attempt_id: str,
+    byte_count: int,
+    artifact_count: int,
+    now: str | None = None,
+) -> dict[str, Any] | None:
+    """Record the evidence bytes persisted for one attempt."""
+    run_id = await attempt_run_id(attempt_id)
+    if run_id is None:
+        return None
+    return await emit_entry(ledger_entry(
+        run_id=run_id,
+        resource_class="storage",
+        provider="daemon",
+        service=f"evidence-artifacts:{int(artifact_count)}",
+        region="local",
+        quantity=float(byte_count),
+        unit="bytes",
+        pricing_version=USAGE_PRICING_VERSION,
+        not_billable_evidence=LOCAL_STORAGE_EVIDENCE,
+        attempt_id=attempt_id,
+        now=await _now(now),
+        entry_id=f"ledger-storage-{attempt_id}",
+    ))
+
+
+async def emit_human_review(
+    *,
+    attempt_id: str,
+    review_id: str,
+    reviewer_id: str,
+    now: str | None = None,
+) -> dict[str, Any] | None:
+    """Record one human review as reviewer time with an unknown price."""
+    run_id = await attempt_run_id(attempt_id)
+    if run_id is None:
+        return None
+    return await emit_entry(ledger_entry(
+        run_id=run_id,
+        resource_class="human_review",
+        provider="reviewers",
+        service=str(reviewer_id),
+        region="unspecified",
+        quantity=1.0,
+        unit="reviews",
+        pricing_version=USAGE_PRICING_VERSION,
+        price_unknown=True,
+        attempt_id=attempt_id,
+        now=await _now(now),
+        entry_id=f"ledger-review-{review_id}",
+    ))
+
+
+async def emit_import(
+    *,
+    run_id: str,
+    import_id: str,
+    byte_count: int,
+    source: str,
+    now: str | None = None,
+) -> dict[str, Any] | None:
+    """Record the bytes one run-scoped import ingested."""
+    return await emit_entry(ledger_entry(
+        run_id=run_id,
+        resource_class="import",
+        provider="daemon",
+        service=str(source),
+        region="local",
+        quantity=float(byte_count),
+        unit="bytes",
+        pricing_version=USAGE_PRICING_VERSION,
+        not_billable_evidence=LOCAL_STORAGE_EVIDENCE,
+        import_id=import_id,
+        now=await _now(now),
+        entry_id=f"ledger-import-{import_id}",
+    ))
 
 
 async def list_entries(run_id: str) -> list[dict[str, Any]]:
@@ -505,10 +757,11 @@ async def apply_late_charge(
     The late charge stores as a new confirmed entry that references
     its estimate entry. The run gets the next reconciliation version,
     settlement reopens, and when the late charge changes any cost
-    rule outcome every stored gate supersedes and every analysis
-    snapshot for the run flags for recomputation.
+    rule outcome every stored gate supersedes and every current
+    analysis snapshot for the run recomputes with the new ledger
+    summary; the old snapshot stays immutable behind a supersession.
     """
-    from benchmarks import repository
+    from benchmarks import evaluation_records, frozen_analysis, repository
 
     if entry.get("charge_state") != "confirmed":
         raise ResourceLedgerError("A late charge is one confirmed entry")
@@ -540,10 +793,40 @@ async def apply_late_charge(
         analysis_ids = [str(row["id"]) for row in rows]
     if run_row is not None and str(run_row["cost_status"]) == "settled":
         await repository.set_run_cost_status(run_id, "settling")
+    recomputed: list[dict[str, Any]] = []
+    recompute_failures: list[dict[str, Any]] = []
     if changed:
         superseded_gates = await repository.supersede_gate_evaluations(
             run_id, superseded_by=reconciled["reconciliation_id"],
         )
+        already_superseded = {
+            str(row["snapshot_id"])
+            for row in await evaluation_records.list_snapshot_supersessions(
+                run_id,
+            )
+        }
+        current_ids = [
+            snapshot_id for snapshot_id in analysis_ids
+            if snapshot_id not in already_superseded
+        ]
+        for snapshot_id in current_ids:
+            try:
+                recomputed.append(await frozen_analysis.recompute_snapshot(
+                    snapshot_id,
+                    ledger_summary=reconciled["record"]["summary"],
+                    reason="late_charge_changed_cost_rule",
+                    reconciliation_id=reconciled["reconciliation_id"],
+                ))
+            except (
+                frozen_analysis.FrozenAnalysisError, KeyError, TypeError,
+                ValueError,
+            ) as failure:
+                # A snapshot that cannot rebuild stays flagged; the
+                # late charge itself never fails on it.
+                recompute_failures.append({
+                    "superseded_snapshot_id": snapshot_id,
+                    "error": str(failure)[:500],
+                })
     return {
         "entry_id": stored["entry_id"],
         "reconciliation_id": reconciled["reconciliation_id"],
@@ -553,5 +836,11 @@ async def apply_late_charge(
         "cost_rule_changed": changed,
         "superseded_gates": superseded_gates,
         "analysis_recompute_required": changed and bool(analysis_ids),
-        "affected_analysis_snapshot_ids": analysis_ids if changed else [],
+        "affected_analysis_snapshot_ids": (
+            [entry["superseded_snapshot_id"] for entry in recomputed]
+            + [entry["superseded_snapshot_id"] for entry in recompute_failures]
+            if changed else []
+        ),
+        "recomputed_analysis_snapshots": recomputed,
+        "recompute_failures": recompute_failures,
     }

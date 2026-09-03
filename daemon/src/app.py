@@ -71,8 +71,17 @@ async def lifespan(app: FastAPI):
     # Start system health loop
     health_task = asyncio.create_task(system_health_loop(app))
 
+    # Calibrate every judge anchor set on its weekly schedule.
+    from benchmarks import judge_calibration
+
+    calibration_task = asyncio.create_task(
+        judge_calibration.calibration_loop(),
+    )
+    app.state.calibration_task = calibration_task
+
     yield
 
+    calibration_task.cancel()
     health_task.cancel()
     await stop_delivery_task(delivery_task)
     await benchmark_scheduler.stop_scheduler()

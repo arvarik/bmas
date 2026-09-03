@@ -217,6 +217,10 @@
           },
           "type": "array"
         },
+        "planned_repetitions": {
+          "minimum": 1,
+          "type": "integer"
+        },
         "resample_count": {
           "minimum": 0,
           "type": "integer"

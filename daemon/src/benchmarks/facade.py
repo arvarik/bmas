@@ -108,6 +108,11 @@ _CURRENT_COMMANDS = {
     "record_gate_display_exception",
     "record_cost_settlement_version",
     "record_dispatch_rank_history",
+    "record_dataset_version",
+    "record_judge_anchor_set",
+    "advance_anchor_schedule",
+    "record_study",
+    "supersede_analysis_snapshot",
 }
 
 
@@ -146,7 +151,16 @@ async def _create_run(payload: dict[str, Any]) -> Any:
 
 
 async def _create_human_review(payload: dict[str, Any]) -> Any:
-    return await repository.create_human_review(**payload)
+    review, created = await repository.create_human_review(**payload)
+    if created:
+        from benchmarks import resource_ledger
+
+        await resource_ledger.emit_human_review(
+            attempt_id=str(payload["attempt_id"]),
+            review_id=str(payload["review_id"]),
+            reviewer_id=str(payload["reviewer_id"]),
+        )
+    return review, created
 
 
 async def _create_baseline(payload: dict[str, Any]) -> Any:
@@ -366,6 +380,51 @@ async def _record_dispatch_rank_history(payload: dict[str, Any]) -> Any:
     )
 
 
+async def _record_dataset_version(payload: dict[str, Any]) -> Any:
+    return await evaluation_records.save_record(
+        payload["record"],
+        links={
+            "dataset_id": payload["dataset_id"],
+            "parent_version_id": payload.get("parent_version_id"),
+        },
+    )
+
+
+async def _record_judge_anchor_set(payload: dict[str, Any]) -> Any:
+    return await evaluation_records.save_record(payload["record"])
+
+
+async def _advance_anchor_schedule(payload: dict[str, Any]) -> Any:
+    await evaluation_records.update_anchor_schedule(
+        payload["anchor_id"],
+        last_calibrated_at=payload["last_calibrated_at"],
+        next_due_at=payload["next_due_at"],
+        state=payload.get("state") or "active",
+    )
+    return {"anchor_id": payload["anchor_id"],
+            "next_due_at": payload["next_due_at"]}
+
+
+async def _record_study(payload: dict[str, Any]) -> Any:
+    return await evaluation_records.save_record(
+        payload["record"],
+        links={
+            "run_plan_id": payload["run_plan_id"],
+            "test_revision_id": payload["test_revision_id"],
+        },
+    )
+
+
+async def _supersede_analysis_snapshot(payload: dict[str, Any]) -> Any:
+    supersession_id = await evaluation_records.record_snapshot_supersession(
+        snapshot_id=payload["snapshot_id"],
+        superseded_by=payload["superseded_by"],
+        reason=payload["reason"],
+        reconciliation_id=payload.get("reconciliation_id"),
+    )
+    return {"supersession_id": supersession_id}
+
+
 _HANDLERS = {
     "create_test_revision": _create_test_revision,
     "create_run": _create_run,
@@ -398,6 +457,11 @@ _HANDLERS = {
     "record_judge_calibration": _record_judge_calibration,
     "record_failure_classification": _record_failure_classification,
     "record_resource_event": _record_resource_event,
+    "record_dataset_version": _record_dataset_version,
+    "record_judge_anchor_set": _record_judge_anchor_set,
+    "advance_anchor_schedule": _advance_anchor_schedule,
+    "record_study": _record_study,
+    "supersede_analysis_snapshot": _supersede_analysis_snapshot,
     "record_analysis_snapshot": _record_analysis_snapshot,
     "record_gate_display_exception": _record_gate_display_exception,
     "record_cost_settlement_version": _record_cost_settlement_version,

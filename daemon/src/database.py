@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 25
+SCHEMA_VERSION = 26
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -3215,6 +3215,138 @@ async def _migrate_add_calibration_failure_ledger_storage(
     )
 
 
+LINEAGE_SUPERSESSION_ANCHOR_STUDY_DDL = """
+CREATE TABLE IF NOT EXISTS dataset_version_records (
+    id                TEXT PRIMARY KEY,
+    schema_version    INTEGER NOT NULL CHECK (schema_version > 0),
+    record            TEXT NOT NULL,
+    record_checksum   TEXT NOT NULL,
+    content_digest    TEXT NOT NULL,
+    policy_digest     TEXT NOT NULL,
+    dataset_id        TEXT NOT NULL REFERENCES datasets(id),
+    parent_version_id TEXT REFERENCES dataset_version_records(id),
+    created_at        TEXT NOT NULL
+                      DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_dataset_version_records_dataset
+ON dataset_version_records(dataset_id, created_at);
+
+CREATE TRIGGER IF NOT EXISTS dataset_version_records_immutable_update
+BEFORE UPDATE ON dataset_version_records
+BEGIN
+    SELECT RAISE(ABORT, 'dataset version records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS dataset_version_records_immutable_delete
+BEFORE DELETE ON dataset_version_records
+BEGIN
+    SELECT RAISE(ABORT, 'dataset version records are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS analysis_snapshot_supersessions (
+    id                TEXT PRIMARY KEY,
+    snapshot_id       TEXT NOT NULL UNIQUE REFERENCES analysis_snapshots(id),
+    superseded_by     TEXT NOT NULL REFERENCES analysis_snapshots(id),
+    reason            TEXT NOT NULL,
+    reconciliation_id TEXT REFERENCES cost_settlement_versions(id),
+    created_at        TEXT NOT NULL
+                      DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TRIGGER IF NOT EXISTS analysis_snapshot_supersessions_immutable_update
+BEFORE UPDATE ON analysis_snapshot_supersessions
+BEGIN
+    SELECT RAISE(ABORT, 'analysis snapshot supersessions are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS analysis_snapshot_supersessions_immutable_delete
+BEFORE DELETE ON analysis_snapshot_supersessions
+BEGIN
+    SELECT RAISE(ABORT, 'analysis snapshot supersessions are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS judge_anchor_sets (
+    id                 TEXT PRIMARY KEY,
+    schema_version     INTEGER NOT NULL CHECK (schema_version > 0),
+    record             TEXT NOT NULL,
+    record_checksum    TEXT NOT NULL,
+    judge_id           TEXT NOT NULL,
+    judge_version      TEXT NOT NULL,
+    state              TEXT NOT NULL CHECK (state IN ('active','retired')),
+    next_due_at        TEXT NOT NULL,
+    last_calibrated_at TEXT,
+    created_at         TEXT NOT NULL
+                       DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_judge_anchor_sets_due
+ON judge_anchor_sets(state, next_due_at);
+
+CREATE TRIGGER IF NOT EXISTS judge_anchor_sets_immutable_record
+BEFORE UPDATE OF id, schema_version, record, record_checksum, judge_id,
+    judge_version, created_at ON judge_anchor_sets
+BEGIN
+    SELECT RAISE(ABORT, 'judge anchor set records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS judge_anchor_sets_immutable_delete
+BEFORE DELETE ON judge_anchor_sets
+BEGIN
+    SELECT RAISE(ABORT, 'judge anchor set records are immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS evaluation_studies (
+    id               TEXT PRIMARY KEY,
+    schema_version   INTEGER NOT NULL CHECK (schema_version > 0),
+    record           TEXT NOT NULL,
+    record_checksum  TEXT NOT NULL,
+    study_type       TEXT NOT NULL,
+    run_plan_id      TEXT NOT NULL REFERENCES run_plans(id),
+    test_revision_id TEXT NOT NULL REFERENCES benchmark_test_revisions(id),
+    created_at       TEXT NOT NULL
+                     DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_evaluation_studies_revision
+ON evaluation_studies(test_revision_id);
+
+CREATE TRIGGER IF NOT EXISTS evaluation_studies_immutable_update
+BEFORE UPDATE ON evaluation_studies
+BEGIN
+    SELECT RAISE(ABORT, 'evaluation studies are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS evaluation_studies_immutable_delete
+BEFORE DELETE ON evaluation_studies
+BEGIN
+    SELECT RAISE(ABORT, 'evaluation studies are immutable');
+END;
+"""
+
+
+async def _migrate_add_lineage_supersession_anchor_study_storage(
+    db: aiosqlite.Connection,
+) -> None:
+    """Expand migration: lineage, supersession, anchor, and study storage.
+
+    A published dataset version stores its frozen lineage record with
+    its content and policy digests. A late charge that changes a cost
+    rule supersedes an analysis snapshot through a new snapshot and
+    one immutable supersession row. A judge anchor set carries its
+    weekly calibration schedule in mutable schedule columns beside an
+    immutable record. An authored study stores with its run plan and
+    test revision links so admission can enforce its validation.
+    """
+    await db.executescript(LINEAGE_SUPERSESSION_ANCHOR_STUDY_DDL)
+    db.row_factory = aiosqlite.Row
+    await db.commit()
+    logger.info(
+        "Migration 26 applied: lineage, supersession, anchor, and study "
+        "storage"
+    )
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -3242,6 +3374,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         23: _migrate_add_evaluation_authority_state,
         24: _migrate_add_score_record_storage,
         25: _migrate_add_calibration_failure_ledger_storage,
+        26: _migrate_add_lineage_supersession_anchor_study_storage,
     }
     fn = migrations.get(version)
     if fn is None:

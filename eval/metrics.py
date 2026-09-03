@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from eval.scorer import ScoredResult
+from eval.scored_result import ScoredResult
 
 
 @dataclass

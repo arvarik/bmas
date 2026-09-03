@@ -14,7 +14,7 @@ import os
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 Transport = Callable[[str, str, dict[str, Any] | None], dict[str, Any]]
 
@@ -110,6 +110,42 @@ class EvaluationClient:
             "plugin_type": plugin_type, "evidence": evidence,
             "configuration": configuration or {},
         })
+
+    # The plugin configuration each legacy dataset scores with.
+    SCORING_PROFILES: ClassVar[dict[str, dict[str, Any]]] = {
+        "gsm8k": {"comparison": "last_number"},
+        "mmlu": {"comparison": "multiple_choice",
+                 "choices": ["A", "B", "C", "D"]},
+    }
+
+    def score_answer(
+        self, dataset: str, expected: str, response: str,
+    ) -> tuple[str | None, bool, str]:
+        """Score one answer through the daemon deterministic scorer.
+
+        Returns ``(extracted_answer, correct, score_method)``. An
+        unknown dataset or an unavailable daemon result returns no
+        extraction and ``correct=False`` with the reason as the method;
+        no local scoring exists anymore.
+        """
+        configuration = self.SCORING_PROFILES.get(dataset)
+        if configuration is None:
+            return None, False, "unknown_dataset"
+        preview = self.preview_score(
+            "deterministic",
+            {"final_output": response, "reference_answer": expected},
+            configuration,
+        )
+        result = preview.get("result") or {}
+        if result.get("status") != "scored":
+            return None, False, str(
+                result.get("explanation") or preview.get("terminal_class")
+                or "unavailable"
+            )
+        dimension = (result.get("dimensions") or [{}])[0]
+        return dimension.get("category"), bool(result.get("passed")), str(
+            result.get("explanation") or "daemon",
+        )
 
     def score_attempt(self, attempt_id: str, **payload: Any) -> dict[str, Any]:
         return self._call("POST", f"/attempts/{attempt_id}/scores", payload)

@@ -575,6 +575,71 @@ Canonical methods the analysis engine implements:
   section of the evidence bundle and the rule that every stored
   score references immutable evidence through enforced links.
 
+### Vectorized analysis, real sandboxes, and data-class redaction
+
+- [NumPy bit generators and parallel random
+  numbers](https://numpy.org/doc/stable/reference/random/bit_generators/index.html)
+  and [SciPy `bootstrap` with vectorized
+  statistics](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html)
+  — The current practice derives every replicate from its own
+  counter-addressed stream so output stays invariant to batch order,
+  parallelism, and thread count, and processes resamples in batches
+  with memory bounded by batch size times sample size. Used for: the
+  keyed-counter derivation of `bmas-analysis-rng` algorithm version
+  2 in `daemon/src/benchmarks/analysis_rng.py`, and the batched,
+  threaded, bit-identical engine in
+  `daemon/src/benchmarks/analysis_engine.py`.
+- [Bootstrap confidence intervals for LLM evaluation (Indeed
+  Engineering, July
+  2026)](https://engineering.indeedblog.com/blog/2026/07/bootstrap-confidence-intervals-for-llm-evaluation/)
+  — Recommends the paired cluster bootstrap with percentile intervals
+  when comparing two systems, carrying every repetition of a chosen
+  input into the resample. Used for: the frozen gate rules in
+  `daemon/src/benchmarks/gates.py`, which decide a baseline gate
+  from the paired frozen comparison of one arm across two runs.
+- [Wasmtime-py API
+  documentation](https://bytecodealliance.github.io/wasmtime-py/) and
+  [WASIp2 in Wasmtime](https://docs.wasmtime.dev/examples-wasip2.html)
+  — The Python bindings expose fuel, store limits, epoch
+  interruption, NaN canonicalization, and the component model
+  linker; a component that imports an interface the linker never
+  defines fails before instantiation. Used for:
+  `daemon/src/benchmarks/sandbox_backends.py`, which runs scorer
+  components with fuel as the deterministic limit, the store limiter
+  for memory and tables, and epoch interruption as the last-resort
+  kill.
+- [Firecracker jailer and snapshot
+  system](https://github.com/firecracker-microvm/firecracker/blob/main/CHANGELOG.md)
+  and [The Firecracker jailer
+  explained](https://www.pandastack.ai/blog/firecracker-jailer-explained/)
+  — The jailer applies the chroot, the namespaces, the cgroup
+  limits, and the seccomp filter before it executes the virtual
+  machine monitor, and the API is one REST surface over a Unix
+  socket with vsock as the host-to-guest channel. Used for: the
+  Firecracker runner in `daemon/src/benchmarks/sandbox_backends.py`,
+  which verifies the kernel, root filesystem, and monitor digests,
+  configures no network device, and authenticates the vsock request
+  channel.
+- [Data classification: technical implementation
+  guide](https://talkthinkdo.com/guides/development-practice/data-classification-implementation/)
+  and [data classification and labeling in
+  2026](https://concentric.ai/the-importance-of-data-classification-levels-and-labels/)
+  — Classification should drive redaction, export, and erasure
+  through declared labels, so a newly labeled field comes under
+  redaction automatically. Used for:
+  `daemon/src/benchmarks/data_classes.py`, the declarative policy
+  with named field classes, measurement markers, value detectors,
+  and one published policy digest that every envelope, evidence
+  bundle, ledger entry, and export pins.
+- [LLM-as-judge best practices in 2026: calibration, bias, and
+  cost](https://futureagi.com/blog/llm-as-judge-best-practices-2026/)
+  and [Who drifted: the system or the judge?](https://arxiv.org/html/2606.15474)
+  — Judges drift within weeks; a fixed anchor set, a calibration job
+  against it, and a drift monitor on agreement are the minimum. Used
+  for: the anchor sets and the weekly calibration schedule in
+  `daemon/src/benchmarks/judge_calibration.py` and the model-backed
+  judge in `daemon/src/benchmarks/model_backed.py`.
+
 ## Update rule
 
 Add one entry when a new source shapes a design decision or an

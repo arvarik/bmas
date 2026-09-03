@@ -372,7 +372,7 @@ async def screening_endpoint(request: Request, payload: ScreeningInput):
 
 @router.post("/assets", status_code=201)
 async def ingest_asset_endpoint(
-    request: Request, payload: AssetUploadInput,
+    request: Request, payload: AssetUploadInput, run_id: str | None = None,
 ):
     require_api_key(request, BMAS_API_KEY)
     import base64
@@ -389,7 +389,9 @@ async def ingest_asset_endpoint(
         declared_media_type=payload.declared_media_type,
         content=content,
     )
-    return await _editor_call(asset_ingestion.store_ingestion(outcome))
+    return await _editor_call(
+        asset_ingestion.store_ingestion(outcome, run_id=run_id),
+    )
 
 
 @router.get("/assets/{ingestion_id}")
@@ -763,6 +765,98 @@ async def calibrate_judge_endpoint(
     )
 
 
+class AnchorSetInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    anchor_id: str = Field(pattern=ID_PATTERN)
+    judge_id: str = Field(pattern=ID_PATTERN)
+    judge_version: str = Field(min_length=1, max_length=100)
+    judge_model: str = Field(min_length=1, max_length=200)
+    prompt_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    scorer_id: str = Field(pattern=ID_PATTERN)
+    scorer_version: str = Field(min_length=1, max_length=100)
+    label_set: dict[str, Any]
+    candidate_models: list[str] = Field(default_factory=list)
+    interval_days: int = Field(default=7, ge=1, le=365)
+    threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    drift_tolerance: float = Field(default=0.1, ge=0.0, le=1.0)
+    registered_at: str = "1970-01-01T00:00:00Z"
+
+
+@router.post("/judges/anchor-sets", status_code=201)
+async def register_anchor_set_endpoint(
+    request: Request, payload: AnchorSetInput,
+):
+    """Pin one anchor set and its weekly calibration schedule."""
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import judge_calibration
+
+    try:
+        record = judge_calibration.anchor_set_record(
+            anchor_id=payload.anchor_id,
+            judge_id=payload.judge_id,
+            judge_version=payload.judge_version,
+            judge_model=payload.judge_model,
+            prompt_digest=payload.prompt_digest,
+            scorer_id=payload.scorer_id,
+            scorer_version=payload.scorer_version,
+            label_set=judge_calibration.pinned_label_set(
+                str(payload.label_set.get("dataset_id") or "labels"),
+                str(payload.label_set.get("version") or "1"),
+                list(payload.label_set.get("items") or []),
+            ),
+            candidate_models=payload.candidate_models,
+            now=payload.registered_at,
+            interval_days=payload.interval_days,
+            threshold=payload.threshold,
+            drift_tolerance=payload.drift_tolerance,
+        )
+    except (judge_calibration.JudgeCalibrationError, KeyError,
+            EvaluationContractError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return await _governed_call(
+        judge_calibration.register_anchor_set(record),
+        judge_calibration.JudgeCalibrationError,
+    )
+
+
+@router.get("/judges/anchor-sets")
+async def list_anchor_sets_endpoint(now: str | None = None):
+    """List every anchor set with its schedule and due state."""
+    from benchmarks import judge_calibration
+
+    return {"anchor_sets": await judge_calibration.list_anchor_sets(now=now)}
+
+
+@router.post("/judges/anchor-sets/{anchor_id}/calibrate")
+async def calibrate_anchor_set_endpoint(
+    request: Request, anchor_id: str, calibrated_at: str | None = None,
+):
+    """Run one anchor set calibration now with the pinned judge model."""
+    require_api_key(request, BMAS_API_KEY)
+    import database as db
+    from benchmarks import judge_calibration
+
+    anchors = [
+        anchor for anchor in await judge_calibration.list_anchor_sets()
+        if str(anchor["id"]) == anchor_id
+    ]
+    if not anchors:
+        raise HTTPException(status_code=404, detail="The anchor set does not exist")
+    judge = judge_calibration.default_judge_factory(anchors[0]["record"])
+    if judge is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No judge gateway is configured for this daemon",
+        )
+    return await _governed_call(
+        judge_calibration.calibrate_anchor_set(
+            anchors[0], judge=judge,
+            now=calibrated_at or await db.database_utc_now(),
+        ),
+        judge_calibration.JudgeCalibrationError,
+    )
+
+
 @router.get("/judges/{judge_id}/versions/{judge_version}/calibration")
 async def read_calibration_endpoint(judge_id: str, judge_version: str):
     from benchmarks import judge_calibration
@@ -933,6 +1027,7 @@ class FreezeAnalysisInput(BaseModel):
     binary_reduction: str = "strict_majority"
     at_least_k: int | None = None
     resample_count: int = Field(default=999, ge=1, le=100_000)
+    metric_ids: list[str] = Field(default_factory=list, max_length=50)
     confidence_level: float = Field(default=0.95, gt=0.0, lt=1.0)
 
 
@@ -964,6 +1059,7 @@ async def freeze_frozen_analysis_endpoint(
             at_least_k=payload.at_least_k,
             resample_count=payload.resample_count,
             confidence_level=payload.confidence_level,
+            metric_ids=payload.metric_ids,
         )
         stored = await frozen_analysis.freeze_and_store(
             run_id,
@@ -985,6 +1081,20 @@ async def freeze_frozen_analysis_endpoint(
         "replay": stored["record"]["replay"],
         "report": stored["report"],
     }
+
+
+@router.get("/datasets/{dataset_id}/versions/{version_id}/record")
+async def read_dataset_version_record_endpoint(
+    dataset_id: str, version_id: str,
+):
+    """Read the frozen publication record of one dataset version."""
+    stored = await evaluation_records.get_record("dataset-version", version_id)
+    if stored is None or str(stored["dataset_id"]) != dataset_id:
+        raise HTTPException(
+            status_code=404,
+            detail="The dataset version record does not exist",
+        )
+    return stored
 
 
 @router.post("/runs/{run_id}/analyses/{snapshot_id}/replay")
@@ -1070,6 +1180,12 @@ class StudyInput(BaseModel):
     seconds_per_attempt: int = Field(ge=1)
     max_concurrency: int = Field(default=4, ge=1)
     hypothesis: str = "non_inferiority"
+    # Publication writes the test revision, the run plan, and the
+    # study record; without it the endpoint only previews.
+    publish: bool = False
+    runtime_id: str = "classic"
+    scorer_versions: list[dict[str, Any]] = Field(default_factory=list)
+    authored_at: str = "1970-01-01T00:00:00Z"
 
 
 class MetricAdvanceInput(BaseModel):
@@ -1101,7 +1217,7 @@ async def author_study_endpoint(request: Request, payload: StudyInput):
     from benchmarks.frozen_analysis import FrozenAnalysisError
 
     try:
-        return study_authoring.author_study(
+        study = study_authoring.author_study(
             study_type=payload.study_type,
             name=payload.name,
             base_configuration=payload.base_configuration,
@@ -1119,6 +1235,27 @@ async def author_study_endpoint(request: Request, payload: StudyInput):
     except (study_authoring.StudyAuthoringError, FrozenAnalysisError,
             ValueError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    if not payload.publish:
+        return {**study, "published": False}
+    if not payload.scorer_versions:
+        raise HTTPException(
+            status_code=422,
+            detail="Publication names at least one scorer version",
+        )
+    published = await _governed_call(
+        study_authoring.publish_study(
+            study,
+            runtime_id=payload.runtime_id,
+            scorer_versions=payload.scorer_versions,
+            now=payload.authored_at,
+        ),
+        study_authoring.StudyAuthoringError,
+        FrozenAnalysisError,
+        repository.BenchmarkConflict,
+        repository.BenchmarkNotFound,
+        ValueError,
+    )
+    return {**study, "published": True, **published}
 
 
 @router.post("/metrics/{metric_id}/advance")
@@ -1397,7 +1534,25 @@ async def list_analyses_endpoint(run_id: str):
             "ORDER BY created_at, id",
             (run_id,),
         )
-    return {"run_id": run_id, "snapshots": [dict(row) for row in rows]}
+    supersessions = {
+        str(row["snapshot_id"]): row
+        for row in await evaluation_records.list_snapshot_supersessions(
+            run_id,
+        )
+    }
+    snapshots = []
+    for row in rows:
+        entry = dict(row)
+        superseded = supersessions.get(str(row["id"]))
+        entry["superseded_by"] = (
+            str(superseded["superseded_by"]) if superseded else None
+        )
+        entry["supersession_reason"] = (
+            str(superseded["reason"]) if superseded else None
+        )
+        entry["current"] = superseded is None
+        snapshots.append(entry)
+    return {"run_id": run_id, "snapshots": snapshots}
 
 
 @router.get("/gates/{gate_evaluation_id}/display-exceptions")

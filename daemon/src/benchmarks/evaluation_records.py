@@ -186,6 +186,46 @@ _STORABLE_KINDS: dict[str, dict[str, Any]] = {
             "charge_state": ("charge_state",),
         },
     },
+    "dataset-version": {
+        "insert_sql": (
+            "INSERT INTO dataset_version_records (id, schema_version, record, record_checksum, content_digest, policy_digest, dataset_id, parent_version_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        ),
+        "table": "dataset_version_records",
+        "id_field": "version_id",
+        "links": ("dataset_id", "parent_version_id"),
+        "required_links": ("dataset_id",),
+        "match_fields": {"parent_version_id": "parent_version_id"},
+        "column_values": {
+            "content_digest": ("content_digest",),
+            "policy_digest": ("policy_digest",),
+        },
+    },
+    "judge-anchor-set": {
+        "insert_sql": (
+            "INSERT INTO judge_anchor_sets (id, schema_version, record, record_checksum, judge_id, judge_version, state, next_due_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        ),
+        "table": "judge_anchor_sets",
+        "id_field": "anchor_id",
+        "links": (),
+        "column_values": {
+            "judge_id": ("judge", "judge_id"),
+            "judge_version": ("judge", "version"),
+            "state": ("state",),
+            "next_due_at": ("schedule", "next_due_at"),
+        },
+    },
+    "study": {
+        "insert_sql": (
+            "INSERT INTO evaluation_studies (id, schema_version, record, record_checksum, study_type, run_plan_id, test_revision_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        ),
+        "table": "evaluation_studies",
+        "id_field": "study_id",
+        "links": ("run_plan_id", "test_revision_id"),
+        "required_links": ("run_plan_id", "test_revision_id"),
+        "match_fields": {"run_plan_id": "run_plan_id",
+                         "test_revision_id": "test_revision_id"},
+        "column_values": {"study_type": ("study_type",)},
+    },
 }
 
 _PUBLISH_SQL = {
@@ -219,6 +259,10 @@ _PUBLISH_SQL = {
 EXPANSION_BASE_VERSION = 21
 
 EXPANSION_TABLES = (
+    ("evaluation_studies", "study"),
+    ("analysis_snapshot_supersessions", "analysis-supersession"),
+    ("judge_anchor_sets", "judge-anchor-set"),
+    ("dataset_version_records", "dataset-version"),
     ("resource_ledger_entries", "resource-ledger-entry"),
     ("failure_classification_records", "failure-classification-record"),
     ("judge_calibration_records", "judge-calibration-record"),
@@ -322,6 +366,117 @@ async def save_record(
         "table": configuration["table"],
         **summary,
     }
+
+
+async def record_snapshot_supersession(
+    *,
+    snapshot_id: str,
+    superseded_by: str,
+    reason: str,
+    reconciliation_id: str | None = None,
+) -> str:
+    """Record that one immutable snapshot is superseded by a newer one."""
+    supersession_id = f"supersession-{uuid.uuid4().hex}"
+    async with db._connect() as connection:  # noqa: SLF001
+        await connection.execute(
+            "INSERT INTO analysis_snapshot_supersessions (id, snapshot_id, "
+            "superseded_by, reason, reconciliation_id) VALUES (?, ?, ?, ?, ?)",
+            (supersession_id, snapshot_id, superseded_by, reason,
+             reconciliation_id),
+        )
+        await connection.commit()
+    return supersession_id
+
+
+async def list_snapshot_supersessions(run_id: str) -> list[dict[str, Any]]:
+    """List every supersession of the snapshots of one run."""
+    async with db._connect() as connection:  # noqa: SLF001
+        rows = await connection.execute_fetchall(
+            "SELECT s.id, s.snapshot_id, s.superseded_by, s.reason, "
+            "s.reconciliation_id, s.created_at "
+            "FROM analysis_snapshot_supersessions AS s "
+            "JOIN analysis_snapshots AS a ON a.id = s.snapshot_id "
+            "WHERE a.run_id = ? ORDER BY s.created_at, s.id",
+            (run_id,),
+        )
+    return [dict(row) for row in rows]
+
+
+async def update_anchor_schedule(
+    anchor_id: str,
+    *,
+    last_calibrated_at: str,
+    next_due_at: str,
+    state: str = "active",
+) -> None:
+    """Advance the schedule columns of one anchor set.
+
+    The stored record stays immutable; only the schedule columns move.
+    """
+    async with db._connect() as connection:  # noqa: SLF001
+        await connection.execute(
+            "UPDATE judge_anchor_sets SET last_calibrated_at = ?, "
+            "next_due_at = ?, state = ? WHERE id = ?",
+            (last_calibrated_at, next_due_at, state, anchor_id),
+        )
+        await connection.commit()
+
+
+async def due_anchor_sets(now: str) -> list[dict[str, Any]]:
+    """List every active anchor set whose calibration is due."""
+    async with db._connect() as connection:  # noqa: SLF001
+        rows = await connection.execute_fetchall(
+            "SELECT * FROM judge_anchor_sets WHERE state = 'active' "
+            "AND next_due_at <= ? ORDER BY next_due_at, id",
+            (now,),
+        )
+    return [
+        {**dict(row), "record": json.loads(row["record"])} for row in rows
+    ]
+
+
+async def run_plan_for_revision(
+    test_revision_id: str,
+) -> dict[str, Any] | None:
+    """Read the latest stored run plan authored for one test revision."""
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "SELECT * FROM run_plans WHERE test_revision_id = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (test_revision_id,),
+        )
+        row = await cursor.fetchone()
+    if row is None:
+        return None
+    return {**dict(row), "record": json.loads(row["record"])}
+
+
+async def study_for_run_plan(plan_id: str) -> dict[str, Any] | None:
+    """Read the study that authored one run plan, when one exists."""
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "SELECT * FROM evaluation_studies WHERE run_plan_id = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (plan_id,),
+        )
+        row = await cursor.fetchone()
+    if row is None:
+        return None
+    return {**dict(row), "record": json.loads(row["record"])}
+
+
+async def list_records(kind: str) -> list[dict[str, Any]]:
+    """Read every stored record of one kind with its decoded content."""
+    configuration = _STORABLE_KINDS.get(kind)
+    if configuration is None:
+        raise EvaluationStorageError(f"Unknown record kind: {kind}")
+    async with db._connect() as connection:  # noqa: SLF001
+        rows = await connection.execute_fetchall(
+            f"SELECT * FROM {configuration['table']} ORDER BY created_at, id",
+        )
+    return [
+        {**dict(row), "record": json.loads(row["record"])} for row in rows
+    ]
 
 
 async def get_record(kind: str, record_id: str) -> dict[str, Any] | None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from benchmarks.data_classes import policy_digest as redaction_policy_digest
 from benchmarks.provenance import content_checksum, redact_secrets
 from core.variants import canonical_variant_id, require_variant_class
 
@@ -44,6 +45,7 @@ async def prepare_benchmark_arm(
         "configuration_schema_version": runtime.descriptor.configuration_schema_version,
         "submission_overrides": overrides or {},
         "effective_configuration": effective,
+        "redaction_policy_digest": redaction_policy_digest(),
     })
     return {
         "runtime_id": canonical_id,
