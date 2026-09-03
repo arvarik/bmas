@@ -413,6 +413,13 @@ def stop(env_file: Path, *, strict: bool = True) -> dict:
         name for name, port in state["ports"].items()
         if name in state.get("processes", {}) and not _port_free(int(port))
     ]
+    # The development server regenerates its route types on every
+    # start; a partial file left by a stopped server would corrupt a
+    # later type check, so the generated development types go away
+    # with the stack.
+    if "mission_control" in state.get("processes", {}):
+        shutil.rmtree(ROOT / "mission-control" / ".next" / "dev",
+                      ignore_errors=True)
     root = Path(state["root"])
     # Keep every component log and the database beside the environment
     # file as artifacts before the temporary root disappears.
