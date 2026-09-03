@@ -58,6 +58,20 @@ groups:
     timeout_seconds: 300
     tools: [python]
 
+  - id: repo.toolchain-pins
+    state: active_required
+    owner: repository
+    purpose: >-
+      Resolve every pinned toolchain component on this host, record the
+      exact resolved versions, and fail before tests when a required
+      component is absent or violates its pin.
+    argv: ["python3", "scripts/check-toolchain.py", "--require", "python,sqlite,statistics", "--report", "test-results/toolchain-daemon.json"]
+    working_directory: "."
+    timeout_seconds: 300
+    tools: [python]
+    artifacts:
+      - "test-results/toolchain-daemon.json"
+
   - id: repo.config-examples
     state: active_required
     owner: repository
@@ -807,6 +821,58 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.hardening-faults
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Inject one fault per subsystem and assert the declared outcome: a
+      storage digest collision quarantines and stops, a resolver
+      failure never leaves a partial import, a scorer trap records an
+      error score, a large dataset pages with stable offsets, a large
+      trace reads back intact, artifact erasure leaves a durable
+      redacted record, and every export policy strips secrets.
+    argv: ["python3", "-m", "pytest", "tests/test_hardening_faults.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.performance-contract-smoke
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Run the published performance contract harness at smoke scale on
+      every worker: the same warmup, repetition, percentile, memory,
+      and fixture-digest machinery with small fixtures, so the report
+      structure proves on every run while the limits enforce only on
+      the pinned performance worker.
+    argv: ["python3", "-m", "pytest", "tests/test_performance_contract.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+    artifacts:
+      - "test-results/performance-contract.json"
+
+  - id: daemon.performance-contract
+    state: active_optional
+    owner: daemon
+    purpose: >-
+      Enforce every published performance limit on the pinned Linux
+      worker with eight logical CPUs, 16 GiB memory, and local SSD:
+      five warmup and thirty measured trials per operation with the
+      median, p95, maximum, peak memory, and fixture digest recorded.
+    argv: ["python3", "-m", "pytest", "tests/test_performance_contract.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 3600
+    tools: [python, pytest]
+    parser: pytest_summary
+    environment:
+      set:
+        BMAS_PERFORMANCE_WORKER: "1"
+    artifacts:
+      - "test-results/performance-contract.json"
+
   - id: daemon.source-adapters-live
     state: active_optional
     owner: daemon
@@ -916,6 +982,21 @@ groups:
     tools: [node, npm, playwright]
     depends_on: [mission-control.install]
 
+  - id: mission-control.toolchain-pins
+    state: active_required
+    owner: mission-control
+    purpose: >-
+      Resolve and verify the browser-side toolchain pins after the
+      browser install: Node.js, npm, Playwright, the Chromium build,
+      and Redis, with every resolved version recorded.
+    argv: ["python3", "scripts/check-toolchain.py", "--require", "node,npm,playwright,chromium,redis", "--report", "test-results/toolchain-browser.json"]
+    working_directory: "."
+    timeout_seconds: 300
+    tools: [python, node, npm, playwright]
+    depends_on: [mission-control.install, mission-control.browser-install]
+    artifacts:
+      - "test-results/toolchain-browser.json"
+
   - id: mission-control.e2e
     state: active_required
     owner: mission-control
@@ -935,6 +1016,27 @@ groups:
   # entry has no command, never executes, and cannot enter a required
   # profile. The owning delivery stage activates each entry only after
   # its feature and test exist.
+  - id: mission-control.full-stack-journey
+    state: active_required
+    owner: mission-control
+    purpose: >-
+      Run the unmocked evaluation journey against the complete local
+      stack: temporary Redis, the daemon with its scheduler and a
+      temporary database, the deterministic fake provider, the real
+      agent service, and Mission Control with test-only credentials,
+      each behind one real readiness check, with logs, traces, and the
+      database kept as artifacts and a teardown that fails on any
+      surviving process, port, or secret.
+    argv: ["npm", "run", "test:e2e:full-stack"]
+    working_directory: mission-control
+    timeout_seconds: 2400
+    tools: [node, npm, playwright, redis-server, python]
+    depends_on: [mission-control.install, mission-control.browser-install]
+    retry:
+      max_attempts: 2
+    artifacts:
+      - "mission-control/test-results/**"
+
   - id: learning.trace-access-redaction
     state: reserved
     owner: learning
@@ -1031,6 +1133,7 @@ profiles:
         - manifest.validate
         - repo.source-naming
         - repo.legacy-write-guard
+        - repo.toolchain-pins
         - repo.config-examples
         - repo.config-schema
         - repo.docs-links
@@ -1084,6 +1187,8 @@ profiles:
         - daemon.evaluation-frozen-analysis
         - daemon.evaluation-studies-replay
         - daemon.evaluation-consolidation
+        - daemon.hardening-faults
+        - daemon.performance-contract-smoke
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.
@@ -1108,4 +1213,6 @@ profiles:
         - mission-control.tests
         - mission-control.build
         - mission-control.browser-install
+        - mission-control.toolchain-pins
         - mission-control.e2e
+        - mission-control.full-stack-journey

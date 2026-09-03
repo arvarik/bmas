@@ -380,6 +380,22 @@ Canonical methods the analysis engine implements:
   executable members, and the toolchain member in
   `daemon/src/benchmarks/replay_bundle.py`.
 
+- [Playwright Global Setup and Teardown: Complete 2026
+  Guide](https://qaskills.sh/blog/playwright-global-setup-teardown-guide)
+  and [Playwright Testing Best Practices for
+  2026](https://qaskills.sh/blog/playwright-testing-best-practices-2026)
+  — Run-wide setup seeds deterministic state and tears it down the
+  same way, fixtures own their data, and web-first assertions replace
+  hard waits. Used for: the test-stack controller in global setup and
+  teardown and the unmocked journey in
+  `mission-control/e2e/full-stack/`.
+- [Playwright Flaky Tests: 2026 Diagnostic
+  Playbook](https://testquality.com/playwright-flaky-tests-diagnostic-playbook-2026/)
+  — A retry that passes hides a real first failure unless the run
+  keeps its artifacts and reports the test as flaky. Used for: the
+  flake reporter, the preserved first-attempt artifacts, and the zero
+  flake budget in `mission-control/playwright.config.ts`.
+
 ## 9. Data contracts and schema evolution
 
 - [Expand and Contract: A Pattern to Apply Breaking Changes to
