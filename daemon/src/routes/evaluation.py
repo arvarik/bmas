@@ -918,6 +918,140 @@ async def reconcile_run_endpoint(
     )
 
 
+# ── Frozen analysis snapshots, replay, overview, and study checks ───
+
+
+class FreezeAnalysisInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    families: dict[str, list[str]]
+    scorer_id: str = Field(pattern=ID_PATTERN)
+    master_seed: int = Field(ge=0, le=2**64 - 1)
+    comparison_family: dict[str, Any]
+    planned_repetitions: int = Field(default=1, ge=1, le=1000)
+    family_weights: dict[str, float] = Field(default_factory=dict)
+    case_weights: dict[str, float] = Field(default_factory=dict)
+    binary_reduction: str = "strict_majority"
+    at_least_k: int | None = None
+    resample_count: int = Field(default=999, ge=1, le=100_000)
+    confidence_level: float = Field(default=0.95, gt=0.0, lt=1.0)
+
+
+class StudyValidationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    run_plan: dict[str, Any]
+    source: dict[str, Any] | None = None
+    holdout_hidden: bool = False
+    report: dict[str, Any] | None = None
+    cost_includes_retries_and_control_plane: bool = False
+
+
+@router.post("/runs/{run_id}/analyses/freeze", status_code=201)
+async def freeze_frozen_analysis_endpoint(
+    request: Request, run_id: str, payload: FreezeAnalysisInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import frozen_analysis
+
+    try:
+        specification = frozen_analysis.freeze_specification(
+            families=payload.families,
+            scorer_id=payload.scorer_id,
+            master_seed=payload.master_seed,
+            comparison_family=payload.comparison_family,
+            family_weights=payload.family_weights,
+            case_weights=payload.case_weights,
+            binary_reduction=payload.binary_reduction,
+            at_least_k=payload.at_least_k,
+            resample_count=payload.resample_count,
+            confidence_level=payload.confidence_level,
+        )
+        stored = await frozen_analysis.freeze_and_store(
+            run_id,
+            specification=specification,
+            planned_repetitions=payload.planned_repetitions,
+        )
+    except (frozen_analysis.FrozenAnalysisError, KeyError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except (
+        EvaluationContractError,
+        evaluation_records.EvaluationStorageError,
+        facade.FacadeCommandError,
+        aiosqlite.IntegrityError,
+    ) as error:
+        raise _facade_error(error) from error
+    return {
+        "snapshot_id": stored["snapshot_id"],
+        "results_digest": stored["record"]["results_digest"],
+        "replay": stored["record"]["replay"],
+        "report": stored["report"],
+    }
+
+
+@router.post("/runs/{run_id}/analyses/{snapshot_id}/replay")
+async def replay_analysis_endpoint(
+    request: Request, run_id: str, snapshot_id: str,
+):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import frozen_analysis
+
+    stored = await evaluation_records.get_record(
+        "analysis-snapshot", snapshot_id,
+    )
+    if stored is None or str(stored["run_id"]) != run_id:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    run = await repository.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    record = stored["record"]
+    return frozen_analysis.replay(
+        record["estimand"], run, record,
+        planned_repetitions=int(
+            (record.get("filters") or {}).get("planned_repetitions") or 1,
+        ),
+    )
+
+
+@router.get("/runs/{run_id}/analyses/{snapshot_id}/overview")
+async def analysis_overview_endpoint(run_id: str, snapshot_id: str):
+    from benchmarks import analytics_views, frozen_analysis
+
+    stored = await evaluation_records.get_record(
+        "analysis-snapshot", snapshot_id,
+    )
+    if stored is None or str(stored["run_id"]) != run_id:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    run = await repository.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    record = stored["record"]
+    specification = record["estimand"]
+    frozen_input = frozen_analysis.freeze_input(
+        run, specification, planned_repetitions=1,
+    )
+    report = frozen_analysis.compute_report(specification, frozen_input)
+    return analytics_views.overview(
+        report, frozen_input=frozen_input, replay=record.get("replay"),
+    )
+
+
+@router.post("/studies/validate")
+async def validate_study_endpoint(
+    request: Request, payload: StudyValidationInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import frozen_analysis
+
+    return frozen_analysis.validate_study(
+        run_plan=payload.run_plan,
+        source=payload.source,
+        holdout_hidden=payload.holdout_hidden,
+        report=payload.report,
+        cost_includes_retries_and_control_plane=(
+            payload.cost_includes_retries_and_control_plane
+        ),
+    )
+
+
 # ── Analyses, gates, exports, and the authority view ─────────────────
 
 

@@ -135,6 +135,10 @@
           "minLength": 1,
           "type": "string"
         },
+        "algorithm_version": {
+          "minimum": 0,
+          "type": "integer"
+        },
         "derivation_schedule": {
           "items": {
             "maxLength": 500,
@@ -142,6 +146,11 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "implementation": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
         },
         "implementation_digest": {
           "pattern": "^[a-f0-9]{64}$",
@@ -157,6 +166,39 @@
         "implementation_digest",
         "master_seed",
         "derivation_schedule"
+      ],
+      "type": "object"
+    },
+    "replay": {
+      "additionalProperties": false,
+      "properties": {
+        "claim": {
+          "enum": [
+            "analysis_replayable",
+            "analysis_not_replayable"
+          ]
+        },
+        "execution_provenance_complete": {
+          "type": "boolean"
+        },
+        "execution_seed_confirmed": {
+          "type": "boolean"
+        },
+        "execution_seed_requested": {
+          "type": "boolean"
+        },
+        "missing_provenance_fields": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "claim",
+        "execution_provenance_complete"
       ],
       "type": "object"
     },

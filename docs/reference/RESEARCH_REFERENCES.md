@@ -237,6 +237,31 @@ Canonical methods the analysis engine implements:
   (`AnalysisRandom`), so bootstrap draws replay across
   implementations (`scripts/generate-statistical-oracle-fixtures.py`).
 
+- [Bootstrap Confidence Intervals for LLM Evaluation (Indeed
+  Engineering, 2026)](https://engineering.indeedblog.com/blog/2026/07/bootstrap-confidence-intervals-for-llm-evaluation/)
+  and [When +1% Is Not Enough: A Paired Bootstrap Protocol for
+  Evaluating Small Improvements](https://arxiv.org/html/2511.19794v1)
+  — Multiple runs per input form clustered data; a paired cluster
+  bootstrap resamples items, never nested runs, and intervals that
+  treat clustered samples as independent come out too narrow. Used
+  for: the family-stratified weighted case bootstrap with cases as
+  the only resampling unit in
+  `daemon/src/benchmarks/frozen_analysis.py`.
+- [Resolution Diagnostics for Paired LLM
+  Evaluation](https://arxiv.org/pdf/2605.30315) — Paired designs
+  need explicit diagnostics for whether the sample can resolve the
+  declared difference. Used for: the predeclared minimum usable case
+  count and the small-cluster insufficiency rule in the frozen
+  comparison gates.
+- [FDA guidance: Non-Inferiority Clinical Trials to Establish
+  Effectiveness](https://www.fda.gov/media/78504/download) and
+  [Multiplicity and multiple-endpoint testing
+  guide](https://meddeviceguide.com/blog/multiplicity-multiple-endpoints-medical-device-clinical-trials-guide)
+  — The margin is pre-specified, non-inferiority tests before
+  superiority, and a Holm procedure controls the family. Used for:
+  the predeclared non-inferiority margin, direction, hypothesis
+  order, and Holm correction inside one declared comparison family.
+
 ## 6. Scheduling and fair dispatch
 
 - [Deficit round robin](https://en.wikipedia.org/wiki/Deficit_round_robin)
