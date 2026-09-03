@@ -1052,6 +1052,226 @@ async def validate_study_endpoint(
     )
 
 
+# ── Studies, metric lifecycle, interactions, and replay bundles ─────
+
+
+class StudyInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    study_type: str
+    name: str = Field(min_length=1, max_length=200)
+    base_configuration: dict[str, Any]
+    treatment: dict[str, Any]
+    invariants: dict[str, Any]
+    families: dict[str, list[str]]
+    scorer_id: str = Field(pattern=ID_PATTERN)
+    master_seed: int = Field(ge=0, le=2**64 - 1)
+    comparison_margin: float = Field(ge=0.0)
+    per_attempt_cost: dict[str, Any]
+    seconds_per_attempt: int = Field(ge=1)
+    max_concurrency: int = Field(default=4, ge=1)
+    hypothesis: str = "non_inferiority"
+
+
+class MetricAdvanceInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    target: str
+    now: str = "1970-01-01T00:00:00Z"
+    validation_evidence: dict[str, bool] = Field(default_factory=dict)
+    reason: str = ""
+
+
+class InteractionRunInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scripted_turns: list[dict[str, Any]]
+    agent_replies: list[str]
+    canaries: list[str] = Field(default_factory=list)
+
+
+class BundleImportInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    archive_base64: str = Field(min_length=1, max_length=70_000_000)
+    approval: dict[str, str] | None = None
+
+
+@router.post("/studies", status_code=201)
+async def author_study_endpoint(request: Request, payload: StudyInput):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import study_authoring
+    from benchmarks.costs import money_from_json
+    from benchmarks.frozen_analysis import FrozenAnalysisError
+
+    try:
+        return study_authoring.author_study(
+            study_type=payload.study_type,
+            name=payload.name,
+            base_configuration=payload.base_configuration,
+            treatment=payload.treatment,
+            invariants=payload.invariants,
+            families=payload.families,
+            scorer_id=payload.scorer_id,
+            master_seed=payload.master_seed,
+            comparison_margin=payload.comparison_margin,
+            per_attempt_cost=money_from_json(payload.per_attempt_cost),
+            seconds_per_attempt=payload.seconds_per_attempt,
+            max_concurrency=payload.max_concurrency,
+            hypothesis=payload.hypothesis,
+        )
+    except (study_authoring.StudyAuthoringError, FrozenAnalysisError,
+            ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/metrics/{metric_id}/advance")
+async def advance_metric_endpoint(
+    request: Request, metric_id: str, payload: MetricAdvanceInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import metric_registry
+
+    try:
+        return await metric_registry.advance(
+            metric_id, payload.target, now=payload.now,
+            validation_evidence=payload.validation_evidence,
+            reason=payload.reason,
+        )
+    except metric_registry.MetricRegistryError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except (
+        EvaluationContractError,
+        evaluation_records.EvaluationStorageError,
+        facade.FacadeCommandError,
+        aiosqlite.IntegrityError,
+    ) as error:
+        raise _facade_error(error) from error
+
+
+@router.get("/metrics/privacy-definitions")
+async def privacy_definitions_endpoint(
+    scorer_version: str = "1",
+    configuration_digest: str = "0" * 64,
+    calibrated_at: str = "2026-01-01T00:00:00Z",
+):
+    from benchmarks import metric_registry
+
+    try:
+        return {"definitions": metric_registry.privacy_metric_definitions(
+            scorer_version=scorer_version,
+            configuration_digest=configuration_digest,
+            calibrated_at=calibrated_at,
+        )}
+    except (EvaluationContractError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/interactions/{spec_id}/execute")
+async def execute_interaction_endpoint(
+    request: Request, spec_id: str, payload: InteractionRunInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import interaction_execution
+
+    stored = await evaluation_records.get_record("interaction-spec", spec_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Interaction not found")
+    version = interaction_execution.scripted_simulator_version(
+        payload.scripted_turns,
+    )
+    interaction_execution.register_simulator(version)
+    spec = dict(stored["record"])
+    pins = version.pins()
+    spec["simulator"] = {
+        key: pins[key]
+        for key in ("implementation_id", "prompt_digest", "model",
+                    "image_digest", "dependency_digest")
+    }
+    replies = iter(payload.agent_replies)
+
+    def scripted_agent(message: Any, allowed: Any) -> dict[str, Any]:
+        return {"content": next(replies, "")}
+
+    try:
+        return interaction_execution.execute_interaction(
+            spec, agent=scripted_agent, canaries=payload.canaries,
+        )
+    except (interaction_execution.InteractionError,
+            EvaluationContractError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/runs/{run_id}/replay-bundles")
+async def export_replay_bundle_endpoint(
+    request: Request, run_id: str, policy: str = "redacted",
+    snapshot_id: str | None = None,
+):
+    require_api_key(request, BMAS_API_KEY)
+    import base64
+
+    from benchmarks import replay_bundle
+
+    try:
+        built = await replay_bundle.export_run_bundle(
+            run_id, policy=policy, snapshot_id=snapshot_id,
+        )
+    except replay_bundle.ReplayBundleError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return {
+        "manifest": built["manifest"],
+        "manifest_digest": built["manifest_digest"],
+        "bundle_digest": built["bundle_digest"],
+        "member_count": built["member_count"],
+        "archive_base64": base64.b64encode(built["archive"]).decode("ascii"),
+    }
+
+
+@router.post("/replay-bundles/import")
+async def import_replay_bundle_endpoint(
+    request: Request, payload: BundleImportInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    import base64
+    import binascii
+
+    from benchmarks import replay_bundle
+
+    try:
+        archive = base64.b64decode(payload.archive_base64, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise HTTPException(
+            status_code=422, detail="Invalid base64 archive",
+        ) from error
+    try:
+        imported = replay_bundle.import_bundle(archive)
+        result: dict[str, Any] = {
+            "import_id": imported.import_id,
+            "ingestion_state": imported.ingestion_state,
+            "quarantined_members": imported.quarantined_members,
+            "stripped_fields": imported.stripped_fields,
+            "readable_members": sorted(imported.records),
+            "replay_approved": False,
+            "execution_repeat": replay_bundle.execution_repeat_requirements(
+                imported,
+            ),
+        }
+        if payload.approval:
+            replay_bundle.approve_replay(
+                imported,
+                actor=str(payload.approval.get("actor") or ""),
+                policy_version=str(payload.approval.get("policy_version")
+                                   or ""),
+            )
+            replayed = replay_bundle.replay_from_bundle(imported)
+            result["replay_approved"] = True
+            result["replay"] = {
+                key: replayed[key] for key in (
+                    "analysis_replayable", "claim", "results_digest",
+                    "expected_results_digest", "execution_repeat",
+                )
+            }
+    except replay_bundle.ReplayBundleError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return result
+
+
 # ── Analyses, gates, exports, and the authority view ─────────────────
 
 
