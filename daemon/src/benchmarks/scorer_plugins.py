@@ -35,6 +35,7 @@ PLUGIN_TYPES = (
     "trajectory",
     "human_review",
     "composite",
+    "reliability",
 )
 
 
@@ -98,6 +99,7 @@ class DeterministicAnswerScorer:
         "numeric_tolerance",
         "multiple_choice",
         "structured_assertions",
+        "last_number",
     )
 
     def score(
@@ -203,6 +205,32 @@ class DeterministicAnswerScorer:
             ),
         )
 
+    def _last_number(
+        self, output: str, reference: str, configuration: dict[str, Any],
+    ) -> dict[str, Any]:
+        """The ported grade-school numeric convention.
+
+        The final numeric value is the answer: a ``####`` marker wins,
+        then an explicit answer phrase, then the last number in the
+        response. Numbers compare after comma stripping and integer
+        normalization.
+        """
+        del configuration
+        extracted = extract_last_number(output)
+        if extracted is None:
+            return _scored(
+                [{"name": "accuracy", "value": 0.0, "category": None}],
+                passed=False,
+                explanation="no_answer",
+            )
+        passed = normalize_number(extracted) == normalize_number(reference)
+        return _scored(
+            [{"name": "accuracy", "value": 1.0 if passed else 0.0,
+              "category": extracted}],
+            passed=passed,
+            explanation="numeric_match" if passed else "numeric_mismatch",
+        )
+
     def _structured_assertions(
         self, output: str, reference: str, configuration: dict[str, Any],
     ) -> dict[str, Any]:
@@ -257,6 +285,205 @@ class DeterministicAnswerScorer:
 
 
 _ABSENT = object()
+
+_NUMBER_PATTERN = r"-?\d+(?:,\d{3})*(?:\.\d+)?"
+
+
+def extract_last_number(text: str) -> str | None:
+    """Extract the final numeric answer from one free-form response."""
+    import re
+
+    if not text or not text.strip():
+        return None
+    if "####" in text:
+        after = text.split("####")[-1].strip()
+        numbers = re.findall(_NUMBER_PATTERN, after)
+        if numbers:
+            return numbers[0].replace(",", "")
+    for pattern in (
+        r"(?:the\s+)?answer\s+is\s*[:\s]*(" + _NUMBER_PATTERN + ")",
+        r"answer\s*:\s*(" + _NUMBER_PATTERN + ")",
+        r"=\s*\$?\s*(" + _NUMBER_PATTERN + r")\s*$",
+    ):
+        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+        if match:
+            return match.group(1).replace(",", "")
+    numbers = re.findall(_NUMBER_PATTERN, text)
+    return numbers[-1].replace(",", "") if numbers else None
+
+
+def normalize_number(text: str) -> str:
+    """Normalize one numeric string with exact decimal arithmetic."""
+    from decimal import Decimal, InvalidOperation
+
+    cleaned = str(text).strip().replace(",", "")
+    try:
+        value = Decimal(cleaned)
+    except InvalidOperation:
+        return cleaned
+    normalized = value.normalize()
+    return format(normalized, "f")
+
+
+# ── Reliability scoring ported from the soak harness ─────────────────
+
+
+def _rate(values: list[bool]) -> float:
+    return sum(bool(value) for value in values) / len(values) if values else 0.0
+
+
+def _nearest_rank(values: list[float], percentile: float) -> float:
+    import math
+
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    rank = math.ceil(len(ordered) * percentile / 100)
+    return float(ordered[max(0, min(len(ordered) - 1, rank - 1))])
+
+
+def validate_trial_outcome(outcome: dict[str, Any]) -> None:
+    """Reject one inconsistent soak trial outcome before scoring."""
+    if int(outcome.get("effective_actions", 0)) < 0:
+        raise ScorerPluginError("effective_actions must not be negative")
+    expected = int(outcome.get("retrieval_expected", 0))
+    found = int(outcome.get("retrieval_found", 0))
+    if expected < 0 or found < 0:
+        raise ScorerPluginError("retrieval counts must not be negative")
+    if found > expected:
+        raise ScorerPluginError("retrieval_found exceeds retrieval_expected")
+    if int(outcome.get("minority_corrections", 0)) > int(
+        outcome.get("minority_opportunities", 0),
+    ):
+        raise ScorerPluginError(
+            "minority_corrections exceeds minority_opportunities"
+        )
+    if outcome.get("restart_recovered") and not outcome.get(
+        "restart_attempted",
+    ):
+        raise ScorerPluginError(
+            "restart recovery requires a restart attempt"
+        )
+
+
+class ReliabilityScorer:
+    """The long-horizon reliability measures ported from the soak harness.
+
+    The plugin reads one list of trial outcomes for one configuration
+    and horizon and reports every soak measure as one named dimension:
+    exact task success, strict repeated-run success, false completion,
+    reliability decay against the declared baseline success, restart
+    recovery, duplicate external actions, budget overshoot, context
+    retrieval recall, stalls, replans, unresolved conflicts, minority
+    corrections, and average effective actions. Role measurements
+    report as evidence marks with nearest-rank percentiles.
+    """
+
+    plugin_type = "reliability"
+    trust_class = "repository_reviewed_deterministic"
+    evidence_requirements = ("trial_outcomes",)
+
+    def score(
+        self, evidence: dict[str, Any], configuration: dict[str, Any],
+    ) -> dict[str, Any]:
+        missing = _require(evidence, self.evidence_requirements)
+        if missing:
+            return unavailable(missing)
+        outcomes = [dict(outcome) for outcome in evidence["trial_outcomes"]]
+        if not outcomes:
+            return unavailable(["trial_outcomes"])
+        for outcome in outcomes:
+            validate_trial_outcome(outcome)
+        exact = [bool(o.get("exact_success")) for o in outcomes]
+        exact_success = _rate(exact)
+        restart_trials = [o for o in outcomes if o.get("restart_attempted")]
+        overshoots = [
+            max(0.0, float(o.get("budget_spent_usd", 0.0))
+                - float(o.get("budget_limit_usd", 0.0)))
+            for o in outcomes
+        ]
+        retrieval_expected = sum(int(o.get("retrieval_expected", 0))
+                                 for o in outcomes)
+        retrieval_found = sum(int(o.get("retrieval_found", 0))
+                              for o in outcomes)
+        minority_opportunities = sum(int(o.get("minority_opportunities", 0))
+                                     for o in outcomes)
+        minority_corrections = sum(int(o.get("minority_corrections", 0))
+                                   for o in outcomes)
+        baseline = configuration.get("baseline_success")
+        duplicates = sum(
+            len(o.get("external_action_keys") or [])
+            - len(set(o.get("external_action_keys") or []))
+            for o in outcomes
+        )
+        dimensions: list[dict[str, Any]] = [
+            {"name": "exact_task_success", "value": exact_success,
+             "category": None},
+            {"name": "strict_repeated_run_success",
+             "value": 1.0 if all(exact) else 0.0, "category": None},
+            {"name": "false_completion_rate",
+             "value": _rate([bool(o.get("completed"))
+                             and not bool(o.get("exact_success"))
+                             for o in outcomes]), "category": None},
+            {"name": "reliability_decay",
+             "value": (float(baseline) - exact_success
+                       if baseline is not None else None),
+             "category": None},
+            {"name": "restart_recovery_rate",
+             "value": _rate([bool(o.get("restart_recovered"))
+                             for o in restart_trials]), "category": None},
+            {"name": "duplicate_external_actions", "value": float(duplicates),
+             "category": None},
+            {"name": "budget_overshoot_rate",
+             "value": _rate([value > 0 for value in overshoots]),
+             "category": None},
+            {"name": "context_retrieval_recall",
+             "value": (retrieval_found / retrieval_expected
+                       if retrieval_expected else 1.0), "category": None},
+            {"name": "stall_count",
+             "value": float(sum(int(o.get("stall_count", 0))
+                                for o in outcomes)), "category": None},
+            {"name": "replan_count",
+             "value": float(sum(int(o.get("replan_count", 0))
+                                for o in outcomes)), "category": None},
+            {"name": "unresolved_conflict_count",
+             "value": float(sum(int(o.get("unresolved_conflicts", 0))
+                                for o in outcomes)), "category": None},
+            {"name": "minority_correction_rate",
+             "value": (minority_corrections / minority_opportunities
+                       if minority_opportunities else 1.0),
+             "category": None},
+            {"name": "average_effective_actions",
+             "value": sum(int(o.get("effective_actions", 0))
+                          for o in outcomes) / len(outcomes),
+             "category": None},
+        ]
+        roles: dict[str, list[dict[str, Any]]] = {}
+        for outcome in outcomes:
+            for measurement in outcome.get("role_measurements") or []:
+                roles.setdefault(str(measurement["role"]), []).append(
+                    measurement,
+                )
+        role_metrics = {}
+        for role, measurements in sorted(roles.items()):
+            latencies = [float(m.get("latency_ms", 0.0)) for m in measurements]
+            costs = [float(m.get("cost_usd", 0.0)) for m in measurements]
+            role_metrics[role] = {
+                "activations": len(measurements),
+                "total_cost_usd": sum(costs),
+                "average_cost_usd": sum(costs) / len(costs),
+                "average_latency_ms": sum(latencies) / len(latencies),
+                "p95_latency_ms": _nearest_rank(latencies, 95),
+            }
+        return {
+            **_scored(
+                dimensions,
+                passed=all(exact),
+                explanation=f"reliability over {len(outcomes)} trials",
+            ),
+            "evidence_marks": {"role_metrics": role_metrics,
+                               "trials": len(outcomes)},
+        }
 
 
 def _resolve_pointer(value: Any, pointer: str) -> Any:
@@ -609,4 +836,6 @@ def plugin_for(
         return HumanReviewScorer()
     if plugin_type == "composite":
         return CompositeScorer()
+    if plugin_type == "reliability":
+        return ReliabilityScorer()
     raise ScorerPluginError(f"Unknown plugin type: {plugin_type!r}")

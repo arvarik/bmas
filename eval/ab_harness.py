@@ -15,6 +15,18 @@ from eval.scorer import ScoredResult
 logger = logging.getLogger("bmas.eval.ab")
 
 
+def _deprecated_harness() -> None:
+    import warnings
+
+    warnings.warn(
+        "eval.ab_harness duplicates the daemon study and run authority; it "
+        "stays for one deprecation cycle. Author studies through the "
+        "evaluation API instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
 class ABHarness:
     """Run the same dataset under two coordination variants and compare.
 
@@ -33,6 +45,7 @@ class ABHarness:
         concurrency: int = 1,
         results_dir: str | Path = "eval/results",
     ):
+        _deprecated_harness()
         self.daemon_url = daemon_url
         self.concurrency = concurrency
         self.results_dir = Path(results_dir)

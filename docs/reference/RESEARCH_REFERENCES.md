@@ -436,6 +436,17 @@ Canonical methods the analysis engine implements:
   with digest checks, the dual-read fallback evidence, and the
   measured deletion gates before the contract phase.
 
+- [The Strangler Fig Pattern: How to Modernize Legacy Systems Without
+  a Big Bang Rewrite (Security Boulevard,
+  2026)](https://securityboulevard.com/2026/07/the-strangler-fig-pattern-how-to-modernize-legacy-systems-without-a-big-bang-rewrite/)
+  — A slice retires only after concrete exit criteria hold: no live
+  traffic on the legacy route, no remaining readers, historical data
+  handled, monitoring that confirms zero usage, and a closed rollback
+  window. Used for: the measured fallback window with its declared
+  threshold, the populated rollback evidence, and the retention
+  evidence every removal gate needs in
+  `daemon/src/benchmarks/evaluation_migration.py`.
+
 ## 10. Dataset lineage and deterministic transformation
 
 - [Data Lineage Tools in 2026: Where Lineage

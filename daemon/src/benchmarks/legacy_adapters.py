@@ -319,3 +319,78 @@ def legacy_item_from_case(case: dict[str, Any]) -> dict[str, Any]:
         "tags": [str(tag) for tag in classification.get("tags") or []],
         "metadata": dict(case.get("metadata") or {}),
     }
+
+
+# The legacy result summary fields the current model represents. Every
+# other field stays unavailable, never a fabricated zero.
+_MIGRATED_SUMMARY_FIELDS = (
+    "run_id", "dataset", "dataset_size", "accuracy",
+    "accuracy_by_subject", "completed_tasks", "completion_rate",
+    "total_cost_usd", "total_tokens", "avg_latency_ms",
+    "median_latency_ms", "p95_latency_ms", "terminated_by",
+    "avg_rounds", "total_recoveries", "run_config",
+)
+
+
+def migrate_legacy_result_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    """Convert one legacy result summary file into the current shape.
+
+    Accuracy becomes an unconditional success rate over the dataset
+    size, the legacy floating-point cost passes through the legacy cost
+    adapter and keeps its source marked, latency and termination
+    counts map directly, and every unmigrated field lists as
+    unavailable.
+    """
+    from benchmarks.costs import legacy_cost_adapter
+
+    if not summary.get("run_id") or "dataset_size" not in summary:
+        raise ValueError(
+            "A legacy result summary names its run_id and dataset_size"
+        )
+    dataset_size = int(summary["dataset_size"])
+    unavailable = sorted(
+        name for name in summary
+        if name not in _MIGRATED_SUMMARY_FIELDS
+    )
+    cost_value = summary.get("total_cost_usd")
+    cost = legacy_cost_adapter(cost_value) if cost_value is not None else None
+    record = {
+        "schema_id": "legacy-result-migration",
+        "legacy_run_id": str(summary["run_id"]),
+        "dataset": str(summary.get("dataset") or "unknown"),
+        "unconditional_success": {
+            "rate": float(summary.get("accuracy") or 0.0),
+            "successes": round(
+                float(summary.get("accuracy") or 0.0) * dataset_size,
+            ),
+            "denominator": dataset_size,
+            "denominator_statement": "legacy dataset size",
+        },
+        "conditional_success": {
+            "completed": int(summary.get("completed_tasks") or 0),
+            "rate": summary.get("accuracy_on_completed"),
+        },
+        "accuracy_by_subject": dict(summary.get("accuracy_by_subject") or {}),
+        "cost": cost,
+        "tokens": (int(summary["total_tokens"])
+                   if summary.get("total_tokens") is not None else None),
+        "latency_ms": {
+            "average": summary.get("avg_latency_ms"),
+            "median": summary.get("median_latency_ms"),
+            "p95": summary.get("p95_latency_ms"),
+        },
+        "termination": {
+            "terminated_by": dict(summary.get("terminated_by") or {}),
+            "average_rounds": summary.get("avg_rounds"),
+            "recoveries": summary.get("total_recoveries"),
+        },
+        "run_configuration": dict(summary.get("run_config") or {}),
+        "unavailable_fields": unavailable,
+        "migration": {
+            "source": "legacy_result_summary_file",
+            "authority": "compatibility_projection_only",
+        },
+    }
+    return {**record, "record_digest": _derived_digest(
+        "legacy-result-migration", record,
+    )}

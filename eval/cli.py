@@ -14,7 +14,6 @@ import asyncio
 import json
 import logging
 import sys
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -113,6 +112,46 @@ def main() -> None:
         help="REQUIRED: confirm this performs destructive operations on cluster nodes",
     )
 
+    # ── evaluation (the facade client commands) ──────────────────────
+    evaluation = subparsers.add_parser(
+        "evaluation",
+        help="Call the versioned evaluation API as a client (no local writes)",
+    )
+    evaluation.add_argument("--daemon-url", type=str, default=None)
+    evaluation.add_argument("--config", type=str, default=None)
+    evaluation_commands = evaluation.add_subparsers(
+        dest="evaluation_command", required=True,
+    )
+    evaluation_commands.add_parser(
+        "authority", help="Show the migration authority and facade counters",
+    )
+    evaluation_commands.add_parser(
+        "removal-gates", help="Show measured fallback, rollback, and retention evidence",
+    )
+    migrate = evaluation_commands.add_parser(
+        "migrate-results", help="Migrate legacy summary files through the API",
+    )
+    migrate.add_argument("--results-dir", type=str, default="eval/results")
+    export = evaluation_commands.add_parser(
+        "export-bundle", help="Export one analysis-replay bundle to a local file",
+    )
+    export.add_argument("--run-id", required=True)
+    export.add_argument("--policy", choices=["redacted", "complete"], default="redacted")
+    export.add_argument("--output", type=str, default=None)
+    replay = evaluation_commands.add_parser(
+        "replay-bundle", help="Import one bundle and replay its analysis after approval",
+    )
+    replay.add_argument("--file", required=True)
+    replay.add_argument("--actor", type=str, default=None)
+    replay.add_argument("--policy-version", type=str, default="1")
+    preview = evaluation_commands.add_parser(
+        "score-preview", help="Score one response through the daemon boundary",
+    )
+    preview.add_argument("--plugin", type=str, default="deterministic")
+    preview.add_argument("--comparison", type=str, default="last_number")
+    preview.add_argument("--reference", required=True)
+    preview.add_argument("--response", required=True)
+
     args = parser.parse_args()
 
     # Logging
@@ -124,20 +163,111 @@ def main() -> None:
     )
 
     if args.command == "benchmark":
+        _deprecated_command("eval.cli.benchmark", args)
         asyncio.run(_cmd_benchmark(args))
     elif args.command == "ab":
+        _deprecated_command("eval.cli.ab", args)
         asyncio.run(_cmd_ab(args))
     elif args.command == "report":
+        _deprecated_command("eval.cli.report", args)
         _cmd_report(args)
     elif args.command == "inject-failure":
         _cmd_inject_failure(args)
+    elif args.command == "evaluation":
+        _cmd_evaluation(args)
+
+
+DEPRECATION_CYCLE = "one release"
+
+
+def _client_for(args: argparse.Namespace):
+    from eval.client import EvaluationClient
+
+    daemon_url = getattr(args, "daemon_url", None)
+    if not daemon_url:
+        try:
+            daemon_url = load_eval_config(getattr(args, "config", None))["daemon_url"]
+        except Exception:  # noqa: BLE001 — a missing config falls back to the default URL.
+            daemon_url = "http://127.0.0.1:8000"
+    return EvaluationClient(daemon_url)
+
+
+def _deprecated_command(entry_point: str, args: argparse.Namespace) -> None:
+    """Warn once and record the legacy command as a measured fallback.
+
+    The compatibility commands stay for one deprecation cycle. Every
+    use records through the facade so the removal gate measures real
+    fallback traffic instead of assuming none.
+    """
+    import warnings
+
+    warnings.warn(
+        f"{entry_point} is a compatibility command kept for "
+        f"{DEPRECATION_CYCLE}; use `python -m eval.cli evaluation ...`",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    try:
+        _client_for(args).record_fallback(entry_point)
+    except Exception as error:  # noqa: BLE001 — an unreachable daemon never blocks the command.
+        logging.getLogger("eval.cli").warning(
+            "fallback use was not recorded: %s", error,
+        )
+
+
+def _cmd_evaluation(args: argparse.Namespace) -> None:
+    client = _client_for(args)
+    command = args.evaluation_command
+    if command == "authority":
+        print(json.dumps(client.authority(), indent=2, sort_keys=True))
+    elif command == "removal-gates":
+        print(json.dumps(client.removal_gates(), indent=2, sort_keys=True))
+    elif command == "migrate-results":
+        from eval.legacy_results import migrate_directory
+
+        for entry in migrate_directory(client, args.results_dir):
+            print(json.dumps(entry, sort_keys=True))
+    elif command == "export-bundle":
+        import base64
+
+        built = client.export_bundle(args.run_id, policy=args.policy)
+        output = Path(args.output or f"eval/results/{args.run_id}-replay-bundle.zip")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(base64.b64decode(built["archive_base64"]))
+        manifest_path = output.with_suffix(".manifest.json")
+        manifest_path.write_text(json.dumps(built["manifest"], indent=2, sort_keys=True))
+        print(json.dumps({
+            "bundle": str(output),
+            "manifest": str(manifest_path),
+            "bundle_digest": built["bundle_digest"],
+            "member_count": built["member_count"],
+            "claims": built["manifest"]["claims"],
+        }, indent=2, sort_keys=True))
+    elif command == "replay-bundle":
+        import base64
+
+        archive = base64.b64encode(Path(args.file).read_bytes()).decode("ascii")
+        result = client.replay_bundle(
+            archive, actor=args.actor, policy_version=args.policy_version,
+        )
+        result["execution_repeat_note"] = (
+            "analysis replay recomputes stored evidence; it never repeats "
+            "the model execution"
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
+    elif command == "score-preview":
+        result = client.preview_score(
+            args.plugin,
+            {"final_output": args.response, "reference_answer": args.reference},
+            {"comparison": args.comparison},
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
 
 
 async def _cmd_benchmark(args: argparse.Namespace) -> None:
     from eval.datasets import load_gsm8k, load_mmlu
-    from eval.runner import BenchmarkRunner
     from eval.metrics import compute_run_metrics
-    from eval.scorer import compute_accuracy, compute_accuracy_by_subject
+    from eval.runner import BenchmarkRunner
 
     cfg = load_eval_config(args.config)
 
@@ -174,7 +304,7 @@ async def _cmd_benchmark(args: argparse.Namespace) -> None:
     print(f"  Cost: ${metrics.total_cost_usd:.4f} | Tokens: {metrics.total_tokens}")
     print(f"  Avg Latency: {metrics.avg_latency_ms:.0f}ms | P95: {metrics.p95_latency_ms:.0f}ms")
     if metrics.accuracy_by_subject:
-        print(f"  Per-subject:")
+        print("  Per-subject:")
         for subj, acc in metrics.accuracy_by_subject.items():
             print(f"    {subj}: {acc:.2%}")
     print(f"  Summary saved: {out_path}")
@@ -182,8 +312,8 @@ async def _cmd_benchmark(args: argparse.Namespace) -> None:
 
 
 async def _cmd_ab(args: argparse.Namespace) -> None:
-    from eval.datasets import load_gsm8k, load_mmlu
     from eval.ab_harness import ABHarness
+    from eval.datasets import load_gsm8k, load_mmlu
 
     cfg = load_eval_config(args.config)
 
@@ -205,7 +335,7 @@ async def _cmd_ab(args: argparse.Namespace) -> None:
     print("  The daemon validates this implementation before submission.")
     print(f"{'='*60}\n")
 
-    scored_a, metrics_a = await harness.run_arm(
+    _, metrics_a = await harness.run_arm(
         items=items,
         expected_variant=args.variant_a,
         run_id=f"{run_id}-a",
@@ -218,7 +348,7 @@ async def _cmd_ab(args: argparse.Namespace) -> None:
     print("  The same daemon receives this implementation per task.")
     print(f"{'='*60}\n")
 
-    scored_b, metrics_b = await harness.run_arm(
+    _, metrics_b = await harness.run_arm(
         items=items,
         expected_variant=args.variant_b,
         run_id=f"{run_id}-b",
@@ -237,8 +367,8 @@ async def _cmd_ab(args: argparse.Namespace) -> None:
 
 
 def _cmd_report(args: argparse.Namespace) -> None:
-    from eval.metrics import RunMetrics
     from eval.ab_harness import ABHarness
+    from eval.metrics import RunMetrics
 
     metrics_a = RunMetrics.load(args.file_a)
     metrics_b = RunMetrics.load(args.file_b)

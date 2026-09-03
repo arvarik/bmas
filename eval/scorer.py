@@ -1,7 +1,10 @@
-"""Benchmark scorers — extract and compare model answers against ground truth.
+"""Benchmark scorers — compatibility shims over the daemon scorer plugins.
 
-GSM8K: numeric answer extraction (last number convention).
-MMLU: letter answer extraction (A/B/C/D).
+The daemon deterministic scorer owns numeric (last number convention)
+and letter (A/B/C/D) scoring. These functions stay for one deprecation
+cycle: with a configured client they delegate to the daemon preview
+endpoint, and without one they fall back to the local logic, warn, and
+record the fallback through ``FALLBACK_RECORDER`` when one is set.
 """
 
 from __future__ import annotations
@@ -43,6 +46,43 @@ class ScoredResult:
         return asdict(self)
 
 
+# One optional evaluation client and one optional fallback recorder,
+# set by the CLI. Tests inject both.
+SCORER_CLIENT = None
+FALLBACK_RECORDER = None
+
+
+def _delegate(plugin_configuration: dict, expected: str, response: str):
+    """Score through the daemon boundary when a client is configured."""
+    if SCORER_CLIENT is None:
+        return None
+    preview = SCORER_CLIENT.preview_score(
+        "deterministic",
+        {"final_output": response, "reference_answer": expected},
+        plugin_configuration,
+    )
+    result = preview.get("result") or {}
+    if result.get("status") != "scored":
+        return None
+    dimension = (result.get("dimensions") or [{}])[0]
+    return dimension.get("category"), bool(result.get("passed")), str(
+        result.get("explanation") or "daemon",
+    )
+
+
+def _local_fallback(entry_point: str) -> None:
+    import warnings
+
+    warnings.warn(
+        f"{entry_point} scored locally; the daemon scorer plugin is the "
+        "authority and this shim stays for one deprecation cycle",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    if FALLBACK_RECORDER is not None:
+        FALLBACK_RECORDER(entry_point)
+
+
 def score_gsm8k(expected: str, response: str) -> tuple[str | None, bool, str]:
     """Score a GSM8K response against the expected numeric answer.
 
@@ -52,6 +92,10 @@ def score_gsm8k(expected: str, response: str) -> tuple[str | None, bool, str]:
     (matching GSM8K evaluation standard). The expected answer has commas
     already stripped by the dataset loader.
     """
+    delegated = _delegate({"comparison": "last_number"}, expected, response)
+    if delegated is not None:
+        return delegated
+    _local_fallback("eval.scorer.score_gsm8k")
     if not response or not response.strip():
         return None, False, "no_answer"
 
@@ -77,6 +121,13 @@ def score_mmlu(expected: str, response: str) -> tuple[str | None, bool, str]:
       2. Standalone letter at start of response
       3. No match → no_answer
     """
+    delegated = _delegate(
+        {"comparison": "multiple_choice", "choices": ["A", "B", "C", "D"]},
+        expected, response,
+    )
+    if delegated is not None:
+        return delegated
+    _local_fallback("eval.scorer.score_mmlu")
     if not response or not response.strip():
         return None, False, "no_answer"
 

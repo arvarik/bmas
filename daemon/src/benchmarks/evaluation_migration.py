@@ -256,14 +256,127 @@ async def record_export(
     )
 
 
-async def record_gate(name: str, passed: bool, *, actor: str) -> None:
-    """Record one deletion-gate decision with its actor."""
+async def record_gate(
+    name: str, passed: bool, *, actor: str,
+    evidence: dict[str, Any] | None = None,
+) -> None:
+    """Record one deletion-gate decision with its actor and evidence."""
     if name not in DELETION_GATES:
         raise MigrationPhaseError(f"Unknown deletion gate: {name}")
     state = await get_state()
     gates = dict(state["gates"])
-    gates[name] = {"passed": bool(passed), "actor": actor}
+    gates[name] = {"passed": bool(passed), "actor": actor,
+                   "evidence": dict(evidence or {})}
     await _write_state(gates=gates)
+
+
+# The declared fallback threshold: the number of legacy fallbacks and
+# direct legacy calls one removal window tolerates before a gate can
+# pass. The threshold is a declared value, never an inferred one.
+DECLARED_FALLBACK_THRESHOLD = 0
+# The gates whose passage needs measured evidence, not only a decision.
+MEASURED_GATES = {
+    "fallback_window_clean": ("fallback_events", "threshold", "window_start"),
+    "downgrade_fixtures_passed": ("legacy_records", "current_records",
+                                  "archived_records"),
+    "compatibility_export_verified": ("verified_exports",),
+}
+
+
+async def measure_fallback_window(
+    *, window_start: str, threshold: int = DECLARED_FALLBACK_THRESHOLD,
+) -> dict[str, Any]:
+    """Measure legacy fallback use inside one removal window.
+
+    The measurement counts dual-read fallbacks and direct legacy calls
+    since the window start and compares the sum with the declared
+    threshold. A gate passes only through this measurement.
+    """
+    fallbacks = await count_events("fallback", since=window_start)
+    direct_calls = await count_events("direct_legacy_call", since=window_start)
+    total = fallbacks + direct_calls
+    return {
+        "window_start": window_start,
+        "fallback_events": fallbacks,
+        "direct_legacy_call_events": direct_calls,
+        "total_legacy_use": total,
+        "threshold": int(threshold),
+        "passed": total <= int(threshold),
+    }
+
+
+async def record_measured_fallback_gate(
+    *, window_start: str, actor: str,
+    threshold: int = DECLARED_FALLBACK_THRESHOLD,
+) -> dict[str, Any]:
+    """Measure the window and record the fallback gate with evidence."""
+    measurement = await measure_fallback_window(
+        window_start=window_start, threshold=threshold,
+    )
+    await record_gate(
+        "fallback_window_clean", measurement["passed"], actor=actor,
+        evidence=measurement,
+    )
+    return measurement
+
+
+async def removal_gate_evidence() -> dict[str, Any]:
+    """Return the measured fallback, rollback, and retention evidence."""
+    state = await get_state()
+    gates = state["gates"]
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "SELECT COUNT(*) AS archived FROM evaluation_readonly_archive",
+        )
+        row = await cursor.fetchone()
+    archived = int(row["archived"]) if row else 0
+    exports = await list_events("export")
+    verified_exports = sum(
+        1 for event in exports if event["payload"].get("verified")
+    )
+    # A downgrade archives the live events; the archived export events
+    # still count as retention evidence.
+    async with db._connect() as connection:  # noqa: SLF001
+        archived_rows = await connection.execute_fetchall(
+            "SELECT record FROM evaluation_readonly_archive "
+            "WHERE source_table = 'evaluation_migration_events'",
+        )
+    for archived_row in archived_rows:
+        archived_event = json.loads(archived_row["record"])
+        if archived_event.get("event_type") != "export":
+            continue
+        payload = json.loads(archived_event.get("payload") or "{}")
+        if payload.get("verified"):
+            verified_exports += 1
+    fallback_gate = gates.get("fallback_window_clean") or {}
+    rollback_gate = gates.get("downgrade_fixtures_passed") or {}
+    return {
+        "fallback": {
+            "measured": bool(fallback_gate.get("evidence")),
+            "evidence": fallback_gate.get("evidence") or {},
+            "passed": bool(fallback_gate.get("passed")),
+        },
+        "rollback": {
+            "populated": bool(rollback_gate.get("evidence")),
+            "evidence": rollback_gate.get("evidence") or {},
+            "passed": bool(rollback_gate.get("passed")),
+        },
+        "retention": {
+            "archived_records": archived,
+            "verified_exports": verified_exports,
+            "passed": verified_exports > 0,
+        },
+    }
+
+
+def _missing_evidence(gates: dict[str, Any]) -> list[str]:
+    missing = []
+    for name, required in MEASURED_GATES.items():
+        evidence = (gates.get(name) or {}).get("evidence") or {}
+        for field in required:
+            if field not in evidence:
+                missing.append(f"{name}:{field}")
+    return missing
 
 
 async def set_cursor(target: str, cursor: str) -> None:
@@ -311,6 +424,12 @@ async def assert_contract_allowed() -> None:
         raise ContractRefusedError(
             "A destructive migration refuses before every deletion gate "
             f"passes; unpassed gates: {sorted(failing)}"
+        )
+    missing = _missing_evidence(gates)
+    if missing:
+        raise ContractRefusedError(
+            "A destructive migration refuses without measured gate "
+            f"evidence; missing: {sorted(missing)}"
         )
     if await list_events("digest_mismatch"):
         raise ContractRefusedError(
