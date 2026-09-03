@@ -729,6 +729,30 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.evaluation-frozen-analysis
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove frozen analysis and clustered statistics: every
+      specification and estimand freezes before calculation, family
+      and case weights normalize separately with zero-sum rejection,
+      slots reduce before weights, paired slots leave both arms on
+      infrastructure missingness, weights renormalize over usable
+      cases under the missing-weight limits, small clusters mark the
+      comparison insufficient, the portable bmas-analysis-rng
+      reproduces every published candidate and bootstrap draw, each
+      case weight applies once and never as a draw probability,
+      non-inferiority gates read predeclared margins, families, sample
+      sizes, and missingness rules with Holm correction, snapshots
+      pin every engine and random-source digest, replay from stored
+      evidence reproduces equal checksums without an execution claim,
+      and every analytics view traces to named fields.
+    argv: ["python3", "-m", "pytest", "tests/test_analysis_rng.py", "tests/test_frozen_analysis.py", "tests/test_analytics_views.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
   - id: daemon.source-adapters-live
     state: active_optional
     owner: daemon
@@ -1002,6 +1026,7 @@ profiles:
         - daemon.evaluation-editing
         - daemon.evaluation-scoring
         - daemon.evaluation-calibration-ledger
+        - daemon.evaluation-frozen-analysis
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

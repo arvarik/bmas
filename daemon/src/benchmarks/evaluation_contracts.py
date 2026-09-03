@@ -833,6 +833,10 @@ RECORD_SCHEMAS: dict[str, dict[str, Any]] = {
                              "master_seed", "derivation_schedule"],
                 "properties": {
                     "algorithm": _NAME,
+                    # The algorithm version is metadata, never part
+                    # of the algorithm identifier.
+                    "algorithm_version": _COUNT,
+                    "implementation": _NAME,
                     "implementation_digest": _DIGEST,
                     "master_seed": _COUNT,
                     "derivation_schedule": _STRING_LIST,
@@ -843,6 +847,24 @@ RECORD_SCHEMAS: dict[str, dict[str, Any]] = {
                 "additionalProperties": False,
                 "required": ["input", "output"],
                 "properties": {"input": _DIGEST, "output": _DIGEST},
+            },
+            # The replay claim separates deterministic analysis replay
+            # from external execution repeatability; a model run is
+            # never reproducible because its stored analysis replays.
+            "replay": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["claim", "execution_provenance_complete"],
+                "properties": {
+                    "claim": {
+                        "enum": ["analysis_replayable",
+                                 "analysis_not_replayable"],
+                    },
+                    "execution_provenance_complete": {"type": "boolean"},
+                    "execution_seed_requested": {"type": "boolean"},
+                    "execution_seed_confirmed": {"type": "boolean"},
+                    "missing_provenance_fields": _STRING_LIST,
+                },
             },
         },
     ),
