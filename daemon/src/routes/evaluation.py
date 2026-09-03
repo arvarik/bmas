@@ -1272,6 +1272,108 @@ async def import_replay_bundle_endpoint(
     return result
 
 
+# ── Legacy consolidation: client fallbacks, previews, gates ─────────
+
+
+class LegacyFallbackInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    entry_point: str = Field(min_length=1, max_length=200)
+
+
+class ScorePreviewInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plugin_type: str = Field(min_length=1, max_length=100)
+    evidence: dict[str, Any]
+    configuration: dict[str, Any] = Field(default_factory=dict)
+
+
+class LegacySummaryInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    summary: dict[str, Any]
+
+
+class FallbackGateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    window_start: str = Field(min_length=1, max_length=64)
+    actor: str = Field(min_length=1, max_length=200)
+    threshold: int = Field(default=0, ge=0)
+
+
+@router.post("/legacy-fallbacks", status_code=201)
+async def record_legacy_fallback_endpoint(
+    request: Request, payload: LegacyFallbackInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    await facade.record_direct_legacy_call(payload.entry_point)
+    return {"entry_point": payload.entry_point, "recorded": True}
+
+
+@router.post("/scorers/preview")
+async def score_preview_endpoint(request: Request, payload: ScorePreviewInput):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import score_execution, scorer_plugins
+
+    try:
+        plugin = scorer_plugins.plugin_for(payload.plugin_type)
+        outcome = score_execution.run_deterministic_in_boundary(
+            plugin=plugin, evidence=payload.evidence,
+            configuration=payload.configuration,
+        )
+    except scorer_plugins.ScorerPluginError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    import json as json_module
+
+    result = (
+        json_module.loads(outcome["canonical_output"])
+        if outcome["canonical_output"] else None
+    )
+    return {
+        "terminal_class": outcome["terminal_class"],
+        "result": result,
+        "result_digest": outcome["result_digest"],
+        "persisted": False,
+    }
+
+
+@router.post("/legacy-results")
+async def migrate_legacy_result_endpoint(
+    request: Request, payload: LegacySummaryInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    from benchmarks import legacy_adapters
+
+    try:
+        migrated = legacy_adapters.migrate_legacy_result_summary(
+            payload.summary,
+        )
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    await evaluation_migration.record_event(
+        "backfill_run",
+        {"target": "legacy_result_files",
+         "legacy_run_id": migrated["legacy_run_id"],
+         "record_digest": migrated["record_digest"],
+         "unavailable_fields": migrated["unavailable_fields"]},
+    )
+    return migrated
+
+
+@router.get("/removal-gates")
+async def removal_gates_endpoint():
+    return await evaluation_migration.removal_gate_evidence()
+
+
+@router.post("/removal-gates/fallback")
+async def measure_fallback_gate_endpoint(
+    request: Request, payload: FallbackGateInput,
+):
+    require_api_key(request, BMAS_API_KEY)
+    return await evaluation_migration.record_measured_fallback_gate(
+        window_start=payload.window_start, actor=payload.actor,
+        threshold=payload.threshold,
+    )
+
+
 # ── Analyses, gates, exports, and the authority view ─────────────────
 
 

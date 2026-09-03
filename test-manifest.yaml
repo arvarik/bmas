@@ -45,6 +45,19 @@ groups:
     timeout_seconds: 300
     tools: [python]
 
+  - id: repo.legacy-write-guard
+    state: active_required
+    owner: repository
+    purpose: >-
+      Block direct legacy database and result writes: the legacy eval
+      package imports no database or benchmark module and executes no
+      SQL, and only the declared writer modules mutate the canonical
+      evaluation tables.
+    argv: ["python3", "scripts/check-legacy-writes.py"]
+    working_directory: "."
+    timeout_seconds: 300
+    tools: [python]
+
   - id: repo.config-examples
     state: active_required
     owner: repository
@@ -776,6 +789,24 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.evaluation-consolidation
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the legacy consolidation: the daemon scorer plugins own the
+      ported numeric scoring and soak reliability measures, legacy
+      result summaries migrate with every unmigrated field marked
+      unavailable, the fallback gate passes only through a measurement
+      against the declared threshold, the destructive contract refuses
+      without measured fallback, populated rollback, and retention
+      evidence, rollback runs against populated legacy and current
+      records, and every legacy command records through the facade.
+    argv: ["python3", "-m", "pytest", "tests/test_legacy_consolidation.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 300
+    tools: [python, pytest]
+    parser: pytest_summary
+
   - id: daemon.source-adapters-live
     state: active_optional
     owner: daemon
@@ -999,6 +1030,7 @@ profiles:
       groups:
         - manifest.validate
         - repo.source-naming
+        - repo.legacy-write-guard
         - repo.config-examples
         - repo.config-schema
         - repo.docs-links
@@ -1051,6 +1083,7 @@ profiles:
         - daemon.evaluation-calibration-ledger
         - daemon.evaluation-frozen-analysis
         - daemon.evaluation-studies-replay
+        - daemon.evaluation-consolidation
 
   - id: ci.agent
     description: Continuous integration partition for agent checks.

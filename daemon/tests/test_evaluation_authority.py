@@ -395,6 +395,24 @@ async def test_the_destructive_contract_refuses_before_every_gate(
         await evaluation_migration.record_gate(
             gate, True, actor="operator-a",
         )
+    # A decision without measured evidence never opens the contract.
+    with pytest.raises(
+        evaluation_migration.ContractRefusedError, match="measured gate",
+    ):
+        await evaluation_migration.advance_phase("contract")
+    await evaluation_migration.record_measured_fallback_gate(
+        window_start="1970-01-01T00:00:00Z", actor="operator-a",
+        threshold=evaluation_migration.DECLARED_FALLBACK_THRESHOLD + 10,
+    )
+    await evaluation_migration.record_gate(
+        "downgrade_fixtures_passed", True, actor="operator-a",
+        evidence={"legacy_records": 1, "current_records": 1,
+                  "archived_records": 1},
+    )
+    await evaluation_migration.record_gate(
+        "compatibility_export_verified", True, actor="operator-a",
+        evidence={"verified_exports": 1},
+    )
     state = await evaluation_migration.advance_phase("contract")
     assert state["phase"] == "contract"
 
