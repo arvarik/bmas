@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:full-stack": "BMAS_E2E_PROJECT=full-stack playwright test --project=full-stack"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.2",

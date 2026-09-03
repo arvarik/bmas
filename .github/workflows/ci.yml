@@ -133,6 +133,16 @@ jobs:
       - name: Install runner dependencies
         run: python3 -m pip install pyyaml jsonschema
 
+      # The complete browser journey starts the real stack: Redis, the
+      # daemon with its scheduler, the deterministic fake provider, and
+      # the agent service, so the job carries their dependencies.
+      - name: Install the complete stack dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y redis-server
+          python3 -m pip install -r daemon/requirements.txt -r agent/requirements.txt
+          python3 -m pip install uvicorn httpx
+
       - name: Publish the resolved check list (mission-control)
         run: python3 scripts/run-test-manifest.py --profile ci.mission-control --list
 

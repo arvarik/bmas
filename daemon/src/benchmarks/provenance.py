@@ -17,6 +17,20 @@ SENSITIVE_KEY_PARTS = (
     "token",
 )
 
+# Token counts are usage measurements, never credentials. A key that
+# names a count keeps its value so cost and budget arithmetic can read
+# it after redaction.
+_COUNT_KEY_MARKERS = (
+    "tokens", "token_count", "token_limit", "token_budget", "token_threshold",
+    "token_ceiling", "per_token", "token_sets",
+)
+
+
+def _is_sensitive_key(normalized: str) -> bool:
+    if any(marker in normalized for marker in _COUNT_KEY_MARKERS):
+        return False
+    return any(part in normalized for part in SENSITIVE_KEY_PARTS)
+
 
 def canonical_json(value: Any) -> str:
     """Return deterministic JSON for checksums and stored contracts."""
@@ -35,7 +49,7 @@ def redact_secrets(value: Any) -> Any:
         for raw_key, item in value.items():
             key = str(raw_key)
             normalized = key.lower().replace("-", "_")
-            if any(part in normalized for part in SENSITIVE_KEY_PARTS):
+            if _is_sensitive_key(normalized):
                 redacted[key] = "[redacted]"
             else:
                 redacted[key] = redact_secrets(item)

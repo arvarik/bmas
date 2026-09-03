@@ -1445,8 +1445,16 @@ async def export_run_endpoint(request: Request, run_id: str):
 
 @router.get("/authority")
 async def authority_endpoint():
+    from benchmarks import release
+
     snapshot = await evaluation_migration.authority_snapshot()
-    return {**snapshot, "facade": facade.metrics_snapshot()}
+    return {
+        **snapshot,
+        "facade": facade.metrics_snapshot(),
+        # Evaluation is the default generation only after the complete
+        # manifest run proved every release gate.
+        "release": release.evaluation_default_status(),
+    }
 
 
 # ── Source adapters ──────────────────────────────────────────────────
@@ -1553,13 +1561,37 @@ async def import_source_endpoint(
     return await _adapter_call(
         source_adapters.import_through_registry(
             adapter_id,
-            payload.request,
+            _decode_upload_content(payload.request),
             configuration=payload.configuration,
             split=payload.split,
             row_limit=payload.row_limit,
             imported_by=(operator_id or "operator")[:200],
         ),
     )
+
+
+def _decode_upload_content(adapter_request: dict[str, Any]) -> dict[str, Any]:
+    """Translate one JSON upload into the adapter's byte contract.
+
+    A JSON request carries the upload as ``content_base64``; the local
+    upload adapter needs the exact bytes. Invalid base64 rejects here
+    before any adapter runs.
+    """
+    if "content_base64" not in adapter_request:
+        return adapter_request
+    import base64
+    import binascii
+
+    decoded = dict(adapter_request)
+    try:
+        decoded["content"] = base64.b64decode(
+            str(decoded.pop("content_base64")), validate=True,
+        )
+    except (binascii.Error, ValueError) as error:
+        raise HTTPException(
+            status_code=422, detail="Invalid base64 upload content",
+        ) from error
+    return decoded
 
 
 @router.post("/capability-promotions")

@@ -1,100 +1,123 @@
-"""Foundation Stage 0H: writer enablement stays gated.
+"""Release gates: evaluation becomes the default only after proof.
 
-No new writer enables until its conformance column, the populated
-migration and rollback gates, and the security gate all pass, and its
-feature flag is on. A planned runtime pair is never a runnable choice
-until its complete column passes.
+The gate script maps every documented release gate to manifest groups
+and reads one complete manifest result as read-only data. A missing
+or failed group leaves its gate unproven or failed, promotion refuses
+until every gate passes, and the daemon reports the default
+generation only from verified release evidence.
 """
+
 from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
-import capability_publication as cap
-import conformance_kit as kit
-import release_gates as gates
-from core.foundation_gates import gate_states
-from core.variants import RuntimeKey
+from benchmarks import release
 
-REFERENCE = RuntimeKey("reference", "1")
-CLASSIC_NATIVE = RuntimeKey("classic", "2")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = REPO_ROOT / "scripts" / "release-gates.py"
 
 
-def test_every_feature_gate_defaults_disabled():
-    # The Stage 0A default keeps every planned writer gate disabled.
-    assert gate_states() == {name: False for name in gate_states()}
+def _load_gate_map() -> dict[str, list[str]]:
+    namespace: dict = {}
+    source = SCRIPT.read_text(encoding="utf-8")
+    start = source.index("RELEASE_GATES")
+    end = source.index("\n}\n", start) + 3
+    exec(source[start:end], namespace)  # noqa: S102 — the mapping is a literal.
+    return namespace["RELEASE_GATES"]
 
 
-def test_a_writer_stays_disabled_until_every_gate_passes():
-    ledger = gates.GateLedger()
-    # No gate has passed yet: the writer is blocked on all gates.
-    assert not gates.writer_may_enable(
-        "activation_ledger", CLASSIC_NATIVE, ledger,
-    )
-    reason = gates.blocked_reason("activation_ledger", CLASSIC_NATIVE, ledger)
-    assert reason is not None
-    assert reason.startswith("gates_not_passed:")
-    for gate in gates.RELEASE_GATES:
-        assert gate in reason
+def _result(states: dict[str, str]) -> dict:
+    return {
+        "schema_id": "bmas.test_manifest_result",
+        "run_id": "run-release",
+        "profile_id": "complete",
+        "groups": [{"group_id": name, "state": state}
+                   for name, state in states.items()],
+    }
 
 
-def test_partial_gates_keep_the_writer_blocked():
-    ledger = gates.GateLedger()
-    ledger.record_pass("conformance", CLASSIC_NATIVE)
-    ledger.record_pass("populated_migration", CLASSIC_NATIVE)
-    # Two gates still missing.
-    missing = ledger.missing_gates(CLASSIC_NATIVE)
-    assert set(missing) == {"supported_downgrade", "security"}
-    assert not gates.writer_may_enable(
-        "activation_ledger", CLASSIC_NATIVE, ledger,
+def _run(result_path: Path, *extra: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--result", str(result_path), *extra],
+        capture_output=True, text=True, check=False, cwd=REPO_ROOT,
     )
 
 
-def test_all_gates_passed_but_feature_flag_still_off():
-    ledger = gates.GateLedger()
-    for gate in gates.RELEASE_GATES:
-        ledger.record_pass(gate, CLASSIC_NATIVE)
-    assert ledger.all_gates_passed(CLASSIC_NATIVE)
-    # Every gate passed, yet the feature flag stays off by default, so
-    # the writer still does not enable.
-    assert not gates.writer_may_enable(
-        "activation_ledger", CLASSIC_NATIVE, ledger,
+def test_every_gate_names_registered_manifest_groups():
+    import yaml
+
+    manifest = yaml.safe_load(
+        (REPO_ROOT / "test-manifest.yaml").read_text(encoding="utf-8"),
     )
-    assert gates.blocked_reason(
-        "activation_ledger", CLASSIC_NATIVE, ledger,
-    ) == "feature_gate_disabled"
+    registered = {group["id"] for group in manifest["groups"]}
+    gate_map = _load_gate_map()
+    assert len(gate_map) == 29
+    for gate, groups in gate_map.items():
+        for group in groups:
+            assert group in registered, f"{gate} names {group}"
 
 
-def test_conformance_gate_records_only_on_a_full_pass():
-    ledger = gates.GateLedger()
-    directory = cap.CapabilityDirectory()
-    # A full pass records the conformance gate.
-    passing = kit.run_conformance_suite(
-        kit.ConformanceAdapter(directory.get(REFERENCE)),
+def test_unproven_and_failed_gates_block_promotion(tmp_path):
+    gate_map = _load_gate_map()
+    every_group = sorted({g for groups in gate_map.values() for g in groups})
+    states = dict.fromkeys(every_group, "passed")
+    states["daemon.performance-contract"] = "skipped"
+    states.pop("repo.source-naming")
+    result_path = tmp_path / "result.json"
+    result_path.write_text(json.dumps(_result(states)))
+    completed = _run(result_path, "--report", str(tmp_path / "gates.json"))
+    assert completed.returncode == 1, completed.stdout
+    report = json.loads((tmp_path / "gates.json").read_text())
+    assert report["gates"]["performance_limits"]["status"] == "unproven"
+    assert report["gates"]["source_naming"]["status"] == "unproven"
+    assert report["all_passed"] is False
+    states["repo.source-naming"] = "failed"
+    states["daemon.performance-contract"] = "passed"
+    result_path.write_text(json.dumps(_result(states)))
+    completed = _run(result_path, "--report", str(tmp_path / "gates.json"))
+    assert completed.returncode == 1
+    report = json.loads((tmp_path / "gates.json").read_text())
+    assert report["gates"]["source_naming"]["status"] == "failed"
+
+
+def test_promotion_writes_verified_evidence(tmp_path, monkeypatch):
+    gate_map = _load_gate_map()
+    every_group = sorted({g for groups in gate_map.values() for g in groups})
+    result_path = tmp_path / "result.json"
+    result_path.write_text(json.dumps(_result(dict.fromkeys(every_group, "passed"))))
+    evidence = tmp_path / "evaluation-default.json"
+    source = SCRIPT.read_text(encoding="utf-8").replace(
+        'EVIDENCE = ROOT / "conformance" / "release" / "evaluation-default.json"',
+        f'EVIDENCE = Path({str(evidence)!r})',
     )
-    ledger.record_conformance(passing)
-    assert ledger.gate_passed("conformance", REFERENCE)
-    # A failing report records nothing.
-    import dataclasses
-
-    reference = directory.get(REFERENCE)
-    broken_record = dataclasses.replace(
-        reference,
-        runtime_key=CLASSIC_NATIVE,
-        capabilities={
-            **reference.capabilities,
-            "nested_receipts": "legacy_unobservable",
-        },
+    script = tmp_path / "release-gates.py"
+    script.write_text(source)
+    completed = subprocess.run(
+        [sys.executable, str(script), "--result", str(result_path), "--promote"],
+        capture_output=True, text=True, check=False, cwd=REPO_ROOT,
     )
-    failing = kit.run_conformance_suite(
-        kit.ConformanceAdapter(broken_record),
-    )
-    ledger.record_conformance(failing)
-    assert not ledger.gate_passed("conformance", CLASSIC_NATIVE)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "PROMOTED" in completed.stdout
+    status = release.evaluation_default_status(evidence)
+    assert status["default_generation"] == "current"
+    assert status["promoted"] is True
+    assert status["gate_count"] == 29
+    # Tampered evidence never promotes.
+    document = json.loads(evidence.read_text())
+    document["gates"]["source_naming"]["status"] = "failed"
+    evidence.write_text(json.dumps(document))
+    tampered = release.evaluation_default_status(evidence)
+    assert tampered["default_generation"] == "legacy"
+    assert tampered["promoted"] is False
 
 
-def test_unknown_gates_and_writers_fail_closed():
-    ledger = gates.GateLedger()
-    with pytest.raises(gates.ReleaseGateError):
-        ledger.record_pass("invented_gate", CLASSIC_NATIVE)
-    with pytest.raises(gates.ReleaseGateError):
-        gates.writer_may_enable("invented_writer", CLASSIC_NATIVE, ledger)
+def test_missing_evidence_keeps_the_legacy_default(tmp_path):
+    status = release.evaluation_default_status(tmp_path / "missing.json")
+    assert status["default_generation"] == "legacy"
+    assert status["promoted"] is False
+    assert pytest  # keep the import for the fixture decorators
