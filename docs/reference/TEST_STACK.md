@@ -82,8 +82,11 @@ Linux worker with eight logical CPUs, 16 GiB memory, and local SSD.
 `toolchain-pins.yaml` pins Python, Node.js, npm, Playwright, the
 Chromium build, Redis, SQLite, Wasmtime, and the statistical runtime.
 `scripts/check-toolchain.py` resolves every component, records the
-exact versions to `test-results/toolchain.json`, and fails before
-tests when a required component is absent or violates its pin.
+exact versions, and fails before tests when a component this
+consumer requires is absent or when any resolved component violates
+its pin. The daemon partition requires the Python-side components and
+the Mission Control partition requires the browser-side components
+after the browser install.
 
 ## Release gates and the default generation
 

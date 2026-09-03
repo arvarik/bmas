@@ -48,7 +48,7 @@ RELEASE_GATES: dict[str, list[str]] = {
     "retries_no_extra_slots": ["daemon.benchmark-statistical-oracle"],
     "weighted_bootstrap_oracle": ["daemon.evaluation-frozen-analysis"],
     "comparability_rejects_exceptions": ["daemon.benchmark-data-contracts"],
-    "snapshots_pin_toolchains": ["daemon.evaluation-frozen-analysis", "repo.toolchain-pins"],
+    "snapshots_pin_toolchains": ["daemon.evaluation-frozen-analysis", "repo.toolchain-pins", "mission-control.toolchain-pins"],
     "wasi_and_microvm": ["daemon.evaluation-scoring"],
     "contamination_rights_assets": ["daemon.evaluation-editing"],
     "interaction_canaries": ["daemon.evaluation-studies-replay"],

@@ -9,7 +9,13 @@ component records "unresolved" when its binary is absent.
 
 Run from the repository root:
 
-    python3 scripts/check-toolchain.py [--report test-results/toolchain.json]
+    python3 scripts/check-toolchain.py [--report test-results/toolchain.json] \
+        [--require python,sqlite]
+
+``--require`` names the components this consumer must resolve; every
+other component records its resolved version and enforces its pin
+only when present, so one partition never fails on a tool another
+partition owns.
 """
 
 from __future__ import annotations
@@ -87,14 +93,23 @@ def satisfies(resolved: str, pin: str) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", default=None)
+    parser.add_argument("--require", default=None,
+                        help="comma-separated components this consumer requires")
     args = parser.parse_args()
     document = yaml.safe_load(PINS.read_text(encoding="utf-8"))
+    consumer_required = (
+        {name.strip() for name in args.require.split(",") if name.strip()}
+        if args.require is not None else None
+    )
     report: dict[str, dict] = {}
     failures: list[str] = []
     for name, spec in document["components"].items():
         resolved = resolve(name, spec)
         pin = str(spec["pin"])
-        required = bool(spec.get("required"))
+        required = (
+            name in consumer_required if consumer_required is not None
+            else bool(spec.get("required"))
+        )
         if resolved is None:
             state = "unresolved"
             if required:

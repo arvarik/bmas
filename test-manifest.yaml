@@ -65,12 +65,12 @@ groups:
       Resolve every pinned toolchain component on this host, record the
       exact resolved versions, and fail before tests when a required
       component is absent or violates its pin.
-    argv: ["python3", "scripts/check-toolchain.py", "--report", "test-results/toolchain.json"]
+    argv: ["python3", "scripts/check-toolchain.py", "--require", "python,sqlite,statistics", "--report", "test-results/toolchain-daemon.json"]
     working_directory: "."
     timeout_seconds: 300
     tools: [python]
     artifacts:
-      - "test-results/toolchain.json"
+      - "test-results/toolchain-daemon.json"
 
   - id: repo.config-examples
     state: active_required
@@ -982,6 +982,21 @@ groups:
     tools: [node, npm, playwright]
     depends_on: [mission-control.install]
 
+  - id: mission-control.toolchain-pins
+    state: active_required
+    owner: mission-control
+    purpose: >-
+      Resolve and verify the browser-side toolchain pins after the
+      browser install: Node.js, npm, Playwright, the Chromium build,
+      and Redis, with every resolved version recorded.
+    argv: ["python3", "scripts/check-toolchain.py", "--require", "node,npm,playwright,chromium,redis", "--report", "test-results/toolchain-browser.json"]
+    working_directory: "."
+    timeout_seconds: 300
+    tools: [python, node, npm, playwright]
+    depends_on: [mission-control.install, mission-control.browser-install]
+    artifacts:
+      - "test-results/toolchain-browser.json"
+
   - id: mission-control.e2e
     state: active_required
     owner: mission-control
@@ -1198,5 +1213,6 @@ profiles:
         - mission-control.tests
         - mission-control.build
         - mission-control.browser-install
+        - mission-control.toolchain-pins
         - mission-control.e2e
         - mission-control.full-stack-journey
