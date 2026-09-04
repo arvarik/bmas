@@ -444,6 +444,25 @@ async def transition_metric_endpoint(
     )
 
 
+@router.get("/metrics")
+async def list_metrics_endpoint(lifecycle_state: str | None = None):
+    """List every registered metric definition with its lifecycle state."""
+    rows = await evaluation_records.list_records("metric-definition")
+    definitions = [
+        {
+            "metric_id": str(row["id"]),
+            "lifecycle_state": str(row["lifecycle_state"]),
+            "calibration_state": str(row["calibration_state"]),
+            "record_checksum": str(row["record_checksum"]),
+            "created_at": str(row["created_at"]),
+            "record": row["record"],
+        }
+        for row in rows
+        if lifecycle_state is None or str(row["lifecycle_state"]) == lifecycle_state
+    ]
+    return {"metrics": definitions}
+
+
 @router.get("/metrics/{metric_id}")
 async def get_metric_endpoint(metric_id: str):
     stored = await evaluation_records.get_record(

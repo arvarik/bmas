@@ -640,6 +640,31 @@ Canonical methods the analysis engine implements:
   `daemon/src/benchmarks/judge_calibration.py` and the model-backed
   judge in `daemon/src/benchmarks/model_backed.py`.
 
+### Frozen evaluation screens
+
+- [Introduction to forest plots](https://cran.r-project.org/web/packages/forestplot/vignettes/forestplot.html)
+  and [Non-inferiority trials: understanding the
+  concepts](https://s4be.cochrane.org/blog/2022/03/18/understanding-non-inferiority-trials/)
+  — A non-inferiority decision reads as one forest-plot row: the
+  interval, its point estimate, the zero line, and the predeclared
+  margin on one shared axis, so the reader sees whether the interval
+  clears the margin. Used for: `FrozenDecisionBar` and the layout
+  helpers in `mission-control/src/lib/frozen-report-presentation.ts`.
+- [Wizard and stepper pattern (UX patterns for
+  developers)](https://uxpatterns.dev/patterns/advanced/wizard) and
+  [Beyond the progress bar: the art of stepper UI design
+  (2026)](https://lollypop.design/blog/2026/february/beyond-the-progress-bar-the-art-of-stepper-ui-design/)
+  — A lifecycle stepper needs semantic list markup, `aria-current`
+  on the active step, and one clear next action per state. Used for:
+  the metric definition lifecycle screen in
+  `mission-control/src/app/metrics/[metricId]/MetricDetailClient.tsx`
+  and `mission-control/src/lib/metric-lifecycle-presentation.ts`.
+- [Dual view design pattern
+  (Microsoft)](https://learn.microsoft.com/dual-screen/design/dual-view)
+  — Two versions of the same content compare best side by side with
+  every changed value marked. Used for: the analysis history panel
+  and `mission-control/src/lib/analysis-history-presentation.ts`.
+
 ## Update rule
 
 Add one entry when a new source shapes a design decision or an
