@@ -81,7 +81,7 @@ const frozenReport = {
     "classic-a": { counts: { planned: 3, admitted: 3, failed: 0, retried: 0, missing: 0, excluded: 0, observed: 3 }, unconditional_denominator: 3, unconditional_successes: 2, unconditional_success_rate: 0.6667, denominator_statement: "planned slots minus predeclared infrastructure exclusions", latency_ms: { count: 0, median_ms: null, p95_ms: null } },
     "classic-b": { counts: { planned: 3, admitted: 3, failed: 0, retried: 0, missing: 0, excluded: 0, observed: 3 }, unconditional_denominator: 3, unconditional_successes: 3, unconditional_success_rate: 1, denominator_statement: "planned slots minus predeclared infrastructure exclusions", latency_ms: { count: 0, median_ms: null, p95_ms: null } },
   },
-  resources: { available: true, currency: "USD", actual_total: { currency: "USD", amount_nanos: 400_000_000 }, estimate_total: { currency: "USD", amount_nanos: 0 }, unknown_entry_ids: [], cost_per_success: { currency: "USD", amount_nanos: 80_000_000 }, unconditional_successes: 5 },
+  resources: { available: true, currency: "USD", actual_total: { currency: "USD", amount_nanos: 400000000 }, estimate_total: { currency: "USD", amount_nanos: 0 }, unknown_entry_ids: [], cost_per_success: { currency: "USD", amount_nanos: 80000000 }, unconditional_successes: 5 },
   warnings: [],
   report: { metric_ids: ["metric-journey"], results_digest: "b".repeat(64), input_digest: "d".repeat(64) },
 };
@@ -114,7 +114,7 @@ test("renders the frozen report with resolved metrics, denominators, and decisio
     { id: "snapshot-current-000001", record_checksum: "f".repeat(64), created_at: "2026-09-02T00:00:00Z", superseded_by: null, supersession_reason: null, current: true },
   ] } }));
   await page.route("**/api/evaluation/runs/run-frozen/analyses/snapshot-old-000000/overview", async (route) => route.fulfill({ json: overview(0.05, "passed", null) }));
-  await page.route("**/api/evaluation/runs/run-frozen/analyses/snapshot-current-000001/overview", async (route) => route.fulfill({ json: overview(0.05, "passed", 400_000_000) }));
+  await page.route("**/api/evaluation/runs/run-frozen/analyses/snapshot-current-000001/overview", async (route) => route.fulfill({ json: overview(0.05, "passed", 400000000) }));
 
   await page.goto("/runs/run-frozen");
   const report = page.getByRole("region", { name: "Comparison report" });
@@ -157,7 +157,7 @@ test("blocks the frozen report until a metric definition is published and offers
   await expect(report.getByRole("link", { name: "Register and publish the metric definition" })).toHaveAttribute("href", "/metrics");
   await report.getByLabel(/Show the report while a metric definition is unpublished/).click();
   await expect(page).toHaveURL(/allow_unresolved=true/);
-  await expect(report.getByText("Metrics unresolved")).toBeVisible({ timeout: 15_000 });
+  await expect(report.getByText("Metrics unresolved")).toBeVisible({ timeout: 15000 });
   await expect(report.getByText("No metric declared").or(report.getByText("metric-journey", { exact: true }).first())).toBeVisible();
   await expect(page.getByRole("region", { name: "Analysis history" }).getByText("No frozen analysis")).toBeVisible();
 });
@@ -207,7 +207,7 @@ test("authors a frozen non-inferiority rule with its margin, direction, and resa
     target = names.findIndex((name) => name.trim() === frozenLabel);
     if (target < 0) await page.keyboard.press("Escape");
     return target;
-  }, { timeout: 15_000 }).toBeGreaterThanOrEqual(0);
+  }, { timeout: 15000 }).toBeGreaterThanOrEqual(0);
   // A dispatched click commits the option without the scroll-into-view
   // step of a pointer click.
   await page.getByRole("option", { name: frozenLabel }).dispatchEvent("click");

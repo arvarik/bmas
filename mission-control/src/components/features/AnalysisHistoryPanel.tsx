@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Columns2, RefreshCw } from "lucide-react";
+import { GitCompare, RefreshCw } from "lucide-react";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { ResourceState } from "@/components/ui/ResourceState";
 import {
@@ -94,7 +94,7 @@ export function AnalysisHistoryPanel({ runId }: { runId: string }) {
                   <td>
                     {entry.replacedBy ? (
                       <ActionButton variant="secondary" onClick={() => void compare(entry.snapshot.id, (entry.replacedBy as AnalysisSnapshotSummary).id)}>
-                        <Columns2 size={15} /> Compare with successor
+                        <GitCompare size={15} /> Compare with successor
                       </ActionButton>
                     ) : null}
                   </td>

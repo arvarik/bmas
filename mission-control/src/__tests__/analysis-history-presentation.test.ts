@@ -53,7 +53,7 @@ describe("analysis history presentation", () => {
   });
 
   it("flags every changed value between a superseded and a current overview", () => {
-    const rows = sideBySide(overview(0.1, "passed", null), overview(0.1, "passed", 400_000_000));
+    const rows = sideBySide(overview(0.1, "passed", null), overview(0.1, "passed", 400000000));
     const byKey = new Map(rows.map((row) => [row.key, row]));
     expect(byKey.get("a-vs-b:estimate")).toMatchObject({ left: "+10.0 pp", right: "+10.0 pp", changed: false });
     expect(byKey.get("a-vs-b:gate")).toMatchObject({ changed: false });
