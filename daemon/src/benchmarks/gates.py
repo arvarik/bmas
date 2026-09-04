@@ -603,7 +603,7 @@ def _frozen_rule_result(
     seed_material = (
         f"{baseline_run.get('id')}\x00{candidate_run.get('id')}\x00"
         f"{rule['id']}"
-    ).encode("utf-8")
+    ).encode()
     master_seed = int.from_bytes(
         hashlib.sha256(seed_material).digest()[:8], "big",
     )

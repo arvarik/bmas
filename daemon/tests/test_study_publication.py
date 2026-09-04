@@ -16,7 +16,7 @@ from test_evaluation_contracts import valid_benchmark_source
 from test_evidence_capture import make_attempts
 
 import database as db
-from benchmarks import evaluation_records, facade, repository, study_authoring
+from benchmarks import evaluation_records, facade, study_authoring
 from benchmarks.frozen_analysis import validate_study
 from core.money import Money
 

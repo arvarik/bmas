@@ -1181,8 +1181,7 @@ async def served_report(
     metric without a published definition blocks the report unless
     the caller explicitly allows an unresolved display.
     """
-    from benchmarks import evaluation_records, metric_registry, repository
-    from benchmarks import resource_ledger
+    from benchmarks import evaluation_records, metric_registry, repository, resource_ledger
 
     snapshot = await current_snapshot(run_id)
     if snapshot is None:
