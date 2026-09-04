@@ -118,8 +118,9 @@ def build_bundle(
             members.append((f"artifacts/{digest}", payload, "artifact"))
     add("artifacts/handles.json", artifact_handles, "record")
 
-    redaction_policy = {"policy": policy,
-                        "redactor": "benchmarks.provenance.redact_secrets"}
+    from benchmarks.data_classes import policy_document
+
+    redaction_policy = {"policy": policy, "redactor": policy_document()}
     manifest_members = [
         _member(path, payload, member_class)
         for path, payload, member_class in members

@@ -9,3 +9,5 @@ pymupdf>=1.27.0         # PDF text extraction (doc 17 §3)
 python-multipart>=0.0.32  # FastAPI multipart form data (file uploads, doc 17 §3)
 cryptography>=46.0.0    # Ed25519 signing for activation and effect grants (Foundation)
 jsonschema>=4.26.0      # Evaluation contract and scorer configuration validation
+numpy>=2.5.2            # Vectorized frozen-analysis engine (bootstrap and sign-flip replicates)
+wasmtime>=48.0.0        # WebAssembly component execution for sandboxed scorers

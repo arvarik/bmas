@@ -1,0 +1,206 @@
+{
+  "$defs": {
+    "money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_nanos": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775807,
+          "type": "integer"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currency",
+        "amount_nanos"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "bmas/judge-anchor-set",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "anchor_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+      "type": "string"
+    },
+    "candidate_models": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "drift_tolerance": {
+      "maximum": 1,
+      "minimum": 0,
+      "type": "number"
+    },
+    "judge": {
+      "additionalProperties": false,
+      "properties": {
+        "judge_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "model": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "prompt_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "judge_id",
+        "version",
+        "model",
+        "prompt_digest"
+      ],
+      "type": "object"
+    },
+    "label_set": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "item_id": {
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              "reviewers": {
+                "items": {
+                  "maxLength": 500,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "item_id",
+              "label",
+              "reviewers"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "label_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset_id",
+        "version",
+        "items",
+        "label_digest"
+      ],
+      "type": "object"
+    },
+    "schedule": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+          "type": "string"
+        },
+        "interval_days": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "next_due_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "interval_days",
+        "next_due_at",
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "schema_id": {
+      "const": "judge-anchor-set"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "scorer": {
+      "additionalProperties": false,
+      "properties": {
+        "scorer_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "scorer_id",
+        "version"
+      ],
+      "type": "object"
+    },
+    "state": {
+      "enum": [
+        "active",
+        "retired"
+      ]
+    },
+    "threshold": {
+      "maximum": 1,
+      "minimum": 0,
+      "type": "number"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "anchor_id",
+    "judge",
+    "scorer",
+    "label_set",
+    "candidate_models",
+    "schedule",
+    "threshold",
+    "drift_tolerance",
+    "state"
+  ],
+  "title": "One pinned anchor set with its judge calibration schedule",
+  "type": "object"
+}

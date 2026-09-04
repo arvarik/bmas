@@ -230,3 +230,253 @@ def _flatten(value: Any, prefix: str = "") -> dict[str, Any]:
         path = f"{prefix}.{key}" if prefix else str(key)
         flattened.update(_flatten(item, path))
     return flattened
+
+
+# ── Publication: one test revision, one run plan, one study record ───
+
+
+async def publish_study(
+    study: dict[str, Any],
+    *,
+    runtime_id: str,
+    scorer_versions: list[dict[str, Any]],
+    test_name: str | None = None,
+    description: str = "",
+    max_concurrency: int | None = None,
+    timeout_seconds: int = 600,
+    starvation_limit: int = 25,
+    now: str = "1970-01-01T00:00:00Z",
+) -> dict[str, Any]:
+    """Persist one authored study as a test revision, a run plan, and a study.
+
+    The test revision carries one arm per study arm with the prepared
+    runtime envelope, the run plan freezes the case schedule, the seed
+    schedule, the rotated interleave, the repetitions, the limits, and
+    the estimand, and the study record links both so admission can
+    enforce the study conditions on every attempt of the run.
+    """
+    import uuid
+
+    from benchmarks import evaluation_records, facade
+    from benchmarks.outcome_mappings import mapping_set_for_arms
+    from benchmarks.runtime import prepare_benchmark_arm
+
+    invariants = study["invariants"]
+    dataset_version_id = str(invariants["dataset_version_id"])
+    case_ids = [str(case_id) for case_id in invariants["case_ids"]]
+    if not case_ids:
+        raise StudyAuthoringError("The study freezes at least one case")
+    repetitions = int(invariants["repetitions"])
+    prepared_arms = []
+    for index, arm in enumerate(study["arms"]):
+        envelope = await prepare_benchmark_arm(
+            runtime_id, {"submission_overrides": dict(arm["configuration"])},
+        )
+        prepared_arms.append({
+            "id": f"arm-{uuid.uuid4().hex}",
+            "name": str(arm["slug"]),
+            "slug": str(arm["slug"]),
+            "sort_order": index,
+            **envelope,
+        })
+    concurrency = int(
+        max_concurrency or study["estimates"].get("max_concurrency") or 4
+    )
+    test_id = f"test-{uuid.uuid4().hex}"
+    revision_id = f"testrev-{uuid.uuid4().hex}"
+    revision = await facade.execute(
+        "create_test_revision",
+        {
+            "test_id": test_id,
+            "revision_id": revision_id,
+            "name": test_name or str(study["name"]),
+            "description": description or f"study {study['study_type']}",
+            "dataset_version_id": dataset_version_id,
+            "configuration": {
+                "repetitions": repetitions,
+                "seed": int(invariants["seed_schedule"].get("base_seed", 0))
+                if isinstance(invariants.get("seed_schedule"), dict)
+                else int(study["estimand"]["resampling"]["master_seed"]),
+                "max_concurrency": concurrency,
+                "study_digest": study["study_digest"],
+            },
+            "arms": prepared_arms,
+            "scorers": [dict(link) for link in scorer_versions],
+        },
+        generation="legacy",
+    )
+    mapping_set = mapping_set_for_arms(
+        [{"runtime_id": runtime_id} for _ in prepared_arms],
+    )
+    dataset_record = await evaluation_records.get_record(
+        "dataset-version", dataset_version_id,
+    )
+    trust = {"level": "public_untrusted", "policy_version": "1"}
+    dataset_digest = content_checksum({"dataset_version_id": dataset_version_id})
+    if dataset_record is not None:
+        dataset_digest = str(dataset_record["record"]["content_digest"])
+        inputs = dataset_record["record"].get("trust_inputs") or []
+        if inputs:
+            trust = dict(inputs[0])
+    seed_schedule = invariants.get("seed_schedule")
+    base_seed = (
+        int(seed_schedule.get("base_seed", 0))
+        if isinstance(seed_schedule, dict)
+        else int(study["estimand"]["resampling"]["master_seed"])
+    )
+    plan_id = f"plan-{uuid.uuid4().hex}"
+    study_id = f"study-{uuid.uuid4().hex}"
+    estimand = {
+        **study["estimand"],
+        "direction": study["estimand"]["comparison_family"]["comparisons"][0]["direction"],
+        "study_id": study_id,
+    }
+    run_plan: dict[str, Any] = {
+        "schema_id": "run-plan",
+        "schema_version": 2,
+        "plan_id": plan_id,
+        "digests": {
+            "dataset": dataset_digest,
+            "runtime": content_checksum([
+                arm["configuration_checksum"] for arm in prepared_arms
+            ]),
+            "scorers": content_checksum(scorer_versions),
+            "schema": content_checksum({"contract_generation": 2}),
+        },
+        "outcome_mapping_set_digest": str(mapping_set["digest"]),
+        "arm_mappings": list(mapping_set["members"]),
+        "case_ids": case_ids,
+        "seed_schedule": {"base_seed": base_seed, "scope": "item-repetition"},
+        "arm_order": {"strategy": "rotated_interleave"},
+        "repetitions": repetitions,
+        "limits": {
+            "max_concurrency": concurrency,
+            "timeout_seconds": int(timeout_seconds),
+            "run_cost": dict(study["estimates"]["cost"]),
+        },
+        "retry_rules": {
+            "infrastructure_exclusions": list(
+                study["estimand"]["missingness"]["infrastructure_categories"],
+            ),
+            "reason": "predeclared infrastructure exclusions",
+        },
+        "unit_hierarchy": list(frozen_analysis.UNIT_HIERARCHY),
+        "estimand": estimand,
+        "trust_policy": {"trust": trust, "capabilities": []},
+        "resource_estimate": {
+            "expected_cost": dict(study["estimates"]["cost"]),
+            "pricing_version": str(study["estimates"]["pricing_basis"]),
+        },
+        "settlement": {"policy": "strict", "maximum_wait_seconds": 3600},
+        "dispatch": {"fairness_policy": "weighted_round_robin",
+                     "starvation_limit": int(starvation_limit)},
+    }
+    plan = await facade.execute(
+        "create_run_plan",
+        {"record": run_plan, "test_revision_id": revision_id, "run_id": None},
+    )
+    await facade.execute("publish_run_plan", {"record_id": plan["id"]})
+    study_record = {
+        "schema_id": "study",
+        "schema_version": 2,
+        "study_id": study_id,
+        "study_type": study["study_type"],
+        "name": study["name"],
+        "arms": [
+            {
+                "slug": arm["slug"], "treatment": arm["treatment"],
+                "configuration_digest": arm["configuration_digest"],
+                "configuration": arm["configuration"],
+            }
+            for arm in study["arms"]
+        ],
+        "expansion_rule": study["expansion_rule"],
+        "invariants": study["invariants"],
+        "estimand": study["estimand"],
+        "gates": study["gates"],
+        "sample_plan": study["sample_plan"],
+        "estimates": study["estimates"],
+        "treatment_paths": list(study["treatment_paths"]),
+        "study_digest": study["study_digest"],
+        "run_plan_id": plan_id,
+        "test_revision_id": revision_id,
+        "authored_at": now,
+    }
+    saved = await facade.execute(
+        "record_study",
+        {"record": study_record, "run_plan_id": plan_id,
+         "test_revision_id": revision_id},
+    )
+    return {
+        "study_id": saved["id"],
+        "study": study_record,
+        "test_id": test_id,
+        "test_revision_id": revision_id,
+        "revision": revision,
+        "run_plan_id": plan_id,
+        "run_plan": run_plan,
+    }
+
+
+async def enforce_study_admission(run_id: str) -> dict[str, Any] | None:
+    """Validate the study conditions of one run before admission.
+
+    A run whose test revision carries a study plan admits only when
+    ``validate_study`` passes at the admission stage; a run without a
+    study plan admits unchanged. The check reads the stored run plan,
+    the dataset version record, and the pinned sources.
+    """
+    from benchmarks import evaluation_records, repository
+
+    run = await repository.get_run(run_id)
+    if run is None:
+        return None
+    revision_id = str(run.get("test_revision_id") or "")
+    if not revision_id:
+        return None
+    stored_plan = await evaluation_records.run_plan_for_revision(revision_id)
+    if stored_plan is None:
+        return None
+    study = await evaluation_records.study_for_run_plan(str(stored_plan["id"]))
+    if study is None:
+        return None
+    plan = stored_plan["record"]
+    dataset_version_id = str(
+        study["record"]["invariants"].get("dataset_version_id") or "",
+    )
+    source: dict[str, Any] | None = None
+    dataset_record = await evaluation_records.get_record(
+        "dataset-version", dataset_version_id,
+    )
+    if dataset_record is not None:
+        for source_id in dataset_record["record"].get("source_lineage") or []:
+            stored_source = await evaluation_records.get_record(
+                "benchmark-source", str(source_id),
+            )
+            if stored_source is not None:
+                source = stored_source["record"]
+                break
+    holdout_hidden = bool(
+        (plan.get("trust_policy") or {}).get("holdout_hidden", True),
+    )
+    verdict = frozen_analysis.validate_study(
+        run_plan=plan,
+        source=source,
+        holdout_hidden=holdout_hidden,
+        report=None,
+        cost_includes_retries_and_control_plane=bool(
+            plan.get("resource_estimate"),
+        ),
+        stage="admission",
+    )
+    if not verdict["ready"]:
+        raise StudyAdmissionError(
+            "The study conditions block admission: "
+            + ", ".join(verdict["blocking"])
+        )
+    return {"study_id": str(study["id"]), "plan_id": str(stored_plan["id"]),
+            "checks": verdict["checks"]}
+
+
+class StudyAdmissionError(ValueError):
+    """The run violates its study conditions at admission."""

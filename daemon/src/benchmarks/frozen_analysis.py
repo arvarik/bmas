@@ -31,7 +31,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from benchmarks import analysis_rng
+from benchmarks import analysis_engine, analysis_rng
 from benchmarks.analysis import outcome_slots
 from benchmarks.evaluation_contracts import validate_record
 from benchmarks.provenance import content_checksum
@@ -91,6 +91,8 @@ def freeze_specification(
     confidence_level: float = DEFAULT_CONFIDENCE_LEVEL,
     target_population: str = "declared dataset cases",
     filters: dict[str, Any] | None = None,
+    algorithm_version: int = analysis_rng.RNG_ALGORITHM_VERSION,
+    metric_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Freeze the complete specification before any calculation.
 
@@ -213,8 +215,10 @@ def freeze_specification(
         },
         "resampling": {
             "algorithm": analysis_rng.RNG_ALGORITHM,
-            "algorithm_version": analysis_rng.RNG_ALGORITHM_VERSION,
-            "implementation": analysis_rng.RNG_IMPLEMENTATION,
+            "algorithm_version": int(algorithm_version),
+            "implementation": analysis_rng.implementation_for(
+                int(algorithm_version),
+            ),
             "master_seed": int(master_seed),
             "resample_count": int(resample_count),
             "unit": "case",
@@ -230,6 +234,9 @@ def freeze_specification(
         },
         "confidence_level": float(confidence_level),
         "filters": dict(filters or {}),
+        # Every displayed metric of the report resolves to one of
+        # these published metric definitions.
+        "metric_ids": sorted({str(metric_id) for metric_id in metric_ids or []}),
     }
     return {
         **specification,
@@ -473,7 +480,9 @@ def weighted_estimate(
         if not members:
             continue
         weights = entry["renormalized_weights"]
-        weight_sum = sum(weights[case_id] for case_id in members)
+        weight_sum = analysis_engine.sequential_sum(
+            weights[case_id] for case_id in members
+        )
         if weight_sum <= 0:
             continue
         total = 0.0
@@ -500,18 +509,67 @@ def _percentile(values: list[float], fraction: float) -> float:
     return ordered[min(position, len(ordered) - 1)]
 
 
+def resolve_engine(
+    specification: dict[str, Any],
+    *,
+    requested: str | None = None,
+    record_draws: bool = False,
+) -> str:
+    """Select the engine that computes one frozen specification.
+
+    The vectorized engine serves algorithm version 2 whenever the
+    host resolves it and the caller records no draws; the reference
+    engine serves every other request. An explicit request that the
+    host cannot honour fails instead of silently changing engines.
+    """
+    version = int(specification["resampling"]["algorithm_version"])
+    if requested in (None, "auto"):
+        if (
+            version >= 2 and not record_draws
+            and analysis_engine.available()
+        ):
+            return analysis_engine.ENGINE_VECTORIZED
+        return analysis_engine.ENGINE_REFERENCE
+    if requested not in analysis_engine.ENGINES:
+        raise FrozenAnalysisError(f"Unknown analysis engine: {requested!r}")
+    if requested == analysis_engine.ENGINE_VECTORIZED:
+        if version < 2:
+            raise FrozenAnalysisError(
+                "Algorithm version 1 derives every draw through SHA-256 "
+                "and never vectorizes; freeze algorithm version 2"
+            )
+        if not analysis_engine.available():
+            raise FrozenAnalysisError(
+                "The vectorized engine is unavailable on this host"
+            )
+    return requested
+
+
 def bootstrap(
     specification: dict[str, Any],
     paired: dict[str, Any],
     input_digest: str,
     *,
     record_draws: bool = False,
+    engine: str | None = None,
 ) -> dict[str, Any]:
     """Run the one weighted cluster bootstrap with derived draws."""
     resampling = specification["resampling"]
     digest = bytes.fromhex(input_digest)
     replicates: list[float] = []
     records: list[dict[str, Any]] = []
+    resolved = resolve_engine(
+        specification, requested=engine, record_draws=record_draws,
+    )
+    if resolved == analysis_engine.ENGINE_VECTORIZED:
+        replicates = [
+            value
+            for value in analysis_engine.bootstrap_estimates(
+                specification, paired, digest,
+            )
+            if value is not None
+        ]
+        return _bootstrap_interval(specification, replicates)
     for replicate_index in range(int(resampling["resample_count"])):
         drawn: dict[str, list[str]] = {}
         for family in specification["cluster_order"]:
@@ -538,6 +596,17 @@ def bootstrap(
                 "family_aggregates": estimate["family_aggregates"],
                 "combined": estimate["estimate"],
             })
+    result = _bootstrap_interval(specification, replicates)
+    if record_draws:
+        result["replicates"] = records
+    return result
+
+
+def _bootstrap_interval(
+    specification: dict[str, Any], replicates: list[float],
+) -> dict[str, Any]:
+    """Summarize the replicate estimates as the percentile interval."""
+    resampling = specification["resampling"]
     alpha = specification["comparison_family"]["alpha"]
     if not replicates:
         interval: dict[str, Any] = {"status": "no_data", "low": None,
@@ -551,7 +620,7 @@ def bootstrap(
             "low": _percentile(replicates, alpha / 2),
             "high": _percentile(replicates, 1 - alpha / 2),
         }
-    result = {
+    return {
         **interval,
         "method": "family_stratified_weighted_case_bootstrap_percentile",
         "unit": "case",
@@ -559,15 +628,14 @@ def bootstrap(
         "algorithm": resampling["algorithm"],
         "algorithm_version": resampling["algorithm_version"],
     }
-    if record_draws:
-        result["replicates"] = records
-    return result
 
 
 def sign_flip_test(
     specification: dict[str, Any],
     paired: dict[str, Any],
     input_digest: str,
+    *,
+    engine: str | None = None,
 ) -> dict[str, Any]:
     """Paired sign-flip randomization on the weighted statistic."""
     observed = weighted_estimate(paired)["estimate"]
@@ -596,18 +664,24 @@ def sign_flip_test(
     resampling = specification["resampling"]
     digest = bytes.fromhex(input_digest)
     resamples = int(resampling["resample_count"])
+    resolved = resolve_engine(specification, requested=engine)
+    if resolved == analysis_engine.ENGINE_VECTORIZED:
+        at_least = analysis_engine.sign_flip_exceedances(
+            specification, paired, digest, target=target,
+        )
+        return {"method": "paired_sign_flip", "mode": "monte_carlo",
+                "p_value": (1 + at_least) / (resamples + 1),
+                "resamples": resamples}
     at_least = 0
     for replicate_index in range(resamples):
-        flips = {
-            case_id: analysis_rng.sign_flip(
-                master_seed=int(resampling["master_seed"]),
-                input_digest=digest,
-                replicate_index=replicate_index,
-                case_index=index,
-                algorithm_version=int(resampling["algorithm_version"]),
-            )
-            for index, case_id in enumerate(case_ids)
-        }
+        bits = analysis_rng.replicate_sign_flips(
+            master_seed=int(resampling["master_seed"]),
+            input_digest=digest,
+            replicate_index=replicate_index,
+            case_count=count,
+            algorithm_version=int(resampling["algorithm_version"]),
+        )
+        flips = dict(zip(case_ids, bits, strict=True))
         value = weighted_estimate(paired, flips=flips)["estimate"]
         if value is not None and abs(value) >= target:
             at_least += 1
@@ -637,6 +711,7 @@ def compare(
     comparison: dict[str, Any],
     *,
     record_draws: bool = False,
+    engine: str | None = None,
 ) -> dict[str, Any]:
     """Compute one predeclared comparison under the frozen rules."""
     paired = pair_cases(
@@ -663,10 +738,10 @@ def compare(
     else:
         interval = bootstrap(
             specification, paired, frozen_input["input_digest"],
-            record_draws=record_draws,
+            record_draws=record_draws, engine=engine,
         )
     test = sign_flip_test(
-        specification, paired, frozen_input["input_digest"],
+        specification, paired, frozen_input["input_digest"], engine=engine,
     )
     comparative_claim = (
         interval["status"] in ("estimated", "degenerate")
@@ -766,11 +841,20 @@ def compute_report(
     record_draws: bool = False,
     ledger_summary: dict[str, Any] | None = None,
     latency_ms_by_arm: dict[str, list[int]] | None = None,
+    engine: str | None = None,
 ) -> dict[str, Any]:
-    """Compute every predeclared comparison plus resource analytics."""
+    """Compute every predeclared comparison plus resource analytics.
+
+    The engine choice never changes a number: the vectorized engine
+    and the reference engine produce equal replicate estimates,
+    intervals, tests, and digests for one frozen specification.
+    """
     family = specification["comparison_family"]
     comparisons = [
-        compare(specification, frozen_input, entry, record_draws=record_draws)
+        compare(
+            specification, frozen_input, entry,
+            record_draws=record_draws, engine=engine,
+        )
         for entry in family["comparisons"]
     ]
     adjusted = holm_adjust([c["test"]["p_value"] for c in comparisons])
@@ -809,6 +893,7 @@ def compute_report(
         "input_digest": frozen_input["input_digest"],
         "primary_estimand": specification["primary_estimand"],
         "statistical_unit": "case",
+        "metric_ids": list(specification.get("metric_ids") or []),
         "arms": arms,
         "comparisons": comparisons,
         "resources": _resource_analytics(ledger_summary, arms),
@@ -865,8 +950,10 @@ def engine_digests() -> dict[str, Any]:
     """Pin the engine source, build, dependency lock, and runtime."""
     import sys
 
-    source = inspect.getsource(sys.modules[__name__]) + inspect.getsource(
-        analysis_rng,
+    source = (
+        inspect.getsource(sys.modules[__name__])
+        + inspect.getsource(analysis_rng)
+        + inspect.getsource(analysis_engine)
     )
     lock_path = Path(__file__).resolve().parents[2] / "requirements.txt"
     lock_bytes = lock_path.read_bytes() if lock_path.is_file() else b""
@@ -882,8 +969,14 @@ def engine_digests() -> dict[str, Any]:
         ).hexdigest(),
         "toolchain_versions": {
             "python": platform.python_version(),
-            "statistics": "python-stdlib-binary64",
+            "statistics": analysis_engine.STATISTICS_CONTRACT,
             "numeric": "ieee-754-binary64",
+            "vector_engine": analysis_engine.describe(),
+            "engine": (
+                analysis_engine.ENGINE_VECTORIZED
+                if analysis_engine.available()
+                else analysis_engine.ENGINE_REFERENCE
+            ),
         },
     }
 
@@ -964,6 +1057,9 @@ def snapshot_record(
             "resample_count": int(
                 specification["resampling"]["resample_count"],
             ),
+            "planned_repetitions": int(
+                frozen_input.get("planned_repetitions") or 1,
+            ),
         },
         "methods": {
             "estimator": "family_stratified_weighted_case_mean",
@@ -980,14 +1076,17 @@ def snapshot_record(
         "engine": engine_digests(),
         "random_source": {
             "algorithm": analysis_rng.RNG_ALGORITHM,
-            "algorithm_version": analysis_rng.RNG_ALGORITHM_VERSION,
-            "implementation": analysis_rng.RNG_IMPLEMENTATION,
+            "algorithm_version": int(
+                specification["resampling"]["algorithm_version"],
+            ),
+            "implementation": analysis_rng.implementation_for(
+                int(specification["resampling"]["algorithm_version"]),
+            ),
             "implementation_digest": analysis_rng.implementation_digest(),
             "master_seed": int(specification["resampling"]["master_seed"]),
-            "derivation_schedule": [
-                "bootstrap:replicate:family:draw:counter",
-                "sign-flip:replicate:case:counter",
-            ],
+            "derivation_schedule": analysis_rng.derivation_schedule(
+                int(specification["resampling"]["algorithm_version"]),
+            ),
         },
         "io_checksums": {
             "input": frozen_input["input_digest"],
@@ -1042,6 +1141,172 @@ def replay(
         "execution_claim": (
             "analysis replay never proves external execution repeatability"
         ),
+    }
+
+
+async def current_snapshot(run_id: str) -> dict[str, Any] | None:
+    """Read the newest stored snapshot of one run that no snapshot supersedes."""
+    import json
+
+    import database as db
+    from benchmarks import evaluation_records
+
+    superseded = {
+        str(row["snapshot_id"])
+        for row in await evaluation_records.list_snapshot_supersessions(run_id)
+    }
+    async with db._connect() as connection:  # noqa: SLF001
+        rows = await connection.execute_fetchall(
+            "SELECT * FROM analysis_snapshots WHERE run_id = ? "
+            "ORDER BY created_at DESC, id DESC",
+            (run_id,),
+        )
+    for row in rows:
+        if str(row["id"]) in superseded:
+            continue
+        return {**dict(row), "record": json.loads(row["record"])}
+    return None
+
+
+async def served_report(
+    run_id: str,
+    *,
+    allow_unresolved: bool = False,
+) -> dict[str, Any] | None:
+    """Serve the current frozen snapshot of one run as its report.
+
+    The report recomputes from the stored specification and the
+    stored evidence, verifies its digests against the snapshot, and
+    resolves every declared metric to one published definition. A
+    metric without a published definition blocks the report unless
+    the caller explicitly allows an unresolved display.
+    """
+    from benchmarks import evaluation_records, metric_registry, repository, resource_ledger
+
+    snapshot = await current_snapshot(run_id)
+    if snapshot is None:
+        return None
+    run = await repository.get_run(run_id)
+    if run is None:
+        raise FrozenAnalysisError(f"The run {run_id} does not exist")
+    record = snapshot["record"]
+    specification = record["estimand"]
+    planned = int(record["resampling"].get("planned_repetitions") or 1)
+    frozen_input = freeze_input(run, specification, planned_repetitions=planned)
+    report = compute_report(specification, frozen_input)
+    verified = report["results_digest"] == record["results_digest"]
+    if not verified:
+        entries = await resource_ledger.list_entries(run_id)
+        summary = resource_ledger.summarize(entries, currency="USD")
+        with_ledger = compute_report(
+            specification, frozen_input, ledger_summary=summary,
+        )
+        if with_ledger["results_digest"] == record["results_digest"]:
+            report = with_ledger
+            verified = True
+    definitions = {
+        str(row["id"]): row["record"]
+        for row in await evaluation_records.list_records("metric-definition")
+    }
+    resolved: list[dict[str, Any]] = []
+    unresolved: list[dict[str, str]] = []
+    for metric_id in report["metric_ids"]:
+        try:
+            resolved.append(metric_registry.resolve_display_metric(
+                metric_id, definitions,
+            ))
+        except metric_registry.MetricRegistryError as error:
+            unresolved.append({"metric_id": metric_id, "reason": str(error)})
+    if not report["metric_ids"]:
+        unresolved.append({
+            "metric_id": "",
+            "reason": "the frozen specification declares no metric "
+                      "definitions; freeze with metric_ids",
+        })
+    if unresolved and not allow_unresolved:
+        raise metric_registry.MetricRegistryError(
+            "Every displayed metric references one published definition; "
+            "unresolved: " + "; ".join(
+                f"{entry['metric_id'] or '<none>'}: {entry['reason']}"
+                for entry in unresolved
+            )
+        )
+    planned_total = sum(
+        int(arm["counts"]["planned"]) for arm in report["arms"].values()
+    )
+    return {
+        "engine": ENGINE_NAME,
+        "engine_version": ENGINE_VERSION,
+        "snapshot_id": str(snapshot["id"]),
+        "replay_verified": verified,
+        "results_digest": report["results_digest"],
+        "stored_results_digest": record["results_digest"],
+        "metrics": resolved,
+        "unresolved_metrics": unresolved,
+        "analysis": {
+            "estimand": report["primary_estimand"],
+            "statistical_unit": report["statistical_unit"],
+            "specification_digest": report["specification_digest"],
+            "replay_claim": record["replay"]["claim"],
+        },
+        "denominators": {
+            "planned": planned_total,
+            "statement": "planned slots minus predeclared infrastructure "
+                         "exclusions",
+        },
+        "comparisons": report["comparisons"],
+        "arms": report["arms"],
+        "resources": report["resources"],
+        "warnings": report["warnings"],
+        "report": report,
+    }
+
+
+async def recompute_snapshot(
+    snapshot_id: str,
+    *,
+    ledger_summary: dict[str, Any] | None,
+    reason: str,
+    reconciliation_id: str | None = None,
+) -> dict[str, Any]:
+    """Recompute one stored snapshot and record the supersession.
+
+    The new snapshot freezes the same specification and the same
+    planned repetitions over the stored evidence with the current
+    ledger summary; the superseded snapshot stays immutable and the
+    supersession row links the two.
+    """
+    from benchmarks import evaluation_records, facade
+
+    stored = await evaluation_records.get_record(
+        "analysis-snapshot", snapshot_id,
+    )
+    if stored is None:
+        raise FrozenAnalysisError(f"The snapshot {snapshot_id} does not exist")
+    record = stored["record"]
+    replacement = await freeze_and_store(
+        str(stored["run_id"]),
+        specification=record["estimand"],
+        planned_repetitions=int(
+            record["resampling"].get("planned_repetitions") or 1,
+        ),
+        ledger_summary=ledger_summary,
+    )
+    supersession = await facade.execute(
+        "supersede_analysis_snapshot",
+        {
+            "snapshot_id": snapshot_id,
+            "superseded_by": replacement["snapshot_id"],
+            "reason": reason,
+            "reconciliation_id": reconciliation_id,
+        },
+    )
+    return {
+        "superseded_snapshot_id": snapshot_id,
+        "snapshot_id": replacement["snapshot_id"],
+        "supersession_id": supersession["supersession_id"],
+        "results_digest": replacement["record"]["results_digest"],
+        "resources": replacement["report"]["resources"],
     }
 
 
@@ -1135,8 +1400,16 @@ def validate_study(
     holdout_hidden: bool,
     report: dict[str, Any] | None,
     cost_includes_retries_and_control_plane: bool,
+    stage: str = "publication",
 ) -> dict[str, Any]:
-    """Check every study condition before a paid model study."""
+    """Check every study condition before a paid model study.
+
+    The ``admission`` stage runs before any attempt executes, so no
+    report exists yet; the report checks apply at the publication
+    stage of the results.
+    """
+    if stage not in ("admission", "publication"):
+        raise FrozenAnalysisError(f"Unknown study stage: {stage!r}")
     checks = []
 
     def check(name: str, passed: bool, detail: str) -> None:
@@ -1179,14 +1452,15 @@ def validate_study(
         and bool(estimand.get("direction") or estimand.get("primary_metric")),
         "the primary metric and direction stay fixed",
     )
-    check(
-        "report_shows_failures_and_missingness",
-        bool(report) and all(
-            "counts" in arm and "unconditional_denominator" in arm
-            for arm in (report or {}).get("arms", {}).values()
-        ),
-        "the report shows failures and missingness",
-    )
+    if stage == "publication":
+        check(
+            "report_shows_failures_and_missingness",
+            bool(report) and all(
+                "counts" in arm and "unconditional_denominator" in arm
+                for arm in (report or {}).get("arms", {}).values()
+            ),
+            "the report shows failures and missingness",
+        )
     check("cost_includes_retries_and_control_plane",
           cost_includes_retries_and_control_plane,
           "cost includes retries and control-plane work")

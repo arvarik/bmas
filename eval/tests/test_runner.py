@@ -12,7 +12,7 @@ import pytest
 from eval.datasets import EvalItem
 from eval.metrics import compute_run_metrics
 from eval.runner import BenchmarkRunner
-from eval.scorer import ScoredResult
+from eval.scored_result import ScoredResult
 
 
 class FakeResponse:
@@ -122,10 +122,28 @@ async def _runner_with_fake_http(
         concurrency=2,
         timeout_per_task_s=timeout_per_task_s,
         api_key=api_key,
+        scorer=fake_scorer,
     )
     await runner.http.aclose()
     runner.http = fake_http
     return runner
+
+
+def fake_scorer(dataset: str, expected: str, response: str) -> tuple:
+    """Stand in for the daemon scorer plugins inside the runner tests."""
+    import re
+
+    if dataset == "gsm8k":
+        numbers = re.findall(r"-?\d+(?:\.\d+)?", response or "")
+        if not numbers:
+            return None, False, "no_answer"
+        return numbers[-1], numbers[-1] == expected, "numeric_match"
+    if dataset == "mmlu":
+        match = re.search(r"\b([A-D])\b", response or "")
+        if match is None:
+            return None, False, "no_answer"
+        return match.group(1), match.group(1) == expected, "letter_match"
+    return None, False, "unknown_dataset"
 
 
 @pytest.mark.asyncio

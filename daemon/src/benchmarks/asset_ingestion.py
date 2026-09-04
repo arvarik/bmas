@@ -356,13 +356,16 @@ def ingest_asset(
     )
 
 
-async def store_ingestion(outcome: IngestionOutcome) -> dict[str, Any]:
+async def store_ingestion(
+    outcome: IngestionOutcome, *, run_id: str | None = None,
+) -> dict[str, Any]:
     """Store one pipeline outcome through the one facade.
 
     The record stores in quarantine first; an accepted outcome then
     transitions through the declared state machine, and a rejected
     outcome transitions to rejected. The record itself stays
-    immutable in content.
+    immutable in content. An ingestion that belongs to one run also
+    records its bytes in that run's resource ledger.
     """
     from benchmarks import evaluation_records, facade
 
@@ -374,6 +377,18 @@ async def store_ingestion(outcome: IngestionOutcome) -> dict[str, Any]:
     if outcome.state in ("accepted", "rejected"):
         await evaluation_records.transition_asset_state(
             saved["id"], outcome.state,
+        )
+    if run_id:
+        from benchmarks import resource_ledger
+
+        await resource_ledger.emit_import(
+            run_id=run_id,
+            import_id=str(saved["id"]),
+            byte_count=int(
+                record.get("size_bytes")
+                or sum(int(m.get("size_bytes") or 0) for m in outcome.members)
+            ),
+            source=str(record.get("source") or record.get("media_type") or "asset"),
         )
     return {
         "ingestion_id": saved["id"],

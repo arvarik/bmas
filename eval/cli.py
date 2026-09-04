@@ -1,10 +1,12 @@
-"""bMAS Evaluation CLI — benchmark, A/B, and failure-injection tooling.
+"""bMAS Evaluation CLI — benchmark, evaluation, and failure-injection tooling.
 
 Usage:
   python -m eval.cli benchmark --dataset gsm8k --limit 10
-  python -m eval.cli ab --dataset gsm8k --variant-a classic --variant-b candidate
-  python -m eval.cli report --file-a results/run_a_summary.json --file-b results/run_b_summary.json
+  python -m eval.cli evaluation authority
   python -m eval.cli inject-failure --node node-1 --mode kill --confirm-destructive
+
+The A/B harness and its report command left with the deprecation
+cycle; author studies through ``POST /api/evaluation/studies``.
 """
 
 from __future__ import annotations
@@ -51,40 +53,6 @@ def main() -> None:
     )
     bench.add_argument(
         "--config", type=str, default=None, help="Path to bmas.yaml (auto-detected if omitted)"
-    )
-
-    # ── ab ────────────────────────────────────────────────────────────
-    ab = subparsers.add_parser(
-        "ab", help="Run A/B comparison between two coordination variants"
-    )
-    ab.add_argument(
-        "--dataset",
-        choices=["gsm8k", "mmlu"],
-        required=True,
-        help="Dataset to evaluate",
-    )
-    ab.add_argument(
-        "--variant-a", type=str, default="classic", help="First variant"
-    )
-    ab.add_argument(
-        "--variant-b", type=str, default="classic", help="Second variant"
-    )
-    ab.add_argument("--limit", type=int, default=None)
-    ab.add_argument("--concurrency", type=int, default=1)
-    ab.add_argument("--run-id", type=str, default=None)
-    ab.add_argument("--config", type=str, default=None)
-
-    # ── report ────────────────────────────────────────────────────────
-    rpt = subparsers.add_parser(
-        "report", help="Generate side-by-side report from two summary files"
-    )
-    rpt.add_argument("--file-a", required=True, help="Path to variant A summary JSON")
-    rpt.add_argument("--file-b", required=True, help="Path to variant B summary JSON")
-    rpt.add_argument(
-        "--variant-a", type=str, default="variant_a", help="Label for variant A"
-    )
-    rpt.add_argument(
-        "--variant-b", type=str, default="variant_b", help="Label for variant B"
     )
 
     # ── inject-failure ────────────────────────────────────────────────
@@ -165,12 +133,6 @@ def main() -> None:
     if args.command == "benchmark":
         _deprecated_command("eval.cli.benchmark", args)
         asyncio.run(_cmd_benchmark(args))
-    elif args.command == "ab":
-        _deprecated_command("eval.cli.ab", args)
-        asyncio.run(_cmd_ab(args))
-    elif args.command == "report":
-        _deprecated_command("eval.cli.report", args)
-        _cmd_report(args)
     elif args.command == "inject-failure":
         _cmd_inject_failure(args)
     elif args.command == "evaluation":
@@ -309,79 +271,6 @@ async def _cmd_benchmark(args: argparse.Namespace) -> None:
             print(f"    {subj}: {acc:.2%}")
     print(f"  Summary saved: {out_path}")
     print(f"{'='*60}")
-
-
-async def _cmd_ab(args: argparse.Namespace) -> None:
-    from eval.ab_harness import ABHarness
-    from eval.datasets import load_gsm8k, load_mmlu
-
-    cfg = load_eval_config(args.config)
-
-    if args.dataset == "gsm8k":
-        items = load_gsm8k(limit=args.limit)
-    else:
-        items = load_mmlu(limit=args.limit)
-
-    run_id = args.run_id or f"ab-{args.dataset}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
-
-    harness = ABHarness(
-        daemon_url=cfg["daemon_url"],
-        concurrency=args.concurrency,
-    )
-
-    # Arm A
-    print(f"\n{'='*60}")
-    print(f"  A/B Test — Arm A: {args.variant_a}")
-    print("  The daemon validates this implementation before submission.")
-    print(f"{'='*60}\n")
-
-    _, metrics_a = await harness.run_arm(
-        items=items,
-        expected_variant=args.variant_a,
-        run_id=f"{run_id}-a",
-        run_config={**cfg["coordination"], "variant": args.variant_a},
-    )
-
-    # Arm B
-    print(f"\n{'='*60}")
-    print(f"  A/B Test — Arm B: {args.variant_b}")
-    print("  The same daemon receives this implementation per task.")
-    print(f"{'='*60}\n")
-
-    _, metrics_b = await harness.run_arm(
-        items=items,
-        expected_variant=args.variant_b,
-        run_id=f"{run_id}-b",
-        run_config={**cfg["coordination"], "variant": args.variant_b},
-    )
-
-    # Report
-    report = harness.generate_report(
-        variant_a=args.variant_a,
-        metrics_a=metrics_a,
-        variant_b=args.variant_b,
-        metrics_b=metrics_b,
-        run_id=run_id,
-    )
-    print(report)
-
-
-def _cmd_report(args: argparse.Namespace) -> None:
-    from eval.ab_harness import ABHarness
-    from eval.metrics import RunMetrics
-
-    metrics_a = RunMetrics.load(args.file_a)
-    metrics_b = RunMetrics.load(args.file_b)
-
-    harness = ABHarness(daemon_url="unused")
-    report = harness.generate_report(
-        variant_a=args.variant_a,
-        metrics_a=metrics_a,
-        variant_b=args.variant_b,
-        metrics_b=metrics_b,
-        run_id=f"report-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}",
-    )
-    print(report)
 
 
 def _cmd_inject_failure(args: argparse.Namespace) -> None:

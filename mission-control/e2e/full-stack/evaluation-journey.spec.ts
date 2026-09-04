@@ -156,23 +156,65 @@ test("the import, edit, publish, configure, execute, inspect, compare, export, a
   // preview the candidate against it.
   const baseline = await daemon(request, "post", "/benchmarks/baselines", {
     run_id: runId, name: `Journey baseline ${suffix}`, description: "gate",
-    rules: [{ id: "cost", label: "Cost stays bounded", metric: "arm.classic-a.cost_usd.mean", operator: "lte", value: 100 }],
+    rules: [
+      { id: "cost", label: "Cost stays bounded", metric: "arm.classic-a.cost_usd.mean", operator: "lte", value: 100 },
+      // The frozen rule decides through the frozen non-inferiority
+      // engine instead of the legacy report engine.
+      { id: "frozen", label: "Success stays within the margin", metric: `frozen.${scorerId}`, operator: "max_drop", value: 0.2,
+        analysis_method: "frozen_non_inferiority", direction: "improvement", resample_count: 199 },
+    ],
   });
   const baselineId = String(baseline.id ?? baseline.baseline_id);
   expect(baselineId).toBeTruthy();
   const previewed = await daemon(request, "post", `/benchmarks/baselines/${baselineId}/preview`, { candidate_run_id: runId });
   expect(previewed.saved).toBe(false);
-  expect((previewed.report as Json)?.status).toBeTruthy();
+  const previewReport = previewed.report as Json;
+  expect(previewReport?.status).toBeTruthy();
+  const previewRules = (previewReport.rules ?? []) as JsonList;
+  const frozenRule = previewRules.find((rule) => rule.id === "frozen") as Json;
+  expect(frozenRule, JSON.stringify(previewRules)).toBeTruthy();
+  expect((frozenRule.frozen as Json)?.engine).toBe("bmas-frozen-analysis");
+  expect(["passed", "failed", "indeterminate"]).toContain(String(frozenRule.status));
+  expect(previewReport.engines).toContain("bmas-frozen-analysis");
   await page.goto("/baselines");
   await expect(page.getByText(`Journey baseline ${suffix}`)).toBeVisible({ timeout: 30_000 });
 
-  // 12. Freeze the analysis, export the replay bundle, and reimport it.
+  // 12. Publish the metric definition every displayed metric resolves
+  // to, freeze the analysis, serve the frozen report, export the
+  // replay bundle, and reimport it.
+  const metricId = `metric-journey-${suffix}`;
+  const digest = "a".repeat(64);
+  await daemon(request, "post", "/api/evaluation/metrics", {
+    record: {
+      schema_id: "metric-definition", schema_version: 2, metric_id: metricId, lifecycle_state: "draft",
+      calibration: { state: "current", method: "deterministic", version: "1", dataset: "calibration-fixtures",
+        result: { limits_failed: false, pinned_digests: {} }, calibrated_at: "2026-09-01T00:00:00Z",
+        expires_at: "2027-09-01T00:00:00Z", drift_policy: "recalibrate-on-implementation-change" },
+      population: { target: "declared dataset cases", inclusion_rule: "Every planned non-excluded slot counts." },
+      measurement: { numerator: "Cases with a passing binary reduction.", denominator: "Unconditional planned cases.", unit: "proportion",
+        range: { minimum: 0, maximum: 1 }, direction: "higher_is_better", aggregation: "family_stratified_weighted_mean" },
+      labels: { source: "scorer", evidence_contract: ["final_output"] },
+      scorer: { scorer_id: scorerId, version: "1", configuration_digest: digest },
+      missingness: "predeclared_infrastructure_exclusions", exclusions: [],
+      uncertainty_method: "family_stratified_weighted_case_bootstrap",
+    },
+  });
+  await daemon(request, "post", `/api/evaluation/metrics/${metricId}/advance`, {
+    target: "validated", now: "2026-09-03T00:00:00Z", validation_evidence: { schema: true, fixture: true, evidence: true },
+  });
+  await daemon(request, "post", `/api/evaluation/metrics/${metricId}/advance`, { target: "published", now: "2026-09-03T00:00:00Z" });
   const frozen = await daemon(request, "post", `/api/evaluation/runs/${runId}/analyses/freeze`, {
     families: { arithmetic: attempts.map((attempt) => String(attempt.dataset_item_id)).filter((v, i, a) => a.indexOf(v) === i) },
-    scorer_id: scorerId, master_seed: 7, planned_repetitions: 1, resample_count: 99,
+    scorer_id: scorerId, master_seed: 7, planned_repetitions: 1, resample_count: 99, metric_ids: [metricId],
     comparison_family: { family_id: "journey", comparisons: [{ comparison_id: "a-vs-b", baseline_arm: attempts[0].arm_id, candidate_arm: attempts[attempts.length - 1].arm_id, non_inferiority_margin: 0.2 }] },
   });
   expect((frozen.replay as Json).claim).toBe("analysis_replayable");
+  const frozenReport = await daemon(request, "get", `/benchmarks/runs/${runId}/report`);
+  expect(frozenReport.engine).toBe("bmas-frozen-analysis");
+  expect(frozenReport.replay_verified).toBe(true);
+  expect((frozenReport.metrics as JsonList).map((metric) => metric.metric_id)).toEqual([metricId]);
+  expect(frozenReport.unresolved_metrics).toEqual([]);
+  expect((frozenReport.denominators as Json)?.planned).toBe(6);
   const exported = await daemon(request, "post", `/api/evaluation/runs/${runId}/replay-bundles?policy=redacted`);
   expect(exported.member_count).toBeGreaterThan(10);
   const reimported = await daemon(request, "post", "/api/evaluation/replay-bundles/import", {

@@ -36,6 +36,8 @@ PLUGIN_TYPES = (
     "human_review",
     "composite",
     "reliability",
+    "wasi_component",
+    "native_microvm",
 )
 
 
@@ -684,6 +686,21 @@ def build_judge_request(
     }
 
 
+def _judge_usage(usage: dict[str, Any]) -> dict[str, Any]:
+    """Keep the token counts and the provider cost text of one judge call."""
+    kept: dict[str, Any] = {}
+    for name in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = usage.get(name)
+        if isinstance(value, (int, float)) and value >= 0:
+            kept[name] = int(value)
+    cost = usage.get("provider_cost_text", usage.get("cost"))
+    if isinstance(cost, (int, float)) and cost >= 0:
+        kept["provider_cost_text"] = f"{float(cost):.9f}"
+    elif isinstance(cost, str) and cost.strip():
+        kept["provider_cost_text"] = cost.strip()
+    return kept
+
+
 class RubricJudgeScorer:
     """Score with one rubric through an injected judge transport."""
 
@@ -730,6 +747,10 @@ class RubricJudgeScorer:
             "judge": {
                 "request_digest": built["request_digest"],
                 "response_digest": content_checksum(response),
+                **({"usage": _judge_usage(response["usage"])}
+                   if isinstance(response.get("usage"), dict) else {}),
+                **({"model": str(response["model"])}
+                   if response.get("model") else {}),
             },
         }
 
@@ -816,10 +837,66 @@ class CompositeScorer:
         )
 
 
+class WasiComponentScorer:
+    """One untrusted scorer compiled as a WebAssembly component.
+
+    The component runs inside the pinned Wasmtime runtime through the
+    boundary contract; this plugin only carries the artifact and the
+    evidence the host marshals into the component.
+    """
+
+    plugin_type = "wasi_component"
+    trust_class = "sandboxed_wasi"
+    evidence_requirements = ("final_output", "reference_answer")
+
+    def __init__(self, component: Any) -> None:
+        self.component = component
+
+    def score(
+        self, evidence: dict[str, Any], configuration: dict[str, Any],
+    ) -> dict[str, Any]:
+        del evidence, configuration
+        raise ScorerPluginError(
+            "A component scorer executes only inside the Wasmtime boundary"
+        )
+
+
+class NativeMicroVmScorer:
+    """One native scorer that runs only inside a pinned microVM."""
+
+    plugin_type = "native_microvm"
+    trust_class = "sandboxed_native"
+    evidence_requirements = ("final_output", "reference_answer")
+
+    def __init__(self, runner: Any) -> None:
+        self.runner = runner
+
+    def score(
+        self, evidence: dict[str, Any], configuration: dict[str, Any],
+    ) -> dict[str, Any]:
+        del evidence, configuration
+        raise ScorerPluginError(
+            "A native scorer executes only inside the microVM boundary"
+        )
+
+
 def plugin_for(
-    plugin_type: str, *, judge: Any = None,
+    plugin_type: str, *, judge: Any = None, component: Any = None,
+    microvm: Any = None,
 ) -> Any:
     """Return one plugin instance for the requested type."""
+    if plugin_type == "wasi_component":
+        if component is None:
+            raise ScorerPluginError(
+                "A component scorer requires one compiled component"
+            )
+        return WasiComponentScorer(component)
+    if plugin_type == "native_microvm":
+        if microvm is None:
+            raise ScorerPluginError(
+                "A native scorer requires one microVM runner"
+            )
+        return NativeMicroVmScorer(microvm)
     if plugin_type == "deterministic":
         return DeterministicAnswerScorer()
     if plugin_type in ("final_state", "environment"):

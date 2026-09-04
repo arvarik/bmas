@@ -713,3 +713,43 @@ async def test_publish_screens_case_content_against_the_corpus(draft_db):
         published["contamination_record_id"],
     )
     assert record["record"]["matches"][0]["kind"] == "content_hash"
+
+
+@pytest.mark.asyncio
+async def test_publication_stores_the_dataset_version_record(draft_db):
+    """Publication freezes one dataset-version record beside the projection."""
+    from benchmarks import evaluation_records
+    from benchmarks.provenance import content_checksum
+
+    draft_id = await _draft()
+    await draft_editor.edit_case(draft_id, _case("case-one"))
+    rows = [{"case_id": "case-one", "input": "Add 20 and 22."}]
+    recipe = _recipe([{"operation": "normalize", "parameters": {}}])
+    await _pin_rebuild_expectation(draft_id, rows, recipe)
+
+    published = await draft_editor.publish_governed(
+        draft_id,
+        dataset_id="dataset-alpha",
+        version_id="version-record",
+        name="Alpha",
+        recipe=recipe,
+    )
+    record = published["dataset_version_record"]
+    assert published["dataset_version_record_id"] == "version-record"
+    assert record["schema_id"] == "dataset-version"
+    assert record["content_digest"] == published["content_digest"]
+    assert record["policy_digest"] == published["policy_digest"]
+    assert record["split_manifest"] == {"test": ["case-one"]}
+    assert record["source_lineage"]
+    assert record["transformation_recipe_digest"] == content_checksum(recipe)
+    assert len(record["contamination_record_digest"]) == 64
+    assert record["attribution_bundle_digest"] == published["attribution_digest"]
+
+    stored = await evaluation_records.get_record(
+        "dataset-version", "version-record",
+    )
+    assert stored is not None
+    assert stored["dataset_id"] == "dataset-alpha"
+    assert stored["content_digest"] == published["content_digest"]
+    assert stored["policy_digest"] == published["policy_digest"]
+    assert stored["record"] == record

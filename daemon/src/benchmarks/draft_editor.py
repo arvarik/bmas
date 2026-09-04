@@ -617,6 +617,26 @@ async def publish_governed(
         "record_contamination_rights",
         {"record": contamination, "dataset_version_id": version_id},
     )
+    version_record = dataset_version_record(
+        version_id=version_id,
+        parent_version_id=record.get("parent_version_id"),
+        sources=sources,
+        cases=cases,
+        effective_restrictions=effective,
+        recipe=recipe,
+        content_digest=str(published["content_digest"]),
+        verification=verification,
+        contamination=contamination,
+        attribution=attribution,
+    )
+    stored_version = await facade.execute(
+        "record_dataset_version",
+        {
+            "record": version_record,
+            "dataset_id": dataset_id,
+            "parent_version_id": record.get("parent_version_id"),
+        },
+    )
     return {
         **published,
         "effective_restrictions": effective,
@@ -625,6 +645,102 @@ async def publish_governed(
         "screening_result": screening["result"],
         "attribution_digest": attribution["bundle_digest"],
         "contamination_record_id": saved["id"],
+        "dataset_version_record_id": stored_version["id"],
+        "dataset_version_record": version_record,
         "canaries": canaries,
         "rebuild_verification": verification,
     }
+
+
+def dataset_version_record(
+    *,
+    version_id: str,
+    parent_version_id: str | None,
+    sources: list[dict[str, Any]],
+    cases: list[dict[str, Any]],
+    effective_restrictions: list[dict[str, Any]],
+    recipe: dict[str, Any] | None,
+    content_digest: str,
+    verification: dict[str, Any],
+    contamination: dict[str, Any],
+    attribution: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the frozen publication record of one dataset version.
+
+    The record carries the content digest of the published cases, the
+    policy digest of the effective restrictions, the case manifest and
+    recipe digests, the split manifest, every asset digest, and the
+    digests of the validation report, contamination record, and
+    attribution bundle. Publication stores it beside the legacy
+    projection, and the projection never becomes a second authority.
+    """
+    from benchmarks.provenance import content_checksum
+
+    case_ids = sorted(str(case["case_id"]) for case in cases)
+    splits: dict[str, list[str]] = {}
+    asset_digests: set[str] = set()
+    for case in cases:
+        split = str(case.get("split") or "test")
+        splits.setdefault(split, []).append(str(case["case_id"]))
+        for asset in (case.get("task") or {}).get("assets") or []:
+            asset_digests.add(_asset_digest(asset))
+    trust_inputs = []
+    seen_trust: set[tuple[str, str]] = set()
+    for source in sources:
+        trust = source.get("trust") or {}
+        level = str(trust.get("level") or "public_untrusted")
+        policy_version = str(trust.get("policy_version") or "1")
+        if (level, policy_version) in seen_trust:
+            continue
+        seen_trust.add((level, policy_version))
+        trust_inputs.append({"level": level, "policy_version": policy_version})
+    if not trust_inputs:
+        trust_inputs.append({"level": "public_untrusted", "policy_version": "1"})
+    return {
+        "schema_id": "dataset-version",
+        "schema_version": 2,
+        "version_id": version_id,
+        "parent_version_id": parent_version_id,
+        "canonical_schema_version": "2",
+        "source_lineage": sorted({
+            str(source["source_id"]) for source in sources
+            if source.get("source_id")
+        }),
+        "trust_inputs": trust_inputs,
+        "effective_restrictions": [
+            {"name": str(item["name"]), "behavior": str(item["behavior"])}
+            for item in effective_restrictions
+        ],
+        "policy_digest": restriction_policy_digest(effective_restrictions),
+        "case_manifest_digest": content_checksum(case_ids),
+        "transformation_recipe_digest": content_checksum(recipe or {}),
+        "split_manifest": {
+            split: sorted(ids) for split, ids in sorted(splits.items())
+        },
+        "asset_digests": sorted(asset_digests),
+        "content_digest": content_digest,
+        "validation_report_digest": content_checksum(verification),
+        "contamination_record_digest": content_checksum(contamination),
+        "attribution_bundle_digest": str(attribution["bundle_digest"]),
+    }
+
+
+def _asset_digest(asset: Any) -> str:
+    """The content digest of one case asset reference.
+
+    A reference that already names a digest keeps it; a reference by
+    identifier digests the identifier so the manifest stays stable.
+    """
+    import hashlib
+    import re
+
+    if isinstance(asset, dict):
+        for key in ("content_digest", "digest", "asset_digest"):
+            value = asset.get(key)
+            if isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value):
+                return value
+        asset = asset.get("asset_id") or asset.get("ingestion_id") or asset
+    text = str(asset)
+    if re.fullmatch(r"[a-f0-9]{64}", text):
+        return text
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()

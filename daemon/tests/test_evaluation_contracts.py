@@ -521,6 +521,60 @@ def valid_resource_ledger_entry() -> dict:
     }
 
 
+def valid_judge_anchor_set() -> dict:
+    return {
+        **_envelope("judge-anchor-set"),
+        "anchor_id": "anchor-rubric-judge",
+        "judge": {
+            "judge_id": "judge-rubric", "version": "3",
+            "model": "gemini-flash-lite", "prompt_digest": DIGEST,
+        },
+        "scorer": {"scorer_id": "scorer-rubric", "version": "1"},
+        "label_set": {
+            "dataset_id": "anchor-set", "version": "1",
+            "items": [
+                {"item_id": "item-1", "label": "pass",
+                 "reviewers": ["reviewer-a", "reviewer-b"]},
+            ],
+            "label_digest": DIGEST,
+        },
+        "candidate_models": ["candidate-model"],
+        "schedule": {"interval_days": 7, "next_due_at": WHEN,
+                     "created_at": WHEN},
+        "threshold": 0.7,
+        "drift_tolerance": 0.1,
+        "state": "active",
+    }
+
+
+def valid_study() -> dict:
+    return {
+        **_envelope("study"),
+        "study_id": "study-alpha",
+        "study_type": "one_factor_ablation",
+        "name": "temperature",
+        "arms": [
+            {"slug": "temperature-0.0", "treatment": {"model.temperature": 0.0},
+             "configuration_digest": DIGEST,
+             "configuration": {"model": {"temperature": 0.0}}},
+            {"slug": "temperature-0.5", "treatment": {"model.temperature": 0.5},
+             "configuration_digest": DIGEST,
+             "configuration": {"model": {"temperature": 0.5}}},
+        ],
+        "expansion_rule": {"study_type": "one_factor_ablation"},
+        "invariants": {"dataset_version_id": "version-alpha"},
+        "estimand": {"primary_estimand": "success"},
+        "gates": {"predeclared": True},
+        "sample_plan": {"attempts": 24},
+        "estimates": {"attempts": 24},
+        "treatment_paths": ["model.temperature"],
+        "study_digest": DIGEST,
+        "run_plan_id": "plan-alpha",
+        "test_revision_id": "testrev-alpha",
+        "authored_at": WHEN,
+    }
+
+
 VALID_RECORDS = {
     "benchmark-source": valid_benchmark_source,
     "evaluation-case": valid_evaluation_case,
@@ -539,6 +593,8 @@ VALID_RECORDS = {
     "judge-calibration-record": valid_judge_calibration,
     "failure-classification-record": valid_failure_classification,
     "resource-ledger-entry": valid_resource_ledger_entry,
+    "judge-anchor-set": valid_judge_anchor_set,
+    "study": valid_study,
 }
 
 

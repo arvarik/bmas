@@ -137,6 +137,10 @@
       },
       "type": "array"
     },
+    "redaction_policy_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
     "resources": {
       "additionalProperties": false,
       "properties": {

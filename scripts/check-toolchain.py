@@ -67,12 +67,40 @@ def _chromium_build() -> str | None:
     return None
 
 
+def _distribution_version(name: str) -> str | None:
+    """Resolve one installed Python distribution inside this interpreter."""
+    try:
+        from importlib import metadata
+    except ImportError:  # pragma: no cover - the standard library ships it
+        return None
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def _statistics_contract() -> str | None:
+    """Resolve the arithmetic contract the analysis engines declare."""
+    daemon_source = ROOT / "daemon" / "src"
+    if str(daemon_source) not in sys.path:
+        sys.path.insert(0, str(daemon_source))
+    try:
+        from benchmarks import analysis_engine
+    except ImportError:
+        return None
+    return str(analysis_engine.STATISTICS_CONTRACT)
+
+
 def resolve(component: str, spec: dict) -> str | None:
     argv = list(spec["resolve"])
     if argv[0] == "constant":
         return argv[1]
     if argv[0] == "python-sqlite":
         return sqlite3.sqlite_version
+    if argv[0] == "python-distribution":
+        return _distribution_version(argv[1])
+    if argv[0] == "python-statistics-contract":
+        return _statistics_contract()
     if argv[0] == "playwright-browser":
         return _chromium_build()
     if argv[0] == "python3":

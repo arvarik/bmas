@@ -655,6 +655,7 @@ RECORD_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "object",
                 "additionalProperties": _NAME,
             },
+            "redaction_policy_digest": _DIGEST,
             "ledger_references": {
                 "type": "object",
                 "additionalProperties": False,
@@ -717,6 +718,21 @@ RECORD_SCHEMAS: dict[str, dict[str, Any]] = {
                 "properties": {
                     "request_digest": _DIGEST,
                     "response_digest": _DIGEST,
+                    # The judge model and its reported use feed the
+                    # resource ledger automatically.
+                    "model": _NAME,
+                    "usage": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "prompt_tokens": _COUNT,
+                            "completion_tokens": _COUNT,
+                            "total_tokens": _COUNT,
+                            # The provider's own decimal text; the
+                            # ledger parses it at its trusted boundary.
+                            "provider_cost_text": _NAME,
+                        },
+                    },
                 },
             },
             "calibration_version": _NAME,
@@ -789,6 +805,9 @@ RECORD_SCHEMAS: dict[str, dict[str, Any]] = {
                     "cluster_order": _STRING_LIST,
                     "small_cluster_policy": _NAME,
                     "resample_count": _COUNT,
+                    # The planned repetitions let a recomputation
+                    # rebuild the frozen input from stored evidence.
+                    "planned_repetitions": {"type": "integer", "minimum": 1},
                 },
             },
             "methods": {
@@ -1356,6 +1375,146 @@ RECORD_SCHEMAS: dict[str, dict[str, Any]] = {
                 "enum": ["quarantined", "accepted", "rejected",
                          "deleted"],
             },
+        },
+    ),
+    "judge-anchor-set": _record_schema(
+        "judge-anchor-set",
+        title="One pinned anchor set with its judge calibration schedule",
+        required=[
+            "anchor_id",
+            "judge",
+            "scorer",
+            "label_set",
+            "candidate_models",
+            "schedule",
+            "threshold",
+            "drift_tolerance",
+            "state",
+        ],
+        properties={
+            "anchor_id": _IDENTIFIER,
+            "judge": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["judge_id", "version", "model",
+                             "prompt_digest"],
+                "properties": {
+                    "judge_id": _IDENTIFIER,
+                    "version": _NAME,
+                    "model": _NAME,
+                    "prompt_digest": _DIGEST,
+                },
+            },
+            "scorer": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["scorer_id", "version"],
+                "properties": {
+                    "scorer_id": _IDENTIFIER,
+                    "version": _NAME,
+                },
+            },
+            "label_set": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["dataset_id", "version", "items",
+                             "label_digest"],
+                "properties": {
+                    "dataset_id": _IDENTIFIER,
+                    "version": _NAME,
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["item_id", "label", "reviewers"],
+                            "properties": {
+                                "item_id": _IDENTIFIER,
+                                "label": _NAME,
+                                "reviewers": _STRING_LIST,
+                            },
+                        },
+                    },
+                    "label_digest": _DIGEST,
+                },
+            },
+            "candidate_models": _STRING_LIST,
+            # The schedule runs the anchor set for every release and
+            # weekly during active use.
+            "schedule": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["interval_days", "next_due_at", "created_at"],
+                "properties": {
+                    "interval_days": {"type": "integer", "minimum": 1},
+                    "next_due_at": _TIMESTAMP,
+                    "created_at": _TIMESTAMP,
+                },
+            },
+            "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+            "drift_tolerance": {"type": "number", "minimum": 0,
+                                "maximum": 1},
+            "state": {"enum": ["active", "retired"]},
+        },
+    ),
+    "study": _record_schema(
+        "study",
+        title="One authored study with its run plan and test revision",
+        required=[
+            "study_id",
+            "study_type",
+            "name",
+            "arms",
+            "expansion_rule",
+            "invariants",
+            "estimand",
+            "gates",
+            "sample_plan",
+            "estimates",
+            "treatment_paths",
+            "study_digest",
+            "run_plan_id",
+            "test_revision_id",
+            "authored_at",
+        ],
+        properties={
+            "study_id": _IDENTIFIER,
+            "study_type": {
+                "enum": [
+                    "one_factor_ablation", "parameter_grid",
+                    "preset_comparison", "runtime_comparison",
+                    "model_family_comparison",
+                ],
+            },
+            "name": _NAME,
+            "arms": {
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["slug", "treatment", "configuration_digest",
+                                 "configuration"],
+                    "properties": {
+                        "slug": _IDENTIFIER,
+                        "treatment": _OPEN_MAP,
+                        "configuration_digest": _DIGEST,
+                        "configuration": _OPEN_MAP,
+                    },
+                },
+            },
+            "expansion_rule": _OPEN_MAP,
+            "invariants": _OPEN_MAP,
+            "estimand": _OPEN_MAP,
+            "gates": _OPEN_MAP,
+            "sample_plan": _OPEN_MAP,
+            "estimates": _OPEN_MAP,
+            "treatment_paths": _STRING_LIST,
+            "study_digest": _DIGEST,
+            "run_plan_id": _IDENTIFIER,
+            "test_revision_id": _IDENTIFIER,
+            "authored_at": _TIMESTAMP,
         },
     ),
     "judge-calibration-record": _record_schema(

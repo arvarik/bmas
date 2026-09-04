@@ -318,3 +318,27 @@ async def test_direct_legacy_calls_record_through_the_facade(
     assert migrated["unavailable_fields"] == ["joules_estimate"]
     events = await evaluation_migration.list_events("backfill_run")
     assert events[-1]["payload"]["target"] == "legacy_result_files"
+
+
+def test_the_deprecation_cycle_removed_the_legacy_modules():
+    """The removal record names the deleted modules and the guard holds."""
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    record = json.loads(
+        (root / "conformance" / "evaluation" / "legacy_removal.json").read_text(),
+    )
+    assert record["schema_id"] == "bmas.legacy_removal"
+    assert record["removed_modules"] == ["eval/scorer.py", "eval/ab_harness.py"]
+    for path in record["removed_modules"] + record["removed_tests"]:
+        assert not (root / path).exists(), path
+    window = record["fallback_window"]
+    assert window["threshold"] == evaluation_migration.DECLARED_FALLBACK_THRESHOLD
+    assert window["fallback_events"] == 0
+    assert window["direct_legacy_call_events"] == 0
+    assert (root / "eval" / "scored_result.py").exists()
+    # The client scores only through the daemon; no local scorer exists.
+    client_source = (root / "eval" / "client.py").read_text()
+    assert "def score_answer" in client_source
+    assert not (root / "eval" / "scorer.py").exists()

@@ -15,11 +15,12 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import httpx
 
 from eval.datasets import EvalItem
-from eval.scorer import ScoredResult, score_gsm8k, score_mmlu
+from eval.scored_result import ScoredResult
 
 logger = logging.getLogger("bmas.eval.runner")
 
@@ -68,6 +69,7 @@ class BenchmarkRunner:
         timeout_per_task_s: float = POLL_TIMEOUT_S,
         api_key: str | None = None,
         variant: str | None = None,
+        scorer: Any = None,
     ):
         self.daemon_url = daemon_url.rstrip("/")
         self.concurrency = concurrency
@@ -75,6 +77,20 @@ class BenchmarkRunner:
         self.api_key = api_key if api_key is not None else os.getenv("BMAS_API_KEY", "")
         self.variant = variant
         self.http = httpx.AsyncClient(timeout=30.0)
+        # ``scorer(dataset, expected, response)`` returns the scored
+        # triple; the default scores through the daemon scorer plugins.
+        self._scorer = scorer
+
+    async def _score(
+        self, dataset: str, expected: str, response: str,
+    ) -> tuple[str | None, bool, str]:
+        if self._scorer is None:
+            from eval.client import EvaluationClient
+
+            self._scorer = EvaluationClient(
+                self.daemon_url, api_key=self.api_key,
+            ).score_answer
+        return await asyncio.to_thread(self._scorer, dataset, expected, response)
 
     def _mutation_headers(self) -> dict[str, str] | None:
         """Return operator authentication for daemon mutation requests."""
@@ -189,17 +205,10 @@ class BenchmarkRunner:
                 variant_metrics=task_result.variant_metrics,
             )
 
-        # Score
-        if item.dataset == "gsm8k":
-            extracted, correct, method = score_gsm8k(
-                item.answer, task_result.result_summary
-            )
-        elif item.dataset == "mmlu":
-            extracted, correct, method = score_mmlu(
-                item.answer, task_result.result_summary
-            )
-        else:
-            extracted, correct, method = None, False, "unknown_dataset"
+        # Score through the daemon scorer plugins.
+        extracted, correct, method = await self._score(
+            item.dataset, item.answer, task_result.result_summary,
+        )
 
         return ScoredResult(
             id=item.id,

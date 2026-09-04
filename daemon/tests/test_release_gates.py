@@ -56,7 +56,7 @@ def test_every_gate_names_registered_manifest_groups():
     )
     registered = {group["id"] for group in manifest["groups"]}
     gate_map = _load_gate_map()
-    assert len(gate_map) == 29
+    assert len(gate_map) == 38
     for gate, groups in gate_map.items():
         for group in groups:
             assert group in registered, f"{gate} names {group}"
@@ -106,7 +106,7 @@ def test_promotion_writes_verified_evidence(tmp_path, monkeypatch):
     status = release.evaluation_default_status(evidence)
     assert status["default_generation"] == "current"
     assert status["promoted"] is True
-    assert status["gate_count"] == 29
+    assert status["gate_count"] == 38
     # Tampered evidence never promotes.
     document = json.loads(evidence.read_text())
     document["gates"]["source_naming"]["status"] = "failed"

@@ -423,6 +423,82 @@ def execute_component(
     }
 
 
+def canonical_result_value(value: Any) -> Any:
+    """Canonicalize NaN payloads inside one scorer result value."""
+    return _canonical_result_value(value)
+
+
+def outcome_from_payload(
+    *,
+    policy: WasiScorerPolicy | None,
+    terminal_class: str,
+    error: str | None,
+    payload: bytes | None,
+    resources: dict[str, Any],
+    runtime_digest: str,
+    output_schema: dict[str, Any] | None = None,
+    pins: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the boundary outcome record every backend returns.
+
+    A completed execution validates its payload against the output
+    schema; an invalid payload quarantines by digest and never becomes
+    a score. The pins come from the policy for a WASI component and
+    from the native specification for a microVM.
+    """
+    schema = output_schema if output_schema is not None else (
+        policy.output_schema if policy is not None else {}
+    )
+    raw_output_digest: str | None = None
+    canonical_output: bytes | None = None
+    result_digest: str | None = None
+    if terminal_class == "completed":
+        if payload is None:
+            terminal_class = "invalid_output"
+            error = "The scorer wrote no result"
+        else:
+            raw_output_digest = hashlib.sha256(payload).hexdigest()
+            validation_error = _validate_output(payload, schema)
+            if validation_error:
+                terminal_class = "invalid_output"
+                error = validation_error
+            else:
+                canonical_output = payload
+                result_digest = raw_output_digest
+    resolved_pins: dict[str, Any] = dict(pins or {})
+    if policy is not None:
+        resolved_pins = {
+            "policy_digest": policy.policy_digest(),
+            "component_digest": policy.component_digest,
+            "wit_digest": policy.wit_digest,
+            "compiler_digest": policy.compiler_digest,
+            "dependency_lock_digest": policy.dependency_lock_digest,
+            "output_schema_digest": policy.output_schema_digest(),
+            "logical_time": policy.logical_time,
+            "time_zone": policy.time_zone,
+            "locale": policy.locale,
+            "random_algorithm": policy.random_algorithm,
+            "random_seed": policy.random_seed,
+            **resolved_pins,
+        }
+    resolved_pins["runtime_digest"] = runtime_digest
+    return {
+        "terminal_class": terminal_class,
+        "error": error,
+        "canonical_output": (
+            canonical_output.decode("utf-8") if canonical_output else None
+        ),
+        "result_digest": result_digest,
+        "quarantined_output_digest": (
+            raw_output_digest if terminal_class == "invalid_output"
+            else None
+        ),
+        "replay_eligible": terminal_class in REPLAY_ELIGIBLE_CLASSES,
+        "resources": dict(resources),
+        "pins": resolved_pins,
+    }
+
+
 def _validate_output(
     payload: bytes, output_schema: dict[str, Any],
 ) -> str | None:

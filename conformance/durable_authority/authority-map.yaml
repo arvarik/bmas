@@ -1681,6 +1681,72 @@ sqlite_tables:
       - { name: attempt_id, owner: daemon.evaluation-service, derived: false }
       - { name: scorer_version_id, owner: daemon.evaluation-service, derived: false }
       - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: dataset_version_records
+    authority: daemon.evaluation-service
+    purpose: "Immutable frozen publication records of dataset versions with content and policy digests."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: content_digest, owner: daemon.evaluation-service, derived: false }
+      - { name: policy_digest, owner: daemon.evaluation-service, derived: false }
+      - { name: dataset_id, owner: daemon.evaluation-service, derived: false }
+      - { name: parent_version_id, owner: daemon.evaluation-service, derived: false }
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: analysis_snapshot_supersessions
+    authority: daemon.evaluation-service
+    purpose: "Immutable links from a superseded analysis snapshot to the recomputed snapshot."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: snapshot_id, owner: daemon.evaluation-service, derived: false }
+      - { name: superseded_by, owner: daemon.evaluation-service, derived: false }
+      - { name: reason, owner: daemon.evaluation-service, derived: false }
+      - { name: reconciliation_id, owner: daemon.evaluation-service, derived: false }
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: judge_anchor_sets
+    authority: daemon.evaluation-service
+    purpose: "Pinned judge anchor sets with their weekly calibration schedule."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: judge_id, owner: daemon.evaluation-service, derived: false }
+      - { name: judge_version, owner: daemon.evaluation-service, derived: false }
+      - { name: state, owner: daemon.evaluation-service, derived: false }
+      - { name: next_due_at, owner: daemon.evaluation-service, derived: false }
+      - { name: last_calibrated_at, owner: daemon.evaluation-service, derived: false }
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: evaluation_studies
+    authority: daemon.evaluation-service
+    purpose: "Immutable authored studies linked to their run plan and test revision."
+    writers:
+      - benchmarks.evaluation_records
+    fields:
+      - { name: id, owner: daemon.evaluation-service, derived: false }
+      - { name: schema_version, owner: daemon.evaluation-service, derived: false }
+      - { name: record, owner: daemon.evaluation-service, derived: false }
+      - name: record_checksum
+        owner: daemon.evaluation-service
+        derived: true
+        reconstruction: "Hash the canonical stored record bytes."
+      - { name: study_type, owner: daemon.evaluation-service, derived: false }
+      - { name: run_plan_id, owner: daemon.evaluation-service, derived: false }
+      - { name: test_revision_id, owner: daemon.evaluation-service, derived: false }
+      - { name: created_at, owner: daemon.evaluation-service, derived: false }
   - table: judge_calibration_records
     authority: daemon.evaluation-service
     purpose: "Immutable judge calibrations against pinned human labels."
