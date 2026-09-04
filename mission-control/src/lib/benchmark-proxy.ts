@@ -5,9 +5,22 @@ import {
   daemonMutationHeaders,
 } from "@/lib/daemon-response";
 
-export async function benchmarkProxy(
+export interface DaemonProxyOptions {
+  request?: Request;
+  method?: "GET" | "POST";
+}
+
+/**
+ * Forward one request to the daemon and return its JSON response.
+ *
+ * A mutation carries the daemon API key and the authenticated
+ * operator identity; a read carries no credentials. Every failure
+ * returns the same shape with the given unavailable message.
+ */
+export async function daemonProxy(
   path: string,
-  options: { request?: Request; method?: "GET" | "POST" } = {},
+  options: DaemonProxyOptions,
+  unavailableMessage: string,
 ) {
   const method = options.method ?? "GET";
   try {
@@ -30,8 +43,12 @@ export async function benchmarkProxy(
     });
     return daemonJsonResponse(response);
   } catch (error) {
-    return daemonFailure(error, "The benchmark service is unavailable");
+    return daemonFailure(error, unavailableMessage);
   }
+}
+
+export function benchmarkProxy(path: string, options: DaemonProxyOptions = {}) {
+  return daemonProxy(path, options, "The benchmark service is unavailable");
 }
 
 export async function benchmarkRawProxy(path: string) {

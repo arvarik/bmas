@@ -295,6 +295,101 @@ export interface BenchmarkRunReport {
   warnings: string[];
   complete: boolean;
   report_checksum: string;
+  /** The legacy engine names itself once a frozen engine exists. */
+  engine?: "legacy-report";
+  frozen_snapshot?: null;
+  statement?: string;
+}
+
+/** One frozen comparison: the predeclared estimate, interval, test, and gate. */
+export interface FrozenComparison {
+  comparison_id: string;
+  metric: string;
+  baseline_arm: string;
+  candidate_arm: string;
+  direction: "higher_is_better" | "lower_is_better";
+  hypothesis: "non_inferiority" | "superiority";
+  non_inferiority_margin: number | null;
+  minimum_usable_cases: number;
+  estimate: number | null;
+  family_aggregates?: Record<string, number>;
+  interval: FrozenInterval;
+  test: FrozenTest;
+  p_value_adjusted: number | null;
+  multiplicity_family?: string;
+  counts: { paired_cases: number; missing_cases: number; removed_slots: number };
+  total_missing_weight?: number;
+  limit_failures: string[];
+  primary_valid: boolean;
+  small_families: string[];
+  comparative_claim: boolean;
+  statistical_unit: string;
+  gate: FrozenGateDecision;
+}
+
+export interface FrozenArmSummary {
+  counts: Record<string, number>;
+  unconditional_denominator: number;
+  unconditional_successes: number;
+  unconditional_success_rate: number | null;
+  denominator_statement: string;
+  latency_ms?: { count: number; median_ms: number | null; p95_ms: number | null; estimator?: string };
+}
+
+export interface ResolvedMetricDefinition {
+  metric_id: string;
+  calibration_version: string;
+  lifecycle_state: string;
+  scorer: { scorer_id: string; version: string; configuration_digest: string };
+  measurement: {
+    numerator: string;
+    denominator: string;
+    unit: string;
+    range: { minimum: number; maximum: number };
+    direction: string;
+    aggregation: string;
+  };
+}
+
+export interface FrozenResourceAnalytics {
+  available: boolean;
+  statement?: string;
+  currency?: string;
+  actual_total?: BenchmarkMoney;
+  estimate_total?: BenchmarkMoney;
+  unknown_entry_ids?: string[];
+  cost_per_success?: BenchmarkMoney | null;
+  unconditional_successes?: number;
+}
+
+/** The frozen snapshot the report route serves once one exists. */
+export interface FrozenRunReport {
+  engine: "bmas-frozen-analysis";
+  engine_version: string;
+  snapshot_id: string;
+  replay_verified: boolean;
+  results_digest: string;
+  stored_results_digest: string;
+  metrics: ResolvedMetricDefinition[];
+  unresolved_metrics: Array<{ metric_id: string; reason: string }>;
+  analysis: {
+    estimand: string;
+    statistical_unit: string;
+    specification_digest: string;
+    replay_claim: string;
+  };
+  denominators: { planned: number; statement: string };
+  comparisons: FrozenComparison[];
+  arms: Record<string, FrozenArmSummary>;
+  resources: FrozenResourceAnalytics;
+  warnings: string[];
+  report: { metric_ids: string[]; results_digest: string; input_digest: string; [key: string]: unknown };
+}
+
+export type RunReportResponse = BenchmarkRunReport | FrozenRunReport;
+
+export function isFrozenReport(report: RunReportResponse | null | undefined): report is FrozenRunReport {
+  return Boolean(report && (report as FrozenRunReport).engine === "bmas-frozen-analysis");
 }
 
 export type RegressionOperator = "gte" | "lte" | "max_drop" | "max_increase_ratio";
@@ -302,7 +397,17 @@ export type RegressionAnalysisMethod =
   | "point_estimate"
   | "lower_confidence_bound"
   | "upper_confidence_bound"
-  | "holm_sign_test";
+  | "holm_sign_test"
+  | "frozen_non_inferiority"
+  | "frozen_superiority";
+export type RegressionDirection = "improvement" | "reduction";
+
+/** The frozen methods decide through the frozen analysis engine. */
+export const FROZEN_ANALYSIS_METHODS: readonly RegressionAnalysisMethod[] = [
+  "frozen_non_inferiority",
+  "frozen_superiority",
+];
+export const FROZEN_METRIC_PREFIX = "frozen.";
 
 export interface RegressionRule {
   id: string;
@@ -311,6 +416,55 @@ export interface RegressionRule {
   operator: RegressionOperator;
   value: number;
   analysis_method?: RegressionAnalysisMethod;
+  direction?: RegressionDirection | null;
+  practical_size?: number | null;
+  minimum_usable_cases?: number | null;
+  resample_count?: number | null;
+}
+
+/** The frozen interval, test, and decision behind one frozen comparison. */
+export interface FrozenInterval {
+  status: string;
+  low: number | null;
+  high: number | null;
+  method?: string;
+  unit?: string;
+  replicate_count?: number;
+  reason?: string;
+}
+
+export interface FrozenTest {
+  method: string;
+  mode: string | null;
+  p_value: number | null;
+  resamples: number;
+}
+
+export interface FrozenGateDecision {
+  status: "passed" | "failed" | "indeterminate";
+  reasons: string[];
+  bound?: number | null;
+  margin?: number | null;
+  rule?: string;
+  p_value_adjusted?: number | null;
+}
+
+export interface FrozenRuleBlock {
+  engine: string;
+  engine_version?: string;
+  reason?: string;
+  specification_digest?: string;
+  input_digest?: string;
+  results_digest?: string;
+  baseline_arm?: string;
+  candidate_arm?: string;
+  estimate?: number | null;
+  interval?: FrozenInterval;
+  test?: FrozenTest;
+  p_value_adjusted?: number | null;
+  gate?: FrozenGateDecision;
+  counts?: { paired_cases: number; missing_cases: number; removed_slots: number };
+  statistical_unit?: string;
 }
 
 export interface BenchmarkGateRuleResult extends RegressionRule {
@@ -318,16 +472,24 @@ export interface BenchmarkGateRuleResult extends RegressionRule {
   baseline_value: number | null;
   candidate_value: number | null;
   boundary: number | null;
-  status: "passed" | "failed" | "indeterminate";
+  status: "passed" | "failed" | "indeterminate" | "waived_display";
+  frozen?: FrozenRuleBlock;
 }
 
 export interface BenchmarkGateReport {
   status: "passed" | "failed" | "indeterminate";
   reason: string;
+  mode?: "preview" | "final";
   baseline_run_id: string;
   candidate_run_id: string;
   rules: BenchmarkGateRuleResult[];
+  engines?: string[];
   report_checksum: string;
+}
+
+export interface BenchmarkGatePreview {
+  report: BenchmarkGateReport;
+  saved: false;
 }
 
 export interface BenchmarkGateEvaluation {
@@ -456,7 +618,33 @@ export function formatMetric(value: number | null | undefined, unit: "percent" |
   return Math.round(value).toLocaleString();
 }
 
-export function reportMetricOptions(report: BenchmarkRunReport): Array<{ value: string; label: string }> {
+/**
+ * The frozen metric paths a baseline can gate: one per scorer across the
+ * compared arm, and one per scorer and arm slug.
+ */
+export function frozenMetricOptions(report: RunReportResponse): Array<{ value: string; label: string }> {
+  const scorers = new Map<string, string>();
+  const arms: Array<{ slug: string; name: string }> = [];
+  if (isFrozenReport(report)) {
+    for (const comparison of report.comparisons) scorers.set(comparison.metric, comparison.metric);
+    for (const slug of Object.keys(report.arms)) arms.push({ slug, name: slug });
+  } else {
+    for (const arm of report.arms) {
+      arms.push({ slug: arm.arm_slug, name: arm.arm_name });
+      for (const scorer of arm.scorers) scorers.set(scorer.scorer_id, scorer.scorer_name);
+    }
+  }
+  return [...scorers.entries()].flatMap(([scorerId, scorerName]) => [
+    { value: `${FROZEN_METRIC_PREFIX}${scorerId}`, label: `Frozen ${scorerName} across runs (first arm)` },
+    ...arms.map((arm) => ({
+      value: `${FROZEN_METRIC_PREFIX}${scorerId}.${arm.slug}`,
+      label: `Frozen ${scorerName} across runs (${arm.name})`,
+    })),
+  ]);
+}
+
+export function reportMetricOptions(report: RunReportResponse): Array<{ value: string; label: string }> {
+  if (isFrozenReport(report)) return frozenMetricOptions(report);
   const armOptions = report.arms.flatMap((arm) => [
     { value: `arm.${arm.arm_slug}.failure_rate`, label: `${arm.arm_name} failure rate` },
     { value: `arm.${arm.arm_slug}.cost_usd.mean`, label: `${arm.arm_name} mean cost` },
@@ -472,10 +660,15 @@ export function reportMetricOptions(report: BenchmarkRunReport): Array<{ value: 
       label: `${comparison.left_arm_name} to ${comparison.right_arm_name} ${scorer.scorer_id} paired difference`,
     })),
   );
-  return [...armOptions, ...comparisonOptions];
+  return [...armOptions, ...comparisonOptions, ...frozenMetricOptions(report)];
+}
+
+export function isFrozenMetric(metric: string): boolean {
+  return metric.startsWith(FROZEN_METRIC_PREFIX);
 }
 
 export function supportedAnalysisMethods(metric: string): RegressionAnalysisMethod[] {
+  if (isFrozenMetric(metric)) return [...FROZEN_ANALYSIS_METHODS];
   const methods: RegressionAnalysisMethod[] = ["point_estimate"];
   if (metric.includes(".score.") || metric.endsWith(".mean")) {
     methods.push("lower_confidence_bound", "upper_confidence_bound");

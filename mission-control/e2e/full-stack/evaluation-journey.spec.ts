@@ -178,6 +178,19 @@ test("the import, edit, publish, configure, execute, inspect, compare, export, a
   expect(previewReport.engines).toContain("bmas-frozen-analysis");
   await page.goto("/baselines");
   await expect(page.getByText(`Journey baseline ${suffix}`)).toBeVisible({ timeout: 30_000 });
+  await page.goto(`/baselines/${baselineId}`);
+  await expect(page.getByRole("cell", { name: /Frozen non-inferiority · margin \+20.0 pp · higher is better/ })).toBeVisible({ timeout: 30_000 });
+  const candidateBox = page.getByRole("combobox", { name: "Candidate run", exact: true });
+  await candidateBox.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(candidateBox).toHaveAttribute("aria-expanded", "true");
+  // The menu closes on any ancestor scroll, so a dispatched click
+  // commits the option without a scroll-into-view step.
+  await page.getByRole("option").filter({ hasNotText: "Select a run" }).first().dispatchEvent("click");
+  await expect(page.getByRole("button", { name: "Preview gate" })).toBeEnabled();
+  await page.getByRole("button", { name: "Preview gate" }).click();
+  const browserPreview = page.getByRole("region", { name: "Unsaved preview" });
+  await expect(browserPreview).toContainText("bmas-frozen-analysis", { timeout: 60_000 });
 
   // 12. Publish the metric definition every displayed metric resolves
   // to, freeze the analysis, serve the frozen report, export the
@@ -215,6 +228,19 @@ test("the import, edit, publish, configure, execute, inspect, compare, export, a
   expect((frozenReport.metrics as JsonList).map((metric) => metric.metric_id)).toEqual([metricId]);
   expect(frozenReport.unresolved_metrics).toEqual([]);
   expect((frozenReport.denominators as Json)?.planned).toBe(6);
+  await page.goto(`/runs/${runId}`);
+  const reportRegion = page.getByRole("region", { name: "Comparison report" });
+  await expect(reportRegion.locator(".frozen-report__badges").getByText("Frozen snapshot", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(reportRegion.getByText("Replay verified")).toBeVisible();
+  await expect(reportRegion.getByRole("link", { name: metricId })).toBeVisible();
+  const historyRegion = page.getByRole("region", { name: "Analysis history" });
+  await expect(historyRegion.getByText("1 stored snapshots")).toBeVisible({ timeout: 30_000 });
+  await expect(historyRegion.getByText("Current", { exact: true })).toBeVisible();
+  await page.goto("/metrics");
+  await expect(page.getByRole("link", { name: metricId })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("cell", { name: "Published" })).toBeVisible();
+  await page.goto(`/metrics/${metricId}`);
+  await expect(page.getByRole("button", { name: "Deprecate" })).toBeVisible({ timeout: 30_000 });
   const exported = await daemon(request, "post", `/api/evaluation/runs/${runId}/replay-bundles?policy=redacted`);
   expect(exported.member_count).toBeGreaterThan(10);
   const reimported = await daemon(request, "post", "/api/evaluation/replay-bundles/import", {

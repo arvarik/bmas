@@ -157,8 +157,16 @@ export function SelectMenu({
 
   useEffect(() => {
     if (!open || activeIndex < 0) return;
-    const item = listRef.current?.children[activeIndex] as HTMLElement | undefined;
-    item?.scrollIntoView({ block: "nearest" });
+    const list = listRef.current;
+    const item = list?.children[activeIndex] as HTMLElement | undefined;
+    if (!list || !item) return;
+    // Scroll only the list itself. Scrolling an ancestor would fire a
+    // window scroll event, which the outside-scroll guard reads as a
+    // reason to close the menu.
+    const top = item.offsetTop;
+    const bottom = top + item.offsetHeight;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
   }, [activeIndex, open]);
 
   const moveActive = useCallback((direction: 1 | -1) => {

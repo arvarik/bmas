@@ -65,6 +65,15 @@ preserves every attempt's output, and reports a retried-then-passed
 test as flaky through `flake-reporter.ts`, which fails the zero flake
 budget.
 
+The browser steps now cover the frozen report on the run page (engine,
+replay verification, resolved metric definitions, denominators, and
+the decision bars), the analysis history with its current and
+superseded snapshots, the frozen gate rule on the baseline detail page
+with its unsaved preview, and the metric definition lifecycle screen.
+The mocked `e2e/evaluation-screens.spec.ts` covers the same screens
+against recorded daemon responses, including the blocked frozen report
+before a metric definition publishes.
+
 ## The performance contract
 
 `daemon/tests/test_performance_contract.py` implements the published

@@ -5,6 +5,7 @@ import { BackLink } from "@/components/ui/BackLink";
 import Link from "next/link";
 import { Ban, Pause, Play, RefreshCw, RotateCcw } from "lucide-react";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { AnalysisHistoryPanel } from "@/components/features/AnalysisHistoryPanel";
 import { BenchmarkRunReportPanel } from "@/components/features/BenchmarkRunReportPanel";
 import { BenchmarkHumanReviewForm } from "@/components/features/BenchmarkHumanReviewForm";
 import { ResourceState } from "@/components/ui/ResourceState";
@@ -83,6 +84,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
         {(run.aggregates?.secondary_metrics ?? []).map((metric) => <div key={metric.scorer_id}><span>{metric.scorer_name}</span><strong>{metric.mean == null ? "Pending" : `${(metric.mean * 100).toFixed(1)}%`}</strong><small>{metric.count} scored</small></div>)}
       </section>
       <BenchmarkRunReportPanel run={run} />
+      <AnalysisHistoryPanel runId={run.id} />
       <section className="benchmark-catalog">
         <header className="dataset-catalog__toolbar"><div><h3>Attempts</h3><span>Retries remain visible for complete provenance.</span></div></header>
         <div className="benchmark-table-wrap"><table className="benchmark-table">

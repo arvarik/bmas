@@ -141,3 +141,20 @@ async def test_a_superseded_snapshot_never_serves(snapshot_db):  # noqa: F811
     assert current["id"] == replacement["snapshot_id"]
     served = await frozen_analysis.served_report(RUN_ID)
     assert served["snapshot_id"] == replacement["snapshot_id"]
+
+
+@pytest.mark.asyncio
+async def test_the_metric_listing_reports_every_lifecycle_state(snapshot_db):  # noqa: F811
+    from routes import evaluation as evaluation_routes
+
+    assert await evaluation_routes.list_metrics_endpoint() == {"metrics": []}
+    await _publish_metric()
+    listing = await evaluation_routes.list_metrics_endpoint()
+    (entry,) = listing["metrics"]
+    assert entry["metric_id"] == METRIC_ID
+    assert entry["lifecycle_state"] == "published"
+    assert entry["calibration_state"] == "current"
+    assert entry["record"]["scorer"]["scorer_id"] == "scorer-exact-match"
+    assert await evaluation_routes.list_metrics_endpoint(lifecycle_state="draft") == {
+        "metrics": [],
+    }

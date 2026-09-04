@@ -17,8 +17,7 @@ import {
   Server,
   ShieldCheck,
   Settings,
-  X,
-} from "lucide-react";
+  X, Ruler } from "lucide-react";
 
 export interface TaskSidebarProps {
   agentHealth: Record<string, { alive: boolean }>;
@@ -48,6 +47,7 @@ const GROUPS = [
       { href: "/baselines", label: "Baselines", icon: GitCompareArrows },
       { href: "/runtimes", label: "Runtimes", icon: ShieldCheck },
       { href: "/datasets", label: "Datasets", icon: Database },
+      { href: "/metrics", label: "Metrics", icon: Ruler },
     ],
   },
   {
