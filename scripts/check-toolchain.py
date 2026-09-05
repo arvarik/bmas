@@ -5,7 +5,9 @@ The script reads ``toolchain-pins.yaml``, resolves every component's
 exact version on this host, compares it with the pinned version line,
 writes the resolved versions as one JSON report, and fails before tests
 when a required component is absent or violates its pin. An optional
-component records "unresolved" when its binary is absent.
+component records "unresolved" when its binary is absent and
+"violates_pin" when it resolves outside its pin, and neither fails the
+consumer that does not require it.
 
 Run from the repository root:
 
@@ -103,6 +105,8 @@ def resolve(component: str, spec: dict) -> str | None:
         return _statistics_contract()
     if argv[0] == "playwright-browser":
         return _chromium_build()
+    if argv[0] == "node-package":
+        return _node_package_version(argv[1], argv[2])
     if argv[0] == "python3":
         argv[0] = sys.executable
     output = _run(argv)
@@ -110,6 +114,23 @@ def resolve(component: str, spec: dict) -> str | None:
         return None
     match = _VERSION.search(output)
     return match.group(1) if match else output
+
+
+def _node_package_version(directory: str, package: str) -> str | None:
+    """Read the installed version of one npm package from the checkout.
+
+    The resolver never runs ``npx``, because ``npx`` downloads the
+    newest release when the package is absent and reports that version
+    instead of the locked one.
+    """
+    manifest = ROOT / directory / "node_modules" / package / "package.json"
+    if not manifest.is_file():
+        return None
+    try:
+        version = json.loads(manifest.read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError):
+        return None
+    return str(version) if version else None
 
 
 def satisfies(resolved: str, pin: str | list[str]) -> bool:
@@ -149,9 +170,10 @@ def main() -> int:
             state = "pinned"
         else:
             state = "violates_pin"
-            failures.append(
-                f"{name}: resolved {resolved} violates the pin {pin}"
-            )
+            if required:
+                failures.append(
+                    f"{name}: resolved {resolved} violates the pin {pin}"
+                )
         report[name] = {"pin": pin, "resolved": resolved, "state": state,
                         "required": required}
     if args.report:

@@ -25,7 +25,7 @@ components:
   playwright:
     required: true
     pin: "1.62"
-    resolve: ["npx", "--prefix", "mission-control", "playwright", "--version"]
+    resolve: ["node-package", "mission-control", "@playwright/test"]
   chromium:
     required: true
     pin: "1234"

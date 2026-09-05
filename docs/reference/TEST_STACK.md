@@ -119,6 +119,7 @@ consumer requires is absent or when any resolved component violates
 its pin. The daemon partition requires the Python-side components and
 the Mission Control partition requires the browser-side components
 after the browser install.
+The Playwright pin resolves from the installed package in `mission-control/node_modules`, never through `npx`, because `npx` downloads the newest release when the package is absent and reports that version instead of the locked one. A component a partition does not require reports `unresolved` or `violates_pin` without failing that partition.
 
 ## The second implementation of the portable profiles
 
