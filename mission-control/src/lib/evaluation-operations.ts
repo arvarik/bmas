@@ -116,6 +116,9 @@ export interface RunStudy {
 export interface LabelItem {
   item_id: string;
   label: string;
+  input?: string;
+  expected_output?: string;
+  candidate?: string;
 }
 
 export interface AnchorSetRecord {

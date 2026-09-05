@@ -279,6 +279,87 @@ def calibration_view(
     }
 
 
+async def overview_inputs(run: dict[str, Any]) -> dict[str, Any]:
+    """Collect the stored inputs every overview view reads for one run.
+
+    The cost per arm sums the confirmed ledger charges of the arm's
+    attempts. The horizon per case comes from the dataset items. The
+    failure classifications and the score records come from the
+    evaluation storage per attempt, and the calibrations are the
+    stored judge calibration records.
+    """
+    import database as db
+    from benchmarks import evaluation_records, resource_ledger
+    from benchmarks.costs import money_to_json
+    from core.money import Money
+
+    attempts = list(run.get("attempts") or [])
+    arm_of_attempt = {
+        str(attempt["id"]): str(attempt.get("arm_id") or attempt.get("arm_name") or "")
+        for attempt in attempts
+    }
+    run_id = str(run["id"])
+    totals: dict[str, Money] = {}
+    for entry in await resource_ledger.list_entries(run_id):
+        actual = (entry.get("actual") or {}).get("value")
+        attempt_id = str((entry.get("references") or {}).get("attempt_id") or "")
+        arm = arm_of_attempt.get(attempt_id)
+        if not arm or not actual:
+            continue
+        money = Money(str(actual["currency"]), int(actual["amount_nanos"]))
+        totals[arm] = totals[arm].add(money) if arm in totals else money
+    cost_by_arm = {arm: money_to_json(total) for arm, total in totals.items()}
+
+    horizon_by_case: dict[str, str] = {}
+    version_id = str(run.get("dataset_version_id") or "")
+    if version_id:
+        offset = 0
+        while True:
+            page, total = await db.list_dataset_items(
+                version_id, limit=200, offset=offset,
+            )
+            for item in page:
+                metadata = item.get("metadata") or {}
+                classification = metadata.get("classification") or {}
+                horizon = (
+                    classification.get("intrinsic_horizon")
+                    or metadata.get("intrinsic_horizon")
+                )
+                if horizon:
+                    horizon_by_case[str(item.get("id"))] = str(horizon)
+                    horizon_by_case[str(item.get("item_key") or item.get("id"))] = str(horizon)
+            offset += len(page)
+            if not page or offset >= int(total):
+                break
+
+    classifications: list[dict[str, Any]] = []
+    trajectory_results: list[dict[str, Any]] = []
+    for attempt in attempts:
+        attempt_id = str(attempt["id"])
+        for stored in await evaluation_records.list_records_for(
+            "failure-classification-record", "attempt_id", attempt_id,
+        ):
+            classifications.append({"attempt_id": attempt_id, **stored["record"]})
+        for stored in await evaluation_records.list_records_for(
+            "score-record", "attempt_id", attempt_id,
+        ):
+            trajectory_results.append({"attempt_id": attempt_id, **stored["record"]})
+    calibrations = [
+        stored["record"]
+        for stored in await evaluation_records.list_records(
+            "judge-calibration-record",
+        )
+    ]
+    return {
+        "cost_by_arm": cost_by_arm or None,
+        "horizon_by_case": horizon_by_case,
+        "classifications": classifications,
+        "trajectory_results": trajectory_results,
+        "calibrations": calibrations,
+        "panels": [],
+    }
+
+
 def overview(
     report: dict[str, Any],
     *,

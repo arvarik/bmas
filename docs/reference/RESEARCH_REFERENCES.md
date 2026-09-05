@@ -700,6 +700,24 @@ Canonical methods the analysis engine implements:
   `mission-control/src/lib/study-presentation.ts`, and the admission
   verdict read route in `daemon/src/routes/evaluation.py`.
 
+### Real-model repairs
+
+- [Gemini on LiteLLM: reasoning_effort and thinking
+  levels](https://docs.litellm.ai/docs/providers/gemini) and [Day 0
+  support: Gemini 3 Flash on
+  LiteLLM](https://docs.litellm.ai/blog/gemini_3_flash) — The gateway
+  maps `reasoning_effort` to the Gemini thinking level or budget,
+  reasoning tokens count inside `max_tokens`, and Gemini 3 keeps the
+  provider default temperature. Used for: `daemon/src/core/model_parameters.py`
+  and every control-plane call in `daemon/src/core/variants/traditional.py`,
+  `daemon/src/core/triage.py`, and `daemon/src/benchmarks/model_backed.py`.
+- [Anthropic effort parameter on
+  LiteLLM](https://docs.litellm.ai/docs/providers/anthropic_effort) — The
+  same `reasoning_effort` maps to Anthropic adaptive thinking and the
+  output effort on Claude 4.6 and later, and a plain model never gains
+  a reasoning pass unless the operator asks. Used for: the
+  `provider_default` and `off` settings of `ModelConfig.reasoning`.
+
 ## Update rule
 
 Add one entry when a new source shapes a design decision or an

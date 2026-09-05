@@ -51,15 +51,22 @@ export function defaultAnchorSetForm(): AnchorSetForm {
   };
 }
 
-/** One "item_id, label" or "item_id<TAB>label" line per anchor item. */
+/**
+ * One anchor item per line: "item_id, label" or "item_id, label, candidate".
+ * A third column pins the candidate answer the label judges; the input
+ * and the reference answer resolve from the dataset item with the same id.
+ */
 export function parseLabelItems(text: string): LabelItem[] {
   const items: LabelItem[] = [];
   for (const line of text.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    const match = /^([^,\t]+)[,\t]\s*(.+)$/.exec(trimmed);
-    if (!match) continue;
-    items.push({ item_id: match[1].trim(), label: match[2].trim() });
+    const parts = trimmed.split(/[,\t]/).map((part) => part.trim());
+    if (parts.length < 2 || !parts[0] || !parts[1]) continue;
+    const item: LabelItem = { item_id: parts[0], label: parts[1] };
+    const candidate = parts.slice(2).join(", ").trim();
+    if (candidate) item.candidate = candidate;
+    items.push(item);
   }
   return items;
 }

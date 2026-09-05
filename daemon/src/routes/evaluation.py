@@ -1220,8 +1220,10 @@ async def analysis_overview_endpoint(run_id: str, snapshot_id: str):
         run, specification, planned_repetitions=1,
     )
     report = frozen_analysis.compute_report(specification, frozen_input)
+    inputs = await analytics_views.overview_inputs(run)
     return analytics_views.overview(
         report, frozen_input=frozen_input, replay=record.get("replay"),
+        **inputs,
     )
 
 

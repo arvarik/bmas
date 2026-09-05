@@ -82,6 +82,18 @@
           "items": {
             "additionalProperties": false,
             "properties": {
+              "candidate": {
+                "maxLength": 20000,
+                "type": "string"
+              },
+              "expected_output": {
+                "maxLength": 20000,
+                "type": "string"
+              },
+              "input": {
+                "maxLength": 20000,
+                "type": "string"
+              },
               "item_id": {
                 "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,199}$",
                 "type": "string"

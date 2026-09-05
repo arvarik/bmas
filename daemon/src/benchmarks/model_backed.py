@@ -20,6 +20,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from benchmarks.provenance import canonical_json, content_checksum
+from core.model_parameters import (
+    ModelProfile,
+    completion_parameters,
+    profile_for_alias,
+)
 
 JUDGE_PROMPT_VERSION = "1"
 SIMULATOR_PROMPT_VERSION = "1"
@@ -115,6 +120,7 @@ class ModelTransport:
         seed: int = 0,
         max_tokens: int = 1024,
         client: Any = None,
+        profile: ModelProfile | None = None,
     ) -> None:
         self.settings = settings
         self.model = str(model)
@@ -123,6 +129,13 @@ class ModelTransport:
         self.max_tokens = int(max_tokens)
         self._client = client
         self.calls = 0
+        self.profile = profile or profile_for_alias(self.model)
+        # The provider profile sizes the completion budget for reasoning
+        # tokens and drops the parameters the provider rejects.
+        self.parameters = completion_parameters(
+            self.profile, output_tokens=self.max_tokens,
+            temperature=self.temperature, reasoning="low", json_object=True,
+        )
 
     def pins(self) -> dict[str, Any]:
         return {
@@ -131,6 +144,9 @@ class ModelTransport:
             "seed": self.seed,
             "max_tokens": self.max_tokens,
             "gateway": self.settings.base_url,
+            "provider": self.profile.provider,
+            "provider_model": self.profile.model,
+            "effective_parameters": dict(self.parameters),
         }
 
     def _post(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -152,10 +168,8 @@ class ModelTransport:
         body = {
             "model": self.model,
             "messages": messages,
-            "temperature": self.temperature,
             "seed": self.seed,
-            "max_tokens": self.max_tokens,
-            "response_format": {"type": "json_object"},
+            **self.parameters,
         }
         self.calls += 1
         reply = self._post(body)

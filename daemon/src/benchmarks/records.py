@@ -188,6 +188,44 @@ async def preview_baseline(
         raise repository.BenchmarkConflict(str(error)) from error
 
 
+async def _assert_gate_calibration(
+    candidate_run_id: str, *, now: str | None = None,
+) -> None:
+    """Block a new terminal gate when a referenced metric's calibration lapsed.
+
+    The candidate run's current analysis snapshot names the metric
+    definitions the gate reads; an expired or failed calibration on
+    any of them rejects the gate instead of deciding on stale labels.
+    """
+    from datetime import UTC, datetime
+
+    from benchmarks import evaluation_records, frozen_analysis, metric_registry
+
+    snapshot = await frozen_analysis.current_snapshot(candidate_run_id)
+    if snapshot is None:
+        return
+    record = snapshot.get("record") or {}
+    metric_ids = list(
+        record.get("metric_ids")
+        or (record.get("estimand") or {}).get("metric_ids")
+        or [],
+    )
+    definitions = []
+    for metric_id in metric_ids:
+        stored = await evaluation_records.get_record(
+            "metric-definition", str(metric_id),
+        )
+        if stored is not None:
+            definitions.append(stored["record"])
+    if not definitions:
+        return
+    moment = now or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        metric_registry.assert_terminal_gate_allowed(definitions, now=moment)
+    except metric_registry.MetricRegistryError as error:
+        raise repository.BenchmarkConflict(str(error)) from error
+
+
 async def evaluate_baseline(
     baseline_id: str,
     candidate_run_id: str,
@@ -208,6 +246,7 @@ async def evaluate_baseline(
             "A final gate accepts only a terminal candidate; preview an "
             "active run instead"
         )
+    await _assert_gate_calibration(candidate_run_id)
     async with db._connect() as connection:  # noqa: SLF001
         rows = await connection.execute_fetchall(
             "SELECT * FROM benchmark_gate_evaluations "

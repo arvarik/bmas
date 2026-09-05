@@ -131,13 +131,13 @@ export function JudgesPageClient() {
             <label>Prompt digest<input required value={form.prompt_digest} onChange={(event) => update({ prompt_digest: event.target.value })} pattern="[a-f0-9]{64}" /></label>
             <label>Scorer<Select required value={form.scorer_id} onChange={(event) => update({ scorer_id: event.target.value })}><option value="">Select a scorer</option>{scorers.map((scorer) => <option key={scorer.id} value={scorer.id}>{scorer.name ?? scorer.id}</option>)}</Select></label>
             <label>Scorer version<input required value={form.scorer_version} onChange={(event) => update({ scorer_version: event.target.value })} /></label>
-            <label>Label set dataset<input required value={form.dataset_id} onChange={(event) => update({ dataset_id: event.target.value })} /></label>
-            <label>Label set version<input required value={form.dataset_version} onChange={(event) => update({ dataset_version: event.target.value })} /></label>
+            <label>Label set dataset (dataset id or version id)<input required value={form.dataset_id} onChange={(event) => update({ dataset_id: event.target.value })} /></label>
+            <label>Label set version (version id or number)<input required value={form.dataset_version} onChange={(event) => update({ dataset_version: event.target.value })} /></label>
             <label>Candidate models (comma separated)<input value={form.candidate_models} onChange={(event) => update({ candidate_models: event.target.value })} /></label>
             <label>Interval (days)<input type="number" min={1} max={365} value={form.interval_days} onChange={(event) => update({ interval_days: Number(event.target.value) })} /></label>
             <label>Agreement threshold<input type="number" min={0} max={1} step={0.01} value={form.threshold} onChange={(event) => update({ threshold: Number(event.target.value) })} /></label>
             <label>Drift tolerance<input type="number" min={0} max={1} step={0.01} value={form.drift_tolerance} onChange={(event) => update({ drift_tolerance: Number(event.target.value) })} /></label>
-            <label className="study-form__wide">Anchor items (one per line as item id, label)<textarea rows={5} value={form.items} onChange={(event) => update({ items: event.target.value })} placeholder={"item-1, pass\nitem-2, fail"} /></label>
+            <label className="study-form__wide">Anchor items (one per line as item id, label, optional candidate answer)<textarea rows={5} value={form.items} onChange={(event) => update({ items: event.target.value })} placeholder={"item-1, pass, 42\nitem-2, fail, 4"} /></label>
           </div>
           {errors.length ? <ul className="benchmark-report__warnings metric-form__errors" aria-label="Anchor set problems">{errors.map((entry) => <li key={entry}>{entry}</li>)}</ul> : null}
           <div className="benchmark-form__actions"><ActionButton type="submit" loading={pending === "register"} disabled={errors.length > 0}>Register anchor set</ActionButton></div>
