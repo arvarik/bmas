@@ -141,6 +141,50 @@
       "pattern": "^[a-f0-9]{64}$",
       "type": "string"
     },
+    "redaction_report": {
+      "additionalProperties": false,
+      "properties": {
+        "detectors": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "policy_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "prohibited": {
+          "items": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "secret": {
+          "items": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sensitive": {
+          "items": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "secret",
+        "sensitive",
+        "prohibited",
+        "detectors",
+        "policy_digest"
+      ],
+      "type": "object"
+    },
     "resources": {
       "additionalProperties": false,
       "properties": {

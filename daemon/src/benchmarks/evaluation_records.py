@@ -479,6 +479,36 @@ async def list_records(kind: str) -> list[dict[str, Any]]:
     ]
 
 
+_FILTER_COLUMNS = frozenset({
+    "run_id", "attempt_id", "dataset_id", "test_revision_id", "run_plan_id",
+})
+
+
+async def list_records_for(
+    kind: str, column: str, value: str,
+) -> list[dict[str, Any]]:
+    """Read every record of one kind whose link column matches one value.
+
+    The column name comes from the fixed set of link columns, never
+    from a caller string, so the query stays parameterized.
+    """
+    tables = {table_kind: table for table, table_kind in EXPANSION_TABLES}
+    table = tables.get(kind)
+    if table is None:
+        raise EvaluationStorageError(f"Unknown record kind: {kind}")
+    if column not in _FILTER_COLUMNS:
+        raise EvaluationStorageError(f"Unknown link column: {column}")
+    async with db._connect() as connection:  # noqa: SLF001
+        rows = await connection.execute_fetchall(
+            f"SELECT * FROM {table} WHERE {column} = ? "
+            "ORDER BY created_at, id",
+            (value,),
+        )
+    return [
+        {**dict(row), "record": json.loads(row["record"])} for row in rows
+    ]
+
+
 async def get_record(kind: str, record_id: str) -> dict[str, Any] | None:
     """Read one stored evaluation record with its decoded content."""
     configuration = _STORABLE_KINDS.get(kind)
@@ -565,6 +595,50 @@ async def transition_metric_lifecycle(
             raise EvaluationStorageError(
                 f"The metric definition {record_id} does not exist"
             )
+
+
+async def revise_metric_definition(
+    record_id: str, record: dict[str, Any],
+) -> dict[str, Any]:
+    """Replace the content of one draft metric definition in place.
+
+    Only a draft revises. The revised record keeps its metric id and
+    its draft state, revalidates against the contract, and stores a
+    new checksum. A validated, published, deprecated, or withdrawn
+    definition rejects the revision, because those states change only
+    through the declared lifecycle transitions.
+    """
+    summary = validate_record(record)
+    if summary["schema_id"] != "metric-definition":
+        raise EvaluationStorageError(
+            "Only a metric-definition record revises here"
+        )
+    if str(record.get("metric_id")) != record_id:
+        raise EvaluationStorageError(
+            "The revised record must keep its metric id"
+        )
+    if record.get("lifecycle_state") != "draft":
+        raise EvaluationStorageError(
+            "A revision keeps the draft lifecycle state"
+        )
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "UPDATE metric_definitions SET calibration_state = ?, "
+            "record = ?, record_checksum = ? "
+            "WHERE id = ? AND lifecycle_state = 'draft'",
+            (
+                str(record["calibration"]["state"]),
+                canonical_record_json(record),
+                summary["record_checksum"],
+                record_id,
+            ),
+        )
+        await connection.commit()
+        if cursor.rowcount != 1:
+            raise EvaluationStorageError(
+                f"The metric definition {record_id} is not a draft"
+            )
+    return {"record_id": record_id, "record_checksum": summary["record_checksum"]}
 
 
 async def save_gate_display_exception(

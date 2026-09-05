@@ -74,6 +74,23 @@ The mocked `e2e/evaluation-screens.spec.ts` covers the same screens
 against recorded daemon responses, including the blocked frozen report
 before a metric definition publishes.
 
+The journey then exercises the operations screens in the browser:
+it scores one attempt through the evaluation path and opens its score
+record with the boundary, the runtime digest, and the terminal class,
+opens the evidence viewer and reads the redacted path with its data
+class and policy digest, freezes a second analysis snapshot, records
+one reconciliation and one late charge in the resource ledger, exports
+and reimports the replay bundle with an approval, revises a draft
+metric definition, reads the dataset version record, registers a
+judge anchor set and calibrates it now, and authors, previews, and
+publishes a study before it reads the admission verdict of a run on
+the study's revision. The fake provider answers the judge with prose,
+so every anchor item abstains and the calibration records a failed
+state with full abstention. The stack passes `BMAS_LITELLM_URL` to
+the daemon so the model-backed judge reaches the fake provider. The
+mocked `e2e/evaluation-operations.spec.ts` covers the same screens
+against recorded daemon responses.
+
 ## The performance contract
 
 `daemon/tests/test_performance_contract.py` implements the published
@@ -102,6 +119,7 @@ consumer requires is absent or when any resolved component violates
 its pin. The daemon partition requires the Python-side components and
 the Mission Control partition requires the browser-side components
 after the browser install.
+The Playwright pin resolves from the installed package in `mission-control/node_modules`, never through `npx`, because `npx` downloads the newest release when the package is absent and reports that version instead of the locked one. A component a partition does not require reports `unresolved` or `violates_pin` without failing that partition.
 
 ## The second implementation of the portable profiles
 

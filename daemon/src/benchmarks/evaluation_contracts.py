@@ -43,6 +43,8 @@ _COUNT = {"type": "integer", "minimum": 0}
 _OPEN_MAP = {"type": "object"}
 _STRING_LIST = {"type": "array", "items": _NAME}
 _IDENTIFIER_LIST = {"type": "array", "items": _IDENTIFIER}
+# A redacted evidence path such as ``trace[0].api_key``.
+_PATH_LIST = {"type": "array", "items": {"type": "string", "maxLength": 500}}
 
 # The one canonical monetary shape. Every monetary configuration and
 # result field references this definition.
@@ -656,6 +658,24 @@ RECORD_SCHEMAS: dict[str, dict[str, Any]] = {
                 "additionalProperties": _NAME,
             },
             "redaction_policy_digest": _DIGEST,
+            "redaction_report": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "secret", "sensitive", "prohibited", "detectors",
+                    "policy_digest",
+                ],
+                "properties": {
+                    "secret": _PATH_LIST,
+                    "sensitive": _PATH_LIST,
+                    "prohibited": _PATH_LIST,
+                    "detectors": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                    },
+                    "policy_digest": _DIGEST,
+                },
+            },
             "ledger_references": {
                 "type": "object",
                 "additionalProperties": False,

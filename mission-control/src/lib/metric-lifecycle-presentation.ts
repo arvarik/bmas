@@ -230,3 +230,35 @@ export function advanceRequest(
   if (target === "deprecated" || target === "withdrawn") body.reason = options.reason ?? "";
   return body;
 }
+
+/** The form that reproduces one stored definition, for a draft revision. */
+export function formFromRecord(record: StoredMetricDefinition["record"]): MetricDefinitionForm {
+  const calibration = (record.calibration ?? {}) as Record<string, unknown>;
+  const text = (value: unknown, fallback = ""): string => (typeof value === "string" ? value : fallback);
+  return {
+    metric_id: record.metric_id,
+    scorer_id: record.scorer.scorer_id,
+    scorer_version: record.scorer.version,
+    configuration_digest: record.scorer.configuration_digest,
+    numerator: record.measurement.numerator,
+    denominator: record.measurement.denominator,
+    unit: record.measurement.unit,
+    range_minimum: record.measurement.range.minimum,
+    range_maximum: record.measurement.range.maximum,
+    direction: record.measurement.direction,
+    aggregation: record.measurement.aggregation,
+    population_target: record.population.target,
+    inclusion_rule: record.population.inclusion_rule,
+    label_source: record.labels.source,
+    evidence_contract: record.labels.evidence_contract.join(", "),
+    missingness: record.missingness,
+    exclusions: record.exclusions.join(", "),
+    uncertainty_method: record.uncertainty_method,
+    calibration_method: text(calibration.method, "deterministic"),
+    calibration_version: text(calibration.version, "1"),
+    calibration_dataset: text(calibration.dataset, "calibration-fixtures"),
+    calibrated_at: text(calibration.calibrated_at),
+    expires_at: text(calibration.expires_at),
+    drift_policy: text(calibration.drift_policy, "recalibrate-on-implementation-change"),
+  };
+}

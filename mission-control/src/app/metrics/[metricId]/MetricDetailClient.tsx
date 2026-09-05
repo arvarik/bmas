@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, RefreshCw } from "lucide-react";
+import { ArrowRight, Pencil, RefreshCw, X } from "lucide-react";
+import { MetricDefinitionFields, type ScorerOption } from "@/components/features/MetricDefinitionFields";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { BackLink } from "@/components/ui/BackLink";
 import { ResourceState } from "@/components/ui/ResourceState";
@@ -9,11 +10,15 @@ import { useToast } from "@/hooks/useToast";
 import { statusLabel } from "@/lib/benchmarks";
 import {
   advanceRequest,
+  buildMetricDefinition,
   calibrationSummary,
+  formFromRecord,
   lifecycleLabel,
   lifecycleSteps,
+  metricFormErrors,
   nextTransitions,
   type LifecycleState,
+  type MetricDefinitionForm,
   type StoredMetricDefinition,
 } from "@/lib/metric-lifecycle-presentation";
 
@@ -36,6 +41,10 @@ export function MetricDetailClient({ metricId }: { metricId: string }) {
   const [pending, setPending] = useState<LifecycleState | null>(null);
   const [evidence, setEvidence] = useState({ schema: true, fixture: true, evidence: true });
   const [reason, setReason] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<MetricDefinitionForm | null>(null);
+  const [scorers, setScorers] = useState<ScorerOption[]>([]);
+  const [revising, setRevising] = useState(false);
   const load = useCallback(async () => {
     try {
       const response = await fetch(`/api/evaluation/metrics/${encodeURIComponent(metricId)}`, { cache: "no-store" });
@@ -48,7 +57,44 @@ export function MetricDetailClient({ metricId }: { metricId: string }) {
     }
   }, [metricId]);
   useEffect(() => { void Promise.resolve().then(load); }, [load]);
+  useEffect(() => {
+    let active = true;
+    void fetch("/api/benchmarks/scorers", { cache: "no-store" }).then(async (response) => {
+      if (!active || !response.ok) return;
+      const data = await response.json() as { scorers?: ScorerOption[] };
+      if (active) setScorers(data.scorers ?? []);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
   const state = stored?.lifecycle_state ?? "draft";
+  const formErrors = useMemo(() => (form ? metricFormErrors(form) : []), [form]);
+  const startEditing = () => {
+    if (!stored) return;
+    setForm(formFromRecord(stored.record));
+    setEditing(true);
+  };
+  const revise = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!form || formErrors.length) return;
+    setRevising(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/evaluation/metrics/${encodeURIComponent(metricId)}/revise`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ record: buildMetricDefinition(form) }),
+      });
+      const data = await response.json() as { record_checksum?: string; error?: string; detail?: string };
+      if (!response.ok) throw new Error(data.error ?? data.detail ?? "The draft could not revise");
+      toast({ type: "success", message: `Draft ${metricId} revised; checksum ${(data.record_checksum ?? "").slice(0, 12)}.` });
+      setEditing(false);
+      await load();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "The draft could not revise");
+    } finally {
+      setRevising(false);
+    }
+  };
   const steps = useMemo(() => lifecycleSteps(state), [state]);
   const transitions = useMemo(() => nextTransitions(state), [state]);
   const calibration = useMemo(() => stored ? calibrationSummary(stored.record) : null, [stored]);
@@ -79,9 +125,20 @@ export function MetricDetailClient({ metricId }: { metricId: string }) {
       <BackLink href="/metrics" label="Metric definitions" />
       <header className="page-header">
         <div><p className="page-eyebrow">Metric definition</p><h2>{stored.metric_id}</h2><p>{record.measurement.numerator} over {record.measurement.denominator} ({record.measurement.unit}), {statusLabel(record.measurement.direction)}.</p></div>
-        <ActionButton variant="secondary" onClick={() => void load()}><RefreshCw size={15} /> Refresh</ActionButton>
+        <div className="page-header__actions">
+          <ActionButton variant="secondary" onClick={() => void load()}><RefreshCw size={15} /> Refresh</ActionButton>
+          {state === "draft" ? <ActionButton variant={editing ? "secondary" : "primary"} onClick={() => (editing ? setEditing(false) : startEditing())}>{editing ? <X size={15} /> : <Pencil size={15} />} {editing ? "Close editor" : "Edit draft"}</ActionButton> : null}
+        </div>
       </header>
       {error ? <p className="benchmark-message benchmark-message--error" role="alert">{error}</p> : null}
+      {editing && form ? (
+        <form className="benchmark-form metric-form" onSubmit={revise} aria-labelledby="metric-revise-title">
+          <header><div><h3 id="metric-revise-title">Revise the draft</h3><p>A draft revises in place and keeps its id. Validation, publication, and retirement stay lifecycle transitions.</p></div></header>
+          <MetricDefinitionFields form={form} update={(patch: Partial<MetricDefinitionForm>) => setForm((current) => (current ? { ...current, ...patch } : current))} scorers={scorers} lockIdentity />
+          {formErrors.length ? <ul className="benchmark-report__warnings metric-form__errors" aria-label="Definition problems">{formErrors.map((entry) => <li key={entry}>{entry}</li>)}</ul> : null}
+          <div className="benchmark-form__actions"><ActionButton type="submit" loading={revising} disabled={formErrors.length > 0}>Save draft revision</ActionButton></div>
+        </form>
+      ) : null}
       <section className="benchmark-catalog metric-lifecycle" aria-labelledby="metric-lifecycle-title">
         <header className="dataset-catalog__toolbar"><div><h3 id="metric-lifecycle-title">Lifecycle</h3><span>Draft, validated, published, then deprecated or withdrawn. Each step is one immutable transition.</span></div></header>
         <ol className="metric-lifecycle__steps" aria-label="Lifecycle steps">

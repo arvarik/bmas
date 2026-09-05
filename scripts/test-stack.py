@@ -292,6 +292,9 @@ def start(env_file: Path, *, keep_on_failure: bool) -> dict:
             "BMAS_DB_PATH": state["database_path"],
             "REDIS_PASSWORD": credentials["redis_password"],
             "LITELLM_MASTER_KEY": credentials["provider_key"],
+            # The model-backed judge reads the gateway URL from the
+            # environment, so calibration reaches the fake provider.
+            "BMAS_LITELLM_URL": f"{state['urls']['fake_provider']}/v1",
             "FAKE_PROVIDER_KEY": credentials["provider_key"],
             "BMAS_NODE_KEY": credentials["node_key"],
             "BMAS_API_KEY": credentials["api_key"],

@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { GitCompare, RefreshCw } from "lucide-react";
+import { GitCompare, RefreshCw, Snowflake, X } from "lucide-react";
 import { ActionButton } from "@/components/ui/ActionButton";
+import { FreezeAnalysisForm } from "@/components/features/FreezeAnalysisForm";
 import { ResourceState } from "@/components/ui/ResourceState";
+import type { BenchmarkRun } from "@/lib/benchmarks";
 import {
   sideBySide,
   snapshotChain,
@@ -36,10 +38,11 @@ async function fetchOverview(runId: string, snapshotId: string): Promise<Analysi
  * is current, which supersession replaced which, and a side-by-side
  * comparison of a superseded snapshot with its successor.
  */
-export function AnalysisHistoryPanel({ runId }: { runId: string }) {
+export function AnalysisHistoryPanel({ runId, run }: { runId: string; run?: BenchmarkRun }) {
   const [snapshots, setSnapshots] = useState<AnalysisSnapshotSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [comparison, setComparison] = useState<ComparisonState | null>(null);
+  const [freezing, setFreezing] = useState(false);
   const load = useCallback(async () => {
     try {
       const response = await fetch(`/api/evaluation/runs/${encodeURIComponent(runId)}/analyses`, { cache: "no-store" });
@@ -71,10 +74,14 @@ export function AnalysisHistoryPanel({ runId }: { runId: string }) {
           <h3 id="analysis-history-title">Analysis history</h3>
           <span>{snapshots ? `${snapshots.length} stored snapshots` : "Loading"}{chain.current ? ` · current ${chain.current.id.slice(-12)}` : ""}</span>
         </div>
-        <ActionButton variant="secondary" onClick={() => void load()}><RefreshCw size={15} /> Refresh</ActionButton>
+        <div className="page-header__actions">
+          <ActionButton variant="secondary" onClick={() => void load()}><RefreshCw size={15} /> Refresh</ActionButton>
+          {run ? <ActionButton variant={freezing ? "secondary" : "primary"} onClick={() => setFreezing((value) => !value)}>{freezing ? <X size={15} /> : <Snowflake size={15} />} {freezing ? "Close" : "Freeze analysis"}</ActionButton> : null}
+        </div>
       </header>
+      {run && freezing ? <FreezeAnalysisForm run={run} onFrozen={() => { setFreezing(false); void load(); }} /> : null}
       {error ? <ResourceState kind="unavailable" title="Analysis history unavailable" description={error} onRetry={load} /> : null}
-      {snapshots && snapshots.length === 0 ? <ResourceState kind="empty" title="No frozen analysis" description="Freeze an analysis through the evaluation API to record the first snapshot." /> : null}
+      {snapshots && snapshots.length === 0 ? <ResourceState kind="empty" title="No frozen analysis" description={run ? "Freeze an analysis to record the first snapshot." : "Freeze an analysis through the evaluation API to record the first snapshot."} /> : null}
       {chain.entries.length ? (
         <div className="benchmark-table-wrap">
           <table className="benchmark-table analysis-history__table">

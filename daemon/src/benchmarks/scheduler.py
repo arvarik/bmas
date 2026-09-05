@@ -40,9 +40,14 @@ async def _admit(attempt: dict[str, Any]) -> None:
     The admission module commits the intent, reserves the maximum task
     cost, dispatches through the shared ledger, stores the raw
     admission response, and links the task under the attempt fence. A
-    blocked budget maps to a retryable capacity rejection.
+    blocked budget maps to a retryable capacity rejection. A study
+    whose conditions block admission maps to a configuration failure
+    that names every blocking condition, because a retry never
+    changes the verdict.
     """
-    from benchmarks import admission
+    from pydantic import ValidationError
+
+    from benchmarks import admission, study_authoring
 
     try:
         await admission.admit_attempt(attempt)
@@ -51,6 +56,24 @@ async def _admit(attempt: dict[str, Any]) -> None:
             status_code=429,
             detail={
                 "code": "benchmark_budget_blocked",
+                "message": str(error),
+            },
+        ) from error
+    except study_authoring.StudyAdmissionError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "benchmark_study_blocked",
+                "message": str(error),
+            },
+        ) from error
+    except ValidationError as error:
+        # The arm's submission overrides violate the dispatch contract;
+        # a retry never changes the outcome.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "benchmark_configuration_invalid",
                 "message": str(error),
             },
         ) from error

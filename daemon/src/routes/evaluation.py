@@ -463,6 +463,18 @@ async def list_metrics_endpoint(lifecycle_state: str | None = None):
     return {"metrics": definitions}
 
 
+@router.post("/metrics/{metric_id}/revise")
+async def revise_metric_endpoint(
+    request: Request, metric_id: str, payload: MetricTransitionInput,
+):
+    """Replace the content of one draft metric definition."""
+    require_api_key(request, BMAS_API_KEY)
+    return await _run_command(
+        "revise_metric_definition",
+        {"record_id": metric_id, "record": payload.record},
+    )
+
+
 @router.get("/metrics/{metric_id}")
 async def get_metric_endpoint(metric_id: str):
     stored = await evaluation_records.get_record(
@@ -570,6 +582,56 @@ async def read_attempt_evidence_endpoint(attempt_id: str):
     if result is None:
         raise HTTPException(status_code=404, detail="Attempt not found")
     return result
+
+
+@router.get("/attempts/{attempt_id}/score-records")
+async def list_attempt_score_records_endpoint(attempt_id: str):
+    """List every stored score record of one attempt, oldest first."""
+    records = await evaluation_records.list_records_for(
+        "score-record", "attempt_id", attempt_id,
+    )
+    return {"attempt_id": attempt_id, "scores": records}
+
+
+@router.get("/evidence/sections/{content_digest}")
+async def read_evidence_section_endpoint(content_digest: str):
+    """Read one persisted evidence section by its content digest."""
+    from benchmarks import evidence_capture
+    from core.asset_store import ArtifactCommitError
+
+    try:
+        return evidence_capture.read_evidence_section(content_digest)
+    except ArtifactCommitError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get("/runs/{run_id}/study")
+async def read_run_study_endpoint(run_id: str):
+    """Report the study of one run with its admission verdict.
+
+    A run without a study plan reports null fields, so the screen
+    tells the difference between "no study" and "blocked study".
+    """
+    from benchmarks import study_authoring
+
+    if await repository.get_run(run_id) is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    result = await study_authoring.study_admission_verdict(run_id)
+    if result is None:
+        return {"run_id": run_id, "study_id": None, "plan_id": None,
+                "study": None, "verdict": None}
+    return {"run_id": run_id, **result}
+
+
+@router.get("/runs/{run_id}/reconciliations")
+async def list_reconciliations_endpoint(run_id: str):
+    """List every cost settlement version of one run, oldest first."""
+    if await repository.get_run(run_id) is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    versions = await evaluation_records.list_records_for(
+        "cost-settlement-version", "run_id", run_id,
+    )
+    return {"run_id": run_id, "reconciliations": versions}
 
 
 # ── Evidence capture, scoring, and environment drivers ───────────────
@@ -1226,6 +1288,32 @@ class BundleImportInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     archive_base64: str = Field(min_length=1, max_length=70_000_000)
     approval: dict[str, str] | None = None
+
+
+@router.get("/studies")
+async def list_studies_endpoint():
+    """List every published study with its plan and revision links."""
+    rows = await evaluation_records.list_records("study")
+    return {"studies": [
+        {
+            "study_id": row["id"],
+            "study_type": row["study_type"],
+            "run_plan_id": row["run_plan_id"],
+            "test_revision_id": row["test_revision_id"],
+            "record_checksum": row["record_checksum"],
+            "created_at": row["created_at"],
+            "record": row["record"],
+        }
+        for row in rows
+    ]}
+
+
+@router.get("/studies/{study_id}")
+async def read_study_endpoint(study_id: str):
+    stored = await evaluation_records.get_record("study", study_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+    return {"study_id": stored["id"], **stored}
 
 
 @router.post("/studies", status_code=201)

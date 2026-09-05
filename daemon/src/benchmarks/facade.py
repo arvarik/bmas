@@ -96,6 +96,7 @@ _CURRENT_COMMANDS = {
     "publish_interaction_spec",
     "register_metric_definition",
     "transition_metric_lifecycle",
+    "revise_metric_definition",
     "record_asset_ingestion",
     "record_contamination_rights",
     "transition_asset_state",
@@ -294,6 +295,12 @@ async def _transition_metric_lifecycle(payload: dict[str, Any]) -> Any:
     return {"record_id": payload["record_id"]}
 
 
+async def _revise_metric_definition(payload: dict[str, Any]) -> Any:
+    return await evaluation_records.revise_metric_definition(
+        payload["record_id"], payload["record"],
+    )
+
+
 async def _record_asset_ingestion(payload: dict[str, Any]) -> Any:
     return await evaluation_records.save_record(payload["record"])
 
@@ -449,6 +456,7 @@ _HANDLERS = {
     "publish_interaction_spec": _publish_interaction_spec,
     "register_metric_definition": _register_metric_definition,
     "transition_metric_lifecycle": _transition_metric_lifecycle,
+    "revise_metric_definition": _revise_metric_definition,
     "record_asset_ingestion": _record_asset_ingestion,
     "record_contamination_rights": _record_contamination_rights,
     "transition_asset_state": _transition_asset_state,

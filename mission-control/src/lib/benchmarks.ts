@@ -81,6 +81,8 @@ export interface BenchmarkAttempt {
   total_tokens: number | null;
   duration_ms: number | null;
   result_summary: string | null;
+  arm_id?: string;
+  dataset_item_id?: string;
   subject?: string | null;
   split?: string | null;
   tags?: string[];

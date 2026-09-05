@@ -26,6 +26,27 @@ async def prepare_benchmark_arm(
         raise BenchmarkRuntimeConfigurationError(
             "submission_overrides must contain an object"
         )
+    if overrides:
+        # The dispatch validates the same overrides at admission, so an
+        # arm with an unsupported override fails here, at authoring,
+        # instead of at every admission attempt.
+        from pydantic import ValidationError
+
+        from routes.submit import TaskOverrides
+
+        try:
+            TaskOverrides.model_validate(overrides)
+        except ValidationError as error:
+            details = error.errors()
+            location = (
+                ".".join(str(part) for part in details[0]["loc"])
+                if details else "overrides"
+            )
+            message = str(details[0]["msg"]) if details else "invalid"
+            raise BenchmarkRuntimeConfigurationError(
+                "The submission overrides are not accepted at dispatch: "
+                f"{location or 'overrides'}: {message}"
+            ) from error
 
     prepare = getattr(runtime, "prepare_benchmark_configuration", None)
     if callable(prepare):
