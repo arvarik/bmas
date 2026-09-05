@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { BackLink } from "@/components/ui/BackLink";
 import { CheckCircle2, Copy, Download, Search } from "lucide-react";
 import { DatasetImportPanel } from "@/components/features/DatasetImportPanel";
+import { DatasetVersionRecordPanel } from "@/components/features/DatasetVersionRecordPanel";
 import { ActionButton } from "@/components/ui/ActionButton";
 import { ResourceState } from "@/components/ui/ResourceState";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -111,6 +112,8 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
         <a className="button button--secondary" href={`/api/datasets/${encodeURIComponent(dataset.id)}/versions/${encodeURIComponent(version.id)}/source`}><Download size={13} /> Source file</a>
         <button type="button" className="dataset-checksum" onClick={() => void navigator.clipboard.writeText(version.checksum).then(() => toast({ type: "success", message: "Dataset checksum copied." }))}><Copy size={13} /> <code>{version.checksum.slice(0, 16)}</code></button>
       </section>
+
+      <DatasetVersionRecordPanel datasetId={dataset.id} versionId={version.id} />
 
       <section className="dataset-distribution" aria-label="Latest dataset distribution">
         <div><h3>Subjects</h3><ul>{Object.entries(dataset.subjects).map(([name, count]) => <li key={name}><span>{name}</span><strong>{count}</strong></li>)}</ul></div>

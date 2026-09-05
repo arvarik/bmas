@@ -418,13 +418,14 @@ async def publish_study(
     }
 
 
-async def enforce_study_admission(run_id: str) -> dict[str, Any] | None:
-    """Validate the study conditions of one run before admission.
+async def study_admission_verdict(run_id: str) -> dict[str, Any] | None:
+    """Read the study conditions of one run without raising.
 
-    A run whose test revision carries a study plan admits only when
-    ``validate_study`` passes at the admission stage; a run without a
-    study plan admits unchanged. The check reads the stored run plan,
-    the dataset version record, and the pinned sources.
+    The result names the study, the run plan, the stored study record,
+    and the admission-stage verdict of ``validate_study`` with every
+    check and every blocking condition. A run without a study plan
+    returns ``None``. The check reads the stored run plan, the dataset
+    version record, and the pinned sources.
     """
     from benchmarks import evaluation_records, repository
 
@@ -469,12 +470,31 @@ async def enforce_study_admission(run_id: str) -> dict[str, Any] | None:
         ),
         stage="admission",
     )
+    return {
+        "study_id": str(study["id"]),
+        "plan_id": str(stored_plan["id"]),
+        "study": study["record"],
+        "verdict": verdict,
+    }
+
+
+async def enforce_study_admission(run_id: str) -> dict[str, Any] | None:
+    """Validate the study conditions of one run before admission.
+
+    A run whose test revision carries a study plan admits only when
+    ``validate_study`` passes at the admission stage; a run without a
+    study plan admits unchanged.
+    """
+    result = await study_admission_verdict(run_id)
+    if result is None:
+        return None
+    verdict = result["verdict"]
     if not verdict["ready"]:
         raise StudyAdmissionError(
             "The study conditions block admission: "
             + ", ".join(verdict["blocking"])
         )
-    return {"study_id": str(study["id"]), "plan_id": str(stored_plan["id"]),
+    return {"study_id": result["study_id"], "plan_id": result["plan_id"],
             "checks": verdict["checks"]}
 
 

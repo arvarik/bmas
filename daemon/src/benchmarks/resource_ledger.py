@@ -612,14 +612,18 @@ async def _latest_reconciliation(
 ) -> tuple[int, dict[str, Any] | None]:
     async with db._connect() as connection:  # noqa: SLF001
         cursor = await connection.execute(
-            "SELECT settlement_version, record FROM cost_settlement_versions "
+            "SELECT id, settlement_version, record "
+            "FROM cost_settlement_versions "
             "WHERE run_id = ? ORDER BY settlement_version DESC LIMIT 1",
             (run_id,),
         )
         row = await cursor.fetchone()
     if row is None:
         return 0, None
-    return int(row["settlement_version"]), json.loads(row["record"])
+    # The stored record carries no identifier of its own, so the row
+    # id joins it here and the next version names what it supersedes.
+    previous = {"reconciliation_id": str(row["id"]), **json.loads(row["record"])}
+    return int(row["settlement_version"]), previous
 
 
 async def reconcile_run(

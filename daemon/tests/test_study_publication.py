@@ -32,8 +32,8 @@ def _study() -> dict:
     return study_authoring.author_study(
         study_type="one_factor_ablation",
         name="temperature",
-        base_configuration={"model_routing": {"medium": "model-a"}},
-        treatment={"path": "model_routing.medium", "values": ["model-a", "model-b"]},
+        base_configuration={"classic": {"max_rounds": 4}},
+        treatment={"path": "classic.max_rounds", "values": [4, 6]},
         invariants={
             "dataset_version_id": "version-evidence",
             "case_ids": ["item-0", "item-1", "item-2", "item-3"],
@@ -85,7 +85,7 @@ async def test_publication_writes_the_revision_plan_and_study(study_db):
     assert study["test_revision_id"] == revision_id
     assert study["record"]["study_digest"] == published["study"]["study_digest"]
     assert [arm["slug"] for arm in study["record"]["arms"]] == [
-        "model_routing.medium-model-a", "model_routing.medium-model-b",
+        "classic.max_rounds-4", "classic.max_rounds-6",
     ] or len(study["record"]["arms"]) == 2
 
     run, _created = await facade.execute(

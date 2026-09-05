@@ -74,3 +74,12 @@ describe("metric lifecycle presentation", () => {
     expect(advanceRequest("withdrawn", { now: "2026-09-03T00:00:00Z", reason: "superseded" })).toEqual({ target: "withdrawn", now: "2026-09-03T00:00:00Z", reason: "superseded" });
   });
 });
+
+describe("metric draft revision", () => {
+  it("rebuilds the form from a stored record so a draft revises in place", async () => {
+    const { buildMetricDefinition, defaultMetricForm, formFromRecord } = await import("@/lib/metric-lifecycle-presentation");
+    const form = { ...defaultMetricForm(new Date("2026-09-04T00:00:00Z")), metric_id: "metric-a", scorer_id: "scorer-a", exclusions: "infra, timeout" };
+    const record = buildMetricDefinition(form) as ReturnType<typeof buildMetricDefinition> & { lifecycle_state: "draft" };
+    expect(formFromRecord(record)).toEqual(form);
+  });
+});

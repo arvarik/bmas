@@ -29,6 +29,9 @@ function getBreadcrumb(pathname: string): string {
   if (pathname === "/runtimes") return "Runtime qualifications";
   if (pathname === "/metrics") return "Metric definitions";
   if (pathname.startsWith("/metrics/")) return "Metric detail";
+  if (pathname === "/studies") return "Studies";
+  if (pathname.startsWith("/studies/")) return "Study detail";
+  if (pathname === "/judges") return "Judge calibration";
   if (pathname.startsWith("/task/")) {
     const segments = pathname.split("/");
     const taskId = segments[2] ?? "";

@@ -665,6 +665,41 @@ Canonical methods the analysis engine implements:
   every changed value marked. Used for: the analysis history panel
   and `mission-control/src/lib/analysis-history-presentation.ts`.
 
+### Evaluation operations screens
+
+- [LLM-as-Judge best practices in 2026: calibration, bias, and
+  cost](https://futureagi.com/blog/llm-as-judge-best-practices-2026/)
+  and [How to calibrate your LLM judge with human
+  annotations](https://galileo.ai/blog/calibrate-llm-judge-human-annotations)
+  — A judge calibrates against a human-labelled anchor set, reports
+  Cohen's kappa beside raw agreement, recalibrates on a schedule and on
+  every judge version change, and a drift monitor alerts when the
+  agreement drops beyond a tolerance. Used for: the judge calibration
+  screen in `mission-control/src/app/judges/JudgesPageClient.tsx` and
+  `mission-control/src/lib/judge-calibration-presentation.ts`.
+- [Complete guide to reconciliation dashboards
+  (2026)](https://www.osfin.ai/blog/reconciliation-dashboard) and
+  [When your settlement doesn't match: a practical troubleshooting
+  guide](https://reconcileos.com/blog/when-settlement-doesnt-match-practical-troubleshooting-guide)
+  — A reconciliation view keeps every unmatched or unpriced item as a
+  first-class row with its reason, aligns each settlement version with
+  the version it supersedes, and never overwrites an earlier version.
+  Used for: the resource ledger panel in
+  `mission-control/src/components/features/ResourceLedgerPanel.tsx`,
+  `mission-control/src/lib/resource-ledger-presentation.ts`, and the
+  supersession link in `daemon/src/benchmarks/resource_ledger.py`.
+- [Pre-registration: why it
+  matters](https://metricgate.com/blogs/pre-registration-why-it-matters/)
+  and [Pre-analysis plans
+  (J-PAL)](https://www.povertyactionlab.org/resource/pre-analysis-plans)
+  — A study commits to its hypotheses, sample size, analysis plan, and
+  exclusion rules before any data collects, and the committed plan
+  cannot change silently. Used for: the study authoring screen with its
+  preview and publication in
+  `mission-control/src/app/studies/StudiesPageClient.tsx`,
+  `mission-control/src/lib/study-presentation.ts`, and the admission
+  verdict read route in `daemon/src/routes/evaluation.py`.
+
 ## Update rule
 
 Add one entry when a new source shapes a design decision or an

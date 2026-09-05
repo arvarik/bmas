@@ -17,7 +17,7 @@ import {
   Server,
   ShieldCheck,
   Settings,
-  X, Ruler } from "lucide-react";
+  X, Ruler, FlaskRound, Scale } from "lucide-react";
 
 export interface TaskSidebarProps {
   agentHealth: Record<string, { alive: boolean }>;
@@ -48,6 +48,8 @@ const GROUPS = [
       { href: "/runtimes", label: "Runtimes", icon: ShieldCheck },
       { href: "/datasets", label: "Datasets", icon: Database },
       { href: "/metrics", label: "Metrics", icon: Ruler },
+      { href: "/studies", label: "Studies", icon: FlaskRound },
+      { href: "/judges", label: "Judges", icon: Scale },
     ],
   },
   {

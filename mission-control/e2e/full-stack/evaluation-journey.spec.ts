@@ -41,6 +41,10 @@ function evaluationCase(caseId: string, instructions: string, answer: string) {
 
 test.describe.configure({ mode: "serial" });
 
+// The select menu closes on any scroll, so the viewport stays tall
+// enough that focusing a field deep in a form never scrolls the page.
+test.use({ viewport: { width: 1280, height: 2400 } });
+
 test("every service answers a real readiness check", async ({ request }) => {
   for (const [name, url] of Object.entries(stack.urls)) {
     if (name === "redis") continue;
@@ -53,7 +57,7 @@ test("every service answers a real readiness check", async ({ request }) => {
 });
 
 test("the import, edit, publish, configure, execute, inspect, compare, export, and replay journey", async ({ page, request }) => {
-  test.setTimeout(600_000);
+  test.setTimeout(1200000);
   const suffix = Date.now().toString(36);
 
   // 1. Import a small public-style fixture through the local upload adapter.
@@ -249,4 +253,187 @@ test("the import, edit, publish, configure, execute, inspect, compare, export, a
   expect(reimported.replay_approved).toBeTruthy();
   expect((reimported.replay as Json).analysis_replayable).toBeTruthy();
   expect((reimported.replay as Json).execution_repeat).toBe("not_guaranteed_by_this_bundle");
+
+  // 13. Score one attempt through the evaluation path and read its
+  // boundary evidence and the redaction classes in the browser.
+  const scorerSpecId = `scorer-journey-${suffix}`;
+  await daemon(request, "post", "/api/evaluation/scorers", { record: {
+    schema_id: "scorer-spec", schema_version: 2, scorer_id: scorerSpecId, version: "1", implementation_digest: digest,
+    description: "Compare the answer with the reference.", input_evidence_contract: ["final_output"], configuration_schema: { type: "object" },
+    output_dimensions: [{ name: "accuracy", scale: "unit_interval", direction: "higher_is_better" }], scale: "unit_interval", direction: "higher_is_better",
+    determinism: "deterministic", required_evidence: ["final_output"], trust_class: "built_in", sandbox: { policy_version: "1", policy_digest: digest },
+    execution_digests: { artifact: digest, runtime: digest, dependencies: digest },
+  } });
+  const firstAttemptId = String(attempts[0].id);
+  await daemon(request, "post", `/api/evaluation/attempts/${firstAttemptId}/evidence`, {
+    run_manifest: { run_id: runId }, runtime_specification: { runtime: "classic" }, case: { case_id: String(attempts[0].item_key ?? "j-1") },
+    trace_events: [{ kind: "tool_call", api_key: "sk-live-journey-secret-value", argument: "safe" }], final_output: "42",
+    resources: { cost: null, tokens: 10, latency_ms: 5 }, seed_evidence: { requested_seed: 7, seed_control: "recorded" }, ledger_references: {},
+  });
+  const scored = await daemon(request, "post", `/api/evaluation/attempts/${firstAttemptId}/scores`, {
+    scorer_id: scorerSpecId, scorer_version: "1", plugin_type: "deterministic", configuration: { comparison: "exact" },
+    extra_evidence: { final_output: "42", reference_answer: "42" },
+  });
+  expect(scored.status).toBe("scored");
+  await page.goto(`/runs/${runId}`);
+  await expect(page.getByText(`Journey test ${suffix}`)).toBeVisible({ timeout: 30_000 });
+  await page.getByText("Scores and evidence").first().click();
+  const scoreRegion = page.getByRole("region", { name: "Score records" }).first();
+  await expect(scoreRegion.getByText("Trusted service")).toBeVisible({ timeout: 30_000 });
+  await expect(scoreRegion.getByText("Completed", { exact: true })).toBeVisible();
+  const evidenceRegion = page.getByRole("region", { name: "Attempt evidence" }).first();
+  await expect(evidenceRegion.getByText(/1 secret/)).toBeVisible();
+  await evidenceRegion.getByRole("listitem").filter({ hasText: "Trace" }).getByRole("button", { name: "View" }).click();
+  const viewer = page.getByLabel("Trace section");
+  await expect(viewer).toContainText("safe", { timeout: 30_000 });
+  await expect(viewer).not.toContainText("sk-live-journey-secret-value");
+  const redactions = viewer.getByRole("list", { name: "Redacted paths" });
+  await expect(redactions).toContainText("trace[0].api_key");
+  await expect(redactions.getByText("Secret", { exact: true })).toBeVisible();
+
+  // 14. Freeze a second snapshot from the browser.
+  const historyPanel = page.getByRole("region", { name: "Analysis history" });
+  await historyPanel.getByRole("button", { name: "Freeze analysis" }).click();
+  await page.getByRole("checkbox", { name: metricId }).check();
+  await page.getByRole("button", { name: "Freeze snapshot" }).click();
+  await expect(historyPanel.getByText("2 stored snapshots")).toBeVisible({ timeout: 60_000 });
+
+  // 15. Reconcile the ledger and apply one late charge in the browser.
+  const ledgerRegion = page.getByRole("region", { name: "Resource ledger" });
+  await expect(ledgerRegion.getByText(/entries · 0 reconciliation versions/)).toBeVisible({ timeout: 30_000 });
+  await ledgerRegion.getByRole("button", { name: "Reconcile now" }).click();
+  await page.getByRole("button", { name: "Record reconciliation" }).click();
+  await expect(ledgerRegion.getByRole("cell", { name: "First version" })).toBeVisible({ timeout: 30_000 });
+  await ledgerRegion.getByRole("button", { name: "Apply late charge" }).click();
+  await page.getByLabel("Provider", { exact: true }).fill("provider-journey");
+  await page.getByLabel("Service", { exact: true }).fill("chat");
+  await page.getByLabel("Charged amount (USD)").fill("0.40");
+  await page.getByLabel("Provider amount text").fill("$0.40");
+  await page.getByRole("button", { name: "Store late charge" }).click();
+  await expect(page.getByRole("status", { name: "Late charge outcome" })).toContainText("opened reconciliation version 2", { timeout: 30_000 });
+  await expect(ledgerRegion.getByText("Late charge", { exact: true })).toBeVisible();
+
+  // 16. Export the replay bundle from the browser and import it back
+  // with a replay approval.
+  const bundleRegion = page.getByRole("region", { name: "Replay bundle" });
+  await bundleRegion.getByRole("button", { name: "Export bundle" }).click();
+  await expect(page.getByLabel("Bundle manifest")).toContainText("Members", { timeout: 60_000 });
+  await page.getByLabel("Bundle archive").setInputFiles({ name: "bundle.zip", mimeType: "application/zip", buffer: Buffer.from(String(exported.archive_base64), "base64") });
+  await page.getByLabel("Approving actor").fill("journey-operator");
+  const importResponsePromise = page.waitForResponse((response) => response.url().includes("/api/evaluation/replay-bundles/import"), { timeout: 120_000 });
+  await page.getByRole("button", { name: "Import bundle" }).click();
+  const importResponse = await importResponsePromise;
+  const importBody = await importResponse.text();
+  expect(importResponse.ok(), `browser import: ${importResponse.status()} ${importBody.slice(0, 400)}`).toBeTruthy();
+  await expect(page.getByRole("status", { name: "Import result" })).toContainText("Replay verified", { timeout: 60_000 });
+
+  // 17. Revise a draft metric definition in the browser.
+  const draftMetricId = `metric-draft-${suffix}`;
+  const publishedMetric = await daemon(request, "get", `/api/evaluation/metrics/${metricId}`);
+  await daemon(request, "post", "/api/evaluation/metrics", { record: { ...(publishedMetric.record as Json), metric_id: draftMetricId, lifecycle_state: "draft" } });
+  await page.goto(`/metrics/${draftMetricId}`);
+  await page.getByRole("button", { name: "Edit draft" }).click();
+  await page.getByLabel("Denominator", { exact: true }).fill("Planned cases minus predeclared exclusions.");
+  await page.getByRole("button", { name: "Save draft revision" }).click();
+  await expect(page.getByText(/over Planned cases minus predeclared exclusions/)).toBeVisible({ timeout: 30_000 });
+  const revised = await daemon(request, "get", `/api/evaluation/metrics/${draftMetricId}`);
+  expect(((revised.record as Json).measurement as Json).denominator).toBe("Planned cases minus predeclared exclusions.");
+  expect(revised.lifecycle_state).toBe("draft");
+
+  // 18. The dataset version record on the dataset page.
+  await page.goto(`/datasets/${datasetId}`);
+  const recordRegion = page.getByRole("region", { name: "Version record" });
+  await expect(recordRegion.getByText("Content digest")).toBeVisible({ timeout: 30_000 });
+  await expect(recordRegion.getByLabel("Source lineage")).toContainText(sourceId);
+  await expect(recordRegion.getByLabel("Split manifest").getByRole("row", { name: /test 3/ })).toBeVisible();
+
+  // 19. Register a judge anchor set and calibrate it now. The fake
+  // provider answers with prose, so every item abstains and the
+  // calibration records a failed state with full abstention.
+  const anchorId = `anchor-${suffix}`;
+  const judgeScorersLoaded = page.waitForResponse((response) => response.url().endsWith("/api/benchmarks/scorers") && response.ok(), { timeout: 30_000 });
+  await page.goto("/judges");
+  await judgeScorersLoaded;
+  await page.waitForTimeout(500);
+  await page.getByRole("button", { name: "Register anchor set" }).click();
+  await page.getByLabel("Anchor id").fill(anchorId);
+  await page.getByLabel("Judge id").fill(`judge-${suffix}`);
+  await page.getByLabel("Judge model").fill("fake-model");
+  const anchorScorer = page.getByRole("combobox", { name: "Scorer", exact: true });
+  await anchorScorer.focus();
+  await page.waitForTimeout(300);
+  await page.keyboard.press("ArrowDown");
+  await expect(anchorScorer).toHaveAttribute("aria-expanded", "true");
+  await page.getByRole("option").filter({ hasNotText: "Select a scorer" }).first().dispatchEvent("click");
+  await page.getByLabel("Label set dataset").fill(datasetId);
+  await page.getByLabel("Anchor items (one per line as item id, label)").fill("j-1, pass\nj-2, pass\nj-3, fail");
+  await page.getByRole("button", { name: "Register anchor set" }).last().click();
+  const anchorRow = page.getByRole("row", { name: new RegExp(anchorId) });
+  await expect(anchorRow).toContainText("Due now", { timeout: 30_000 });
+  await anchorRow.getByRole("button", { name: "Calibrate now" }).click();
+  await expect(page.getByRole("row", { name: new RegExp(anchorId) })).toContainText("100.0%", { timeout: 120_000 });
+  await expect(page.getByRole("row", { name: new RegExp(anchorId) })).toContainText("Due in");
+
+  // 20. Author a study in the browser, preview its estimate, publish it,
+  // start a run on its revision, and read the admission verdict.
+  // The dataset and scorer lists load after the page renders and the
+  // select re-renders when they arrive, so the steps wait for both
+  // responses and a short settle before they open a menu.
+  const datasetsLoaded = page.waitForResponse((response) => response.url().endsWith("/api/datasets") && response.ok(), { timeout: 30_000 });
+  const scorersLoaded = page.waitForResponse((response) => response.url().endsWith("/api/benchmarks/scorers") && response.ok(), { timeout: 30_000 });
+  await page.goto("/studies");
+  await Promise.all([datasetsLoaded, scorersLoaded]);
+  await page.waitForTimeout(500);
+  await page.getByRole("button", { name: "Author study" }).click();
+  await page.getByLabel("Name", { exact: true }).fill(`Journey study ${suffix}`);
+  const datasetBox = page.getByRole("combobox", { name: "Dataset", exact: true });
+  await datasetBox.focus();
+  await page.waitForTimeout(300);
+  await page.keyboard.press("ArrowDown");
+  await expect(datasetBox).toHaveAttribute("aria-expanded", "true");
+  await page.getByRole("option", { name: new RegExp(`Journey ${suffix}`) }).dispatchEvent("click");
+  await expect(page.getByLabel("Case ids (comma separated)")).toHaveValue(/j-1/, { timeout: 30_000 });
+  const studyScorer = page.getByRole("combobox", { name: "Scorer", exact: true });
+  await studyScorer.focus();
+  await page.waitForTimeout(300);
+  await page.keyboard.press("ArrowDown");
+  await expect(studyScorer).toHaveAttribute("aria-expanded", "true");
+  await page.getByRole("option").filter({ hasNotText: "Select a scorer" }).first().dispatchEvent("click");
+  // The classic runtime reserves its own maximum task cost per attempt,
+  // so the study budget stays generous enough for admission.
+  await page.getByLabel("Cost per attempt").fill("1.00");
+  await page.getByRole("button", { name: "Preview estimates" }).click();
+  const studyPreview = page.getByRole("status", { name: "Study preview" });
+  await expect(studyPreview).toContainText("2 arms", { timeout: 30_000 });
+  await expect(studyPreview).toContainText("Attempts");
+  await page.getByRole("button", { name: "Publish study" }).click();
+  await expect(page.getByRole("link", { name: `Journey study ${suffix}` })).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("link", { name: `Journey study ${suffix}` }).click();
+  await expect(page.getByRole("heading", { name: "Sample plan and estimate" })).toBeVisible({ timeout: 30_000 });
+  const studies = await daemon(request, "get", "/api/evaluation/studies");
+  const study = (studies.studies as JsonList).find((entry) => (entry.record as Json).name === `Journey study ${suffix}`) as Json;
+  expect(study).toBeTruthy();
+  const studyRevisionId = String(study.test_revision_id);
+  const tests = await daemon(request, "get", "/benchmarks/tests");
+  const studyTest = ((tests.tests ?? tests) as JsonList).find((entry) => {
+    const revisionIds = ((entry.revisions ?? []) as JsonList).map((revision) => String(revision.id));
+    return revisionIds.includes(studyRevisionId) || String(entry.latest_revision_id ?? "") === studyRevisionId;
+  }) as Json;
+  expect(studyTest, `test for revision ${studyRevisionId}`).toBeTruthy();
+  const studyRun = await daemon(request, "post", `/benchmarks/tests/${studyTest.id}/revisions/${studyRevisionId}/runs`, { operator_note: "study journey", priority: 10 });
+  const studyRunId = String(studyRun.id);
+  await page.goto(`/runs/${studyRunId}`);
+  const studyRegion = page.getByRole("region", { name: "Study conditions" });
+  await expect(studyRegion.getByText(/Admission ready|Admission blocked by/)).toBeVisible({ timeout: 60_000 });
+  await expect(studyRegion.getByRole("link", { name: `Journey study ${suffix}` })).toBeVisible();
+  await expect(studyRegion.getByRole("table")).toContainText("Source pinned");
+  const verdict = await daemon(request, "get", `/api/evaluation/runs/${studyRunId}/study`);
+  expect(verdict.study_id).toBe(study.study_id);
+  // The polled text starts with the run status and carries every
+  // attempt state, so a stalled run reports why in the failure message.
+  await expect.poll(async () => {
+    const current = await daemon(request, "get", `/benchmarks/runs/${studyRunId}`);
+    const states = ((current.attempts ?? []) as JsonList).map((a) => [a.status, a.failure_category, a.error_message]);
+    return `${String(current.status)} ${JSON.stringify(states)}`;
+  }, { timeout: 420_000, intervals: [2_000] }).toMatch(/^(completed|partial|failed|cancelled)/);
 });

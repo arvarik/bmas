@@ -21,8 +21,9 @@ from pathlib import Path
 from typing import Any
 
 import database as db
+from benchmarks.data_classes import RedactionReport, redact
 from benchmarks.data_classes import policy_digest as redaction_policy_digest
-from benchmarks.provenance import content_checksum, redact_secrets
+from benchmarks.provenance import content_checksum
 
 # The sections whose absence downgrades completeness. Optional
 # sections record as unavailable without a downgrade.
@@ -53,7 +54,8 @@ def _persist_section(
     from benchmarks.provenance import canonical_json
     from core.asset_store import DataClass
 
-    redacted = redact_secrets(value)
+    report = _REDACTION_REPORTS.setdefault(attempt_id, RedactionReport())
+    redacted = redact(value, report=report, path=section)
     payload = canonical_json(redacted).encode("utf-8")
     _PERSISTED_BYTES[attempt_id] = _PERSISTED_BYTES.get(attempt_id, 0) + len(
         payload,
@@ -69,9 +71,13 @@ def _persist_section(
     )
 
 
-# Bytes and artifacts persisted per attempt inside one capture call.
+# Bytes, artifacts, and the redaction report per attempt inside one
+# capture call. The report lists every redacted path with its data
+# class and the value detector that fired, so a reader sees which
+# policy removed each value instead of a bare marker.
 _PERSISTED_BYTES: dict[str, int] = {}
 _PERSISTED_COUNT: dict[str, int] = {}
+_REDACTION_REPORTS: dict[str, RedactionReport] = {}
 
 
 def host_versions() -> dict[str, str]:
@@ -116,16 +122,20 @@ async def capture_attempt_evidence(
         raise EvidenceCaptureError("An evidence bundle names its attempt")
     store = _evidence_store()
     unavailable: list[str] = []
+    report = _REDACTION_REPORTS.setdefault(attempt_id, RedactionReport())
 
     record: dict[str, Any] = {
         "schema_id": "attempt-evidence",
         "schema_version": 2,
         "attempt_id": attempt_id,
         "run_manifest_digest": content_checksum(
-            redact_secrets(run_manifest),
+            redact(run_manifest, report=report, path="run_manifest"),
         ),
         "runtime_specification_digest": content_checksum(
-            redact_secrets(runtime_specification),
+            redact(
+                runtime_specification, report=report,
+                path="runtime_specification",
+            ),
         ),
         "case_reference": {
             "case_id": str(
@@ -204,9 +214,12 @@ async def capture_attempt_evidence(
         "unavailable_sections": unavailable if core_missing else [],
     }
     if recovery_events is not None:
-        record["recovery_events"] = redact_secrets(recovery_events)
+        record["recovery_events"] = redact(
+            recovery_events, report=report, path="recovery_events",
+        )
     record["seed_evidence"] = dict(seed_evidence)
     record["redaction_policy_digest"] = redaction_policy_digest()
+    record["redaction_report"] = _REDACTION_REPORTS.pop(attempt_id).to_dict()
     record["failure_classification"] = failure_classification
     record["versions"] = {**host_versions(), **(versions or {})}
     record["ledger_references"] = dict(ledger_references)
@@ -232,7 +245,12 @@ async def capture_attempt_evidence(
 
 
 def read_evidence_section(content_digest: str) -> dict[str, Any]:
-    """Read one persisted evidence section by its content digest."""
+    """Read one persisted evidence section by its content digest.
+
+    The stored bytes are already redacted, so the reader returns the
+    decoded value as persisted; the attempt-evidence record's
+    redaction report names the paths the policy removed.
+    """
     stored = _evidence_store().read_object(content_digest)
     if stored.get("redacted"):
         return {"redacted": True, "reason": stored.get("reason")}
