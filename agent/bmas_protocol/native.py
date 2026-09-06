@@ -30,7 +30,7 @@ from typing import Any
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from .digest_profile import canonicalize, digest_hex
+from .digest_profile import canonicalize, digest_hex, plain_json
 from .signing import (
     ACTIVATION_ACKNOWLEDGEMENT_DOMAIN,
     ACTIVATION_GRANT_DOMAIN,
@@ -305,7 +305,7 @@ class NativeProtocol:
         self.cache_dir = Path(cache_dir)
         self.keys = load_or_create_agent_key(self.cache_dir / "agent-signing-key", f"agent-key-{agent_id}")
         self.document = capability_document(agent_id, self.keys.key_id)
-        self.capability_digest = digest_hex(CAPABILITY_DOCUMENT_DIGEST_DOMAIN, self.document)
+        self.capability_digest = digest_hex(CAPABILITY_DOCUMENT_DIGEST_DOMAIN, plain_json(self.document))
         self.store = GrantStore(self.cache_dir / "grants")
         self.client = DaemonClient(daemon_url, node_key=node_key, node_id=agent_id, http=http)
         self._daemon_keys: dict[str, bytes] = self._load_daemon_key_cache()
@@ -491,20 +491,43 @@ class NativeProtocol:
 
     async def open_model_effect(self, context: EffectContext, *, model: str, request: dict[str, Any]) -> EffectHandle:
         """Request one effect grant for one model call and record the start."""
+        return await self.open_provider_effect(
+            context, provider="litellm", target="litellm", operation="chat", model=model, request=request,
+        )
+
+    async def open_provider_effect(
+        self,
+        context: EffectContext,
+        *,
+        provider: str,
+        target: str,
+        operation: str,
+        model: str | None,
+        request: dict[str, Any],
+        tool: str | None = None,
+        kind: str = "provider",
+        transport_observation: str | None = None,
+    ) -> EffectHandle:
+        """Request one effect grant for one nested provider or tool effect.
+
+        The grant binds the request digest, the fence, the agent, and the
+        audience. The first receipt records the transport start.
+        """
         grant = context.grant
-        request_digest = digest_hex(REQUEST_DIGEST_DOMAIN, request)
+        request_digest = digest_hex(REQUEST_DIGEST_DOMAIN, plain_json(request))
         call = context.next_call()
         response = await self.client.request_effect_grant({
             "run_id": grant["run_id"],
             "parent_grant_id": grant["activation_grant_id"],
-            "kind": "provider",
+            "kind": kind,
             "request_digest": request_digest,
-            "child_idempotency_key": f"{grant['activation_grant_id']}:model:{call}",
+            "child_idempotency_key": f"{grant['activation_grant_id']}:{kind}:{call}",
             "retry_safety": "conditional",
-            "target": "litellm",
-            "operation": "chat",
-            "provider": "litellm",
+            "target": target,
+            "operation": operation,
+            "provider": provider if kind == "provider" else None,
             "model": model,
+            "tool": tool,
             "capability_digest": self.capability_digest,
             "task_fence": grant["task_fence"],
         })
@@ -519,9 +542,42 @@ class NativeProtocol:
             dispatch_ref=str(response["dispatch_ref"]),
         )
         context.handles.append(handle)
-        await self.receipt(handle, stage=STAGE_TRANSPORT_STARTING)
+        await self.receipt(handle, stage=STAGE_TRANSPORT_STARTING, transport_observation=transport_observation)
         handle.sent = True
         return handle
+
+    async def observe_tool_effect(
+        self,
+        context: EffectContext,
+        *,
+        tool: str,
+        arguments: Any,
+        result: Any,
+        executed_by: str,
+    ) -> EffectHandle | None:
+        """Record one tool call a remote backend executed.
+
+        A gateway or command-line backend runs its tools before this
+        agent sees them, so the grant and both receipts carry the
+        observation marker. The ledger then shows the tool effect as
+        observed after execution, never as pre-authorized.
+        """
+        marker = f"observed_after_execution_by_{executed_by}"
+        try:
+            handle = await self.open_provider_effect(
+                context, provider="", target=tool, operation="call", model=None,
+                request={"tool": tool, "arguments": arguments}, tool=tool, kind="tool",
+                transport_observation=marker,
+            )
+            await self.receipt(
+                handle, stage=STAGE_RESPONSE_OBSERVED,
+                raw_response=json.dumps(result, sort_keys=True, default=str).encode("utf-8"),
+                transport_observation=marker,
+            )
+            return handle
+        except (NativeProtocolError, httpx.HTTPError) as exc:
+            logger.warning("Tool observation receipt failed for %s: %s", tool, exc)
+            return None
 
     async def receipt(
         self,

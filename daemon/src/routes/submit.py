@@ -92,6 +92,9 @@ class TaskOverrides(BaseModel):
     # Runtime limit overrides for this one task. The runtime validates the
     # merged result at capture time (classic: validate_classic_settings).
     classic: dict[str, Any] | None = None
+    # The recorded seed of the run admission. A legacy runtime records
+    # it and never applies it; a native runtime applies it.
+    seed: int | None = Field(default=None, ge=0)
 
     def routing_dict(self) -> dict[str, str] | None:
         if self.routing is None:
@@ -656,6 +659,8 @@ async def _admit_task(
                 task_overrides["role_registry"] = rr_dict
             if req.overrides.classic:
                 task_overrides["classic"] = dict(req.overrides.classic)
+            if req.overrides.seed is not None:
+                task_overrides["seed"] = int(req.overrides.seed)
         if req.effort is not None:
             task_overrides["effort"] = req.effort
         if not task_overrides:

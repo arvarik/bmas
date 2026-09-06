@@ -137,6 +137,82 @@ bytes as a duplicate, and a second activation dispatches under the
 same fence. The `daemon.foundation-process-journey` group runs it and
 feeds the `foundation_complete_stack_journey` release gate.
 
+## Interactive admission and the Classic column with the real runtime
+
+`daemon/src/interactive_admission.py` admits every interactive task
+into one Foundation run before the runtime executes. The orchestrator
+calls it after it resolves the runtime pair. The admission goes through
+`run_admission.admit_run`: the exact pair, the version set of the pair
+with the live database schema version, the policy set derived from the
+daemon configuration in force, the asset manifest of the task's
+uploaded files, the storage readiness report (cached per process), the
+live qualification records when `BMAS_REQUIRE_PROVIDER_QUALIFICATION`
+is set, the run budget from the task's `budget_ceiling_usd`, one
+reserved reservation the activation grants bind, the journal genesis,
+and the run-control row with the task fence. A legacy contract keeps
+its budget permissive: the reservation records intent and the classic
+ledger stays the spend authority. The writer runs only when the
+`run_context`, `runtime_unit_of_work`, and `budget_reservations` gates
+are on in `bmas.yaml`; with them off, the task keeps the legacy bearer
+path. A prerequisite the writer rejects fails the task closed.
+`BMAS_STORAGE_CONFIRMED=1` confirms an unrecognised filesystem type
+for the storage readiness check. The journey route
+`POST /agent-protocol/runs` uses the same writer.
+
+The recorded seed travels as the `seed` submission override. A legacy
+runtime records it in the run admission and never applies it, which
+is the declared `recorded_only` value.
+
+The legacy capability records now declare the host's compatibility
+adapter for the activation ledger, the dispatch outbox, the agent
+protocol, the signed acknowledgement, and the nested receipts: the
+host performs the current protocol on the legacy runtime's behalf, and
+the runtime itself authors no native authority record. The behavioral
+suite derives those values from real behaviour: it counts the journal
+records a runtime authored (proposal, evidence, goal, budget,
+terminal, and invalidation operations, or any record outside host
+authority) and the activation grants the host dispatched.
+
+A native dispatch retries with one new attempt number that names the
+attempt it retries, so every attempt owns its own lease, grant, and
+acknowledgement. A run without a reserved reservation stays on the
+legacy path. A daemon-side ledger error returns one failed turn and
+never opens the endpoint circuit, because it is not an endpoint
+failure.
+
+`daemon/tests/test_behavioral_conformance_stack.py` runs the Classic
+column with the real classic runtime. The test stack starts Redis, the
+fake provider, the daemon, and the agent with every writer gate on.
+The suite submits real tasks over `POST /submit`, aborts one through
+`POST /api/tasks/{task_id}/abort`, resumes one through a real daemon
+restart, and reads the durable footprint from the daemon's own
+database. The `daemon.behavioral-conformance-stack` group runs it and
+feeds the `foundation_shared_conformance` gate. The daemon job in
+continuous integration installs `redis-server` for it.
+
+Three stack details make that run real. The stack points every role
+in the registry at its own agent process, so the classic activations
+reach the stack agent instead of the deployed port. The stack sets
+`LOCK_TTL_MS` to fifteen seconds, so a task lease held by a killed
+daemon expires and the restarted daemon resumes the task within
+seconds. The fake provider answers arithmetic from the task line
+outside code fences, with the operands next to the arithmetic word,
+so the board context that the agent appends as fenced JSON never
+changes the answer.
+
+## Receipts for the Hermes backends
+
+The Hermes gateway backend runs one provider effect per run under one
+daemon-issued grant, with a receipt at the transport start and one at
+the observed terminal state with the usage. Hermes executes its own
+tools before the agent sees them, so each observed tool event requests
+one tool grant and posts its receipt with the marker
+`observed_after_execution_by_hermes_gateway`. The ledger shows those
+tool effects as observed after execution, never as pre-authorized. The
+command-line backend runs one provider effect around the process and
+reports the exit code on failure. It emits no tool events, so it
+produces no tool receipts.
+
 ## The live-provider smoke
 
 Every required group answers model calls with the deterministic fake

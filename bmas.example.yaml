@@ -107,3 +107,22 @@ storage:
   allowed_upload_types: [pdf, txt, md, csv, json, png, jpg, docx]
   pdf_extraction: pymupdf
   extraction_max_chars: 60000
+
+# Foundation writer gates. Each gate enables one planned Foundation
+# writer. With run_context, runtime_unit_of_work, and
+# budget_reservations on, the daemon admits every interactive task into
+# one Foundation run (journal genesis, run budget with one reserved
+# reservation, run-control row with the task fence) and dispatches
+# through signed activation grants to an agent that publishes a
+# qualified capability document. With the gates off, tasks keep the
+# legacy bearer execute path. The test stack turns every gate on.
+foundation_gates:
+  runtime_registry: false
+  run_context: false
+  runtime_unit_of_work: false
+  activation_ledger: false
+  effect_ledger: false
+  budget_reservations: false
+  trace_envelope: false
+  evidence_index: false
+  goal_index: false

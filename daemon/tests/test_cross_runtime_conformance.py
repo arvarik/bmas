@@ -61,9 +61,11 @@ def test_legacy_records_mark_unsupported_native_capabilities(directory):
         assert "activation_dispatch_outbox" in unsupported
         assert "signed_activation_acknowledgement" in unsupported
         assert "nested_receipts" in unsupported
-        assert record.capabilities["agent_protocol"] == "legacy"
+        # The host's compatibility adapter negotiates, acknowledges, and
+        # receipts on the legacy runtime's behalf.
+        assert record.capabilities["agent_protocol"] == "compatibility_adapter"
         assert record.capabilities["budget_reservation"] == "advisory_legacy"
-        assert record.capabilities["nested_receipts"] == "legacy_unobservable"
+        assert record.capabilities["nested_receipts"] == "compatibility_adapter"
         # Every pair keeps the generic fallback.
         assert record.ui_fallback
         assert "trace" in record.ui_fallback_panels
@@ -162,8 +164,8 @@ def test_legacy_pairs_prove_compatibility_not_native(directory, key):
         result for result in report.case_results
         if result.case_id == "agent_protocol_negotiation"
     )
-    assert protocol_case.expected_value == "legacy"
-    assert protocol_case.observed_value == "legacy"
+    assert protocol_case.expected_value == "compatibility_adapter"
+    assert protocol_case.observed_value == "compatibility_adapter"
     assert protocol_case.passed
 
 

@@ -1543,6 +1543,10 @@ async def _run_via_api(
                 trace_data["run_id"] = run_id
             return trace
 
+        effect_context = native.current_effect_context()
+        hermes_effect: native.EffectHandle | None = None
+        started_tools: dict[str, object] = {}
+
         async def consume_events(events: list[tuple[str, dict]]) -> None:
             """Translate events and update the run result."""
             nonlocal trace_seq, final_output, final_usage, status, saw_terminal
@@ -1550,6 +1554,18 @@ async def _run_via_api(
                 trace_data = dict(event_data)
                 if run_id:
                     trace_data.setdefault("run_id", run_id)
+                if effect_context is not None and event_name == "tool.started":
+                    started_tools[str(event_data.get("name", event_data.get("tool", "unknown")))] = (
+                        event_data.get("arguments", event_data.get("args", {}))
+                    )
+                elif effect_context is not None and event_name == "tool.completed":
+                    tool_name = str(event_data.get("name", event_data.get("tool", "unknown")))
+                    await effect_context.protocol.observe_tool_effect(
+                        effect_context, tool=tool_name,
+                        arguments=started_tools.pop(tool_name, {}),
+                        result=event_data.get("result", event_data.get("output", "")),
+                        executed_by="hermes_gateway",
+                    )
                 if event_name == "run.completed":
                     final_output = str(event_data.get("output", ""))
                     final_usage = _normalize_usage(event_data.get("usage"), model)
@@ -1610,6 +1626,14 @@ async def _run_via_api(
 
         try:
             async with asyncio.timeout_at(deadline):
+                if effect_context is not None and hermes_effect is None:
+                    # The whole gateway run is one provider effect under
+                    # one daemon-issued grant, with receipts at the start
+                    # and at the observed terminal state.
+                    hermes_effect = await effect_context.protocol.open_provider_effect(
+                        effect_context, provider="hermes", target="hermes-gateway",
+                        operation="run", model=model, request=run_payload,
+                    )
                 if run_id is None:
                     try:
                         for attempt in range(HERMES_429_MAX_ATTEMPTS):
@@ -1937,6 +1961,14 @@ async def _run_via_api(
             except TimeoutError:
                 logger.warning(f"[{request_id}] Final log delivery timed out")
 
+        if hermes_effect is not None:
+            with contextlib.suppress(Exception):
+                await effect_context.protocol.receipt(
+                    hermes_effect, stage=native.STAGE_RESPONSE_OBSERVED,
+                    usage=final_usage,
+                    raw_response=(final_output or "").encode("utf-8"),
+                    transport_observation=None if status == TaskStatus.completed else str(final_output)[:500],
+                )
         return status, final_output, final_usage, emitter.trace_count, run_id
 
 
@@ -2117,6 +2149,15 @@ async def _run_hermes_inner(
             f"timeout={timeout}s workspace={workspace}"
         )
 
+        effect_context = native.current_effect_context()
+        cli_effect: native.EffectHandle | None = None
+        if effect_context is not None:
+            cli_effect = await effect_context.protocol.open_provider_effect(
+                effect_context, provider="hermes", target="hermes-cli",
+                operation="run", model=model,
+                request={"argv": [str(part) for part in cmd], "description": description},
+            )
+
         # Run as async subprocess with timeout
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -2168,6 +2209,12 @@ async def _run_hermes_inner(
                 error_output,
                 int((context or {}).get("round", 1) or 1),
             )
+            if cli_effect is not None:
+                with contextlib.suppress(Exception):
+                    await effect_context.protocol.receipt(
+                        cli_effect, stage=native.STAGE_RESPONSE_OBSERVED,
+                        transport_observation=f"exit_code_{proc.returncode}",
+                    )
             return TaskStatus.failed, error_output, None, trace_count, None
 
         # Emit synthetic traces (doc 06 §8: coarse trace rather than nothing)
@@ -2200,6 +2247,12 @@ async def _run_hermes_inner(
             )
 
         # usage is null under the legacy path (doc 06 §3.1 note)
+        if cli_effect is not None:
+            with contextlib.suppress(Exception):
+                await effect_context.protocol.receipt(
+                    cli_effect, stage=native.STAGE_RESPONSE_OBSERVED,
+                    raw_response=output.encode("utf-8"),
+                )
         return TaskStatus.completed, output, None, trace_count, None
 
     finally:

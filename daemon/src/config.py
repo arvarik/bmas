@@ -296,6 +296,13 @@ REQUIRE_PROVIDER_QUALIFICATION = os.getenv(
     "BMAS_REQUIRE_PROVIDER_QUALIFICATION", "",
 ).strip().lower() in {"1", "true", "yes"}
 
+# An operator confirms an unknown filesystem type for the journal
+# writers. Local and network types classify on their own; only an
+# unrecognised mount needs this confirmation.
+STORAGE_OPERATOR_CONFIRMED = os.getenv(
+    "BMAS_STORAGE_CONFIRMED", "",
+).strip().lower() in {"1", "true", "yes"}
+
 MODEL_PROFILES: dict[str, ModelProfile] = {
     str(_alias): profile_from_configuration(str(_alias), _model_cfg)
     for _alias, _model_cfg in _models.items()

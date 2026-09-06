@@ -51,8 +51,8 @@ async def test_each_stage0_pair_passes_the_behavioral_suite(conformance_db, key)
         assert native["agent_protocol_negotiation"] == "native"
     else:
         assert native["seed_state"] == "recorded_only"
-        assert native["agent_protocol_negotiation"] == "legacy"
-        assert native["activation_effect_ledgers"] == "compatibility_projection"
+        assert native["agent_protocol_negotiation"] == "compatibility_adapter"
+        assert native["activation_effect_ledgers"] == "compatibility_adapter"
     ledger = release_gates.GateLedger()
     ledger.record_conformance(report)
     assert ledger.gate_passed("conformance", key)
@@ -77,7 +77,7 @@ async def test_a_reference_runtime_that_ignores_the_seed_fails_the_native_column
 
 @dataclasses.dataclass
 class NativeWritingLegacyExecutor(behavior.LegacyTraceExecutor):
-    """A legacy executor that wrongly writes one native authority row."""
+    """A legacy executor that wrongly authors one native authority record."""
 
     async def execute(self, **arguments):
         result = await super().execute(**arguments)
@@ -95,6 +95,14 @@ class NativeWritingLegacyExecutor(behavior.LegacyTraceExecutor):
             },
             idempotency_token=f"admission-{result.task_id}",
         ))
+        # A runtime-authored record: the legacy runtime must never commit one.
+        await journal.commit_operation(journal.JournalOperation(
+            operation_type="evidence_update", task_id=result.task_id,
+            run_id=f"run-native-{result.task_id}", runtime_id=self.runtime_key.runtime_id,
+            runtime_contract_version=self.runtime_key.runtime_contract_version,
+            payload={"claim_id": "claim-native", "evidence_state": "verified"},
+            idempotency_token=f"evidence-{result.task_id}",
+        ))
         return dataclasses.replace(result, native_rows=await behavior.native_authority_rows(result.task_id))
 
 
@@ -107,7 +115,7 @@ async def test_a_legacy_execution_that_writes_a_native_row_fails_the_ledger_case
     ledger_case = next(result for result in report.case_results if result.case_id == "activation_effect_ledgers")
     assert not ledger_case.passed
     assert ledger_case.observed_value == "native"
-    assert ledger_case.expected_value == "compatibility_projection"
+    assert ledger_case.expected_value == "compatibility_adapter"
 
 
 @pytest.mark.asyncio

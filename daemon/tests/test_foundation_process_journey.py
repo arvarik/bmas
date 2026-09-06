@@ -28,8 +28,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTROLLER = REPO_ROOT / "scripts" / "test-stack.py"
 RESULTS = REPO_ROOT / "test-results" / "foundation-process-journey"
-RUN_ID = "run-process-journey"
 TASK_ID = "task-process-journey"
+RUN_ID = f"run-{TASK_ID}"
 
 pytestmark = pytest.mark.skipif(
     shutil.which("redis-server") is None,
@@ -93,7 +93,7 @@ def _agent(stack: dict) -> httpx.Client:
 def _dispatch(operator: httpx.Client, stack: dict, activation_id: str) -> dict:
     response = operator.post("/agent-protocol/dispatch", json={
         "run_id": RUN_ID, "task_id": TASK_ID, "agent_url": stack["state"]["urls"]["agent"],
-        "activation_id": activation_id, "reservation_id": f"reservation-{RUN_ID}",
+        "activation_id": activation_id,
         "request": {
             "description": "Add 20 and 22 and answer with the number only.",
             "role": "expert", "model": "fake-model", "timeout": 60,
@@ -112,8 +112,12 @@ def test_the_foundation_journey_survives_a_real_restart(stack):
     keys = node.get("/agent-protocol/agent-keys").json()["keys"]
     assert any(key["agent_id"] == document["document"]["agent_id"] for key in keys), keys
     # 2. The daemon admits one run with its exact pair, fence, budget, and reservation.
-    admitted = operator.post("/agent-protocol/runs", json={"run_id": RUN_ID, "task_id": TASK_ID}).json()
+    admission = operator.post("/agent-protocol/runs", json={"task_id": TASK_ID})
+    assert admission.status_code == 200, admission.text
+    admitted = admission.json()
+    assert admitted["run_id"] == RUN_ID
     assert admitted["runtime_key"]["runtime_id"] == "classic"
+    assert admitted["reservation_id"], admitted
     fence = admitted["task_fence"]
     # 3. The daemon dispatches one signed grant. The agent acknowledges,
     # executes one model call under an effect grant, and returns receipts.

@@ -116,10 +116,29 @@ def write_daemon_config(root: Path, ports: dict[str, int]) -> Path:
         "color": "#5eead4",
     }]
     example.setdefault("triage", {})["enabled"] = False
+    # Every role dispatches to the stack's own agent process. The
+    # example registry names the deployed port, which would send the
+    # classic activations to a foreign agent and fall back to the
+    # control plane, so no signed grant would ever reach the agent.
+    registry = (example.get("coordination") or {}).get("role_registry") or {}
+    for entry in registry.values():
+        if isinstance(entry, dict):
+            entry["preferred_host"] = "127.0.0.1"
+            entry["dispatch_port"] = ports["agent"]
     for model in (example.get("models") or {}).values():
         model["provider"] = "openai"
         model["model"] = "fake-model"
         model["api_key_env"] = "FAKE_PROVIDER_KEY"
+    # The stack proves the Foundation writers, so every planned writer
+    # gate is on. The orchestrator then admits each interactive task
+    # into one Foundation run and dispatches through signed grants.
+    example["foundation_gates"] = {
+        name: True for name in (
+            "runtime_registry", "run_context", "runtime_unit_of_work",
+            "activation_ledger", "effect_ledger", "budget_reservations",
+            "trace_envelope", "evidence_index", "goal_index",
+        )
+    }
     storage = example.setdefault("storage", {})
     storage["user_media_dir"] = str(root / "uploads")
     storage["artifacts_dir"] = str(root / "artifacts")
@@ -302,6 +321,9 @@ def start(env_file: Path, *, keep_on_failure: bool, mission_control: bool = True
             "BMAS_NODE_KEY": credentials["node_key"],
             "BMAS_API_KEY": credentials["api_key"],
             "BMAS_EXECUTE_KEY": credentials["execute_key"],
+            # A crashed daemon's task lease expires quickly, so a restart
+            # resumes running tasks within seconds instead of minutes.
+            "LOCK_TTL_MS": "15000",
             "PYTHONUNBUFFERED": "1",
         }
         daemon_argv = [

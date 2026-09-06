@@ -25,7 +25,7 @@ import agent_protocol as protocol
 import config
 import database as db
 import protocol_keys
-from core.digest_profile import digest_hex
+from core.digest_profile import digest_hex, plain_json
 
 logger = logging.getLogger("bmas.daemon.agent_dispatch")
 
@@ -112,6 +112,12 @@ async def native_context(task_id: str) -> NativeContext | None:
         return None
     if row is None:
         return None
+    import interactive_admission
+
+    # A run without a reserved reservation cannot bind an activation
+    # grant, so its task stays on the legacy path.
+    if await interactive_admission.reservation_for_run(str(row["run_id"])) is None:
+        return None
     return NativeContext(run_id=str(row["run_id"]), task_fence=str(row["task_fence"]))
 
 
@@ -125,21 +131,34 @@ async def dispatch_activation(
     request: dict[str, Any],
     task_fence: str,
     attempt: int = 1,
+    retry_of_attempt: int | None = None,
     reservation_id: str | None = None,
     timeout_s: float = 600.0,
     document: protocol.AgentCapabilityDocument | None = None,
 ) -> dict[str, Any]:
-    """Deliver one signed grant to the agent and commit its acknowledgement."""
+    """Deliver one signed grant to the agent and commit its acknowledgement.
+
+    A retry keeps the logical activation identifier and uses one new
+    attempt number that names the attempt it retries, so every attempt
+    owns its own lease, grant, and acknowledgement.
+    """
     document = document or await endpoint_capabilities(http, agent_url, use_cache=False)
     if not supports_native_protocol(document):
         raise DispatchError(f"The agent at {agent_url} does not qualify for protocol {protocol.CURRENT_AGENT_PROTOCOL_VERSION}")
     assert document is not None
     registry = await protocol_keys.registry()
     store = protocol_keys.artifact_store()
-    request_digest = digest_hex(REQUEST_DIGEST_DOMAIN, request)
-    context_view_digest = digest_hex(CONTEXT_DIGEST_DOMAIN, request.get("context") or {})
+    if reservation_id is None:
+        import interactive_admission
+
+        reservation_id = await interactive_admission.reservation_for_run(run_id)
+    request_digest = digest_hex(REQUEST_DIGEST_DOMAIN, plain_json(request))
+    context_view_digest = digest_hex(CONTEXT_DIGEST_DOMAIN, plain_json(request.get("context") or {}))
+    if not reservation_id:
+        raise DispatchError(f"The run {run_id} holds no reserved reservation for its activation grants")
     await activations.create_activation(
         run_id=run_id, activation_id=activation_id, attempt=attempt,
+        retry_of_attempt=retry_of_attempt,
         reservation_id=reservation_id, request_digest=request_digest,
         context_view_digest=context_view_digest, task_fence=task_fence,
     )

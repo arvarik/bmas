@@ -688,6 +688,13 @@ class Orchestrator:
                     )
                 )
 
+            # Admit the task into its Foundation run before the runtime
+            # executes. With the writer gates off the task keeps the
+            # legacy path and the agent dispatch uses the bearer route.
+            await self._admit_foundation_run(
+                task_id, runtime_key, effective_configuration, overrides,
+            )
+
             if resume:
                 try:
                     complexity = Complexity(str(row.get("complexity") or "medium"))
@@ -1963,6 +1970,38 @@ class Orchestrator:
         )
         return round(cost, 8)
 
+    async def _admit_foundation_run(
+        self,
+        task_id: str,
+        runtime_key: RuntimeKey,
+        effective_configuration: dict[str, Any] | None,
+        overrides: dict | None,
+    ) -> dict[str, Any] | None:
+        """Admit one interactive task into its Foundation run, or stay legacy.
+
+        A disabled writer gate returns None. A prerequisite or
+        reservation failure fails the task closed, because a run the
+        admission writer rejected must not execute.
+        """
+        import interactive_admission
+        import run_admission
+
+        seed = (overrides or {}).get("seed") if isinstance(overrides, dict) else None
+        try:
+            return await interactive_admission.admit_task_run(
+                task_id=task_id,
+                runtime_key=runtime_key,
+                effective_configuration=effective_configuration,
+                requested_seed=seed if isinstance(seed, int) and not isinstance(seed, bool) else None,
+            )
+        except (
+            run_admission.AdmissionPrerequisiteError,
+            run_admission.AdmissionReservationError,
+        ) as exc:
+            raise VariantConfigurationError(
+                f"The Foundation admission rejected task {task_id}: {exc}"
+            ) from exc
+
     async def _native_plan(
         self, task_id: str, candidate_urls: list[str],
     ) -> dict[str, Any] | None:
@@ -1990,15 +2029,24 @@ class Orchestrator:
         payload: dict[str, Any],
         headers: dict[str, str] | None,
         native_plan: dict[str, Any] | None,
+        attempt_number: int = 1,
     ) -> httpx.Response:
         """Deliver one activation: a signed grant for a native endpoint, else
-        the bearer ``/execute`` request."""
+        the bearer ``/execute`` request.
+
+        The agent's answer arrives as one HTTP response. A daemon-side
+        ledger error is not an endpoint failure, so it returns one
+        failed turn without touching the endpoint circuit.
+        """
         timeout = float(payload["timeout"]) + 15.0
         if native_plan is None or native_plan["url"] != url:
             return await self.http.post(
                 f"{url}/execute", json=payload, headers=headers, timeout=timeout,
             )
+        import activation_service
         import agent_dispatch
+        import agent_protocol
+        from core.signing import SigningError
 
         request = httpx.Request("POST", f"{url}/bmas/activations")
         try:
@@ -2009,11 +2057,25 @@ class Orchestrator:
                 activation_id=str(payload["activation_id"]),
                 request=payload,
                 task_fence=native_plan["context"].task_fence,
+                attempt=attempt_number,
+                retry_of_attempt=attempt_number - 1 if attempt_number > 1 else None,
                 timeout_s=timeout,
                 document=native_plan["document"],
             )
         except agent_dispatch.DispatchError as exc:
             return httpx.Response(502, text=str(exc), request=request)
+        except (
+            activation_service.ActivationServiceError,
+            agent_protocol.AgentProtocolError,
+            SigningError,
+        ) as exc:
+            logger.warning(f"Native dispatch ledger error for {payload['task_id']}: {exc}")
+            return httpx.Response(200, json={
+                "task_id": str(payload["task_id"]),
+                "status": "failed",
+                "result": f"Native dispatch ledger error: {exc}",
+                "native_protocol": {"error": type(exc).__name__},
+            }, request=request)
         data = dict(outcome.get("result") or {})
         data.setdefault("status", "failed")
         data["native_protocol"] = {
@@ -2123,7 +2185,7 @@ class Orchestrator:
                 try:
                     await self._assert_dispatch_lease(task_id)
                     resp = await self._post_activation(
-                        url, payload, headers, native_plan,
+                        url, payload, headers, native_plan, attempt + 1,
                     )
                 finally:
                     self._release_endpoint_slot(url, endpoint_slot)

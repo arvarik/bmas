@@ -27,16 +27,40 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 _NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
 
 
+_FENCE = re.compile(r"```.*?```", re.DOTALL)
+_ARITHMETIC_WORDS = ("plus", "add", "sum", "+")
+
+
+def task_lines(prompt: str) -> list[str]:
+    """The prompt lines outside code fences.
+
+    The agent appends the board context as one fenced JSON block, and
+    that block carries identifiers, timestamps, and scores. The answer
+    must follow the task text, never a number inside the context.
+    """
+    return [line.strip() for line in _FENCE.sub(" ", prompt).splitlines() if line.strip()]
+
+
 def deterministic_answer(prompt: str) -> str:
     """Answer arithmetic prompts exactly and everything else stably."""
-    numbers = [float(value) for value in _NUMBER.findall(prompt)]
-    lowered = prompt.lower()
-    if len(numbers) >= 2 and any(
-        word in lowered for word in ("plus", "add", "sum", "+")
-    ):
-        total = numbers[0] + numbers[1]
-        rendered = str(int(total)) if total == int(total) else str(total)
-        return f"The sum is {rendered}. #### {rendered}"
+    for line in task_lines(prompt):
+        lowered = line.lower()
+        positions = [lowered.find(word) for word in _ARITHMETIC_WORDS if word in lowered]
+        if not positions:
+            continue
+        # The operands sit next to the arithmetic word: the last number
+        # before it and the first number after it, else the first two.
+        cut = min(positions)
+        before = [float(value) for value in _NUMBER.findall(line[:cut])]
+        after = [float(value) for value in _NUMBER.findall(line[cut:])]
+        if before and after:
+            operands = [before[-1], after[0]]
+        else:
+            operands = (before + after)[:2]
+        if len(operands) >= 2:
+            total = operands[0] + operands[1]
+            rendered = str(int(total)) if total == int(total) else str(total)
+            return f"The sum is {rendered}. #### {rendered}"
     digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:8]
     return f"Deterministic reply {digest}."
 
@@ -69,8 +93,10 @@ def _run_prompt(payload: dict) -> str:
         value = payload.get(key)
         if isinstance(value, str):
             parts.append(value)
+    # The user messages carry the task. A system persona may list
+    # numbered instructions, which are not the task's numbers.
     for message in payload.get("messages") or []:
-        if isinstance(message, dict):
+        if isinstance(message, dict) and message.get("role") != "system":
             parts.append(str(message.get("content") or ""))
     return "\n".join(parts)
 

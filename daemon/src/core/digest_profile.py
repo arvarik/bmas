@@ -210,3 +210,27 @@ def digest_bytes(domain: str, payload: bytes) -> str:
     _validate_domain(domain)
     framed = b"bmas:" + domain.encode("ascii") + b"\x00" + payload
     return hashlib.sha256(framed).hexdigest()
+
+
+def plain_json(value: Any) -> Any:
+    """Return a JSON-safe view of one value for digesting.
+
+    The profile supports integer numbers only, so a float travels as
+    its shortest exact text. A dataclass becomes its field mapping,
+    a tuple or set becomes a list, and any other object becomes its
+    string form. The result digests under the same profile as the
+    caller's other input.
+    """
+    import dataclasses
+
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return plain_json(dataclasses.asdict(value))
+    if isinstance(value, dict):
+        return {str(key): plain_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [plain_json(item) for item in value]
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, (str, int, bool)) or value is None:
+        return value
+    return str(value)
