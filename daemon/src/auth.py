@@ -48,6 +48,12 @@ def check_bearer_or_pass(request: Request, node_key: str) -> None:
         token = auth[7:].strip()
         if hmac.compare_digest(token, node_key):
             return
+        # The operator key authenticates the same reads through the
+        # dashboard proxy, which now carries it on every request.
+        from config import BMAS_API_KEY
+
+        if BMAS_API_KEY and hmac.compare_digest(token, str(BMAS_API_KEY)):
+            return
     # If an Authorization header is present but wrong, reject
     if auth:
         raise HTTPException(status_code=401, detail="Invalid bearer token")

@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 /** Return only the capability document that the daemon reports. */
 export async function GET(): Promise<NextResponse> {
   try {
-    const upstream = await fetch(`${DAEMON_BASE_URL}/capabilities`, {
+    const upstream = await daemonFetch(`${DAEMON_BASE_URL}/capabilities`, {
       signal: AbortSignal.timeout(3_000),
       cache: "no-store",
     });

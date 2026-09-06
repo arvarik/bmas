@@ -29,6 +29,7 @@ from routes import (
     health,
     hitl,
     ingest,
+    recovery,
     settings,
     submit,
     tasks,
@@ -92,6 +93,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=f"{PROJECT_NAME} — bMAS Daemon", version="1.0.0", lifespan=lifespan)
 
+# Every request authenticates at the edge before any route runs.
+import edge_access  # noqa: E402
+
+app.middleware("http")(edge_access.enforce_edge_access)
+
 # Register route modules
 app.include_router(submit.router)
 app.include_router(benchmarks.router)
@@ -106,3 +112,4 @@ app.include_router(files.router)
 app.include_router(artifacts.router)
 app.include_router(hitl.router)
 app.include_router(settings.router)
+app.include_router(recovery.router)

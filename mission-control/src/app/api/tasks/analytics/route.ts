@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 export async function GET(): Promise<NextResponse> {
   try {
-    const upstream = await fetch(`${DAEMON_BASE_URL}/tasks/analytics`, {
+    const upstream = await daemonFetch(`${DAEMON_BASE_URL}/tasks/analytics`, {
       cache: "no-store",
       signal: AbortSignal.timeout(5_000),
     });

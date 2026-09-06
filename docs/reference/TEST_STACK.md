@@ -91,6 +91,29 @@ the daemon so the model-backed judge reaches the fake provider. The
 mocked `e2e/evaluation-operations.spec.ts` covers the same screens
 against recorded daemon responses.
 
+## The live-provider smoke
+
+Every required group answers model calls with the deterministic fake
+provider, which hides provider-specific behaviour: reasoning tokens
+inside the completion budget, empty structured replies, deprecated
+sampling parameters, and the material a judge needs to label an
+anchor item. The optional `daemon.live-provider-smoke` group runs
+`daemon/tests/test_live_provider.py` against a daemon that already
+uses a real gateway, for example the compose starter after
+`./scripts/bmas up`:
+
+```bash
+set -a; source .env; set +a
+BMAS_LIVE_DAEMON_URL=http://127.0.0.1:9000 \
+  PATH="$PWD/.venv/bin:$PATH" .venv/bin/python scripts/run-test-manifest.py \
+  --group daemon.live-provider-smoke
+```
+
+It submits one classic task and asserts the decider produced the
+answer, and it registers a four-item anchor set with inline content
+and asserts the judge labels every item without abstaining. It spends
+real provider budget, so it never enters a required profile.
+
 ## The performance contract
 
 `daemon/tests/test_performance_contract.py` implements the published

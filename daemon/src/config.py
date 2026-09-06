@@ -290,6 +290,12 @@ _routing = _cfg.get("routing", {})
 # parameters a provider rejects.
 from core.model_parameters import ModelProfile, profile_from_configuration  # noqa: E402
 
+# When set, benchmark admission fails closed unless a live, unexpired
+# provider qualification exists for the attempt's model.
+REQUIRE_PROVIDER_QUALIFICATION = os.getenv(
+    "BMAS_REQUIRE_PROVIDER_QUALIFICATION", "",
+).strip().lower() in {"1", "true", "yes"}
+
 MODEL_PROFILES: dict[str, ModelProfile] = {
     str(_alias): profile_from_configuration(str(_alias), _model_cfg)
     for _alias, _model_cfg in _models.items()

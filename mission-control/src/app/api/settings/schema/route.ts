@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 /**
  * GET /api/settings/schema
@@ -7,7 +8,7 @@ import { DAEMON_BASE_URL } from "@/lib/config";
  */
 export async function GET(): Promise<NextResponse> {
   try {
-    const res = await fetch(`${DAEMON_BASE_URL}/settings/schema`, {
+    const res = await daemonFetch(`${DAEMON_BASE_URL}/settings/schema`, {
       cache: "no-store",
     });
     if (!res.ok) {

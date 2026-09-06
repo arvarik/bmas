@@ -146,11 +146,30 @@ def _validate_prerequisites(
         )
 
 
+async def live_qualifications(
+    qualification_ids: tuple[str, ...],
+) -> dict[str, QualificationRecord]:
+    """Read the live qualification records the request names."""
+    import qualification_service
+
+    records: dict[str, QualificationRecord] = {}
+    for qualification_id in qualification_ids:
+        stored = await qualification_service.get_qualification(qualification_id)
+        if stored is None:
+            continue
+        records[qualification_id] = QualificationRecord(
+            qualification_id=qualification_id,
+            state="revoked" if int(stored.get("revoked") or 0) else "qualified",
+            expires_at=str(stored.get("expires_at") or ""),
+        )
+    return records
+
+
 async def admit_run(
     request: AdmissionRequest,
     *,
     available_reader_ids: frozenset[str],
-    qualification_fixture: dict[str, QualificationRecord],
+    qualification_fixture: dict[str, QualificationRecord] | None = None,
     storage_report: dict[str, Any],
     database_time: str | None = None,
 ) -> dict[str, Any]:
@@ -162,6 +181,15 @@ async def admit_run(
     reservation that does not fit the aggregate limits rejects the
     whole transaction, and nothing persists.
     """
+    # The Foundation admission writer stays behind its gates until the
+    # conformance column of its runtime pair passes.
+    from core.foundation_gates import require_writer_gates
+
+    require_writer_gates("run_context", "runtime_unit_of_work", "budget_reservations")
+    if qualification_fixture is None:
+        qualification_fixture = await live_qualifications(
+            request.required_qualification_ids,
+        )
     now = database_time or await db.database_utc_now()
     _validate_prerequisites(
         request,

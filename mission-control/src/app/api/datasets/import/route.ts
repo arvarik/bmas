@@ -1,4 +1,5 @@
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 import {
   daemonFailure,
   daemonJsonResponse,
@@ -7,7 +8,7 @@ import {
 
 export async function POST(request: Request) {
   try {
-    const response = await fetch(`${DAEMON_BASE_URL}/datasets/import`, {
+    const response = await daemonFetch(`${DAEMON_BASE_URL}/datasets/import`, {
       method: "POST",
       headers: daemonMutationHeaders(),
       body: await request.formData(),

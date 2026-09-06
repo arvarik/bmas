@@ -45,6 +45,20 @@ def gate_enabled(name: str) -> bool:
     return bool(configured.get(name, False))
 
 
+class WriterDisabledError(RuntimeError):
+    """A v2 writer ran while its foundation gate stayed disabled."""
+
+
+def require_writer_gates(*names: str) -> None:
+    """Refuse a v2 write while any named gate stays disabled."""
+    disabled = [name for name in names if not gate_enabled(name)]
+    if disabled:
+        raise WriterDisabledError(
+            "The foundation gates stay disabled for this writer: "
+            + ", ".join(sorted(disabled))
+        )
+
+
 def gate_states() -> dict[str, bool]:
     """Return the current state of every planned writer gate."""
     return {name: gate_enabled(name) for name in PLANNED_WRITER_GATES}

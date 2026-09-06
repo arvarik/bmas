@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 const HYDRATION_PAGE_LIMIT = 1_000;
 const HYDRATION_PAGE_ATTEMPTS = 2;
 
 async function fetchOptional(path: string): Promise<unknown | null> {
   try {
-    const response = await fetch(`${DAEMON_BASE_URL}${path}`, {
+    const response = await daemonFetch(`${DAEMON_BASE_URL}${path}`, {
       cache: "no-store",
       signal: AbortSignal.timeout(5_000),
     });
@@ -38,7 +39,7 @@ async function fetchTailPage(
     let lastError: Error | null = null;
     for (let attempt = 0; attempt < HYDRATION_PAGE_ATTEMPTS; attempt += 1) {
       try {
-        const response = await fetch(`${DAEMON_BASE_URL}${pagePath}`, {
+        const response = await daemonFetch(`${DAEMON_BASE_URL}${pagePath}`, {
           cache: "no-store",
           signal: AbortSignal.timeout(5_000),
         });
@@ -96,7 +97,7 @@ export async function GET(
 
   try {
     const [detailResponse, board, turns, cost, logs, traces] = await Promise.all([
-      fetch(`${DAEMON_BASE_URL}${taskPath}`, {
+      daemonFetch(`${DAEMON_BASE_URL}${taskPath}`, {
         cache: "no-store",
         signal: AbortSignal.timeout(5_000),
       }),

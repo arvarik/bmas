@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 /**
  * PATCH /api/settings/role_registry
@@ -8,7 +9,7 @@ import { DAEMON_BASE_URL } from "@/lib/config";
 export async function PATCH(request: Request): Promise<NextResponse> {
   try {
     const body = await request.json();
-    const res = await fetch(`${DAEMON_BASE_URL}/settings/role_registry`, {
+    const res = await daemonFetch(`${DAEMON_BASE_URL}/settings/role_registry`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",

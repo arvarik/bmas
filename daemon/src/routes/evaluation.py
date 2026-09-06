@@ -16,6 +16,7 @@ import aiosqlite
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+import edge_access
 from auth import require_api_key
 from benchmarks import (
     asset_ingestion,
@@ -578,6 +579,7 @@ async def read_run_scores_endpoint(run_id: str):
 
 @router.get("/attempts/{attempt_id}/evidence")
 async def read_attempt_evidence_endpoint(attempt_id: str):
+    edge_access.authorize_read("evidence", attempt_id)
     result = await facade.read_attempt_evidence(attempt_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Attempt not found")
@@ -596,6 +598,7 @@ async def list_attempt_score_records_endpoint(attempt_id: str):
 @router.get("/evidence/sections/{content_digest}")
 async def read_evidence_section_endpoint(content_digest: str):
     """Read one persisted evidence section by its content digest."""
+    edge_access.authorize_read("evidence", content_digest)
     from benchmarks import evidence_capture
     from core.asset_store import ArtifactCommitError
 

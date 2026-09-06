@@ -67,6 +67,14 @@ async def _admit(attempt: dict[str, Any]) -> None:
                 "message": str(error),
             },
         ) from error
+    except admission.QualificationBlockedError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "benchmark_qualification_blocked",
+                "message": str(error),
+            },
+        ) from error
     except ValidationError as error:
         # The arm's submission overrides violate the dispatch contract;
         # a retry never changes the outcome.

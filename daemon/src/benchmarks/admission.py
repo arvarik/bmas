@@ -549,6 +549,36 @@ async def _link_task(
     )
 
 
+class QualificationBlockedError(RuntimeError):
+    """The attempt's model has no live provider qualification."""
+
+
+async def _require_provider_qualification(attempt: dict[str, Any]) -> None:
+    """Fail closed when the flag demands a live qualification."""
+    import config
+    from core.model_parameters import profile_for_alias
+
+    if not getattr(config, "REQUIRE_PROVIDER_QUALIFICATION", False):
+        return
+    import qualification_service
+
+    arm = attempt.get("arm_configuration") or {}
+    effective = arm.get("effective_configuration") or {}
+    routing = effective.get("model_routing") or {}
+    alias = str(
+        routing.get("medium") or next(iter(routing.values()), None)
+        or attempt.get("model_used") or "starter-model",
+    )
+    profile = profile_for_alias(alias)
+    try:
+        await qualification_service.check_admission(
+            provider=profile.provider, model=profile.model, adapter="litellm",
+            required_capabilities=(),
+        )
+    except qualification_service.AdmissionBlockedError as error:
+        raise QualificationBlockedError(str(error)) from error
+
+
 async def admit_attempt(attempt: dict[str, Any]) -> dict[str, str]:
     """Admit one attempt through the shared effect ledger.
 
@@ -557,6 +587,7 @@ async def admit_attempt(attempt: dict[str, Any]) -> dict[str, str]:
     stable key is the attempt identifier; an equal key with a
     different request digest fails closed.
     """
+    await _require_provider_qualification(attempt)
     authority = await ensure_run_authority(attempt)
     attempt_id = str(attempt["id"])
     # A run authored as a study admits only while its study

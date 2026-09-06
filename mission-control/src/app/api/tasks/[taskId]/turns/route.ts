@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 /**
  * GET /api/tasks/[taskId]/turns
@@ -17,7 +18,7 @@ export async function GET(
   }
 
   try {
-    const upstream = await fetch(`${DAEMON_BASE_URL}/tasks/${taskId}/turns`, {
+    const upstream = await daemonFetch(`${DAEMON_BASE_URL}/tasks/${taskId}/turns`, {
       signal: AbortSignal.timeout(5_000),
       cache: "no-store",
     });
