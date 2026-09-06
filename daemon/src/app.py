@@ -80,8 +80,18 @@ async def lifespan(app: FastAPI):
     )
     app.state.calibration_task = calibration_task
 
+    # Restore a fresh backup on a schedule when an operator enables it.
+    import restore_test
+
+    restore_task = None
+    if restore_test.RESTORE_TEST_INTERVAL_SECONDS > 0:
+        restore_task = asyncio.create_task(restore_test.restore_test_loop())
+    app.state.restore_test_task = restore_task
+
     yield
 
+    if restore_task is not None:
+        restore_task.cancel()
     calibration_task.cancel()
     health_task.cancel()
     await stop_delivery_task(delivery_task)

@@ -1,0 +1,129 @@
+{
+ "exact_bytes": [
+  {
+   "domain": "artifact-content",
+   "input": "a\r\nb",
+   "name": "crlf-kept",
+   "sha256": "2cf372b1d93b32b4473e04dd5eb1ba35dd6b089df08c196801e2dc8dcb30072a"
+  },
+  {
+   "domain": "evidence-final-output",
+   "input": "hello world",
+   "name": "domain-separates",
+   "sha256": "979e141e049e71e24dad2aca4cbc74f4c8a14fcdd60b0c7310c231b7bcc7e240"
+  },
+  {
+   "domain": "artifact-content",
+   "input": "",
+   "name": "empty",
+   "sha256": "45650d5f5b75f93d81d77400411f168c4362f055281018733a4458e22a1bdfa4"
+  },
+  {
+   "domain": "artifact-content",
+   "input": "caf\u00e9",
+   "name": "nfc-differs-from-nfd",
+   "sha256": "65bd1ec0838fbccae9a2265ca9d77c465d70b89afaed95a59b786402e7d0e904"
+  },
+  {
+   "domain": "artifact-content",
+   "input": "cafe\u0301",
+   "name": "nfd-differs-from-nfc",
+   "sha256": "7bdb58b205d5274e19526bd580fd9dd44a432ee83c716a187f6a31bc964eec4c"
+  },
+  {
+   "domain": "artifact-content",
+   "input": "hello world",
+   "name": "plain-ascii",
+   "sha256": "18b4f543b1fd261b9c35e9899f365aaf488f60f588cfe55ef2d81154706289b1"
+  }
+ ],
+ "fixture_id": "keyed-digest",
+ "keyed": [
+  {
+   "domain": "principal-email",
+   "hmac_sha256": "0d515f781e270855a9e0fa1c7e7d1f1907bdb1f8f53e99ebe3e038a47aebacd5",
+   "key_id": "hmac-key-fixture",
+   "name": "email",
+   "value": "person@example.org"
+  },
+  {
+   "domain": "principal-email",
+   "hmac_sha256": "fa645f4c1d68fa2f06bc373e579a1e509c640969ac3ef86aefb1f28737891403",
+   "key_id": "hmac-key-fixture",
+   "name": "empty-value",
+   "value": ""
+  },
+  {
+   "domain": "free-text",
+   "hmac_sha256": "9ef7cb673115e1ea57534bb84f29f526e099a07dc02285abca322e58bbd98235",
+   "key_id": "hmac-key-fixture",
+   "name": "long-value",
+   "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+   "domain": "api-key",
+   "hmac_sha256": "ad611b68ae83193db55469ebb82a7c0d950d6ef2a16419785587b786871af4c2",
+   "key_id": "hmac-key-fixture",
+   "name": "other-domain",
+   "value": "person@example.org"
+  },
+  {
+   "domain": "principal-name",
+   "hmac_sha256": "794c86e47003e3c133cc226b2cb3813410fb9501863da53613143f049931826a",
+   "key_id": "hmac-key-fixture",
+   "name": "unicode-value",
+   "value": "Zo\u00eb \u00d8sterg\u00e5rd"
+  }
+ ],
+ "metadata": {
+  "digest_profile": "bmas-digest",
+  "digest_profile_version": "1",
+  "domain_prefix": "bmas:",
+  "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "key_id": "hmac-key-fixture",
+  "keyed_algorithm": "hmac-sha256",
+  "tenant_id": "tenant-fixture"
+ },
+ "semantic_text": [
+  {
+   "input": "line one\r\nline two\rline three\n",
+   "name": "crlf-and-cr",
+   "semantic_text": "line one\nline two\nline three\n"
+  },
+  {
+   "input": "\ud83d\ude00 \u65e5\u672c\u8a9e \u0645\u0631\u062d\u0628\u0627",
+   "name": "emoji-and-cjk",
+   "semantic_text": "\ud83d\ude00 \u65e5\u672c\u8a9e \u0645\u0631\u062d\u0628\u0627"
+  },
+  {
+   "input": "",
+   "name": "empty",
+   "semantic_text": ""
+  },
+  {
+   "input": "caf\u00e9 na\u00efve",
+   "name": "nfc-stays",
+   "semantic_text": "caf\u00e9 na\u00efve"
+  },
+  {
+   "input": "cafe\u0301 na\u0308ive",
+   "name": "nfd-composes-to-nfc",
+   "semantic_text": "caf\u00e9 n\u00e4ive"
+  },
+  {
+   "input": "hello world",
+   "name": "plain-ascii",
+   "semantic_text": "hello world"
+  },
+  {
+   "input": "a\tb  c \u00a0d",
+   "name": "tabs-and-spaces-stay",
+   "semantic_text": "a\tb  c \u00a0d"
+  },
+  {
+   "input": "keep  \n",
+   "name": "trailing-whitespace-stays",
+   "semantic_text": "keep  \n"
+  }
+ ]
+}

@@ -125,6 +125,38 @@ smoke scale on every worker so the report structure proves on every
 run. The `daemon.performance-contract` group sets
 `BMAS_PERFORMANCE_WORKER=1` and enforces every limit on the pinned
 Linux worker with eight logical CPUs, 16 GiB memory, and local SSD.
+The harness measures every published limit. The scheduler decision
+measurement claims 100 leases across 20 runs and enforces 100
+milliseconds at p95. The cancellation measurement cancels one run
+with queued work and enforces two seconds until the scheduler stops
+offering that run. The report's `host` block records the machine
+image digest from `BMAS_HOST_IMAGE_DIGEST`, the kernel release, and
+the Python, SQLite, Redis client, Redis server
+(`BMAS_REDIS_SERVER_VERSION`), NumPy, Wasmtime, Node.js, and
+Playwright versions, so a number never travels without its host.
+The pinned worker run itself happens in continuous integration on
+that worker. A laptop run records the smoke scale only and enforces
+nothing.
+
+## The Foundation verification tests
+
+`daemon/tests/test_foundation_verification.py` proves four
+behaviours the handoff gate listed as missing. Twelve concurrent
+writers on one run commit through one ordered digest chain with
+distinct cursors and sequence numbers. A simulated full disk
+(`sqlite3.OperationalError: database or disk is full`) at the journal
+insert, the projection write, the outbox write, or the commit leaves
+no partial record, and the retry commits exactly once. The scheduled
+restore test in `daemon/src/restore_test.py` creates one backup,
+restores it into an isolated directory, and compares the measured
+recovery time and recovery point lag against the objectives
+(60 seconds, zero lag). It records every outcome as a `restore_test`
+backup record, so a failed restore test shows in the Recovery Center
+`backup_health` queue. `BMAS_RESTORE_TEST_INTERVAL_SECONDS` above
+zero starts the loop in the daemon against `BMAS_BACKUP_ROOT`. A
+repeatability pair runs one case twice under one seed plan, captures
+both evidence bundles with their own seed evidence, and claims no
+repeatability.
 
 ## The pinned toolchain
 
@@ -153,6 +185,12 @@ and `bmas-analysis-rng` in TypeScript. The
 published daemon fixtures, so every digest, rank, sample, split,
 candidate, sign-flip bit, and oracle aggregate has one real second
 consumer that reproduces it byte for byte.
+`mission-control/src/lib/keyed-digest.ts` implements the keyed
+digest, the semantic text transform, and the exact content digest.
+`scripts/generate-keyed-digest-fixtures.py` freezes the reference
+vectors in `daemon/tests/fixtures/keyed_digest.json`, and both the
+daemon (`test_keyed_digest_fixtures.py`) and the same Mission Control
+group reproduce every HMAC, text transform, and exact digest.
 
 ## Release gates and the default generation
 
