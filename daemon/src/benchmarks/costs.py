@@ -134,16 +134,43 @@ def budget_limit_nanos(configuration: dict[str, Any]) -> int:
     return limit.amount_nanos
 
 
+# The observed reservation multiplies the recent cost percentile by
+# this safety factor and never drops below the floor, so a reservation
+# stays close to real spend without starving a slightly larger attempt.
+OBSERVED_RESERVATION_SAFETY = 2
+OBSERVED_RESERVATION_FLOOR_TEXT = "0.02"
+OBSERVED_RESERVATION_PERCENTILE = 0.95
+
+
+def observed_reservation_amount(costs_usd: list[float]) -> Money | None:
+    """Size one reservation from recent settled attempt costs.
+
+    The amount is twice the ninety-fifth percentile of the observed
+    costs, with a small floor. It returns None without observations,
+    so the documented default applies to a revision's first attempts.
+    """
+    observed = sorted(float(value) for value in costs_usd if value is not None and float(value) >= 0)
+    if not observed:
+        return None
+    position = max(0, min(len(observed) - 1, int(round(OBSERVED_RESERVATION_PERCENTILE * (len(observed) - 1)))))
+    percentile, _ = parse_boundary_amount(observed[position])
+    scaled = percentile.scale_ratio(OBSERVED_RESERVATION_SAFETY, 1)
+    floor = Money.from_decimal_string(BENCHMARK_CURRENCY, OBSERVED_RESERVATION_FLOOR_TEXT)
+    return scaled if scaled.amount_nanos >= floor.amount_nanos else floor
+
+
 def attempt_reservation_amount(
     configuration: dict[str, Any], total_attempts: int,
+    *, observed_costs_usd: list[float] | None = None,
 ) -> Money:
     """Return the expected maximum cost to reserve for one attempt.
 
     An explicit ``attempt_cost_limit_usd`` wins. Otherwise the run
     limit divides across the planned attempts with upward rounding, so
     the sum of all reservations still covers the run limit. Without
-    any limit, the documented default applies and reconciliation
-    records the observed overshoot.
+    any limit, recent settled attempts of the same revision size the
+    reservation, and without observations the documented default
+    applies; reconciliation records the observed overshoot either way.
     """
     declared = configuration.get("attempt_cost_limit_usd")
     if declared is not None:
@@ -152,6 +179,9 @@ def attempt_reservation_amount(
     limit = run_cost_limit(configuration)
     if limit is not None:
         return limit.scale_ratio(1, max(int(total_attempts), 1))
+    observed = observed_reservation_amount(observed_costs_usd or [])
+    if observed is not None:
+        return observed
     return Money.from_decimal_string(
         BENCHMARK_CURRENCY, DEFAULT_ATTEMPT_RESERVATION_TEXT,
     )

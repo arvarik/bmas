@@ -15,7 +15,7 @@ DAEMON_SRC = REPO_ROOT / "daemon" / "src"
 LITELLM_GENERATOR = REPO_ROOT / "litellm" / "generate_config.py"
 sys.path.insert(0, str(DAEMON_SRC))
 
-from config_schema import validate_config_document  # noqa: E402
+from config_schema import validate_config_document
 
 
 def config_files() -> list[Path]:

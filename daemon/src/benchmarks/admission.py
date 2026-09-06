@@ -18,6 +18,7 @@ by querying the stable key.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -41,6 +42,8 @@ if TYPE_CHECKING:
     from routes.submit import TaskSubmission
 
 ADMISSION_SCOPE = "benchmark-admission"
+logger = logging.getLogger("bmas.benchmarks.admission")
+
 ADMISSION_RUNTIME_ID = "benchmark-scheduler"
 ADMISSION_AGENT_ID = "benchmark-scheduler"
 ADMISSION_AUDIENCE = "bmas-daemon"
@@ -449,9 +452,18 @@ async def _reserve_attempt_cost(
         record = await budget.get_reservation(reservation_id)
     except budget.BudgetError:
         configuration = attempt.get("test_configuration") or {}
+        observed: list[float] = []
+        revision_id = str(attempt.get("test_revision_id") or "")
+        if (
+            revision_id
+            and configuration.get("attempt_cost_limit_usd") is None
+            and configuration.get("cost_limit_usd") is None
+        ):
+            observed = await repository.observed_attempt_costs(revision_id)
         amount = costs.attempt_reservation_amount(
             configuration,
             int(attempt.get("run_total_attempts") or 1),
+            observed_costs_usd=observed,
         )
         await budget.request_reservation(
             reservation_id=reservation_id,
@@ -986,6 +998,94 @@ async def settle_attempt_admission(attempt: dict[str, Any]) -> None:
     from benchmarks import resource_ledger
 
     await resource_ledger.emit_runtime_usage({**attempt, "run_id": run_id})
+    # The immutable evidence bundle of the attempt captures at the same
+    # moment, so every scorer and every viewer reads frozen evidence
+    # instead of the legacy projection.
+    await capture_settled_evidence(attempt_id)
+
+
+async def capture_settled_evidence(attempt_id: str) -> dict[str, Any] | None:
+    """Capture the immutable evidence bundle of one settled attempt.
+
+    The bundle joins the attempt, its trial, its task record, and the
+    task's trace events. It captures exactly once: a stored bundle
+    stays untouched, and a failure to capture never blocks settlement,
+    because the legacy projection still serves the read.
+    """
+    from benchmarks import costs, evaluation_records, evidence_capture, facade
+
+    try:
+        existing = await evaluation_records.get_record("attempt-evidence", attempt_id)
+        if existing is not None:
+            return None
+        row = await facade._legacy_attempt_row(attempt_id)  # noqa: SLF001
+        if row is None or not row.get("task_id"):
+            return None
+        task = await db.get_task(str(row["task_id"])) or {}
+        traces = await db.get_task_traces(str(row["task_id"]), limit=5000, offset=0)
+        trace_events = [
+            {key: value for key, value in trace.items() if key != "task_id"}
+            for trace in traces
+        ]
+        tool_calls = [
+            trace for trace in trace_events
+            if "tool" in str(trace.get("type") or "").lower()
+        ]
+        cost = costs.legacy_cost_adapter(row.get("total_cost_usd"))
+        final_state = None
+        raw_state = task.get("result_json")
+        if isinstance(raw_state, str) and raw_state.strip():
+            try:
+                final_state = {"state": json.loads(raw_state)}
+            except ValueError:
+                final_state = {"state": {"raw": raw_state[:2000]}}
+        elif isinstance(raw_state, dict):
+            final_state = {"state": raw_state}
+        seed_evidence: dict[str, Any] = {
+            "requested_seed": row.get("random_seed"),
+            "seed_control": str(row.get("seed_control") or "recorded"),
+            "applied_seed": None,
+        }
+        ledger_references: dict[str, Any] = {}
+        if row.get("admission_effect_id"):
+            ledger_references["admission_effect_id"] = str(row["admission_effect_id"])
+        if row.get("admission_reservation_id"):
+            ledger_references["reservation_id"] = str(row["admission_reservation_id"])
+        runtime_id = str(row.get("runtime_id") or "classic")
+        return await evidence_capture.capture_attempt_evidence(
+            attempt_id=attempt_id,
+            run_manifest={
+                "run_id": str(row.get("run_id") or ""),
+                "plan_checksum": row.get("execution_plan_checksum"),
+                "dataset_item_id": row.get("dataset_item_id"),
+            },
+            runtime_specification={
+                "runtime": runtime_id,
+                "model": task.get("model_used"),
+                "variant": task.get("variant"),
+            },
+            case={"case_id": str(row.get("item_key") or row.get("dataset_item_id") or "unknown")},
+            trace_events=trace_events,
+            final_output=(
+                str(row["result_summary"]) if row.get("result_summary") is not None else None
+            ),
+            final_state=final_state,
+            tool_calls=tool_calls or None,
+            resources={
+                "cost": cost["money"] if cost else None,
+                "tokens": int(row.get("total_tokens") or 0),
+                "latency_ms": int(row.get("duration_ms") or 0),
+            },
+            seed_evidence=seed_evidence,
+            ledger_references=ledger_references,
+            failure_classification=(
+                str(row["failure_category"]) if row.get("failure_category") else None
+            ),
+            versions={"runtime": runtime_id, "evidence_source": "settlement"},
+        )
+    except Exception:  # noqa: BLE001 - settlement never fails on evidence capture
+        logger.exception("Evidence capture failed for attempt %s", attempt_id)
+        return None
 
 
 async def try_settle_run(run_id: str) -> bool:

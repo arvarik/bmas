@@ -4633,6 +4633,28 @@ async def get_task_cost_summary(task_id: str) -> dict:
             "WHERE c.task_id = ? GROUP BY actor ORDER BY cost_usd DESC",
             (task_id,),
         )
+        # Per round: actor turns carry round_no; a control-plane call
+        # names its round in a synthetic turn id "control-r<round>-<n>".
+        round_cursor = await conn.execute(
+            "SELECT round_no, "
+            "  SUM(cost_usd) AS cost_usd, "
+            "  SUM(input_tokens + output_tokens) AS tokens, "
+            "  COUNT(*) AS calls, "
+            "  SUM(CASE WHEN node_id = 'control_plane' THEN cost_usd ELSE 0.0 END) AS control_plane_cost_usd, "
+            "  SUM(CASE WHEN node_id = 'control_plane' THEN input_tokens + output_tokens ELSE 0 END) AS control_plane_tokens "
+            "FROM ("
+            "  SELECT c.cost_usd, c.input_tokens, c.output_tokens, c.node_id, "
+            "    CASE WHEN t.round_no IS NOT NULL THEN t.round_no "
+            "         WHEN c.turn_id LIKE 'control-r%' THEN "
+            "           CAST(substr(c.turn_id, 10, instr(substr(c.turn_id, 10), '-') - 1) AS INTEGER) "
+            "         ELSE NULL END AS round_no "
+            "  FROM cost_entries c "
+            "  LEFT JOIN turns t ON c.turn_id = t.id AND c.task_id = t.task_id "
+            "  WHERE c.task_id = ?"
+            ") GROUP BY round_no ORDER BY round_no",
+            (task_id,),
+        )
+        round_rows = await round_cursor.fetchall()
         # Totals
         cursor = await conn.execute(
             "SELECT COALESCE(SUM(cost_usd), 0.0) as total_cost, "
@@ -4645,6 +4667,7 @@ async def get_task_cost_summary(task_id: str) -> dict:
         return {
             "total_cost_usd": totals["total_cost"] if totals else 0.0,
             "total_tokens": totals["total_tokens"] if totals else 0,
+            "by_round": [dict(r) for r in round_rows],
             "by_model": [dict(r) for r in model_rows],
             "by_phase": [dict(r) for r in phase_rows],
             "by_actor": [dict(r) for r in actor_rows],

@@ -1074,6 +1074,7 @@ _ATTEMPT_CONTEXT_SELECT = (
     "run.dispatch_tickets, run.starvation_wait, "
     "run.budget_id AS run_budget_id, run.authority_run_id, "
     "run.authority_fence, run.total_attempts AS run_total_attempts, "
+    "run.test_revision_id AS test_revision_id, "
     "(SELECT COUNT(*) FROM benchmark_test_arms AS counted_arm "
     "WHERE counted_arm.test_revision_id = run.test_revision_id) AS arm_count, "
     "task.model_used AS task_model_used, "
@@ -2351,3 +2352,25 @@ async def record_late_charge(
         await set_run_cost_status(run_id, "settling")
     await supersede_gate_evaluations(run_id, superseded_by=charge_id)
     return charge_id
+
+
+async def observed_attempt_costs(
+    test_revision_id: str, *, limit: int = 50,
+) -> list[float]:
+    """Recent settled attempt costs of one test revision, newest first.
+
+    Admission sizes a reservation from these observations when the
+    revision declares no cost limit.
+    """
+    async with db._connect() as connection:  # noqa: SLF001
+        rows = await connection.execute_fetchall(
+            "SELECT task.total_cost_usd AS cost FROM benchmark_attempts AS attempt "
+            "JOIN benchmark_trials AS trial ON trial.id = attempt.trial_id "
+            "JOIN benchmark_runs AS run ON run.id = trial.run_id "
+            "JOIN tasks AS task ON task.id = attempt.task_id "
+            "WHERE run.test_revision_id = ? AND attempt.status = 'completed' "
+            "AND task.total_cost_usd IS NOT NULL "
+            "ORDER BY attempt.completed_at DESC, attempt.id DESC LIMIT ?",
+            (test_revision_id, int(limit)),
+        )
+    return [float(row["cost"]) for row in rows if row["cost"] is not None]

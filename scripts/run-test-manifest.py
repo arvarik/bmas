@@ -23,6 +23,7 @@ import argparse
 import glob
 import os
 import secrets
+import shutil
 import signal as signal_module
 import subprocess
 import sys
@@ -109,7 +110,16 @@ def file_record(path: Path, recorded_path: str) -> dict[str, Any]:
     }
 
 
-def collect_artifacts(repo_root: Path, group: dict[str, Any]) -> list[dict[str, Any]]:
+def collect_artifacts(
+    repo_root: Path, group: dict[str, Any], attempt_dir: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Record every artifact of one attempt from a snapshot copy.
+
+    A kept test stack or a later group can keep writing to the live
+    file after the attempt ends, so the runner copies each artifact
+    into the attempt directory first and records the copy. The record
+    then stays valid however the live path changes afterwards.
+    """
     records = []
     for pattern in group.get("artifacts", []):
         matches = sorted(glob.glob(str(repo_root / pattern), recursive=True))
@@ -117,7 +127,14 @@ def collect_artifacts(repo_root: Path, group: dict[str, Any]) -> list[dict[str, 
             path = Path(match)
             if not path.is_file():
                 continue
-            records.append(file_record(path, path.relative_to(repo_root).as_posix()))
+            relative = path.relative_to(repo_root).as_posix()
+            if attempt_dir is None or attempt_dir in path.parents:
+                records.append(file_record(path, relative))
+                continue
+            snapshot = attempt_dir / "artifacts" / relative
+            snapshot.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, snapshot)
+            records.append(file_record(snapshot, snapshot.relative_to(repo_root).as_posix()))
     return records
 
 
@@ -197,7 +214,7 @@ def run_attempt(
         "stdout_sha256": manifestlib.file_sha256(stdout_path),
         "stderr_sha256": manifestlib.file_sha256(stderr_path),
         "logs": logs,
-        "artifacts": collect_artifacts(repo_root, group),
+        "artifacts": collect_artifacts(repo_root, group, attempt_dir),
     }
 
 
