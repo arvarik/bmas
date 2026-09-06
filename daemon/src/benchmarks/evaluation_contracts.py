@@ -1453,6 +1453,11 @@ RECORD_SCHEMAS: dict[str, dict[str, Any]] = {
                                 "item_id": _IDENTIFIER,
                                 "label": _NAME,
                                 "reviewers": _STRING_LIST,
+                                # The material the judge reads; absent
+                                # fields resolve from the dataset item.
+                                "input": _TEXT,
+                                "expected_output": _TEXT,
+                                "candidate": _TEXT,
                             },
                         },
                     },

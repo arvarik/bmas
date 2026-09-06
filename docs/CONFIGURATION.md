@@ -148,6 +148,7 @@ models:
 | `api_key_env` | string | Yes | Names the environment variable that contains the provider key. |
 | `api_base` | string | No | Sets a custom OpenAI-compatible API base. |
 | `max_tokens` | integer | No | Limits output tokens. The default is `4096`. |
+| `reasoning` | string | No | Controls how control-plane calls (agent selection, answer generation, the solution evaluator, triage, and the model-backed judge) ask a reasoning model to think. `provider_default` lets a model that reasons by default (Gemini 2.5 and later, OpenAI o-series and GPT-5) run at low effort for structured replies and never adds reasoning to a plain model. A level (`minimal`, `low`, `medium`, `high`) forces that effort. `off` never sends an effort. Every control-plane call sizes its completion budget for reasoning tokens and omits `temperature` for providers that reject it. |
 | `pricing.input_cost_per_token` | number | No | Sets static input pricing in US dollars. |
 | `pricing.output_cost_per_token` | number | No | Sets static output pricing in US dollars. |
 | `pricing.source` | string | No | Records the pricing source label. |

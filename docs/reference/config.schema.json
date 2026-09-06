@@ -394,6 +394,26 @@
           "minLength": 1,
           "title": "Provider",
           "type": "string"
+        },
+        "reasoning": {
+          "anyOf": [
+            {
+              "enum": [
+                "provider_default",
+                "off",
+                "minimal",
+                "low",
+                "medium",
+                "high"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reasoning"
         }
       },
       "required": [

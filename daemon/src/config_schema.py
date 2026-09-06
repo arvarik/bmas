@@ -69,6 +69,13 @@ class ModelConfig(StrictModel):
     api_base: str | None = None
     max_tokens: int = Field(default=4096, ge=1)
     pricing: PricingConfig | None = None
+    # How control-plane calls ask a reasoning model to think:
+    # provider_default lets a model that reasons by default run at low
+    # effort for structured replies, a level forces that effort, and
+    # off never sends an effort.
+    reasoning: Literal[
+        "provider_default", "off", "minimal", "low", "medium", "high",
+    ] | None = None
 
 
 class RoutingConfig(StrictModel):

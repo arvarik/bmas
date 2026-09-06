@@ -31,6 +31,13 @@ import httpx
 
 from core.capabilities import capabilities_for_role
 from core.entry import BoardEntry, entry_to_dict
+from core.model_parameters import (
+    completion_parameters,
+    message_content,
+    profile_for_alias,
+    retry_budget,
+    truncated,
+)
 from core.response_parser import parse_entries
 
 logger = logging.getLogger("bmas.traditional")
@@ -479,13 +486,13 @@ class TraditionalVariant:
                         {"role": "system", "content": AG_SYSTEM_PROMPT.format(n=n)},
                         {"role": "user", "content": f"Task: {query}"},
                     ],
-                    # 2048 output tokens: gemini-pro thinking mode burns ~500
-                    # reasoning tokens before producing any output, so 512 was
-                    # always truncating the JSON mid-array.  2048 gives headroom
-                    # for 4 experts × ~200 tokens each plus the JSON wrapper.
-                    "max_tokens": 2048,
-                    "temperature": 0.4,
-                    "response_format": {"type": "json_object"},
+                    # 4 experts x ~200 tokens each plus the JSON wrapper; the
+                    # provider profile adds the reasoning headroom a thinking
+                    # model needs before it writes the visible JSON.
+                    **completion_parameters(
+                        profile_for_alias(ag_model), output_tokens=1024,
+                        temperature=0.4, reasoning="low", json_object=True,
+                    ),
                 },
             )
             resp.raise_for_status()
@@ -496,7 +503,7 @@ class TraditionalVariant:
             )
             choice = resp_json["choices"][0]
             finish_reason = choice.get("finish_reason", "stop")
-            raw_content = choice["message"]["content"]
+            raw_content = message_content(resp_json)
 
             # Guard against truncated JSON: if the model hit the token limit
             # the JSON will be incomplete and json.loads will raise.  Detect
@@ -1483,7 +1490,14 @@ class TraditionalVariant:
         system = CU_SYSTEM_PROMPT.format(max_concurrent=self.max_concurrent)
 
         cu_model = self._resolve_model(self.model_routing.get("light", "medium"))
-        # Try up to 2 times (1 retry on garbled output)
+        # The visible reply is a short JSON object; a reasoning model
+        # spends completion tokens on reasoning first, so the budget
+        # comes from the provider profile and grows once on truncation.
+        parameters = completion_parameters(
+            profile_for_alias(cu_model), output_tokens=256, temperature=0.2,
+            reasoning="low", json_object=True,
+        )
+        # Try up to 2 times (1 retry on garbled or truncated output)
         for attempt in range(2):
             try:
                 resp = await self.http.post(
@@ -1495,9 +1509,7 @@ class TraditionalVariant:
                             {"role": "system", "content": system},
                             {"role": "user", "content": prompt},
                         ],
-                        "max_tokens": 256,
-                        "temperature": 0.2,
-                        "response_format": {"type": "json_object"},
+                        **parameters,
                     },
                     timeout=30.0,
                 )
@@ -1507,7 +1519,16 @@ class TraditionalVariant:
                 await self._record_llm_cost(
                     task_id, resp_json.get("usage"), cu_model, "control_plane:cu",
                 )
-                raw = resp_json["choices"][0]["message"]["content"]
+                cut = truncated(resp_json)
+                if cut is not None:
+                    logger.warning(
+                        "CU reply truncated at %s tokens (%s reasoning); "
+                        "retrying with a larger budget",
+                        cut["completion_tokens"], cut["reasoning_tokens"],
+                    )
+                    parameters = retry_budget(parameters)
+                    continue
+                raw = message_content(resp_json)
                 selected, rationale = parse_cu_output(raw, self.roster.actor_names())
                 if selected:
                     return selected, rationale
@@ -1763,8 +1784,10 @@ class TraditionalVariant:
                             f"Provide your answer:"
                         )},
                     ],
-                    "max_tokens": 512,
-                    "temperature": 0.1,
+                    **completion_parameters(
+                        profile_for_alias(sole_model), output_tokens=512,
+                        temperature=0.1, reasoning="low",
+                    ),
                 },
                 timeout=30.0,
             )
@@ -1774,7 +1797,13 @@ class TraditionalVariant:
             await self._record_llm_cost(
                 task_id, resp_json.get("usage"), sole_model, "control_plane:sole",
             )
-            return resp_json["choices"][0]["message"]["content"]
+            cut = truncated(resp_json)
+            if cut is not None:
+                logger.warning(
+                    "SolE reply for %s truncated at %s tokens (%s reasoning)",
+                    actor, cut["completion_tokens"], cut["reasoning_tokens"],
+                )
+            return message_content(resp_json)
         except Exception as e:
             raise RuntimeError(f"SolE call failed for {actor}: {e}") from e
 

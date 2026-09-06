@@ -39,6 +39,10 @@ models:
     model: "gemini-3.5-flash"
     api_key_env: GEMINI_API_KEY
     max_tokens: 65536
+    # Control-plane calls ask a reasoning model for low effort and size
+    # their completion budget for reasoning tokens. Set a level to force
+    # an effort, or off to never send one. See docs/CONFIGURATION.md.
+    reasoning: provider_default
     pricing:
       # Official Gemini API paid tier, verified 2026-08:
       # https://ai.google.dev/gemini-api/docs/pricing ($1.50 / $9.00 per 1M)

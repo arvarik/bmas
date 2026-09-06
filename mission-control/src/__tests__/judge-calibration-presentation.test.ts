@@ -40,6 +40,10 @@ function calibration(overrides: Partial<CalibrationRecord> = {}): CalibrationRec
 describe("judge calibration presentation", () => {
   it("parses labelled items with comma or tab separators", () => {
     expect(parseLabelItems("item-1, pass\nitem-2\tfail\nbad\n")).toEqual([{ item_id: "item-1", label: "pass" }, { item_id: "item-2", label: "fail" }]);
+    expect(parseLabelItems("item-3, fail, 16\nitem-4, pass, the answer is 42, really")).toEqual([
+      { item_id: "item-3", label: "fail", candidate: "16" },
+      { item_id: "item-4", label: "pass", candidate: "the answer is 42, really" },
+    ]);
   });
 
   it("names every problem and builds the registration", () => {

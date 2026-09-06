@@ -285,6 +285,16 @@ print("  Validating model routing...", file=sys.stderr)
 _models = _cfg.get("models", {})
 _routing = _cfg.get("routing", {})
 
+# Provider-aware profiles for every model alias. Control-plane calls
+# read them to size completion budgets and to omit the sampling
+# parameters a provider rejects.
+from core.model_parameters import ModelProfile, profile_from_configuration  # noqa: E402
+
+MODEL_PROFILES: dict[str, ModelProfile] = {
+    str(_alias): profile_from_configuration(str(_alias), _model_cfg)
+    for _alias, _model_cfg in _models.items()
+}
+
 # Public credential readiness metadata. This reports only whether each
 # configured environment variable has a value. It never exposes the value.
 MODEL_CREDENTIALS: list[dict[str, object]] = []

@@ -366,7 +366,8 @@ test("the import, edit, publish, configure, execute, inspect, compare, export, a
   await expect(anchorScorer).toHaveAttribute("aria-expanded", "true");
   await page.getByRole("option").filter({ hasNotText: "Select a scorer" }).first().dispatchEvent("click");
   await page.getByLabel("Label set dataset").fill(datasetId);
-  await page.getByLabel("Anchor items (one per line as item id, label)").fill("j-1, pass\nj-2, pass\nj-3, fail");
+  // The third column pins the candidate answer the label judges.
+  await page.getByLabel(/^Anchor items/).fill("j-1, pass, 42\nj-2, pass, 3\nj-3, fail, 16");
   await page.getByRole("button", { name: "Register anchor set" }).last().click();
   const anchorRow = page.getByRole("row", { name: new RegExp(anchorId) });
   await expect(anchorRow).toContainText("Due now", { timeout: 30_000 });

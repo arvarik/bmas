@@ -171,21 +171,40 @@ class TriageRouter:
         'gemini-flash-lite'). No guided_choice — Gemini doesn't support
         constrained decoding; label extraction handles free-form output.
         """
-        response = await self.client.post(
-            f"{self.litellm_url}/chat/completions",
-            headers={"Authorization": f"Bearer {self.litellm_key}"},
-            json={
-                "model": TRIAGE_GEMINI_MODEL,
-                "messages": [
-                    {"role": "system", "content": TRIAGE_SYSTEM_PROMPT},
-                    {"role": "user", "content": task_description},
-                ],
-                "max_tokens": 10,
-                "temperature": 0.1,
-            },
+        from core.model_parameters import (
+            completion_parameters,
+            message_content,
+            profile_for_alias,
+            retry_budget,
+            truncated,
         )
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+
+        # One label word; a reasoning model still needs headroom for
+        # its reasoning tokens, and a truncated reply retries once.
+        parameters = completion_parameters(
+            profile_for_alias(TRIAGE_GEMINI_MODEL), output_tokens=16,
+            temperature=0.1, reasoning="minimal",
+        )
+        for _attempt in range(2):
+            response = await self.client.post(
+                f"{self.litellm_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self.litellm_key}"},
+                json={
+                    "model": TRIAGE_GEMINI_MODEL,
+                    "messages": [
+                        {"role": "system", "content": TRIAGE_SYSTEM_PROMPT},
+                        {"role": "user", "content": task_description},
+                    ],
+                    **parameters,
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+            content = message_content(body)
+            if content.strip() or truncated(body) is None:
+                return content
+            parameters = retry_budget(parameters)
+        return content
 
     async def _classify_local(self, task_description: str) -> str:
         """Classify via local vLLM server with guided_choice constrained decoding.

@@ -48,11 +48,7 @@ def pinned_label_set(
         raise JudgeCalibrationError("A label set holds at least one item")
     pinned = sorted(
         (
-            {
-                "item_id": str(item["item_id"]),
-                "label": str(item["label"]),
-                "reviewers": sorted(str(r) for r in item.get("reviewers") or []),
-            }
+            _pinned_item(item)
             for item in items
         ),
         key=lambda item: str(item["item_id"]),
@@ -63,6 +59,25 @@ def pinned_label_set(
         "items": pinned,
         "label_digest": content_checksum(pinned),
     }
+
+
+# The content fields one anchor item can carry beside its label, so
+# the judge reads the same material the human reviewer labelled even
+# when the dataset version is not available at calibration time.
+ANCHOR_CONTENT_FIELDS = ("input", "expected_output", "candidate")
+
+
+def _pinned_item(item: dict[str, Any]) -> dict[str, Any]:
+    pinned = {
+        "item_id": str(item["item_id"]),
+        "label": str(item["label"]),
+        "reviewers": sorted(str(r) for r in item.get("reviewers") or []),
+    }
+    for field in ANCHOR_CONTENT_FIELDS:
+        value = item.get(field)
+        if value is not None and str(value) != "":
+            pinned[field] = str(value)
+    return pinned
 
 
 def judge_independence(
@@ -335,10 +350,42 @@ async def list_anchor_sets(*, now: str | None = None) -> list[dict[str, Any]]:
     return listed
 
 
+async def _resolve_version_id(dataset_id: str, version: str) -> str | None:
+    """Find the dataset version one label set names.
+
+    The label set's ``dataset_id`` may already be a version id, or a
+    dataset id whose ``version`` names a version id, a version number,
+    or nothing, in which case the newest version applies.
+    """
+    if not dataset_id:
+        return None
+    probe, _total = await db.list_dataset_items(dataset_id, limit=1, offset=0)
+    if probe:
+        return dataset_id
+    dataset = await db.get_dataset(dataset_id)
+    if not dataset:
+        return None
+    versions = list(dataset.get("versions") or [])
+    for candidate in versions:
+        if str(candidate.get("id")) == version or str(candidate.get("version")) == version:
+            return str(candidate["id"])
+    if versions:
+        newest = max(versions, key=lambda entry: int(entry.get("version") or 0))
+        return str(newest["id"])
+    return None
+
+
 async def _anchor_items(label_set: dict[str, Any]) -> list[dict[str, Any]]:
-    """Join the pinned labels with the dataset items they label."""
+    """Join the pinned labels with the content the judge reads.
+
+    Inline content on a pinned item wins; otherwise the dataset item
+    with the same key supplies the input and the reference answer.
+    """
     items_by_id: dict[str, dict[str, Any]] = {}
-    version_id = str(label_set.get("dataset_id") or "")
+    version_id = await _resolve_version_id(
+        str(label_set.get("dataset_id") or ""),
+        str(label_set.get("version") or ""),
+    )
     if version_id:
         offset = 0
         while True:
@@ -357,8 +404,11 @@ async def _anchor_items(label_set: dict[str, Any]) -> list[dict[str, Any]]:
         joined.append({
             "item_id": str(pinned["item_id"]),
             "label": str(pinned["label"]),
-            "input": item.get("input"),
-            "expected_output": item.get("expected_output"),
+            "input": pinned.get("input") or item.get("input"),
+            "expected_output": (
+                pinned.get("expected_output") or item.get("expected_output")
+            ),
+            "candidate": pinned.get("candidate"),
         })
     return joined
 

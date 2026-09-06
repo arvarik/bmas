@@ -283,6 +283,7 @@ async def emit_runtime_usage(
         "now": when,
         "entry_id": f"ledger-runtime-{attempt_id}",
     }
+    estimate = await _reservation_estimate(str(arguments["reservation_id"]))
     if raw_cost is not None:
         text = _decimal_text(float(raw_cost))
         arguments["actual"] = Money.from_decimal_string(
@@ -290,9 +291,30 @@ async def emit_runtime_usage(
         )
         arguments["actual_provider_text"] = text
         arguments["actual_source"] = "usage_report"
+        if estimate is not None:
+            arguments["estimate"] = estimate
+            arguments["estimate_method"] = "admission_reservation"
     else:
         arguments["price_unknown"] = True
     return await emit_entry(ledger_entry(**arguments))
+
+
+async def _reservation_estimate(reservation_id: str) -> Money | None:
+    """The admission reservation of one attempt as the ledger estimate."""
+    import budget_service
+
+    try:
+        record = await budget_service.get_reservation(reservation_id)
+    except Exception:  # noqa: BLE001 - a missing reservation is not an estimate
+        return None
+    if not record:
+        return None
+    amount = record.get("reserved_amount_nanos")
+    if not amount:
+        amount = record.get("requested_amount_nanos")
+    if amount is None:
+        return None
+    return Money(str(record.get("currency") or BENCHMARK_CURRENCY), int(amount))
 
 
 async def emit_scorer_execution(
