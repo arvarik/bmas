@@ -40,7 +40,7 @@ RELEASE_GATES: dict[str, list[str]] = {
     "foundation_evidence_and_goals": ["daemon.evidence-authority", "daemon.goal-concurrency"],
     "foundation_shared_conformance": ["daemon.cross-runtime-conformance", "daemon.behavioral-conformance", "daemon.foundation-release-gate"],
     "foundation_populated_migration": ["daemon.populated-migration"],
-    "foundation_complete_stack_journey": ["daemon.complete-stack-journey"],
+    "foundation_complete_stack_journey": ["daemon.complete-stack-journey", "daemon.foundation-process-journey"],
     "foundation_golden_fixtures": ["daemon.foundation-release-gate"],
     "foundation_journal_immutability": ["daemon.journal-replay", "daemon.unit-of-work-atomicity", "daemon.populated-migration"],
     "foundation_backup_and_restore": ["daemon.sqlite-operational"],

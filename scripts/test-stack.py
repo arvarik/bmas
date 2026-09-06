@@ -227,7 +227,7 @@ def _stop_pid(pid: int) -> bool:
 # ── Start ────────────────────────────────────────────────────────────
 
 
-def start(env_file: Path, *, keep_on_failure: bool) -> dict:
+def start(env_file: Path, *, keep_on_failure: bool, mission_control: bool = True) -> dict:
     root = Path(tempfile.mkdtemp(prefix="bmas-test-stack-"))
     logs = root / "logs"
     logs.mkdir()
@@ -255,6 +255,9 @@ def start(env_file: Path, *, keep_on_failure: bool) -> dict:
         "processes": {},
         "readiness": {},
         "started_at": time.time(),
+        # The exact command and environment of every restartable service,
+        # so a restart respawns the same process over the same state.
+        "launch": {},
     }
     python = sys.executable
     base_env = {
@@ -301,10 +304,16 @@ def start(env_file: Path, *, keep_on_failure: bool) -> dict:
             "BMAS_EXECUTE_KEY": credentials["execute_key"],
             "PYTHONUNBUFFERED": "1",
         }
-        process = _spawn("daemon", [
+        daemon_argv = [
             python, "-m", "uvicorn", "app:app", "--host", "127.0.0.1",
             "--port", str(ports["daemon"]), "--log-level", "info",
-        ], cwd=ROOT / "daemon" / "src", env=daemon_env, log_path=logs / "daemon.log")
+        ]
+        state["launch"]["daemon"] = {
+            "argv": daemon_argv, "cwd": str(ROOT / "daemon" / "src"), "env": daemon_env,
+            "log": str(logs / "daemon.log"), "health": f"{state['urls']['daemon']}/health",
+        }
+        process = _spawn("daemon", daemon_argv, cwd=ROOT / "daemon" / "src",
+                         env=daemon_env, log_path=logs / "daemon.log")
         state["processes"]["daemon"] = process.pid
         if not _wait_http(f"{state['urls']['daemon']}/health",
                           timeout=READINESS_TIMEOUT_SECONDS):
@@ -327,10 +336,16 @@ def start(env_file: Path, *, keep_on_failure: bool) -> dict:
             "TRACE_SPOOL_DIR": str(root / "agent-spool"),
             "PYTHONUNBUFFERED": "1",
         }
-        process = _spawn("agent", [
+        agent_argv = [
             python, "-m", "uvicorn", "api_server:app", "--host", "127.0.0.1",
             "--port", str(ports["agent"]), "--log-level", "info",
-        ], cwd=ROOT / "agent", env=agent_env, log_path=logs / "agent.log")
+        ]
+        state["launch"]["agent"] = {
+            "argv": agent_argv, "cwd": str(ROOT / "agent"), "env": agent_env,
+            "log": str(logs / "agent.log"), "health": f"{state['urls']['agent']}/health",
+        }
+        process = _spawn("agent", agent_argv, cwd=ROOT / "agent",
+                         env=agent_env, log_path=logs / "agent.log")
         state["processes"]["agent"] = process.pid
         if not _wait_http(f"{state['urls']['agent']}/health", timeout=120):
             raise StackError("the agent service never became healthy")
@@ -343,6 +358,11 @@ def start(env_file: Path, *, keep_on_failure: bool) -> dict:
             raise StackError("the daemon never reported every check ready")
         state["readiness"]["daemon"] = True
 
+        if not mission_control:
+            state["readiness"]["mission_control"] = "skipped"
+            env_file.parent.mkdir(parents=True, exist_ok=True)
+            env_file.write_text(json.dumps(state, indent=2, sort_keys=True))
+            return state
         npm = shutil.which("npm")
         if npm is None:
             raise StackError("npm is required for Mission Control")
@@ -455,6 +475,45 @@ def stop(env_file: Path, *, strict: bool = True) -> dict:
     return report
 
 
+def restart(env_file: Path, services: tuple[str, ...] = ("daemon", "agent")) -> dict:
+    """Stop and respawn the daemon and the agent over the same durable state.
+
+    The database, the daemon signing key, the agent activation cache,
+    and the log files stay in place. The respawned processes bind the
+    same ports, so every stored URL keeps working.
+    """
+    state = json.loads(env_file.read_text())
+    report: dict = {"restarted": [], "failed": []}
+    for name in reversed(services):
+        pid = state.get("processes", {}).get(name)
+        if pid is not None and not _stop_pid(int(pid)):
+            raise StackError(f"the {name} process {pid} did not stop")
+        state["processes"].pop(name, None)
+    for name in services:
+        launch = state.get("launch", {}).get(name)
+        if launch is None:
+            raise StackError(f"the stack recorded no launch command for {name}")
+        port = int(state["ports"][name])
+        deadline = time.time() + 30.0
+        while not _port_free(port) and time.time() < deadline:
+            time.sleep(0.2)
+        process = _spawn(name, list(launch["argv"]), cwd=Path(launch["cwd"]),
+                         env=dict(launch["env"]), log_path=Path(launch["log"]))
+        state["processes"][name] = process.pid
+        if not _wait_http(launch["health"], timeout=120):
+            report["failed"].append(name)
+            env_file.write_text(json.dumps(state, indent=2, sort_keys=True))
+            raise StackError(f"the {name} service never became healthy after the restart")
+        report["restarted"].append(name)
+    if "daemon" in services and not _wait_ready_json(
+        f"{state['urls']['daemon']}/readiness", timeout=90,
+    ):
+        raise StackError("the daemon never reported every check ready after the restart")
+    state.setdefault("restarts", []).append({"at": time.time(), **report})
+    env_file.write_text(json.dumps(state, indent=2, sort_keys=True))
+    return report
+
+
 def status(env_file: Path) -> dict:
     state = json.loads(env_file.read_text())
     return {
@@ -465,18 +524,27 @@ def status(env_file: Path) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["start", "stop", "status"])
+    parser.add_argument("command", choices=["start", "stop", "status", "restart"])
     parser.add_argument("--env-file", required=True)
     parser.add_argument("--keep-on-failure", action="store_true")
+    parser.add_argument(
+        "--without-mission-control", action="store_true",
+        help="Start Redis, the fake provider, the daemon, and the agent only.",
+    )
     args = parser.parse_args()
     env_file = Path(args.env_file)
     try:
         if args.command == "start":
-            state = start(env_file, keep_on_failure=args.keep_on_failure)
+            state = start(
+                env_file, keep_on_failure=args.keep_on_failure,
+                mission_control=not args.without_mission_control,
+            )
             print(json.dumps({"ports": state["ports"], "urls": state["urls"],
                               "env_file": str(env_file)}, sort_keys=True))
         elif args.command == "stop":
             print(json.dumps(stop(env_file), sort_keys=True))
+        elif args.command == "restart":
+            print(json.dumps(restart(env_file), sort_keys=True))
         else:
             print(json.dumps(status(env_file), sort_keys=True))
     except StackError as error:

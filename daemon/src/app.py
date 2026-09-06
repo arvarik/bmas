@@ -19,6 +19,7 @@ from core.variants import require_variant_class
 from database import init_db
 from monitoring.health_loop import system_health_loop
 from routes import (
+    agent_protocol,
     artifacts,
     benchmarks,
     capabilities,
@@ -123,3 +124,4 @@ app.include_router(artifacts.router)
 app.include_router(hitl.router)
 app.include_router(settings.router)
 app.include_router(recovery.router)
+app.include_router(agent_protocol.router)

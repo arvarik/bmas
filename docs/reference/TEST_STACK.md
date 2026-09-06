@@ -91,6 +91,52 @@ the daemon so the model-backed judge reaches the fake provider. The
 mocked `e2e/evaluation-operations.spec.ts` covers the same screens
 against recorded daemon responses.
 
+## The native agent protocol and the real-process journey
+
+The agent implements the current agent protocol in
+`agent/bmas_protocol/native.py`. The daemon signs activation and
+effect grants with one Ed25519 key that lives beside the database
+(`daemon/src/protocol_keys.py`), so a restart keeps every issued grant
+verifiable. The agent keeps its own Ed25519 seed under the activation
+cache directory and registers the public key over the node-authenticated
+route `POST /agent-protocol/agent-keys`. The daemon pins the key: one
+key identifier never changes its bytes, and a new identifier records a
+rotation. The agent publishes its capability document at
+`GET /bmas/capabilities`. The daemon probes that document and, for a
+task under a run-control row and a qualified endpoint, delivers one
+signed grant to `POST /bmas/activations` instead of the bearer
+`/execute` request. A legacy endpoint keeps the bearer path.
+
+The agent verifies the grant under the daemon key, signs one exact
+acknowledgement, stores the grant and the acknowledgement durably,
+posts the acknowledgement to `POST /agent-protocol/acknowledgements`,
+and only then executes. A repeated delivery of the same grant returns
+the stored acknowledgement and result without a second execution,
+across a restart, and `GET /bmas/acknowledgements/{grant_id}` serves
+the stored acknowledgement. Every model call requests one effect
+grant from `POST /agent-protocol/effect-grants`, verifies it, and posts
+signed receipts to `POST /agent-protocol/receipts` for the transport
+start and the observed response with the usage. The agent carries a
+byte-identical copy of the daemon digest profile and signing modules,
+and `scripts/tests/test_vendored_protocol.py` keeps the copies equal.
+
+`daemon/tests/test_agent_protocol_routes.py` runs the real agent
+protocol code in process against the daemon routes.
+`daemon/tests/test_foundation_process_journey.py` runs the journey
+across real processes. `scripts/test-stack.py start
+--without-mission-control` starts Redis, the fake provider, the
+daemon, and the agent. The daemon admits one run over
+`POST /agent-protocol/runs`, dispatches one grant over
+`POST /agent-protocol/dispatch`, and the agent executes one model call
+against the fake provider under an effect grant with two receipts.
+`scripts/test-stack.py restart` then stops and respawns the daemon and
+the agent over the same database, signing key, and activation cache.
+After the restart the run keeps its fence and projection digest, the
+agent serves the same acknowledgement, the daemon treats the same
+bytes as a duplicate, and a second activation dispatches under the
+same fence. The `daemon.foundation-process-journey` group runs it and
+feeds the `foundation_complete_stack_journey` release gate.
+
 ## The live-provider smoke
 
 Every required group answers model calls with the deterministic fake

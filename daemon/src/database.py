@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -2209,6 +2209,16 @@ CREATE TABLE IF NOT EXISTS backup_records (
     created_at     TEXT NOT NULL,
     expires_at     TEXT
 );
+
+CREATE TABLE IF NOT EXISTS signing_keys (
+    key_id         TEXT PRIMARY KEY,
+    agent_id       TEXT NOT NULL,
+    purpose        TEXT NOT NULL,
+    public_key_hex TEXT NOT NULL,
+    registered_at  TEXT NOT NULL,
+    revoked_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_signing_keys_agent ON signing_keys(agent_id);
 """
 
 
@@ -3347,6 +3357,23 @@ async def _migrate_add_lineage_supersession_anchor_study_storage(
     )
 
 
+async def _migrate_add_agent_signing_keys(db: aiosqlite.Connection) -> None:
+    """Add the pinned agent signing keys for the native agent protocol."""
+    await db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS signing_keys (
+            key_id         TEXT PRIMARY KEY,
+            agent_id       TEXT NOT NULL,
+            purpose        TEXT NOT NULL,
+            public_key_hex TEXT NOT NULL,
+            registered_at  TEXT NOT NULL,
+            revoked_at     TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_signing_keys_agent ON signing_keys(agent_id);
+        """
+    )
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -3375,6 +3402,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         24: _migrate_add_score_record_storage,
         25: _migrate_add_calibration_failure_ledger_storage,
         26: _migrate_add_lineage_supersession_anchor_study_storage,
+        27: _migrate_add_agent_signing_keys,
     }
     fn = migrations.get(version)
     if fn is None:

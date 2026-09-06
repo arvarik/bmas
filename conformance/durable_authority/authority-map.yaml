@@ -1179,6 +1179,18 @@ sqlite_tables:
       - { name: details, owner: daemon.recovery-authority, derived: false }
       - { name: created_at, owner: daemon.recovery-authority, derived: false }
       - { name: expires_at, owner: daemon.recovery-authority, derived: false }
+  - table: signing_keys
+    authority: daemon.protocol-authority
+    purpose: "Pinned agent public keys for acknowledgement and receipt verification."
+    writers:
+      - protocol_keys
+    fields:
+      - { name: key_id, owner: daemon.protocol-authority, derived: false }
+      - { name: agent_id, owner: daemon.protocol-authority, derived: false }
+      - { name: purpose, owner: daemon.protocol-authority, derived: false }
+      - { name: public_key_hex, owner: daemon.protocol-authority, derived: false }
+      - { name: registered_at, owner: daemon.protocol-authority, derived: false }
+      - { name: revoked_at, owner: daemon.protocol-authority, derived: false }
   - table: claim_index
     authority: daemon.evidence-authority
     purpose: "Host claim index over evidence relationships."

@@ -289,12 +289,7 @@ class LegacyTraceExecutor:
             {"task_id": task_id, "turn_id": "turn-1", "seq": 1, "role": "expert",
              "type": "message", "data": {"content": self.answer}},
         ])
-        async with db._connect() as connection:  # noqa: SLF001
-            await connection.execute(
-                "UPDATE tasks SET status = 'completed', result_summary = ? WHERE id = ?",
-                (self.answer, task_id),
-            )
-            await connection.commit()
+        await db.complete_task(task_id, self.answer, json.dumps({"answer": self.answer}))
         return ExecutionResult(
             task_id=task_id, answer=self.answer, result={"answer": self.answer},
             checkpoint=None, aborted=False, phases=["legacy"],

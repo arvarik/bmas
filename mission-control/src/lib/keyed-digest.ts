@@ -18,7 +18,13 @@ import { createHash, createHmac } from "node:crypto";
 export const KEYED_DIGEST_ALGORITHM = "hmac-sha256";
 export const KEYED_DIGEST_DOMAIN_PREFIX = "bmas:";
 
-const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+// A lone surrogate is a high surrogate without a following low surrogate,
+// or a low surrogate without a preceding high surrogate.
+const HIGH_SURROGATES = "\\ud800-\\udbff";
+const LOW_SURROGATES = "\\udc00-\\udfff";
+const LONE_SURROGATE = new RegExp(
+  `[${HIGH_SURROGATES}](?![${LOW_SURROGATES}])|(?<![${HIGH_SURROGATES}])[${LOW_SURROGATES}]`,
+);
 const ASCII_DOMAIN = /^[\x21-\x7e]+$/;
 
 export class KeyedDigestError extends Error {}

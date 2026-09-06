@@ -563,6 +563,25 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.foundation-process-journey
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Run the Foundation journey across real processes: the test stack
+      starts Redis, the fake provider, the daemon, and the agent, the
+      daemon admits one run and dispatches one signed activation grant
+      to the agent, the agent acknowledges, executes one nested model
+      call under an effect grant with signed receipts, the stack
+      restarts the daemon and the agent, and the same fence, the same
+      acknowledgement, and a second activation resume after the restart.
+    argv: ["python3", "-m", "pytest", "tests/test_foundation_process_journey.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 900
+    tools: [python, pytest, redis]
+    parser: pytest_summary
+    artifacts:
+      - "test-results/foundation-process-journey/**"
+
   - id: daemon.foundation-release-gate
     state: active_required
     owner: daemon
@@ -1223,6 +1242,7 @@ profiles:
         - daemon.populated-migration
         - daemon.release-gates
         - daemon.complete-stack-journey
+        - daemon.foundation-process-journey
         - daemon.foundation-release-gate
         - daemon.benchmark-statistical-oracle
         - daemon.benchmark-schedule-fairness

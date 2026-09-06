@@ -7,6 +7,7 @@ execution events and sends bounded logs and traces to the daemon.
 """
 
 import asyncio
+import contextlib
 import fcntl
 import hashlib
 import hmac
@@ -28,7 +29,7 @@ from urllib.parse import quote
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
@@ -55,6 +56,8 @@ HERMES_GATEWAY_KEY = os.getenv("HERMES_GATEWAY_KEY", os.getenv("API_SERVER_KEY",
 DAEMON_INGEST_URL = os.getenv("DAEMON_INGEST_URL")    # e.g. http://192.168.4.240:9000
 BMAS_NODE_KEY = os.getenv("BMAS_NODE_KEY", "")
 BMAS_EXECUTE_KEY = os.getenv("BMAS_EXECUTE_KEY", "")
+
+from bmas_protocol import native
 
 # ── Task output workspace (artifacts) ─────────────────────────────────────
 # The Hermes Runs API has no per-run working directory. The adapter gives
@@ -1199,6 +1202,9 @@ async def lifespan(app: FastAPI):
     except OSError as exc:
         logger.warning(f"  Task outputs directory unavailable: {exc}")
     sweeper = asyncio.create_task(_sweep_outputs_forever())
+    if DAEMON_INGEST_URL:
+        registered = await _native_protocol().ensure_registered()
+        logger.info(f"  Native protocol key registration: {'done' if registered else 'deferred'}")
     yield
     sweeper.cancel()
     logger.info("bMAS Agent API shutting down")
@@ -1364,16 +1370,30 @@ async def _run_via_litellm(
             objective=description[:500],
         )
         emitter = TraceEmitter(client, task_id, turn_id)
+        effect_context = native.current_effect_context()
+        effect_handle = None
         try:
+            request_body = {"model": model, "messages": messages}
+            if effect_context is not None:
+                # A native activation runs every model call under one
+                # daemon-issued effect grant and reports signed receipts.
+                effect_handle = await effect_context.protocol.open_model_effect(
+                    effect_context, model=model, request=request_body,
+                )
             response = await client.post(
                 f"{LITELLM_URL.rstrip('/')}/chat/completions",
                 headers=headers,
-                json={"model": model, "messages": messages},
+                json=request_body,
             )
             response.raise_for_status()
             body = response.json()
             result = str(body["choices"][0]["message"]["content"])
             usage = _normalize_usage(body.get("usage"), model)
+            if effect_handle is not None:
+                await effect_context.protocol.receipt(
+                    effect_handle, stage=native.STAGE_RESPONSE_OBSERVED,
+                    usage=usage, raw_response=response.content,
+                )
             await emitter.emit(
                 translate(
                     "run.completed",
@@ -1395,6 +1415,16 @@ async def _run_via_litellm(
             return TaskStatus.completed, result, usage, emitter.trace_count, None
         except Exception as exc:
             message = f"LiteLLM execution failed: {exc}"
+            if effect_handle is not None:
+                with contextlib.suppress(Exception):
+                    await effect_context.protocol.receipt(
+                        effect_handle,
+                        stage=(
+                            native.STAGE_RESPONSE_OBSERVED if effect_handle.sent
+                            else native.STAGE_FAILED_BEFORE_TRANSPORT
+                        ),
+                        transport_observation=str(exc)[:500],
+                    )
             await emitter.emit(
                 translate(
                     "run.failed",
@@ -3465,6 +3495,84 @@ async def proxy_hermes_run_steer(run_id: str, request: Request):
     return await _proxy_hermes_request(
         request, "POST", f"/v1/runs/{safe_id}/steer"
     )
+
+
+_native_protocol_instance: Optional[native.NativeProtocol] = None
+
+
+def _native_protocol() -> native.NativeProtocol:
+    """The process-wide native protocol state, created on first use."""
+    global _native_protocol_instance
+    if _native_protocol_instance is None:
+        _native_protocol_instance = native.NativeProtocol(
+            agent_id=NODE_ID,
+            cache_dir=ACTIVATION_CACHE_DIR / "native",
+            daemon_url=DAEMON_INGEST_URL or "",
+            node_key=BMAS_NODE_KEY,
+        )
+    return _native_protocol_instance
+
+
+class NativeActivationRequest(BaseModel):
+    """One signed activation grant with the work it authorizes."""
+
+    grant: dict = Field(..., description="The exact signed activation grant")
+    grant_digest: str = Field(..., min_length=64, max_length=64, description="The stored grant artifact digest")
+    request: dict = Field(..., description="The execute request the grant covers")
+
+
+@app.get("/bmas/capabilities")
+async def native_capabilities():
+    """The agent's own bMAS capability document and its digest."""
+    protocol = _native_protocol()
+    return {"document": protocol.document, "capability_digest": protocol.capability_digest}
+
+
+@app.get("/bmas/acknowledgements/{grant_id}")
+async def native_acknowledgement(grant_id: str, request: Request):
+    """Return the durable acknowledgement for one grant, or 404."""
+    _authorize_execute(request)
+    record = _native_protocol().acknowledgement_for(grant_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Unknown activation grant")
+    return record
+
+
+@app.post("/bmas/activations")
+async def native_activation(body: NativeActivationRequest, request: Request):
+    """Acknowledge one activation grant durably, then execute it once."""
+    _authorize_execute(request)
+    protocol = _native_protocol()
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
+    grant = body.grant
+    payload = dict(body.request)
+    payload["task_id"] = str(grant.get("task_id", payload.get("task_id", "")))
+    payload["activation_id"] = str(grant.get("activation_id", payload.get("activation_id", "")))
+    try:
+        req = TaskRequest(**payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    turn_id = req.turn_id or f"turn-{str(uuid.uuid4())[:8]}"
+    key = f"{req.task_id}:{grant.get('activation_grant_id', '')}"
+    fingerprint = _request_fingerprint(req)
+
+    async def execute(context: native.EffectContext) -> dict:
+        token = native.EFFECT_CONTEXT.set(context)
+        try:
+            response = await _execute_task_once(
+                req, request_id, turn_id,
+                activation_key=key, activation_fingerprint=fingerprint,
+            )
+        finally:
+            native.EFFECT_CONTEXT.reset(token)
+        return response.model_dump(mode="json")
+
+    try:
+        return await protocol.activate(grant, body.grant_digest, execute)
+    except native.GrantRejectedError as exc:
+        raise HTTPException(status_code=422, detail=f"{exc.reason_code}: {exc}") from exc
+    except native.NativeProtocolError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/execute", response_model=TaskResponse)
