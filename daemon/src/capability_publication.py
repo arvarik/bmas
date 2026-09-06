@@ -204,11 +204,16 @@ def _legacy_capabilities() -> dict[str, str]:
         "immutable_assets": "compatibility_adapter",
         "immutable_policy_set": "compatibility_record",
         "task_fence_validation": "compatibility_adapter",
-        "durable_activation_ledger": "compatibility_projection",
-        "activation_dispatch_outbox": "legacy_unavailable",
-        "agent_protocol": "legacy",
-        "signed_activation_acknowledgement": "legacy_unavailable",
-        "nested_receipts": "legacy_unobservable",
+        # The host admits a legacy task into one Foundation run and
+        # dispatches through signed grants on the runtime's behalf when
+        # the endpoint qualifies. The runtime itself stays legacy: it
+        # authors no native authority record. These values name that
+        # host-side compatibility adapter.
+        "durable_activation_ledger": "compatibility_adapter",
+        "activation_dispatch_outbox": "compatibility_adapter",
+        "agent_protocol": "compatibility_adapter",
+        "signed_activation_acknowledgement": "compatibility_adapter",
+        "nested_receipts": "compatibility_adapter",
         "trusted_envelope_creator": "compatibility_adapter",
         "cancellation_signal": "legacy",
         "budget_reservation": "advisory_legacy",

@@ -230,13 +230,13 @@ def _run_case(
         ledger = adapter.observe_capability("durable_activation_ledger")
         dispatch = adapter.observe_capability("activation_dispatch_outbox")
         expected = _expected_value(record, "durable_activation_ledger")
-        # A legacy pair keeps a compatibility projection and never
-        # writes a native activation or effect authority record.
+        # A legacy pair runs under the host's compatibility adapter and
+        # never authors a native activation or effect authority record.
         if not adapter.is_native_contract():
             adapter_writes = adapter.native_authority_writes
             passed = (
                 ledger == expected
-                and dispatch == "legacy_unavailable"
+                and dispatch == "compatibility_adapter"
                 and adapter_writes == []
             )
             return CaseResult(
@@ -260,12 +260,13 @@ def _run_case(
                 and receipts == "native"
             )
         else:
-            # Legacy protocol, no signed acknowledgement, unobservable
-            # nested effects, exactly as the matrix declares.
+            # The host negotiates the current protocol on the legacy
+            # runtime's behalf, so acknowledgements and receipts come
+            # from the compatibility adapter, exactly as declared.
             passed = (
-                protocol == "legacy"
-                and acknowledgement == "legacy_unavailable"
-                and receipts == "legacy_unobservable"
+                protocol == "compatibility_adapter"
+                and acknowledgement == "compatibility_adapter"
+                and receipts == "compatibility_adapter"
             )
         return CaseResult(
             case_id, passed, expected, protocol,

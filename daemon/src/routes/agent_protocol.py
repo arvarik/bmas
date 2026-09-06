@@ -70,14 +70,11 @@ class EffectGrantRequest(BaseModel):
 class RunAdmissionRequest(BaseModel):
     """Admit one Foundation run for the native protocol journey."""
 
-    run_id: str = Field(..., min_length=1, max_length=128)
     task_id: str = Field(..., min_length=1, max_length=128)
+    run_id: str | None = None
     runtime_id: str = "classic"
     runtime_contract_version: str = "1"
-    task_fence: str | None = None
     budget_limit_usd_millionths: int = Field(default=1_000_000, ge=1)
-    reservation_usd_millionths: int = Field(default=100_000, ge=1)
-    reservation_id: str | None = None
 
 
 class DispatchRequest(BaseModel):
@@ -275,72 +272,52 @@ async def read_activation(activation_id: str, attempt: int) -> dict[str, Any]:
 
 @router.post("/runs")
 async def admit_run(body: RunAdmissionRequest) -> dict[str, Any]:
-    """Admit one run: journal genesis, run control, budget, and reservation.
+    """Admit one interactive run through the full Foundation admission writer.
 
-    The route follows the benchmark admission anchor: the journal
-    genesis names the exact runtime pair, the run-control row carries
-    the task fence, and the budget holds one reserved reservation the
-    activation grants bind.
+    The writer validates the exact runtime pair, the version set, the
+    policy set, the asset manifest, the storage readiness, and the live
+    qualification records, then creates the run, the budget, the
+    reserved reservation, the journal genesis, and the run-control row
+    with the task fence in one transaction. With the writer gates off
+    the route answers 409, because no run exists on the legacy path.
     """
-    import uuid
-
-    import budget_service as budget
-    from core.digest_profile import digest_hex
+    import interactive_admission
+    import run_admission
+    from core.variants import RuntimeKey, UnknownVariantError
 
     _require_operator()
-    fence = body.task_fence or f"fence-{uuid.uuid4().hex[:12]}"
-    try:
-        await activations.run_identity(body.run_id)
-    except activations.ActivationServiceError:
-        payload = {
-            "admission_id": f"admission-{body.run_id}",
-            "version_set": {"checkpoint_schema_version": "1"},
-            "specification_digest": digest_hex("journal-payload", {"task_id": body.task_id}),
-            "capability_document_digest": digest_hex("journal-payload", {"agent_protocol": "2"}),
-            "admission_digest": digest_hex("journal-payload", {"run_id": body.run_id, "fence": fence}),
-        }
-        await journal.commit_operation(journal.JournalOperation(
-            operation_type="admission_identity", task_id=body.task_id, run_id=body.run_id,
-            runtime_id=body.runtime_id, runtime_contract_version=body.runtime_contract_version,
-            payload=payload, idempotency_token=f"admission-{body.run_id}",
-        ))
-    control = await db.get_run_control(body.run_id)
-    if control is None:
-        await db.create_run_control(body.run_id, body.task_id, fence)
-        control = await db.get_run_control(body.run_id)
-    budget_id = f"budget-{body.run_id}"
-    async with db._connect() as connection:  # noqa: SLF001
-        cursor = await connection.execute("SELECT budget_id FROM run_budgets WHERE budget_id = ?", (budget_id,))
-        existing = await cursor.fetchone()
-        if existing is None:
-            await budget.create_run_budget(
-                connection, budget_id=budget_id, run_id=body.run_id, task_id=body.task_id,
-                currency="USD",
-                limits=(budget.LimitSpec("run", body.run_id, "provider_cost",
-                                         body.budget_limit_usd_millionths, currency="USD"),),
-            )
-            await connection.commit()
-    reservation_id = body.reservation_id or f"reservation-{body.run_id}"
-    try:
-        reservation = await budget.get_reservation(reservation_id)
-    except Exception:  # noqa: BLE001 - an absent reservation is the normal first call
-        reservation = None
-    if reservation is None:
-        await budget.request_reservation(
-            reservation_id=reservation_id, budget_id=budget_id,
-            resources={"provider_cost": body.reservation_usd_millionths},
+    if await db.get_task(body.task_id) is None:
+        await db.create_task_with_meta(
+            body.task_id, "foundation run", "foundation run", body.runtime_id, {},
+            runtime_contract_version=body.runtime_contract_version,
         )
-        if not await budget.reserve(reservation_id):
-            raise HTTPException(status_code=422, detail="The reservation does not fit the run budget")
-    identity = await activations.run_identity(body.run_id)
-    assert control is not None
+    try:
+        admitted = await interactive_admission.admit_task_run(
+            task_id=body.task_id,
+            runtime_key=RuntimeKey(body.runtime_id, body.runtime_contract_version),
+            effective_configuration={},
+            budget_ceiling=body.budget_limit_usd_millionths / 1_000_000,
+        )
+    except (run_admission.AdmissionPrerequisiteError, run_admission.AdmissionReservationError, UnknownVariantError) as exc:
+        raise HTTPException(status_code=422, detail=f"{type(exc).__name__}: {exc}") from exc
+    if admitted is None:
+        raise HTTPException(
+            status_code=409,
+            detail="The Foundation writer gates are off, so no interactive run can be admitted",
+        )
+    if body.run_id and admitted["run_id"] != body.run_id:
+        raise HTTPException(
+            status_code=422,
+            detail=f"The run of task {body.task_id} is {admitted['run_id']}, not {body.run_id}",
+        )
     return {
-        "run_id": body.run_id,
+        "run_id": admitted["run_id"],
         "task_id": body.task_id,
-        "runtime_key": identity,
-        "task_fence": str(control["task_fence"]),
-        "budget_id": budget_id,
-        "reservation_id": reservation_id,
+        "runtime_key": admitted["runtime_key"],
+        "task_fence": admitted["task_fence"],
+        "budget_id": admitted.get("budget_id"),
+        "reservation_id": admitted.get("reservation_id") or await interactive_admission.reservation_for_run(admitted["run_id"]),
+        "new": admitted["new"],
     }
 
 

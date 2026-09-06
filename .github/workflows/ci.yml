@@ -34,6 +34,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r daemon/requirements.txt
           pip install pytest pytest-asyncio httpx2 mypy ruff pyyaml jsonschema
+          # The stack-backed conformance and journey groups start Redis,
+          # the fake provider, the daemon, and the agent as real processes.
+          sudo apt-get update
+          sudo apt-get install -y redis-server
 
       - name: Publish the resolved check list (daemon + repository contracts)
         run: python3 scripts/run-test-manifest.py --profile ci.daemon --list
