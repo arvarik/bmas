@@ -158,6 +158,40 @@ repeatability pair runs one case twice under one seed plan, captures
 both evidence bundles with their own seed evidence, and claims no
 repeatability.
 
+## The behavioral conformance suite
+
+`daemon/src/conformance_behavior.py` executes the Foundation services
+for one runtime pair and derives every observed matrix value from what
+happened. The matrix suite in `conformance_kit.py` still checks that a
+record declares one value per capability. The behavioral suite proves
+the value. The journal genesis carries the exact pair and commits once
+under one idempotency token. The artifact store rejects a wrong digest
+and an early reference and keeps promoted bytes immutable. An applied
+seed changes the output, and an equal seed repeats it. A cancel stops
+the next step and the run-control cancellation states advance. A stale
+fence and a stale lease are rejected, and a replay from cursor zero
+rebuilds the same projection digest. A native execution writes durable
+activation and effect rows, and a legacy execution writes none. The
+endpoint directory selects the pair's protocol partition and fails
+closed. A budget refuses an over-limit reservation. Evidence and goals
+reach the projection, every record carries the common envelope, and a
+terminal outcome closes the run to further updates while the post
+terminal invalidation still commits. The reference scorer replays the
+runtime output deterministically, and the interface falls back to the
+generic panels.
+
+`daemon/src/core/variants/reference.py` is the executable reference
+runtime. It registers as the pair `reference/1`, runs in process with
+no agent and no provider, derives one digest per step from the seed,
+checks the abort signal before every step, saves a checkpoint after
+every step, and resumes from the checkpoint after a restart. It stays
+out of the public capability document. The `daemon.behavioral-conformance`
+group runs the suite for the reference pair and the three legacy pairs
+and feeds the `foundation_shared_conformance` release gate. The suite
+also proves its own teeth: a reference runtime that ignores the seed
+fails the native column, and a legacy path that writes one native row
+fails the ledger case.
+
 ## The pinned toolchain
 
 `toolchain-pins.yaml` pins Python, Node.js, npm, Playwright, the

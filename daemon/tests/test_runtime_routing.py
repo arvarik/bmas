@@ -195,10 +195,14 @@ def test_interface_adapter_identity_matches_the_frozen_fixture():
         for entry in fixture["record"]["variants"]
         for version in entry["contract_versions"]
     }
+    # The frozen fixture names every qualified pair the interface offers.
+    # An unlisted pair, such as the executable reference runtime, never
+    # reaches the interface, so it stays out of the fixture.
     qualified = {
         (key.runtime_id, key.runtime_contract_version)
         for key in registered_runtime_keys()
         if runtime_availability(key) == "qualified"
+        and require_runtime(key).descriptor.listed
     }
     assert frozen == qualified
 

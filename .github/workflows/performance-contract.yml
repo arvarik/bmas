@@ -1,0 +1,52 @@
+name: Performance contract
+
+# The published performance limits are enforced only on the pinned
+# Linux worker. This workflow runs the enforced harness on a schedule
+# and on demand, records the host provenance in the report, and keeps
+# the report as an artifact. A pull request never blocks on it.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+
+jobs:
+  enforce:
+    name: Enforce the published limits on the Linux worker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r daemon/requirements.txt
+          pip install pytest pytest-asyncio pyyaml jsonschema
+
+      - name: Record the worker image and kernel
+        run: |
+          echo "BMAS_HOST_IMAGE_DIGEST=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_ENV"
+          echo "BMAS_REDIS_SERVER_VERSION=$(redis-server --version 2>/dev/null | head -1 || echo unavailable)" >> "$GITHUB_ENV"
+          uname -a
+          nproc
+          free -h
+
+      - name: Run the enforced performance contract
+        env:
+          BMAS_PERFORMANCE_WORKER: "1"
+        run: python3 scripts/run-test-manifest.py --group daemon.performance-contract
+
+      - name: Upload the performance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-contract
+          path: |
+            test-results/performance-contract.json
+            test-results/**/manifest-result.json
+          if-no-files-found: warn

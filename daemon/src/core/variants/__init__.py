@@ -16,6 +16,7 @@ CLASSIC_VARIANT = "classic"
 LEGACY_CLASSIC_VARIANT = "traditional"
 PATCHBOARD_VARIANT = "patchboard"
 STIGMERGIC_VARIANT = "stigmergic"
+REFERENCE_VARIANT = "reference"
 VARIANT_API_VERSION = "1"
 
 # The registry availability states from the compatibility matrix.
@@ -143,6 +144,9 @@ class VariantDescriptor:
     required_agent_features: tuple[str, ...] = ()
     benchmark: VariantBenchmarkContract = field(default_factory=VariantBenchmarkContract)
     effort_profiles: Any = None
+    # A listed runtime appears in the public capability document. An
+    # unlisted runtime stays admissible for tests and conformance only.
+    listed: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Return the authoritative public capability record."""
@@ -411,6 +415,8 @@ def load_builtin_variants() -> None:
         (STIGMERGIC_VARIANT, collaborative.StigmergicVariantRuntime),
     ):
         register_variant(runtime_id, runtime)
+    reference = importlib.import_module("core.variants.reference")
+    register_variant(REFERENCE_VARIANT, reference.ReferenceVariantRuntime)
 
 
 def resolve_runtime_key(name: str) -> RuntimeKey:
@@ -520,5 +526,6 @@ def variant_capabilities() -> dict[str, Any]:
         _VARIANTS[key].descriptor.to_dict()
         for key in sorted(_VARIANTS)
         if _AVAILABILITY[key] == QUALIFIED_AVAILABILITY
+        and _VARIANTS[key].descriptor.listed
     ]
     return {"api_version": VARIANT_API_VERSION, "variants": descriptors}

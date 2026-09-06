@@ -505,6 +505,22 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.behavioral-conformance
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Execute the Foundation services for every Stage 0 runtime pair
+      and derive each observed matrix value from real behaviour: the
+      reference runtime runs in process and proves the native column,
+      the legacy pairs prove their compatibility column through the
+      durable footprint of a legacy execution, and a regression or a
+      native row from a legacy path fails the pair.
+    argv: ["python3", "-m", "pytest", "tests/test_behavioral_conformance.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
   - id: daemon.populated-migration
     state: active_required
     owner: daemon
@@ -1203,6 +1219,7 @@ profiles:
         - daemon.security-matrix
         - daemon.recovery-center
         - daemon.cross-runtime-conformance
+        - daemon.behavioral-conformance
         - daemon.populated-migration
         - daemon.release-gates
         - daemon.complete-stack-journey
