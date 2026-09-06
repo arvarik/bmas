@@ -4,6 +4,11 @@ vi.mock("@/lib/config", () => ({ DAEMON_BASE_URL: "http://daemon" }));
 
 import { GET } from "@/app/api/stream/task/[taskId]/route";
 
+/** The replay cursor the proxy sent upstream, read through the Headers API. */
+function sentCursor(init: RequestInit | undefined): string | null {
+  return new Headers(init?.headers ?? {}).get("Last-Event-ID");
+}
+
 describe("task stream proxy", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -28,7 +33,7 @@ describe("task stream proxy", () => {
 
     expect(response.status).toBe(200);
     expect(upstreamFetch).toHaveBeenCalledOnce();
-    expect(upstreamFetch.mock.calls[0][1]?.headers).toEqual({ "Last-Event-ID": "42" });
+    expect(sentCursor(upstreamFetch.mock.calls[0][1])).toBe("42");
   });
 
   it("retries a replay cursor gap once without the cursor", async () => {
@@ -59,8 +64,8 @@ describe("task stream proxy", () => {
 
     expect(response.status).toBe(200);
     expect(upstreamFetch).toHaveBeenCalledTimes(2);
-    expect(upstreamFetch.mock.calls[0][1]?.headers).toEqual({ "Last-Event-ID": "99" });
-    expect(upstreamFetch.mock.calls[1][1]?.headers).toBeUndefined();
+    expect(sentCursor(upstreamFetch.mock.calls[0][1])).toBe("99");
+    expect(sentCursor(upstreamFetch.mock.calls[1][1])).toBeNull();
   });
 
   it("does not retry an unrelated 409 response", async () => {

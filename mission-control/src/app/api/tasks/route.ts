@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 export async function GET(request: Request): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
@@ -26,7 +27,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const url = `${DAEMON_BASE_URL}/tasks${qs ? `?${qs}` : ""}`;
 
   try {
-    const upstream = await fetch(url, {
+    const upstream = await daemonFetch(url, {
       cache: "no-store",
       signal: AbortSignal.timeout(5_000),
     });

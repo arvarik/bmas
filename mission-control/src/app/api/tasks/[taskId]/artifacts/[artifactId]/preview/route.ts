@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 export async function GET(
   _request: Request,
@@ -7,7 +8,7 @@ export async function GET(
 ): Promise<Response> {
   const { taskId, artifactId } = await params;
   try {
-    const upstream = await fetch(
+    const upstream = await daemonFetch(
       `${DAEMON_BASE_URL}/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}`,
       { cache: "no-store", signal: AbortSignal.timeout(15_000) },
     );

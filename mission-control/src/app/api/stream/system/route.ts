@@ -1,4 +1,5 @@
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 // Force Node.js runtime (not Edge) for long-lived SSE streams.
 export const runtime = "nodejs";
@@ -11,7 +12,7 @@ export async function GET(req: Request) {
 
   try {
     const lastEventId = req.headers.get("last-event-id");
-    const fetchUpstream = (cursor: string | null) => fetch(
+    const fetchUpstream = (cursor: string | null) => daemonFetch(
       `${DAEMON_BASE_URL}/events/system`,
       {
         signal: abortController.signal,

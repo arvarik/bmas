@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 /**
  * GET /api/tasks/[taskId]/artifacts — list artifacts for a task
@@ -14,7 +15,7 @@ export async function GET(
   const encodedTaskId = encodeURIComponent(taskId);
 
   try {
-    const upstream = await fetch(
+    const upstream = await daemonFetch(
       `${DAEMON_BASE_URL}/tasks/${encodedTaskId}/artifacts`,
       {
         cache: "no-store",
