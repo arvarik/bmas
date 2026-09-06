@@ -200,6 +200,16 @@ async def test_anchor_items_resolve_from_the_dataset_or_inline_content(repairs_d
         ),
     )
     assert direct[0]["input"]
+    # The explicit version id wins over the dataset lookup and is pinned.
+    explicit_set = judge_calibration.pinned_label_set(
+        "dataset-evidence", "unknown-version",
+        [{"item_id": "case-1", "label": "pass", "reviewers": []}],
+        dataset_version_id="version-evidence",
+    )
+    assert explicit_set["dataset_version_id"] == "version-evidence"
+    explicit = await judge_calibration._anchor_items(explicit_set)  # noqa: SLF001
+    assert explicit[0]["expected_output"] == direct[0]["expected_output"]
+    assert explicit[0]["input"] == direct[0]["input"]
     # The record with inline content validates against the contract.
     record = judge_calibration.anchor_set_record(
         anchor_id="anchor-inline", judge_id="judge-a", judge_version="1",

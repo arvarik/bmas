@@ -70,6 +70,15 @@ export function proxy(request: NextRequest): NextResponse {
   );
 }
 
+// The browser fetches the service worker script, the web manifest, the
+// icons, and robots.txt without the dashboard header or basic
+// credentials, so those public files stay outside authentication.
+// Every page and every API route stays behind it.
+export const PUBLIC_ASSET_PATTERN =
+  "sw\\.js|manifest\\.webmanifest|robots\\.txt|favicon\\.ico|favicon-16x16\\.png|favicon-32x32\\.png|icon\\.png|apple-icon\\.png|apple-touch-icon\\.png|android-chrome-192x192\\.png|android-chrome-512x512\\.png|ant-head\\.png";
+
 export const config = {
-  matcher: ["/((?!api/health|_next/static|_next/image).*)"],
+  // The public files anchor at the end of the path, so "/sw.json" or
+  // "/tasks/sw.js" stay protected.
+  matcher: [`/((?!api/health|_next/static|_next/image|(?:${PUBLIC_ASSET_PATTERN})$).*)`],
 };
