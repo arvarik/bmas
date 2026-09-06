@@ -500,6 +500,7 @@ class TraditionalVariant:
             # Capture control-plane LLM usage/cost (doc 06 §3.1)
             await self._record_llm_cost(
                 task_id, resp_json.get("usage"), ag_model, "control_plane:ag",
+                round_no=0,
             )
             choice = resp_json["choices"][0]
             finish_reason = choice.get("finish_reason", "stop")
@@ -1518,6 +1519,7 @@ class TraditionalVariant:
                 # Capture control-plane LLM usage/cost (doc 06 §3.1)
                 await self._record_llm_cost(
                     task_id, resp_json.get("usage"), cu_model, "control_plane:cu",
+                    round_no=current_round,
                 )
                 cut = truncated(resp_json)
                 if cut is not None:
@@ -2738,12 +2740,31 @@ class TraditionalVariant:
         share = available / count
         return [share for _ in range(count)]
 
+    def _control_turn_id(self, task_id: str | None, round_no: int | None) -> str | None:
+        """One synthetic turn id per control-plane call, keyed by round.
+
+        Actor turns carry their round through the turns table; a
+        control-plane call has no turn row, so its id names the round
+        and a per-task sequence number, and the cost summary groups
+        both kinds of spend by round.
+        """
+        if task_id is None or round_no is None:
+            return None
+        counters = getattr(self, "_control_call_sequence", None)
+        if counters is None:
+            counters = {}
+            self._control_call_sequence = counters
+        counters[task_id] = counters.get(task_id, 0) + 1
+        return f"control-r{int(round_no)}-{counters[task_id]}"
+
     async def _record_llm_cost(
         self,
         task_id: str | None,
         usage: dict | None,
         model: str,
         phase: str,
+        *,
+        round_no: int | None = None,
     ) -> None:
         """Capture token usage + cost from a control-plane LiteLLM call.
 
@@ -2803,7 +2824,7 @@ class TraditionalVariant:
                 cost_usd=cost,
                 phase=phase,
                 node_id="control_plane",
-                turn_id=None,
+                turn_id=self._control_turn_id(task_id, round_no),
                 provider=None,
                 price_source=str(pricing.get("source", "bmas.yaml")) if pricing else "missing",
                 joules_estimate=0.0,

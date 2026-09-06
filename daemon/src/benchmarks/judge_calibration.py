@@ -42,8 +42,14 @@ class JudgeCalibrationError(ValueError):
 
 def pinned_label_set(
     dataset_id: str, version: str, items: list[dict[str, Any]],
+    *, dataset_version_id: str | None = None,
 ) -> dict[str, Any]:
-    """Pin one human label set with its content digest."""
+    """Pin one human label set with its content digest.
+
+    ``dataset_version_id`` names the exact version the items come from;
+    ``dataset_id`` and ``version`` stay for readers of older records,
+    which may carry a version id in ``dataset_id``.
+    """
     if not items:
         raise JudgeCalibrationError("A label set holds at least one item")
     pinned = sorted(
@@ -53,12 +59,15 @@ def pinned_label_set(
         ),
         key=lambda item: str(item["item_id"]),
     )
-    return {
+    label_set: dict[str, Any] = {
         "dataset_id": dataset_id,
         "version": version,
         "items": pinned,
         "label_digest": content_checksum(pinned),
     }
+    if dataset_version_id:
+        label_set["dataset_version_id"] = str(dataset_version_id)
+    return label_set
 
 
 # The content fields one anchor item can carry beside its label, so
@@ -350,13 +359,18 @@ async def list_anchor_sets(*, now: str | None = None) -> list[dict[str, Any]]:
     return listed
 
 
-async def _resolve_version_id(dataset_id: str, version: str) -> str | None:
+async def _resolve_version_id(
+    dataset_id: str, version: str, dataset_version_id: str | None = None,
+) -> str | None:
     """Find the dataset version one label set names.
 
-    The label set's ``dataset_id`` may already be a version id, or a
-    dataset id whose ``version`` names a version id, a version number,
-    or nothing, in which case the newest version applies.
+    An explicit ``dataset_version_id`` wins. Otherwise the label set's
+    ``dataset_id`` may already be a version id, or a dataset id whose
+    ``version`` names a version id, a version number, or nothing, in
+    which case the newest version applies.
     """
+    if dataset_version_id:
+        return str(dataset_version_id)
     if not dataset_id:
         return None
     probe, _total = await db.list_dataset_items(dataset_id, limit=1, offset=0)
@@ -385,6 +399,7 @@ async def _anchor_items(label_set: dict[str, Any]) -> list[dict[str, Any]]:
     version_id = await _resolve_version_id(
         str(label_set.get("dataset_id") or ""),
         str(label_set.get("version") or ""),
+        label_set.get("dataset_version_id"),
     )
     if version_id:
         offset = 0

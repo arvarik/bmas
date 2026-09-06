@@ -125,7 +125,7 @@ export interface AnchorSetRecord {
   anchor_id: string;
   judge: { judge_id: string; version: string; model: string; prompt_digest: string };
   scorer: { scorer_id: string; version: string };
-  label_set: { dataset_id: string; version: string; items: LabelItem[] };
+  label_set: { dataset_id: string; version: string; dataset_version_id?: string; items: LabelItem[] };
   candidate_models: string[];
   schedule: { interval_days: number; next_due_at: string; created_at: string };
   threshold: number;

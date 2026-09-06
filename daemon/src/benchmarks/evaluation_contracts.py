@@ -1441,6 +1441,10 @@ RECORD_SCHEMAS: dict[str, dict[str, Any]] = {
                              "label_digest"],
                 "properties": {
                     "dataset_id": _IDENTIFIER,
+                    # The exact version the labelled items come from.
+                    # Older records may carry a version id in
+                    # dataset_id instead.
+                    "dataset_version_id": _IDENTIFIER,
                     "version": _NAME,
                     "items": {
                         "type": "array",

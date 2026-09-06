@@ -18,6 +18,7 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 import database as db
+import edge_access
 from auth import check_bearer_or_pass, require_node_key
 from config import (
     BMAS_NODE_KEY,
@@ -304,6 +305,7 @@ async def ingest_artifact(
 
 @router.get("/tasks/{task_id}/artifacts")
 async def list_artifacts(task_id: str):
+    edge_access.authorize_read("artifact", task_id, task_id=task_id)
     """List all artifacts for a task."""
     task = await db.get_task(task_id)
     if not task:

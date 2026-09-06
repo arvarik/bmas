@@ -158,6 +158,19 @@ def build_request(**overrides) -> run_admission.AdmissionRequest:
     return run_admission.AdmissionRequest(**arguments)
 
 
+@pytest.fixture(autouse=True)
+def enabled_writer_gates(monkeypatch):
+    """The admission writer consults its gates; these tests enable them."""
+    import config
+    from core import foundation_gates
+
+    monkeypatch.setattr(
+        config, "FOUNDATION_GATES",
+        {name: True for name in foundation_gates.PLANNED_WRITER_GATES},
+        raising=False,
+    )
+
+
 async def admit(request=None, *, database_time: str = BASE_TIME):
     return await run_admission.admit_run(
         request or build_request(),

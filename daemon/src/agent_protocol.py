@@ -546,6 +546,41 @@ def sign_attempt_receipt(
     )
 
 
+_RECEIPT_FIELDS = frozenset(spec.name for spec in fields(AgentAttemptReceipt))
+
+
+def parse_attempt_receipt(text: str) -> AgentAttemptReceipt:
+    """Parse one attempt receipt strictly.
+
+    The parser rejects duplicate JSON keys, unknown members, missing
+    members, and non-canonical number forms, the same way the
+    acknowledgement parser does.
+    """
+    try:
+        data = parse_digest_input(text)
+    except DigestInputError as exc:
+        raise ReceiptError(str(exc)) from exc
+    if not isinstance(data, dict):
+        raise ReceiptError("The receipt is one JSON object")
+    unknown = set(data) - _RECEIPT_FIELDS
+    if unknown:
+        raise ReceiptError(f"The receipt rejects unknown members: {sorted(unknown)}")
+    missing = _RECEIPT_FIELDS - set(data)
+    if missing:
+        raise ReceiptError(f"The receipt misses members: {sorted(missing)}")
+    if data["stage"] not in RECEIPT_STAGES:
+        raise ReceiptError(f"Unknown receipt stage: {data['stage']!r}")
+    if data["signature_algorithm"] != SIGNATURE_ALGORITHM:
+        raise ReceiptError(f"Unknown signature algorithm: {data['signature_algorithm']!r}")
+    usage = data.get("usage")
+    if usage is not None and (
+        not isinstance(usage, dict)
+        or any(isinstance(value, bool) or not isinstance(value, int) for value in usage.values())
+    ):
+        raise ReceiptError("usage carries integer counts only")
+    return AgentAttemptReceipt(**data)
+
+
 def verify_attempt_receipt_signature(
     receipt: AgentAttemptReceipt, registry: KeyRegistry,
 ) -> None:

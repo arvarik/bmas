@@ -1,4 +1,5 @@
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 import { daemonFailure, daemonJsonResponse } from "@/lib/daemon-response";
 
 export async function GET(request: Request) {
@@ -9,7 +10,7 @@ export async function GET(request: Request) {
     if (value) params.set(key, value);
   }
   try {
-    const response = await fetch(`${DAEMON_BASE_URL}/datasets?${params}`, {
+    const response = await daemonFetch(`${DAEMON_BASE_URL}/datasets?${params}`, {
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),
     });

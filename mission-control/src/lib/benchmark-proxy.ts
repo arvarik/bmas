@@ -27,9 +27,10 @@ export async function daemonProxy(
     const body = method === "POST" && options.request
       ? await options.request.text()
       : undefined;
+    // Every request carries the operator key; a mutation adds its body type.
     const headers: Record<string, string> = method === "POST"
       ? { "Content-Type": "application/json", ...daemonMutationHeaders() }
-      : {};
+      : { ...daemonMutationHeaders() };
     const idempotencyKey = options.request?.headers.get("X-Idempotency-Key");
     if (idempotencyKey) headers["X-Idempotency-Key"] = idempotencyKey;
     const operatorId = options.request?.headers.get("X-BMAS-Operator-Id");
@@ -55,6 +56,7 @@ export async function benchmarkRawProxy(path: string) {
   try {
     const response = await fetch(`${DAEMON_BASE_URL}${path}`, {
       cache: "no-store",
+      headers: daemonMutationHeaders(),
       signal: AbortSignal.timeout(30_000),
     });
     const body = await response.arrayBuffer();

@@ -371,9 +371,7 @@ def _resolve_profile_groups(manifest: dict[str, Any], profile_id: str) -> list[d
     explicit = selector.get("groups")
     resolved = []
     for group in manifest.get("groups", []):
-        if states is not None and group.get("state") in states:
-            resolved.append(group)
-        elif explicit is not None and group.get("id") in explicit:
+        if states is not None and group.get("state") in states or explicit is not None and group.get("id") in explicit:
             resolved.append(group)
     return resolved
 

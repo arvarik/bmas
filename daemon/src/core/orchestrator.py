@@ -1963,6 +1963,67 @@ class Orchestrator:
         )
         return round(cost, 8)
 
+    async def _native_plan(
+        self, task_id: str, candidate_urls: list[str],
+    ) -> dict[str, Any] | None:
+        """Choose the native protocol when the task runs under a run control
+        row and the first healthy endpoint publishes a qualified document."""
+        import agent_dispatch
+
+        if not candidate_urls:
+            return None
+        try:
+            context = await agent_dispatch.native_context(task_id)
+            if context is None:
+                return None
+            document = await agent_dispatch.endpoint_capabilities(self.http, candidate_urls[0])
+        except Exception as exc:  # noqa: BLE001 - the legacy path stays available
+            logger.debug(f"Native dispatch plan unavailable for {task_id}: {exc}")
+            return None
+        if not agent_dispatch.supports_native_protocol(document):
+            return None
+        return {"context": context, "document": document, "url": candidate_urls[0]}
+
+    async def _post_activation(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        headers: dict[str, str] | None,
+        native_plan: dict[str, Any] | None,
+    ) -> httpx.Response:
+        """Deliver one activation: a signed grant for a native endpoint, else
+        the bearer ``/execute`` request."""
+        timeout = float(payload["timeout"]) + 15.0
+        if native_plan is None or native_plan["url"] != url:
+            return await self.http.post(
+                f"{url}/execute", json=payload, headers=headers, timeout=timeout,
+            )
+        import agent_dispatch
+
+        request = httpx.Request("POST", f"{url}/bmas/activations")
+        try:
+            outcome = await agent_dispatch.dispatch_activation(
+                self.http, agent_url=url,
+                run_id=native_plan["context"].run_id,
+                task_id=str(payload["task_id"]),
+                activation_id=str(payload["activation_id"]),
+                request=payload,
+                task_fence=native_plan["context"].task_fence,
+                timeout_s=timeout,
+                document=native_plan["document"],
+            )
+        except agent_dispatch.DispatchError as exc:
+            return httpx.Response(502, text=str(exc), request=request)
+        data = dict(outcome.get("result") or {})
+        data.setdefault("status", "failed")
+        data["native_protocol"] = {
+            "grant_id": outcome["grant_id"],
+            "acknowledgement_status": outcome["acknowledgement_status"],
+            "activation_state": outcome["activation_state"],
+            "replayed": outcome["replayed"],
+        }
+        return httpx.Response(200, json=data, request=request)
+
     async def _dispatch_turn(
         self, role: str, task_id: str, description: str, persona: str,
         context: dict | None = None,
@@ -2046,6 +2107,7 @@ class Orchestrator:
         except Exception as e:
             logger.warning(f"Turn create failed {task_id}/{turn_id}: {e}")
 
+        native_plan = await self._native_plan(task_id, candidate_urls)
         max_attempts = len(candidate_urls) + 2
         candidate_index = 0
         rate_limited_until: dict[str, float] = {}
@@ -2060,11 +2122,8 @@ class Orchestrator:
                 endpoint_slot = await self._acquire_endpoint_slot(url)
                 try:
                     await self._assert_dispatch_lease(task_id)
-                    resp = await self.http.post(
-                        f"{url}/execute",
-                        json=payload,
-                        headers=headers,
-                        timeout=float(payload["timeout"]) + 15.0,
+                    resp = await self._post_activation(
+                        url, payload, headers, native_plan,
                     )
                 finally:
                     self._release_endpoint_slot(url, endpoint_slot)

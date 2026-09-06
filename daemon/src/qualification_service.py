@@ -108,6 +108,17 @@ async def run_qualification_probes(
     }
 
 
+async def get_qualification(qualification_id: str) -> dict[str, Any] | None:
+    """Read one live qualification record by its identifier."""
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "SELECT * FROM provider_qualifications WHERE qualification_id = ?",
+            (qualification_id,),
+        )
+        row = await cursor.fetchone()
+    return dict(row) if row is not None else None
+
+
 async def latest_unexpired(
     *,
     provider: str,

@@ -505,6 +505,22 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.behavioral-conformance
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Execute the Foundation services for every Stage 0 runtime pair
+      and derive each observed matrix value from real behaviour: the
+      reference runtime runs in process and proves the native column,
+      the legacy pairs prove their compatibility column through the
+      durable footprint of a legacy execution, and a regression or a
+      native row from a legacy path fails the pair.
+    argv: ["python3", "-m", "pytest", "tests/test_behavioral_conformance.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
   - id: daemon.populated-migration
     state: active_required
     owner: daemon
@@ -546,6 +562,25 @@ groups:
     timeout_seconds: 900
     tools: [python, pytest]
     parser: pytest_summary
+
+  - id: daemon.foundation-process-journey
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Run the Foundation journey across real processes: the test stack
+      starts Redis, the fake provider, the daemon, and the agent, the
+      daemon admits one run and dispatches one signed activation grant
+      to the agent, the agent acknowledges, executes one nested model
+      call under an effect grant with signed receipts, the stack
+      restarts the daemon and the agent, and the same fence, the same
+      acknowledgement, and a second activation resume after the restart.
+    argv: ["python3", "-m", "pytest", "tests/test_foundation_process_journey.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 900
+    tools: [python, pytest, redis]
+    parser: pytest_summary
+    artifacts:
+      - "test-results/foundation-process-journey/**"
 
   - id: daemon.foundation-release-gate
     state: active_required
@@ -890,6 +925,25 @@ groups:
       set:
         BMAS_LIVE_SOURCE_SMOKE: "1"
 
+  - id: daemon.live-provider-smoke
+    state: active_optional
+    owner: daemon
+    purpose: >-
+      Run one classic task and one judge calibration against a daemon
+      that uses a real model gateway. The fake provider hides
+      provider-specific behaviour such as reasoning tokens inside the
+      completion budget, so this optional group proves the control-plane
+      calls and the judge work with a live model. It needs
+      BMAS_LIVE_DAEMON_URL and BMAS_API_KEY in the environment.
+    argv: ["python3", "-m", "pytest", "tests/test_live_provider.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 900
+    tools: [python, pytest]
+    parser: pytest_summary
+    environment:
+      set:
+        BMAS_LIVE_PROVIDER: "1"
+
   # ── Agent ────────────────────────────────────────────────────────
   - id: agent.tests
     state: active_required
@@ -1184,9 +1238,11 @@ profiles:
         - daemon.security-matrix
         - daemon.recovery-center
         - daemon.cross-runtime-conformance
+        - daemon.behavioral-conformance
         - daemon.populated-migration
         - daemon.release-gates
         - daemon.complete-stack-journey
+        - daemon.foundation-process-journey
         - daemon.foundation-release-gate
         - daemon.benchmark-statistical-oracle
         - daemon.benchmark-schedule-fairness

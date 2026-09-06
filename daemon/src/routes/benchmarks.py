@@ -12,6 +12,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
+import edge_access
 from auth import require_api_key
 from benchmarks import facade, records, repository
 from benchmarks import scheduler as benchmark_scheduler
@@ -377,6 +378,7 @@ async def benchmark_capacity_endpoint():
 
 @router.get("/runs/{run_id}")
 async def get_run_endpoint(run_id: str):
+    edge_access.authorize_read("run", run_id, run_id=run_id)
     run = await repository.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="The benchmark run does not exist")

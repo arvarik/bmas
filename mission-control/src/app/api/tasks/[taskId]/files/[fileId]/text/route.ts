@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 /** Return the extracted text for one uploaded task file. */
 export async function GET(
@@ -11,7 +12,7 @@ export async function GET(
   const encodedFileId = encodeURIComponent(fileId);
 
   try {
-    const upstream = await fetch(
+    const upstream = await daemonFetch(
       `${DAEMON_BASE_URL}/tasks/${encodedTaskId}/files/${encodedFileId}/text`,
       {
         cache: "no-store",

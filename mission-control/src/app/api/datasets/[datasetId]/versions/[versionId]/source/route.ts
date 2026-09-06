@@ -1,4 +1,5 @@
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 import { daemonFailure } from "@/lib/daemon-response";
 
 export async function GET(
@@ -7,7 +8,7 @@ export async function GET(
 ) {
   const { datasetId, versionId } = await params;
   try {
-    const response = await fetch(
+    const response = await daemonFetch(
       `${DAEMON_BASE_URL}/datasets/${encodeURIComponent(datasetId)}/versions/${encodeURIComponent(versionId)}/source`,
       { cache: "no-store", signal: AbortSignal.timeout(30_000) },
     );

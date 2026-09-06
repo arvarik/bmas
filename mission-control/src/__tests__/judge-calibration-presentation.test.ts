@@ -55,6 +55,9 @@ describe("judge calibration presentation", () => {
     const request = buildAnchorSetRequest({ ...completeForm(), candidate_models: "model-y, model-z" }, "2026-09-04T00:00:00Z");
     expect(request).toMatchObject({ anchor_id: "anchor-a", judge_id: "judge-a", judge_version: "1", interval_days: 7, threshold: 0.7, drift_tolerance: 0.1, registered_at: "2026-09-04T00:00:00Z", candidate_models: ["model-y", "model-z"] });
     expect(request.label_set.items).toHaveLength(3);
+    expect(request.label_set).not.toHaveProperty("dataset_version_id");
+    const explicit = buildAnchorSetRequest({ ...completeForm(), dataset_version_id: "version-a" }, "2026-09-04T00:00:00Z");
+    expect(explicit.label_set.dataset_version_id).toBe("version-a");
   });
 
   it("reads the schedule status against one moment", () => {

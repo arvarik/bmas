@@ -133,6 +133,7 @@ export function JudgesPageClient() {
             <label>Scorer version<input required value={form.scorer_version} onChange={(event) => update({ scorer_version: event.target.value })} /></label>
             <label>Label set dataset (dataset id or version id)<input required value={form.dataset_id} onChange={(event) => update({ dataset_id: event.target.value })} /></label>
             <label>Label set version (version id or number)<input required value={form.dataset_version} onChange={(event) => update({ dataset_version: event.target.value })} /></label>
+            <label>Dataset version id (exact, optional)<input value={form.dataset_version_id} onChange={(event) => update({ dataset_version_id: event.target.value })} placeholder="version-…" /></label>
             <label>Candidate models (comma separated)<input value={form.candidate_models} onChange={(event) => update({ candidate_models: event.target.value })} /></label>
             <label>Interval (days)<input type="number" min={1} max={365} value={form.interval_days} onChange={(event) => update({ interval_days: Number(event.target.value) })} /></label>
             <label>Agreement threshold<input type="number" min={0} max={1} step={0.01} value={form.threshold} onChange={(event) => update({ threshold: Number(event.target.value) })} /></label>

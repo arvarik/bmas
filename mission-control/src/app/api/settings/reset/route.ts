@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 /**
  * POST /api/settings/reset
@@ -7,7 +8,7 @@ import { DAEMON_BASE_URL } from "@/lib/config";
  */
 export async function POST(): Promise<NextResponse> {
   try {
-    const res = await fetch(`${DAEMON_BASE_URL}/settings/reset`, {
+    const res = await daemonFetch(`${DAEMON_BASE_URL}/settings/reset`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

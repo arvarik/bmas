@@ -811,7 +811,7 @@ async def register_backup_outcome(
     kind: str,
     state: str,
     published_path: str | None = None,
-    details: str | None = None,
+    details: str | dict[str, Any] | None = None,
     expires_at: str | None = None,
     database_time: str | None = None,
 ) -> dict[str, Any]:

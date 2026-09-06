@@ -29,6 +29,25 @@ EVIDENCE = ROOT / "conformance" / "release" / "evaluation-default.json"
 
 # Every release gate names the manifest groups that prove it.
 RELEASE_GATES: dict[str, list[str]] = {
+    # ── Foundation Stage 0 conditions ─────────────────────────────
+    "foundation_manifest_parity": ["manifest.validate", "daemon.foundation-release-gate"],
+    "foundation_runtime_routing": ["daemon.runtime-routing"],
+    "foundation_unit_of_work_atomicity": ["daemon.unit-of-work-atomicity", "daemon.run-admission"],
+    "foundation_journal_replay": ["daemon.journal-replay", "daemon.typed-indexes"],
+    "foundation_crash_recovery": ["daemon.activation-states", "daemon.agent-protocol", "daemon.external-effects", "daemon.execution-envelope"],
+    "foundation_budget_reconciliation": ["daemon.budget-states"],
+    "foundation_privacy_boundary": ["daemon.privacy-boundary"],
+    "foundation_evidence_and_goals": ["daemon.evidence-authority", "daemon.goal-concurrency"],
+    "foundation_shared_conformance": ["daemon.cross-runtime-conformance", "daemon.behavioral-conformance", "daemon.foundation-release-gate"],
+    "foundation_populated_migration": ["daemon.populated-migration"],
+    "foundation_complete_stack_journey": ["daemon.complete-stack-journey", "daemon.foundation-process-journey"],
+    "foundation_golden_fixtures": ["daemon.foundation-release-gate"],
+    "foundation_journal_immutability": ["daemon.journal-replay", "daemon.unit-of-work-atomicity", "daemon.populated-migration"],
+    "foundation_backup_and_restore": ["daemon.sqlite-operational"],
+    "foundation_monetary_arithmetic": ["daemon.budget-arithmetic"],
+    "foundation_digest_access_and_keys": ["daemon.digest-profile", "daemon.keyed-digest", "daemon.security-matrix"],
+    "foundation_recovery_center": ["daemon.recovery-center"],
+    # ── Evaluation conditions ─────────────────────────────────────
     "phase_zero_regression": ["daemon.tests", "daemon.benchmark-data-contracts"],
     "statistical_oracle": ["daemon.benchmark-statistical-oracle"],
     "unmocked_browser_journey": ["mission-control.full-stack-journey"],

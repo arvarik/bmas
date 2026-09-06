@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 /** Return the daemon's actionable readiness checks. */
 export async function GET(): Promise<NextResponse> {
   try {
-    const upstream = await fetch(`${DAEMON_BASE_URL}/readiness`, {
+    const upstream = await daemonFetch(`${DAEMON_BASE_URL}/readiness`, {
       signal: AbortSignal.timeout(3_000),
       cache: "no-store",
     });

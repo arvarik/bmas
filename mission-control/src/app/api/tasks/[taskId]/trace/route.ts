@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 /**
  * GET /api/tasks/[taskId]/trace
@@ -22,7 +23,7 @@ export async function GET(
   const offset = url.searchParams.get("offset") ?? "0";
 
   try {
-    const upstream = await fetch(
+    const upstream = await daemonFetch(
       `${DAEMON_BASE_URL}/tasks/${taskId}/trace?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`,
       {
         signal: AbortSignal.timeout(5_000),

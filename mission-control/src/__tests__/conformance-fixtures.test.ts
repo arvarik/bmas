@@ -21,6 +21,13 @@ import {
   replicateSignFlips,
 } from "@/lib/analysis-rng";
 import {
+  KEYED_DIGEST_ALGORITHM,
+  exactTextDigestHex,
+  hexToBytes,
+  keyedDigestHex,
+  semanticText,
+} from "@/lib/keyed-digest";
+import {
   PROFILE_NAME,
   PROFILE_VERSION,
   TransformProfileError,
@@ -259,4 +266,53 @@ describe("bmas-analysis-rng in TypeScript", () => {
       }
     });
   }
+});
+
+interface KeyedDigestFixture {
+  metadata: {
+    digest_profile_version: string;
+    keyed_algorithm: string;
+    key_hex: string;
+    key_id: string;
+    tenant_id: string;
+  };
+  semantic_text: Array<{ name: string; input: string; semantic_text: string }>;
+  exact_bytes: Array<{ name: string; domain: string; input: string; sha256: string }>;
+  keyed: Array<{ name: string; domain: string; value: string; key_id: string; hmac_sha256: string }>;
+}
+
+describe("keyed digest fixtures", () => {
+  const keyed = fixture<KeyedDigestFixture>("keyed_digest.json");
+  const key = hexToBytes(keyed.metadata.key_hex);
+
+  it("matches the frozen algorithm", () => {
+    expect(keyed.metadata.keyed_algorithm).toBe(KEYED_DIGEST_ALGORITHM);
+    expect(keyed.semantic_text.length).toBeGreaterThanOrEqual(6);
+    expect(keyed.keyed.length).toBeGreaterThanOrEqual(4);
+  });
+
+  for (const vector of keyed.semantic_text) {
+    it(`transforms semantic text ${vector.name}`, () => {
+      expect(semanticText(vector.input)).toBe(vector.semantic_text);
+    });
+  }
+
+  for (const vector of keyed.exact_bytes) {
+    it(`digests exact bytes ${vector.name}`, () => {
+      expect(exactTextDigestHex(vector.domain, vector.input)).toBe(vector.sha256);
+    });
+  }
+
+  for (const vector of keyed.keyed) {
+    it(`reproduces the keyed digest ${vector.name}`, () => {
+      expect(keyedDigestHex(key, vector.domain, vector.value)).toBe(vector.hmac_sha256);
+    });
+  }
+
+  it("separates exact digests that semantic text joins", () => {
+    const nfd = keyed.exact_bytes.find((vector) => vector.name === "nfd-differs-from-nfc");
+    const nfc = keyed.exact_bytes.find((vector) => vector.name === "nfc-differs-from-nfd");
+    expect(nfd && nfc && nfd.sha256 !== nfc.sha256).toBe(true);
+    expect(semanticText(nfd!.input)).toBe(semanticText(nfc!.input));
+  });
 });

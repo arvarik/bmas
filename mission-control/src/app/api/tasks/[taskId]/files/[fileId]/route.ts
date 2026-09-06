@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 /**
  * GET /api/tasks/[taskId]/files/[fileId] — download a task file
@@ -16,7 +17,7 @@ export async function GET(
   const encodedFileId = encodeURIComponent(fileId);
 
   try {
-    const upstream = await fetch(
+    const upstream = await daemonFetch(
       `${DAEMON_BASE_URL}/tasks/${encodedTaskId}/files/${encodedFileId}`,
       {
         cache: "no-store",

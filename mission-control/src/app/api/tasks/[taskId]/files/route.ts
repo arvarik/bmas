@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 /**
  * GET /api/tasks/[taskId]/files — list files for a task
@@ -14,7 +15,7 @@ export async function GET(
   const encodedTaskId = encodeURIComponent(taskId);
 
   try {
-    const upstream = await fetch(`${DAEMON_BASE_URL}/tasks/${encodedTaskId}/files`, {
+    const upstream = await daemonFetch(`${DAEMON_BASE_URL}/tasks/${encodedTaskId}/files`, {
       cache: "no-store",
       signal: AbortSignal.timeout(5_000),
     });
@@ -59,7 +60,7 @@ export async function POST(
     const body = await request.arrayBuffer();
     const contentType = request.headers.get("content-type") || "";
 
-    const upstream = await fetch(`${DAEMON_BASE_URL}/tasks/${encodedTaskId}/files`, {
+    const upstream = await daemonFetch(`${DAEMON_BASE_URL}/tasks/${encodedTaskId}/files`, {
       method: "POST",
       headers: {
         "content-type": contentType,

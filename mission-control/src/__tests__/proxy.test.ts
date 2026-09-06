@@ -17,10 +17,15 @@ afterEach(() => {
 });
 
 describe("Mission Control request authentication", () => {
-  it("leaves only health and Next.js asset paths public", () => {
-    expect(config.matcher).toEqual([
-      "/((?!api/health|_next/static|_next/image).*)",
-    ]);
+  it("leaves only health, Next.js assets, and the public browser files outside authentication", () => {
+    expect(config.matcher).toHaveLength(1);
+    const pattern = new RegExp(`^${config.matcher[0].replace(/^\//, "/")}$`);
+    for (const publicPath of ["/sw.js", "/manifest.webmanifest", "/robots.txt", "/favicon.ico", "/icon.png", "/apple-icon.png", "/ant-head.png", "/api/health", "/_next/static/chunks/main.js"]) {
+      expect(pattern.test(publicPath), publicPath).toBe(false);
+    }
+    for (const protectedPath of ["/", "/runs", "/api/tasks", "/api/evaluation/studies", "/sw.json", "/icons/private.png", "/tasks/sw.js"]) {
+      expect(pattern.test(protectedPath), protectedPath).toBe(true);
+    }
   });
 
   it("keeps trusted deployments compatible when no key is configured", () => {

@@ -14,7 +14,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import resource
+import sqlite3
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -39,6 +43,10 @@ LIMITS = {
     "analysis_report": {"seconds": 30.0, "peak_memory_bytes": 4 * 1024**3,
                         "fixture_cases": 100_000 if FULL_SCALE else 200,
                         "replicates": 10_000 if FULL_SCALE else 20},
+    "scheduler_decision": {"p95_seconds": 0.1,
+                           "fixture_runs": 20 if FULL_SCALE else 4,
+                           "fixture_attempts_per_run": 5},
+    "cancellation": {"seconds": 2.0},
 }
 
 
@@ -82,6 +90,56 @@ class Trial:
         }
 
 
+def _command_version(*argv: str) -> str | None:
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = (completed.stdout or completed.stderr).strip()
+    return output.splitlines()[0] if output else None
+
+
+def _module_version(name: str) -> str | None:
+    from importlib import metadata
+
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def _package_version(path: Path) -> str | None:
+    try:
+        return str(json.loads(path.read_text())["version"])
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _host_provenance() -> dict:
+    """Name the host image, kernel, and every component under measurement."""
+    uname = os.uname()
+    repo_root = Path(__file__).resolve().parents[2]
+    return {
+        "image_digest": os.getenv("BMAS_HOST_IMAGE_DIGEST"),
+        "sysname": uname.sysname,
+        "kernel": uname.release,
+        "machine": uname.machine,
+        "cpu_count": os.cpu_count(),
+        "python": platform.python_version(),
+        "python_implementation": platform.python_implementation(),
+        "sqlite": sqlite3.sqlite_version,
+        "redis_client": _module_version("redis"),
+        "redis_server": os.getenv("BMAS_REDIS_SERVER_VERSION"),
+        "numpy": _module_version("numpy"),
+        "wasmtime": _module_version("wasmtime"),
+        "node": _command_version("node", "--version"),
+        "browser_runner": _package_version(
+            repo_root / "mission-control" / "node_modules" / "@playwright" / "test" / "package.json",
+        ),
+        "executable": sys.executable,
+    }
+
+
 REPORTS: list[dict] = []
 
 
@@ -94,8 +152,7 @@ def _record(report: dict) -> None:
         "schema_id": "bmas.performance_contract",
         "contract_version": CONTRACT_VERSION,
         "scale": "full" if FULL_SCALE else "smoke",
-        "host": {"sysname": os.uname().sysname, "machine": os.uname().machine,
-                 "cpu_count": os.cpu_count()},
+        "host": _host_provenance(),
         "reports": REPORTS,
     }, indent=2, sort_keys=True))
 
@@ -223,6 +280,107 @@ async def test_analysis_report():
              peak_memory_bytes=LIMITS["analysis_report"]["peak_memory_bytes"])
 
 
+def _summary(name: str, durations: list[float], fixture_digest: str) -> dict:
+    return {
+        "operation": name,
+        "contract_version": CONTRACT_VERSION,
+        "scale": "full" if FULL_SCALE else "smoke",
+        "warmup": WARMUP,
+        "measured": MEASURED,
+        "samples": len(durations),
+        "median_seconds": _percentile(durations, 0.5),
+        "p95_seconds": _percentile(durations, 0.95),
+        "max_seconds": max(durations),
+        "peak_memory_bytes": _peak_memory_bytes(),
+        "fixture_digest": fixture_digest,
+    }
+
+
+async def _queued_runs(count: int, attempts_per_run: int) -> list[str]:
+    """Create ``count`` queued runs that each hold ``attempts_per_run`` attempts."""
+    from benchmarks import repository
+    from benchmarks.provenance import content_checksum
+
+    await db.create_dataset_version(
+        dataset_id="dataset-scheduler", version_id="version-scheduler", name="Scheduler",
+        description="", source_uri=None, license_name=None, author=None, dataset_metadata={},
+        checksum="scheduler-checksum", schema={"version": "1"}, source_filename="scheduler.jsonl",
+        source_mime="application/x-ndjson", source_checksum="scheduler-source",
+        source_path="/tmp/scheduler.jsonl", version_metadata={}, items=_items(attempts_per_run),
+    )
+    envelope = {"runtime_id": "classic", "effective_configuration": {"model_routing": {"medium": "model-a"}}}
+    await repository.create_test_revision(
+        test_id="test-scheduler", revision_id="revision-scheduler", name="scheduler", description="",
+        dataset_version_id="version-scheduler",
+        configuration={"repetitions": 1, "seed": 1, "max_concurrency": 32},
+        arms=[{"id": "arm-scheduler", "name": "Classic", "slug": "classic", "runtime_id": "classic",
+               "configuration": envelope, "configuration_checksum": content_checksum(envelope)}],
+        scorers=[{"id": "scorer-exact-match-v1", "configuration": {}}],
+    )
+    run_ids = [f"run-scheduler-{index:03d}" for index in range(count)]
+    for run_id in run_ids:
+        await repository.create_run(run_id=run_id, revision_id="revision-scheduler", idempotency_key=None)
+    return run_ids
+
+
+@pytest.mark.asyncio
+async def test_scheduler_decision_and_cancellation(performance_db):
+    """A lease decision stays under its limit at full scale, and a cancel takes effect in time."""
+    from benchmarks import repository
+    from benchmarks.capacity import CapacityPolicy
+
+    limits = LIMITS["scheduler_decision"]
+    policy = CapacityPolicy(global_limit=limits["fixture_runs"] * limits["fixture_attempts_per_run"] + 1)
+    run_ids = await _queued_runs(limits["fixture_runs"], limits["fixture_attempts_per_run"])
+    digest = hashlib.sha256(json.dumps(run_ids).encode()).hexdigest()
+    total = limits["fixture_runs"] * limits["fixture_attempts_per_run"]
+    durations: list[float] = []
+    leased: list[dict] = []
+    for index in range(total):
+        started = time.perf_counter()
+        attempt = await repository.claim_next_attempt(worker_id=f"worker-{index % 4}", lease_seconds=60, capacity_policy=policy)
+        durations.append(time.perf_counter() - started)
+        assert attempt is not None, f"lease {index} found no queued attempt"
+        leased.append(attempt)
+    assert len({attempt["id"] for attempt in leased}) == total
+    assert len({attempt["run_id"] for attempt in leased}) == limits["fixture_runs"]
+    report = _summary("scheduler_decision", durations, digest)
+    _record(report)
+    _enforce(report, p95_seconds=limits["p95_seconds"])
+
+    # Release the attempts of one run, then cancel it and measure when
+    # the scheduler stops offering that run's work.
+    target = run_ids[0]
+    for attempt in leased:
+        if attempt["run_id"] == target:
+            assert await repository.release_attempt(attempt["id"], lease_token=attempt["lease_token"])
+    assert (await repository.claim_next_attempt(worker_id="probe", lease_seconds=60, capacity_policy=policy))["run_id"] == target
+    started = time.perf_counter()
+    await repository.set_run_state(target, "cancel")
+    while True:
+        run = await repository.get_run(target)
+        probe = await repository.claim_next_attempt(worker_id="probe", lease_seconds=60, capacity_policy=policy)
+        elapsed = time.perf_counter() - started
+        async with db._connect() as connection:  # noqa: SLF001
+            row = await (await connection.execute(
+                "SELECT COUNT(*) FROM benchmark_attempts attempt "
+                "JOIN benchmark_trials trial ON trial.id = attempt.trial_id "
+                "WHERE trial.run_id = ? AND attempt.status = 'queued'", (target,),
+            )).fetchone()
+        settled = (
+            run["status"] in {"cancelling", "cancelled"}
+            and int(row[0]) == 0
+            and (probe is None or probe["run_id"] != target)
+        )
+        if settled or elapsed > LIMITS["cancellation"]["seconds"] * 5:
+            break
+    cancellation = _summary("cancellation", [elapsed], digest)
+    cancellation["settled"] = settled
+    _record(cancellation)
+    assert settled, cancellation
+    _enforce(cancellation, seconds=LIMITS["cancellation"]["seconds"])
+
+
 def test_report_records_every_required_field():
     assert REPORTS, "the operations record their reports first"
     for report in REPORTS:
@@ -232,3 +390,10 @@ def test_report_records_every_required_field():
             assert field in report, field
         assert report["measured"] == MEASURED
         assert report["warmup"] == WARMUP
+    document = json.loads(Path(os.getenv("BMAS_PERFORMANCE_REPORT",
+                                         "../test-results/performance-contract.json")).read_text())
+    for field in ("image_digest", "kernel", "python", "sqlite", "redis_client",
+                  "numpy", "wasmtime", "node", "browser_runner"):
+        assert field in document["host"], field
+    assert {report["operation"] for report in document["reports"]} >= {
+        "scheduler_decision", "cancellation"}

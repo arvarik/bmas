@@ -91,6 +91,75 @@ the daemon so the model-backed judge reaches the fake provider. The
 mocked `e2e/evaluation-operations.spec.ts` covers the same screens
 against recorded daemon responses.
 
+## The native agent protocol and the real-process journey
+
+The agent implements the current agent protocol in
+`agent/bmas_protocol/native.py`. The daemon signs activation and
+effect grants with one Ed25519 key that lives beside the database
+(`daemon/src/protocol_keys.py`), so a restart keeps every issued grant
+verifiable. The agent keeps its own Ed25519 seed under the activation
+cache directory and registers the public key over the node-authenticated
+route `POST /agent-protocol/agent-keys`. The daemon pins the key: one
+key identifier never changes its bytes, and a new identifier records a
+rotation. The agent publishes its capability document at
+`GET /bmas/capabilities`. The daemon probes that document and, for a
+task under a run-control row and a qualified endpoint, delivers one
+signed grant to `POST /bmas/activations` instead of the bearer
+`/execute` request. A legacy endpoint keeps the bearer path.
+
+The agent verifies the grant under the daemon key, signs one exact
+acknowledgement, stores the grant and the acknowledgement durably,
+posts the acknowledgement to `POST /agent-protocol/acknowledgements`,
+and only then executes. A repeated delivery of the same grant returns
+the stored acknowledgement and result without a second execution,
+across a restart, and `GET /bmas/acknowledgements/{grant_id}` serves
+the stored acknowledgement. Every model call requests one effect
+grant from `POST /agent-protocol/effect-grants`, verifies it, and posts
+signed receipts to `POST /agent-protocol/receipts` for the transport
+start and the observed response with the usage. The agent carries a
+byte-identical copy of the daemon digest profile and signing modules,
+and `scripts/tests/test_vendored_protocol.py` keeps the copies equal.
+
+`daemon/tests/test_agent_protocol_routes.py` runs the real agent
+protocol code in process against the daemon routes.
+`daemon/tests/test_foundation_process_journey.py` runs the journey
+across real processes. `scripts/test-stack.py start
+--without-mission-control` starts Redis, the fake provider, the
+daemon, and the agent. The daemon admits one run over
+`POST /agent-protocol/runs`, dispatches one grant over
+`POST /agent-protocol/dispatch`, and the agent executes one model call
+against the fake provider under an effect grant with two receipts.
+`scripts/test-stack.py restart` then stops and respawns the daemon and
+the agent over the same database, signing key, and activation cache.
+After the restart the run keeps its fence and projection digest, the
+agent serves the same acknowledgement, the daemon treats the same
+bytes as a duplicate, and a second activation dispatches under the
+same fence. The `daemon.foundation-process-journey` group runs it and
+feeds the `foundation_complete_stack_journey` release gate.
+
+## The live-provider smoke
+
+Every required group answers model calls with the deterministic fake
+provider, which hides provider-specific behaviour: reasoning tokens
+inside the completion budget, empty structured replies, deprecated
+sampling parameters, and the material a judge needs to label an
+anchor item. The optional `daemon.live-provider-smoke` group runs
+`daemon/tests/test_live_provider.py` against a daemon that already
+uses a real gateway, for example the compose starter after
+`./scripts/bmas up`:
+
+```bash
+set -a; source .env; set +a
+BMAS_LIVE_DAEMON_URL=http://127.0.0.1:9000 \
+  PATH="$PWD/.venv/bin:$PATH" .venv/bin/python scripts/run-test-manifest.py \
+  --group daemon.live-provider-smoke
+```
+
+It submits one classic task and asserts the decider produced the
+answer, and it registers a four-item anchor set with inline content
+and asserts the judge labels every item without abstaining. It spends
+real provider budget, so it never enters a required profile.
+
 ## The performance contract
 
 `daemon/tests/test_performance_contract.py` implements the published
@@ -102,6 +171,72 @@ smoke scale on every worker so the report structure proves on every
 run. The `daemon.performance-contract` group sets
 `BMAS_PERFORMANCE_WORKER=1` and enforces every limit on the pinned
 Linux worker with eight logical CPUs, 16 GiB memory, and local SSD.
+The harness measures every published limit. The scheduler decision
+measurement claims 100 leases across 20 runs and enforces 100
+milliseconds at p95. The cancellation measurement cancels one run
+with queued work and enforces two seconds until the scheduler stops
+offering that run. The report's `host` block records the machine
+image digest from `BMAS_HOST_IMAGE_DIGEST`, the kernel release, and
+the Python, SQLite, Redis client, Redis server
+(`BMAS_REDIS_SERVER_VERSION`), NumPy, Wasmtime, Node.js, and
+Playwright versions, so a number never travels without its host.
+The pinned worker run itself happens in continuous integration on
+that worker. A laptop run records the smoke scale only and enforces
+nothing.
+
+## The Foundation verification tests
+
+`daemon/tests/test_foundation_verification.py` proves four
+behaviours the handoff gate listed as missing. Twelve concurrent
+writers on one run commit through one ordered digest chain with
+distinct cursors and sequence numbers. A simulated full disk
+(`sqlite3.OperationalError: database or disk is full`) at the journal
+insert, the projection write, the outbox write, or the commit leaves
+no partial record, and the retry commits exactly once. The scheduled
+restore test in `daemon/src/restore_test.py` creates one backup,
+restores it into an isolated directory, and compares the measured
+recovery time and recovery point lag against the objectives
+(60 seconds, zero lag). It records every outcome as a `restore_test`
+backup record, so a failed restore test shows in the Recovery Center
+`backup_health` queue. `BMAS_RESTORE_TEST_INTERVAL_SECONDS` above
+zero starts the loop in the daemon against `BMAS_BACKUP_ROOT`. A
+repeatability pair runs one case twice under one seed plan, captures
+both evidence bundles with their own seed evidence, and claims no
+repeatability.
+
+## The behavioral conformance suite
+
+`daemon/src/conformance_behavior.py` executes the Foundation services
+for one runtime pair and derives every observed matrix value from what
+happened. The matrix suite in `conformance_kit.py` still checks that a
+record declares one value per capability. The behavioral suite proves
+the value. The journal genesis carries the exact pair and commits once
+under one idempotency token. The artifact store rejects a wrong digest
+and an early reference and keeps promoted bytes immutable. An applied
+seed changes the output, and an equal seed repeats it. A cancel stops
+the next step and the run-control cancellation states advance. A stale
+fence and a stale lease are rejected, and a replay from cursor zero
+rebuilds the same projection digest. A native execution writes durable
+activation and effect rows, and a legacy execution writes none. The
+endpoint directory selects the pair's protocol partition and fails
+closed. A budget refuses an over-limit reservation. Evidence and goals
+reach the projection, every record carries the common envelope, and a
+terminal outcome closes the run to further updates while the post
+terminal invalidation still commits. The reference scorer replays the
+runtime output deterministically, and the interface falls back to the
+generic panels.
+
+`daemon/src/core/variants/reference.py` is the executable reference
+runtime. It registers as the pair `reference/1`, runs in process with
+no agent and no provider, derives one digest per step from the seed,
+checks the abort signal before every step, saves a checkpoint after
+every step, and resumes from the checkpoint after a restart. It stays
+out of the public capability document. The `daemon.behavioral-conformance`
+group runs the suite for the reference pair and the three legacy pairs
+and feeds the `foundation_shared_conformance` release gate. The suite
+also proves its own teeth: a reference runtime that ignores the seed
+fails the native column, and a legacy path that writes one native row
+fails the ledger case.
 
 ## The pinned toolchain
 
@@ -130,6 +265,12 @@ and `bmas-analysis-rng` in TypeScript. The
 published daemon fixtures, so every digest, rank, sample, split,
 candidate, sign-flip bit, and oracle aggregate has one real second
 consumer that reproduces it byte for byte.
+`mission-control/src/lib/keyed-digest.ts` implements the keyed
+digest, the semantic text transform, and the exact content digest.
+`scripts/generate-keyed-digest-fixtures.py` freezes the reference
+vectors in `daemon/tests/fixtures/keyed_digest.json`, and both the
+daemon (`test_keyed_digest_fixtures.py`) and the same Mission Control
+group reproduce every HMAC, text transform, and exact digest.
 
 ## Release gates and the default generation
 

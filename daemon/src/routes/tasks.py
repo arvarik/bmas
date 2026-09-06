@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 import database as db
+import edge_access
 from auth import require_api_key
 from config import (
     BLACKBOARD_V2,
@@ -149,6 +150,7 @@ async def archive_tasks_endpoint(body: TaskArchiveRequest, request: Request):
 @router.get("/tasks/{task_id}")
 async def get_task_detail(task_id: str):
     """Full task detail including sub-tasks."""
+    edge_access.authorize_read("task", task_id, task_id=task_id)
     task = await db.get_task(task_id)
     if not task:
         return JSONResponse({"error": "Task not found"}, status_code=404)

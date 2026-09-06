@@ -16,6 +16,7 @@ import aiosqlite
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+import edge_access
 from auth import require_api_key
 from benchmarks import (
     asset_ingestion,
@@ -578,6 +579,7 @@ async def read_run_scores_endpoint(run_id: str):
 
 @router.get("/attempts/{attempt_id}/evidence")
 async def read_attempt_evidence_endpoint(attempt_id: str):
+    edge_access.authorize_read("evidence", attempt_id)
     result = await facade.read_attempt_evidence(attempt_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Attempt not found")
@@ -596,6 +598,7 @@ async def list_attempt_score_records_endpoint(attempt_id: str):
 @router.get("/evidence/sections/{content_digest}")
 async def read_evidence_section_endpoint(content_digest: str):
     """Read one persisted evidence section by its content digest."""
+    edge_access.authorize_read("evidence", content_digest)
     from benchmarks import evidence_capture
     from core.asset_store import ArtifactCommitError
 
@@ -830,6 +833,7 @@ async def calibrate_judge_endpoint(
                 str(payload.label_set.get("dataset_id") or "labels"),
                 str(payload.label_set.get("version") or "1"),
                 list(payload.label_set.get("items") or []),
+                dataset_version_id=payload.label_set.get("dataset_version_id"),
             ),
             judge_outputs=payload.judge_outputs,
             candidate_models=payload.candidate_models,
@@ -884,6 +888,7 @@ async def register_anchor_set_endpoint(
                 str(payload.label_set.get("dataset_id") or "labels"),
                 str(payload.label_set.get("version") or "1"),
                 list(payload.label_set.get("items") or []),
+                dataset_version_id=payload.label_set.get("dataset_version_id"),
             ),
             candidate_models=payload.candidate_models,
             now=payload.registered_at,

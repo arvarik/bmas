@@ -70,6 +70,17 @@ export function proxy(request: NextRequest): NextResponse {
   );
 }
 
+// The browser fetches the service worker script, the web manifest, the
+// icons, and robots.txt without the dashboard header or basic
+// credentials, so those public files stay outside authentication.
+// Every page and every API route stays behind it.
+//
+// Next.js parses this matcher at compile time, so the entry must be one
+// static string. Do not build it from a variable or a template literal.
+// The public file names anchor at the end of the path, so "/sw.json" or
+// "/tasks/sw.js" stay protected.
 export const config = {
-  matcher: ["/((?!api/health|_next/static|_next/image).*)"],
+  matcher: [
+    "/((?!api/health|_next/static|_next/image|(?:sw\\.js|manifest\\.webmanifest|robots\\.txt|favicon\\.ico|favicon-16x16\\.png|favicon-32x32\\.png|icon\\.png|apple-icon\\.png|apple-touch-icon\\.png|android-chrome-192x192\\.png|android-chrome-512x512\\.png|ant-head\\.png)$).*)",
+  ],
 };

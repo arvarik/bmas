@@ -21,6 +21,7 @@ export interface AnchorSetForm {
   scorer_version: string;
   dataset_id: string;
   dataset_version: string;
+  dataset_version_id: string;
   items: string;
   candidate_models: string;
   interval_days: number;
@@ -43,6 +44,7 @@ export function defaultAnchorSetForm(): AnchorSetForm {
     scorer_version: "1",
     dataset_id: "",
     dataset_version: "1",
+    dataset_version_id: "",
     items: "",
     candidate_models: "",
     interval_days: 7,
@@ -102,7 +104,12 @@ export function buildAnchorSetRequest(form: AnchorSetForm, registeredAt: string)
     prompt_digest: form.prompt_digest.trim(),
     scorer_id: form.scorer_id.trim(),
     scorer_version: form.scorer_version.trim(),
-    label_set: { dataset_id: form.dataset_id.trim(), version: form.dataset_version.trim(), items: parseLabelItems(form.items) },
+    label_set: {
+      dataset_id: form.dataset_id.trim(),
+      version: form.dataset_version.trim(),
+      ...(form.dataset_version_id.trim() ? { dataset_version_id: form.dataset_version_id.trim() } : {}),
+      items: parseLabelItems(form.items),
+    },
     candidate_models: form.candidate_models.split(/[,\n]/).map((entry) => entry.trim()).filter(Boolean),
     interval_days: form.interval_days,
     threshold: form.threshold,

@@ -59,6 +59,29 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "Install $1 and run this command again."
 }
 
+# Read one top-level string field from a JSON document. Python parses
+# the document when it exists; the sed fallback reads the first match
+# and does not depend on field order beyond that.
+json_field() {
+  local name="$1"
+  local document="$2"
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s' "$document" | python3 -c '
+import json, sys
+name = sys.argv[1]
+try:
+    document = json.load(sys.stdin)
+except ValueError:
+    sys.exit(0)
+value = document.get(name) if isinstance(document, dict) else None
+if isinstance(value, (str, int, float)):
+    print(value)
+' "$name"
+    return
+  fi
+  printf '%s' "$document" | sed -n "s/.*\"$name\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n 1
+}
+
 provider_template() {
   case "$1" in
     gemini) echo "bmas.example.yaml" ;;
@@ -190,7 +213,7 @@ smoke_command() {
     -d '{"task":"Explain the classic blackboard workflow in three concise bullets.","variant":"classic"}')"
 
   local task_id
-  task_id="$(printf '%s' "$response" | sed -n 's/.*"task_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  task_id="$(json_field task_id "$response")"
   [[ -n "$task_id" ]] || die "The smoke submission did not return a task_id: $response"
   echo "Submitted $task_id."
 
@@ -199,7 +222,16 @@ smoke_command() {
     local task_json
     local status
     task_json="$(curl -fsS "http://localhost:${daemon_port}/tasks/${task_id}")"
-    status="$(printf '%s' "$task_json" | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+    # The task document nests the record under "task"; the status
+    # field of that record drives the wait loop.
+    task_record="$(printf '%s' "$task_json" | python3 -c 'import json, sys
+try:
+    document = json.load(sys.stdin)
+except ValueError:
+    sys.exit(0)
+task = document.get("task") if isinstance(document, dict) else None
+print(json.dumps(task if isinstance(task, dict) else document))' 2>/dev/null || printf '%s' "$task_json")"
+    status="$(json_field status "$task_record")"
     case "$status" in
       completed)
         echo "PASS: $task_id completed."

@@ -265,11 +265,28 @@ test("the import, edit, publish, configure, execute, inspect, compare, export, a
     execution_digests: { artifact: digest, runtime: digest, dependencies: digest },
   } });
   const firstAttemptId = String(attempts[0].id);
-  await daemon(request, "post", `/api/evaluation/attempts/${firstAttemptId}/evidence`, {
-    run_manifest: { run_id: runId }, runtime_specification: { runtime: "classic" }, case: { case_id: String(attempts[0].item_key ?? "j-1") },
-    trace_events: [{ kind: "tool_call", api_key: "sk-live-journey-secret-value", argument: "safe" }], final_output: "42",
-    resources: { cost: null, tokens: 10, latency_ms: 5 }, seed_evidence: { requested_seed: 7, seed_control: "recorded" }, ledger_references: {},
+  // Settlement already captured the immutable evidence bundle from the
+  // attempt, the task record, and the task's trace events, so the
+  // journey reads that bundle instead of writing one.
+  const settled = await daemon(request, "get", `/api/evaluation/attempts/${firstAttemptId}/evidence`);
+  expect(settled.source).toBe("current");
+  const settledRecord = settled.record as Json;
+  expect((settledRecord.versions as Json)?.evidence_source).toBe("settlement");
+  expect((settledRecord.completeness as Json)?.level).toBe("complete");
+  expect((settledRecord.case_reference as Json)?.case_id).toBe(String(attempts[0].item_key ?? "j-1"));
+  const traceDigest = String(settledRecord.trace_digest);
+  expect(traceDigest).toHaveLength(64);
+  // The bundle stores exactly once, so a second write is one state
+  // conflict rather than a replacement.
+  const rewrite = await request.post(`${stack.urls.daemon}/api/evaluation/attempts/${firstAttemptId}/evidence`, {
+    headers,
+    data: {
+      run_manifest: { run_id: runId }, runtime_specification: { runtime: "classic" }, case: { case_id: "j-1" },
+      trace_events: [], final_output: "42", resources: { cost: null, tokens: 10, latency_ms: 5 },
+      seed_evidence: { requested_seed: 7, seed_control: "recorded" }, ledger_references: {},
+    },
   });
+  expect(rewrite.status()).toBe(409);
   const scored = await daemon(request, "post", `/api/evaluation/attempts/${firstAttemptId}/scores`, {
     scorer_id: scorerSpecId, scorer_version: "1", plugin_type: "deterministic", configuration: { comparison: "exact" },
     extra_evidence: { final_output: "42", reference_answer: "42" },
@@ -282,14 +299,14 @@ test("the import, edit, publish, configure, execute, inspect, compare, export, a
   await expect(scoreRegion.getByText("Trusted service")).toBeVisible({ timeout: 30_000 });
   await expect(scoreRegion.getByText("Completed", { exact: true })).toBeVisible();
   const evidenceRegion = page.getByRole("region", { name: "Attempt evidence" }).first();
-  await expect(evidenceRegion.getByText(/1 secret/)).toBeVisible();
+  await expect(evidenceRegion.getByText("Complete", { exact: true })).toBeVisible();
+  await expect(evidenceRegion.getByText(/0 redacted paths/)).toBeVisible();
   await evidenceRegion.getByRole("listitem").filter({ hasText: "Trace" }).getByRole("button", { name: "View" }).click();
   const viewer = page.getByLabel("Trace section");
-  await expect(viewer).toContainText("safe", { timeout: 30_000 });
-  await expect(viewer).not.toContainText("sk-live-journey-secret-value");
-  const redactions = viewer.getByRole("list", { name: "Redacted paths" });
-  await expect(redactions).toContainText("trace[0].api_key");
-  await expect(redactions.getByText("Secret", { exact: true })).toBeVisible();
+  // The viewer reads the same persisted section the settled bundle
+  // names, so the digest in the header equals the bundle's digest.
+  await expect(viewer).toContainText(traceDigest, { timeout: 30_000 });
+  await expect(viewer).toContainText("No redaction inside this section.");
 
   // 14. Freeze a second snapshot from the browser.
   const historyPanel = page.getByRole("region", { name: "Analysis history" });

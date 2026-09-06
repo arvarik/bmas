@@ -9,7 +9,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "daemon" / "src"))
 
-from config_schema import BmasConfig  # noqa: E402
+from config_schema import BmasConfig
 
 OUTPUT = REPO_ROOT / "docs" / "reference" / "config.schema.json"
 

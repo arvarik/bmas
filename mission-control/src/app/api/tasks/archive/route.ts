@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { DAEMON_BASE_URL } from "@/lib/config";
+import { daemonFetch } from "@/lib/daemon-fetch";
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
     const body = await request.text();
-    const upstream = await fetch(`${DAEMON_BASE_URL}/tasks/archive`, {
+    const upstream = await daemonFetch(`${DAEMON_BASE_URL}/tasks/archive`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
