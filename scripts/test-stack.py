@@ -308,7 +308,9 @@ def start(env_file: Path, *, keep_on_failure: bool, mission_control: bool = True
             str(ports["fake_provider"]), "--api-key", credentials["provider_key"],
         ], cwd=root, env=base_env, log_path=logs / "fake_provider.log")
         state["processes"]["fake_provider"] = process.pid
-        if not _wait_http(f"{state['urls']['fake_provider']}/health", timeout=20):
+        # A loaded continuous-integration runner can take more than
+        # twenty seconds to import and bind the provider process.
+        if not _wait_http(f"{state['urls']['fake_provider']}/health", timeout=60):
             raise StackError("the fake provider never became ready")
         state["readiness"]["fake_provider"] = True
 

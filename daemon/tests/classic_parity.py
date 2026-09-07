@@ -18,6 +18,7 @@ turn identifiers never enter a digest.
 from __future__ import annotations
 
 import copy
+import time
 from typing import Any
 
 from classic_harness import (
@@ -149,8 +150,13 @@ def stall_sample_rounds() -> list[dict[str, BoardEntry]]:
 
 
 def fresh_engine(**config: Any) -> TraditionalVariant:
-    """An engine with the harness configuration and no host services."""
+    """An engine with the harness configuration and no host services.
+
+    The genesis clock starts now, as it does in a real run, so a
+    duration check reads the elapsed run time and not the host uptime.
+    """
     engine = harness_engine("sequential", None, None, None)
+    engine.genesis_time = time.monotonic()
     for name, value in config.items():
         setattr(engine, name, value)
     return engine

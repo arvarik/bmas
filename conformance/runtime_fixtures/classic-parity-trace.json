@@ -950,7 +950,7 @@
       "termination": {
         "best_finding": "Private review confirms that alpha remains required.",
         "revision_headroom": [
-          false,
+          true,
           false
         ],
         "stall": [
