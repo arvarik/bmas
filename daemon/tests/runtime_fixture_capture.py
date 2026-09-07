@@ -69,6 +69,14 @@ def fixture_path(fixture_id: str) -> Path:
 # and states its reason here. The reason lands in the fixture metadata,
 # so the frozen bytes carry the justification of their last change.
 FIXTURE_REVISIONS: dict[str, dict[str, str]] = {
+    "classic-parity-trace": {
+        "revised": "2026-09-07",
+        "reason": (
+            "Classic work package 3: the parity trace of the engine over the "
+            "deterministic harness, captured before the policy extraction. "
+            "Every extracted policy must reproduce it."
+        ),
+    },
     "classic-effective-configuration": {
         "revised": "2026-09-07",
         "reason": (
@@ -261,6 +269,12 @@ async def capture_classic_lifecycle() -> dict[str, Any]:
     }
 
 
+async def capture_classic_parity_trace() -> dict[str, Any]:
+    from classic_parity import capture_parity_trace
+
+    return await capture_parity_trace("sequential")
+
+
 async def capture_protocol_vocabulary() -> dict[str, Any]:
     key_patterns = [
         {"pattern": pattern, **details}
@@ -312,6 +326,7 @@ CAPTURES: dict[str, Any] = {
     "stigmergic-effective-configuration": lambda: _capture_named_configuration("stigmergic"),
     "classic-legacy-migration": capture_classic_legacy_migration,
     "classic-lifecycle": capture_classic_lifecycle,
+    "classic-parity-trace": capture_classic_parity_trace,
     "patchboard-lifecycle": lambda: capture_collaborative_lifecycle("patchboard"),
     "stigmergic-lifecycle": lambda: capture_collaborative_lifecycle("stigmergic"),
     "protocol-vocabulary": capture_protocol_vocabulary,

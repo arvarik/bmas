@@ -1,0 +1,1250 @@
+{
+  "fixture_id": "classic-parity-trace",
+  "metadata": {
+    "contract_version": "1.0.0",
+    "reason": "Classic work package 3: the parity trace of the engine over the deterministic harness, captured before the policy extraction. Every extracted policy must reproduce it.",
+    "revised": "2026-09-07"
+  },
+  "record": {
+    "board": [
+      [
+        "conflict",
+        "conflict_resolver",
+        "Conflicting values",
+        "Alpha states forty-two while beta states forty-one.",
+        [
+          "e-3",
+          "e-4"
+        ],
+        [],
+        "superseded",
+        "public",
+        4,
+        "0.000000",
+        "0.990000"
+      ],
+      [
+        "critique",
+        "critic",
+        "Beta lacks evidence",
+        "The value forty-one conflicts with the stronger alpha constraint.",
+        [
+          "e-4"
+        ],
+        [],
+        "open",
+        "public",
+        2,
+        "0.000000",
+        "0.970000"
+      ],
+      [
+        "critique",
+        "critic",
+        "Verification passed",
+        "The independent critic found no blocking issue in solution e-22.",
+        [
+          "e-22"
+        ],
+        [],
+        "superseded",
+        "public",
+        8,
+        "0.000000",
+        "1.000000"
+      ],
+      [
+        "finding",
+        "expert.alpha",
+        "Alpha constraint",
+        "Alpha requires the final value to equal forty-two.",
+        [],
+        [],
+        "superseded",
+        "public",
+        1,
+        "0.000000",
+        "0.920000"
+      ],
+      [
+        "finding",
+        "expert.alpha",
+        "Alpha constraint",
+        "Private review confirms that alpha remains required.",
+        [
+          "e-7"
+        ],
+        [],
+        "open",
+        "public",
+        5,
+        "0.000000",
+        "0.920000"
+      ],
+      [
+        "finding",
+        "expert.alpha",
+        "Alpha constraint",
+        "Private review confirms that alpha remains required.",
+        [
+          "e-7"
+        ],
+        [],
+        "open",
+        "public",
+        5,
+        "0.000000",
+        "0.920000"
+      ],
+      [
+        "finding",
+        "expert.beta",
+        "Beta constraint",
+        "Beta initially claims that the value equals forty-one.",
+        [],
+        [],
+        "superseded",
+        "public",
+        1,
+        "0.000000",
+        "0.720000"
+      ],
+      [
+        "finding",
+        "expert.beta",
+        "Beta reconciliation",
+        "Beta accepts forty-two after reviewing alpha evidence.",
+        [
+          "e-7"
+        ],
+        [],
+        "open",
+        "public",
+        5,
+        "0.000000",
+        "0.940000"
+      ],
+      [
+        "finding",
+        "expert.beta",
+        "Beta reconciliation",
+        "Beta accepts forty-two after reviewing alpha evidence.",
+        [
+          "e-7"
+        ],
+        [],
+        "removed",
+        "public",
+        5,
+        "0.000000",
+        "0.940000"
+      ],
+      [
+        "objective",
+        "control_unit",
+        "Resolve the two constraints and return the verified conclusion.",
+        "Resolve the two constraints and return the verified conclusion.",
+        [],
+        [],
+        "open",
+        "public",
+        0,
+        "0.000000",
+        "1.000000"
+      ],
+      [
+        "plan",
+        "planner",
+        "Resolve both constraints",
+        "Compare both claims, resolve conflicts, and verify the result.",
+        [
+          "e-1"
+        ],
+        [],
+        "open",
+        "public",
+        1,
+        "0.000000",
+        "0.900000"
+      ],
+      [
+        "rebuttal",
+        "expert.beta",
+        "Beta correction",
+        "The critique is correct. Beta withdraws forty-one.",
+        [
+          "e-5"
+        ],
+        [],
+        "open",
+        "public",
+        3,
+        "0.000000",
+        "0.960000"
+      ],
+      [
+        "solution",
+        "decider",
+        "Verified conclusion",
+        "The final value is 42.",
+        [],
+        [],
+        "open",
+        "public",
+        7,
+        "0.000000",
+        "0.990000"
+      ]
+    ],
+    "checkpoints": [
+      "d37009da76ca54ac88a1aba8f979ab3a1fb67f07c3a1e79498d3c1e82ba7194a",
+      "1ff8c5a6a5035ecf3a7318a03b7fd901467a91e6feacd99f52eb8868ab551c91",
+      "26887fe6da29ec330fbd2f234740d27a43aa9fc166d0778a2aeb0c1ce17c25a2",
+      "00f54367924fb5b0ecbee0653644181c66110c6b934e4f17d240cd0c27901edf",
+      "b3810d2222d587b5a7019c3aa8001a3f4be94667d3f35f6796418d03bf6318ad",
+      "376cabe848099012a530a2b94da85271edd062ba5731bee3d6fe29a17426fd32",
+      "c967a29d8e363fde71f4552a24c41e2e1bf0936e880babeb7376e2c2e5178ff2",
+      "35a4375a8cb372c15e15cb444fb2b6f8f5c57fe5fbcaacad67cf8651a7316db1",
+      "84a50170f6ecd4c1d177534f23a5f0f81ba4fb4c81f87829d20fa40a5796827b"
+    ],
+    "contract_version": "1",
+    "events": [
+      {
+        "actor": "control_unit",
+        "entry_id": "e-1",
+        "event_type": "entry_added",
+        "mutation_id": "genesis:objective:v1",
+        "round": 0,
+        "seq": 1,
+        "turn_id": "genesis"
+      },
+      {
+        "actor": "planner",
+        "entry_id": "e-2",
+        "event_type": "entry_added",
+        "mutation_id": "activation-5e9db521991d54a190ffa363fab84917:0:0",
+        "round": 1,
+        "seq": 2,
+        "turn_id": "activation-5e9db521991d54a190ffa363fab84917"
+      },
+      {
+        "actor": "expert.alpha",
+        "entry_id": "e-3",
+        "event_type": "entry_added",
+        "mutation_id": "activation-7d2730e4a63456bfa6c5526a717e369d:0:0",
+        "round": 1,
+        "seq": 3,
+        "turn_id": "activation-7d2730e4a63456bfa6c5526a717e369d"
+      },
+      {
+        "actor": "expert.beta",
+        "entry_id": "e-4",
+        "event_type": "entry_added",
+        "mutation_id": "activation-5d56b9a25aa854419283adfd566d00a2:0:0",
+        "round": 1,
+        "seq": 4,
+        "turn_id": "activation-5d56b9a25aa854419283adfd566d00a2"
+      },
+      {
+        "actor": "critic",
+        "entry_id": "e-5",
+        "event_type": "entry_added",
+        "mutation_id": "activation-4c8e4fdc9bf557858b8d1dbc2595a09c:0:0",
+        "round": 2,
+        "seq": 5,
+        "turn_id": "activation-4c8e4fdc9bf557858b8d1dbc2595a09c"
+      },
+      {
+        "actor": "expert.beta",
+        "entry_id": "e-6",
+        "event_type": "entry_added",
+        "mutation_id": "activation-cc4eed289532555b84c4650d9022ca96:0:0",
+        "round": 3,
+        "seq": 6,
+        "turn_id": "activation-cc4eed289532555b84c4650d9022ca96"
+      },
+      {
+        "actor": "conflict_resolver",
+        "entry_id": "e-7",
+        "event_type": "entry_added",
+        "mutation_id": "activation-770b7727599a53689ffda4754be7260e:0:0",
+        "round": 4,
+        "seq": 7,
+        "turn_id": "activation-770b7727599a53689ffda4754be7260e"
+      },
+      {
+        "actor": "control_unit",
+        "entry_id": "e-8",
+        "event_type": "entry_added",
+        "mutation_id": "conflict-seed-e-7:0",
+        "round": 5,
+        "seq": 8,
+        "turn_id": "conflict-seed-e-7"
+      },
+      {
+        "actor": "expert.alpha",
+        "entry_id": "e-9",
+        "event_type": "entry_added",
+        "mutation_id": "activation-f1ba09bad32f5e1eaf12e889ebe4c2cc:0",
+        "round": 1,
+        "seq": 9,
+        "turn_id": "activation-f1ba09bad32f5e1eaf12e889ebe4c2cc"
+      },
+      {
+        "actor": "expert.beta",
+        "entry_id": "e-10",
+        "event_type": "entry_added",
+        "mutation_id": "activation-e7ecf9c9315852ea8d8bd6f4e696d52f:0",
+        "round": 1,
+        "seq": 10,
+        "turn_id": "activation-e7ecf9c9315852ea8d8bd6f4e696d52f"
+      },
+      {
+        "actor": "expert.alpha",
+        "entry_id": "e-11",
+        "event_type": "entry_added",
+        "mutation_id": "activation-ccd546453d56584f9662825db5eba562:0",
+        "round": 2,
+        "seq": 11,
+        "turn_id": "activation-ccd546453d56584f9662825db5eba562"
+      },
+      {
+        "actor": "expert.beta",
+        "entry_id": "e-12",
+        "event_type": "entry_added",
+        "mutation_id": "activation-0f0bb5b2c3f05892bc1aee0db71ed3f7:0",
+        "round": 2,
+        "seq": 12,
+        "turn_id": "activation-0f0bb5b2c3f05892bc1aee0db71ed3f7"
+      },
+      {
+        "actor": "control_unit",
+        "entry_id": null,
+        "event_type": "space_archived",
+        "mutation_id": "conflict-archive:e-7",
+        "round": 0,
+        "seq": 13,
+        "turn_id": null
+      },
+      {
+        "actor": "expert.alpha",
+        "entry_id": "e-14",
+        "event_type": "entry_added",
+        "mutation_id": "conflict-public:e-7:activation-f1ba09bad32f5e1eaf12e889ebe4c2cc:e-9",
+        "round": 5,
+        "seq": 14,
+        "turn_id": "activation-f1ba09bad32f5e1eaf12e889ebe4c2cc"
+      },
+      {
+        "actor": "expert.beta",
+        "entry_id": "e-15",
+        "event_type": "entry_added",
+        "mutation_id": "conflict-public:e-7:activation-e7ecf9c9315852ea8d8bd6f4e696d52f:e-10",
+        "round": 5,
+        "seq": 15,
+        "turn_id": "activation-e7ecf9c9315852ea8d8bd6f4e696d52f"
+      },
+      {
+        "actor": "expert.alpha",
+        "entry_id": "e-16",
+        "event_type": "entry_added",
+        "mutation_id": "conflict-public:e-7:activation-ccd546453d56584f9662825db5eba562:e-11",
+        "round": 5,
+        "seq": 16,
+        "turn_id": "activation-ccd546453d56584f9662825db5eba562"
+      },
+      {
+        "actor": "expert.beta",
+        "entry_id": "e-17",
+        "event_type": "entry_added",
+        "mutation_id": "conflict-public:e-7:activation-0f0bb5b2c3f05892bc1aee0db71ed3f7:e-12",
+        "round": 5,
+        "seq": 17,
+        "turn_id": "activation-0f0bb5b2c3f05892bc1aee0db71ed3f7"
+      },
+      {
+        "actor": "conflict_resolver",
+        "entry_id": "e-3",
+        "event_type": "entry_status_changed",
+        "mutation_id": null,
+        "round": 0,
+        "seq": 18,
+        "turn_id": null
+      },
+      {
+        "actor": "conflict_resolver",
+        "entry_id": "e-4",
+        "event_type": "entry_status_changed",
+        "mutation_id": null,
+        "round": 0,
+        "seq": 19,
+        "turn_id": null
+      },
+      {
+        "actor": "conflict_resolver",
+        "entry_id": "e-7",
+        "event_type": "entry_status_changed",
+        "mutation_id": null,
+        "round": 0,
+        "seq": 20,
+        "turn_id": null
+      },
+      {
+        "actor": "cleaner",
+        "entry_id": "e-17",
+        "event_type": "entry_removed",
+        "mutation_id": "activation-257bbefdbef25296aff746d517d6ac31:0:e-17",
+        "round": 6,
+        "seq": 21,
+        "turn_id": "activation-257bbefdbef25296aff746d517d6ac31"
+      },
+      {
+        "actor": "decider",
+        "entry_id": "e-22",
+        "event_type": "entry_added",
+        "mutation_id": "activation-1a65be26b2d75833aee6d83f021b087b:0:0",
+        "round": 7,
+        "seq": 22,
+        "turn_id": "activation-1a65be26b2d75833aee6d83f021b087b"
+      },
+      {
+        "actor": "critic",
+        "entry_id": "e-23",
+        "event_type": "entry_added",
+        "mutation_id": "activation-402b799b21f45eae8e24b30654950d29:0:approval",
+        "round": 8,
+        "seq": 23,
+        "turn_id": "activation-402b799b21f45eae8e24b30654950d29"
+      },
+      {
+        "actor": "critic",
+        "entry_id": "e-23",
+        "event_type": "entry_status_changed",
+        "mutation_id": "activation-402b799b21f45eae8e24b30654950d29:0:approval:resolved",
+        "round": 0,
+        "seq": 24,
+        "turn_id": null
+      }
+    ],
+    "final_meta_digest": "84a50170f6ecd4c1d177534f23a5f0f81ba4fb4c81f87829d20fa40a5796827b",
+    "mode": "sequential",
+    "result": {
+      "answer": "The final value is 42.",
+      "answer_source": "decider",
+      "budget_spent": 0.0016250000000000006,
+      "rounds_completed": 8,
+      "terminated_by": "solution",
+      "verification_status": "critic_reviewed"
+    },
+    "roster": {
+      "constants": {
+        "cleaner": "Removes redundant or obsolete entries to keep the board focused.",
+        "conflict_resolver": "Detects contradictions between entries and mediates resolution.",
+        "critic": "Identifies errors, hallucinations, and weak reasoning in findings.",
+        "decider": "Judges whether the board is sufficient and posts the final solution.",
+        "planner": "Decomposes the objective into actionable sub-goals and plans."
+      },
+      "experts": [
+        {
+          "ability": "Apply the alpha constraint.",
+          "model": "expert-model-alpha",
+          "name": "Alpha Analyst",
+          "slug": "alpha"
+        },
+        {
+          "ability": "Test the beta constraint.",
+          "model": "expert-model-beta",
+          "name": "Beta Analyst",
+          "slug": "beta"
+        }
+      ]
+    },
+    "rounds": [
+      {
+        "completed": [
+          [
+            "activation-5d56b9a25aa854419283adfd566d00a2",
+            "completed"
+          ],
+          [
+            "activation-5e9db521991d54a190ffa363fab84917",
+            "completed"
+          ],
+          [
+            "activation-7d2730e4a63456bfa6c5526a717e369d",
+            "completed"
+          ]
+        ],
+        "phase": "Discovery",
+        "rationale": "golden schedule",
+        "round_state": {
+          "activations": [
+            {
+              "activation_id": "activation-5e9db521991d54a190ffa363fab84917",
+              "actor": "planner",
+              "model": "fixed-role-model",
+              "node_endpoint": "http://node-a:8000",
+              "profile": "planner-profile",
+              "role": "planner"
+            },
+            {
+              "activation_id": "activation-7d2730e4a63456bfa6c5526a717e369d",
+              "actor": "expert.alpha",
+              "model": "expert-model-alpha",
+              "node_endpoint": "http://node-b:8000",
+              "profile": "expert-profile",
+              "role": "expert"
+            },
+            {
+              "activation_id": "activation-5d56b9a25aa854419283adfd566d00a2",
+              "actor": "expert.beta",
+              "model": "expert-model-beta",
+              "node_endpoint": "http://node-c:8000",
+              "profile": "expert-profile",
+              "role": "expert"
+            }
+          ],
+          "completed": [],
+          "phase": "Discovery",
+          "rationale": "golden schedule",
+          "round": 1,
+          "selection_source": "llm",
+          "status": "active"
+        },
+        "selected": [
+          "planner",
+          "expert.alpha",
+          "expert.beta"
+        ],
+        "selection_source": "llm"
+      },
+      {
+        "completed": [
+          [
+            "activation-4c8e4fdc9bf557858b8d1dbc2595a09c",
+            "completed"
+          ]
+        ],
+        "phase": "Debate",
+        "rationale": "golden schedule",
+        "round_state": {
+          "activations": [
+            {
+              "activation_id": "activation-4c8e4fdc9bf557858b8d1dbc2595a09c",
+              "actor": "critic",
+              "model": "fixed-role-model",
+              "node_endpoint": "http://node-a:8000",
+              "profile": "critic-profile",
+              "role": "critic"
+            }
+          ],
+          "completed": [],
+          "phase": "Debate",
+          "rationale": "golden schedule",
+          "round": 2,
+          "selection_source": "llm",
+          "status": "active"
+        },
+        "selected": [
+          "critic"
+        ],
+        "selection_source": "llm"
+      },
+      {
+        "completed": [
+          [
+            "activation-cc4eed289532555b84c4650d9022ca96",
+            "completed"
+          ]
+        ],
+        "phase": "Debate",
+        "rationale": "golden schedule",
+        "round_state": {
+          "activations": [
+            {
+              "activation_id": "activation-cc4eed289532555b84c4650d9022ca96",
+              "actor": "expert.beta",
+              "model": "expert-model-beta",
+              "node_endpoint": "http://node-c:8000",
+              "profile": "expert-profile",
+              "role": "expert"
+            }
+          ],
+          "completed": [],
+          "phase": "Debate",
+          "rationale": "golden schedule",
+          "round": 3,
+          "selection_source": "llm",
+          "status": "active"
+        },
+        "selected": [
+          "expert.beta"
+        ],
+        "selection_source": "llm"
+      },
+      {
+        "completed": [
+          [
+            "activation-770b7727599a53689ffda4754be7260e",
+            "completed"
+          ]
+        ],
+        "phase": "Convergence",
+        "rationale": "golden schedule",
+        "round_state": {
+          "activations": [
+            {
+              "activation_id": "activation-770b7727599a53689ffda4754be7260e",
+              "actor": "conflict_resolver",
+              "model": "fixed-role-model",
+              "node_endpoint": "http://node-a:8000",
+              "profile": "conflict_resolver-profile",
+              "role": "conflict_resolver"
+            }
+          ],
+          "completed": [],
+          "phase": "Convergence",
+          "rationale": "golden schedule",
+          "round": 4,
+          "selection_source": "llm",
+          "status": "active"
+        },
+        "selected": [
+          "conflict_resolver"
+        ],
+        "selection_source": "llm"
+      },
+      {
+        "completed": [
+          [
+            "activation-9ea4eb650f9851b3b84310af6de48a84",
+            "completed"
+          ]
+        ],
+        "phase": "Convergence",
+        "rationale": "golden schedule",
+        "round_state": {
+          "activations": [
+            {
+              "activation_id": "activation-9ea4eb650f9851b3b84310af6de48a84",
+              "actor": "conflict_resolver",
+              "model": "fixed-role-model",
+              "node_endpoint": "http://node-a:8000",
+              "profile": "conflict_resolver-profile",
+              "role": "conflict_resolver"
+            }
+          ],
+          "completed": [],
+          "phase": "Convergence",
+          "rationale": "golden schedule",
+          "round": 5,
+          "selection_source": "llm",
+          "status": "active"
+        },
+        "selected": [
+          "conflict_resolver"
+        ],
+        "selection_source": "llm"
+      },
+      {
+        "completed": [
+          [
+            "activation-257bbefdbef25296aff746d517d6ac31",
+            "completed"
+          ]
+        ],
+        "phase": "Convergence",
+        "rationale": "golden schedule",
+        "round_state": {
+          "activations": [
+            {
+              "activation_id": "activation-257bbefdbef25296aff746d517d6ac31",
+              "actor": "cleaner",
+              "model": "fixed-role-model",
+              "node_endpoint": "http://node-a:8000",
+              "profile": "cleaner-profile",
+              "role": "cleaner"
+            }
+          ],
+          "completed": [],
+          "phase": "Convergence",
+          "rationale": "golden schedule",
+          "round": 6,
+          "selection_source": "llm",
+          "status": "active"
+        },
+        "selected": [
+          "cleaner"
+        ],
+        "selection_source": "llm"
+      },
+      {
+        "completed": [
+          [
+            "activation-1a65be26b2d75833aee6d83f021b087b",
+            "completed"
+          ]
+        ],
+        "phase": "Convergence",
+        "rationale": "golden schedule",
+        "round_state": {
+          "activations": [
+            {
+              "activation_id": "activation-1a65be26b2d75833aee6d83f021b087b",
+              "actor": "decider",
+              "model": "fixed-role-model",
+              "node_endpoint": "http://node-a:8000",
+              "profile": "decider-profile",
+              "role": "decider"
+            }
+          ],
+          "completed": [],
+          "phase": "Convergence",
+          "rationale": "golden schedule",
+          "round": 7,
+          "selection_source": "llm",
+          "status": "active"
+        },
+        "selected": [
+          "decider"
+        ],
+        "selection_source": "llm"
+      },
+      {
+        "completed": [
+          [
+            "activation-402b799b21f45eae8e24b30654950d29",
+            "completed"
+          ]
+        ],
+        "phase": "Convergence",
+        "rationale": "Solution e-22 requires an independent critic review before completion.",
+        "round_state": {
+          "activations": [
+            {
+              "activation_id": "activation-402b799b21f45eae8e24b30654950d29",
+              "actor": "critic",
+              "model": "fixed-role-model",
+              "node_endpoint": "http://node-a:8000",
+              "profile": "critic-profile",
+              "role": "critic"
+            }
+          ],
+          "completed": [],
+          "phase": "Convergence",
+          "rationale": "Solution e-22 requires an independent critic review before completion.",
+          "round": 8,
+          "selection_source": "verification_guard",
+          "status": "active"
+        },
+        "selected": [
+          "critic"
+        ],
+        "selection_source": "verification_guard"
+      }
+    ],
+    "runtime_id": "classic",
+    "samples": {
+      "board_views": {
+        "cu_view": "0e89005bb17899822882275c4bd9b8a4ae48cf21abe59a327ed94b626c734fec",
+        "views": {
+          "cleaner": "aadf0812241d9759829b4c14658990d91769a9166a0aaf19763cbb442dbe4fc5",
+          "conflict_resolver": "59b9388dc96ec528f26bb783165a20f26b29adb9cc3c82dd0df2d86cabbdf80f",
+          "critic": "8ad7eb058a38a38b2973267c004c7aabec37ad0cbde8367b49efe26340bd1f1b",
+          "decider": "e245146dae51645d8b56ad5f2d6cb25c9122976f463ca329a59acbd11b998f10",
+          "expert.alpha": "aadf0812241d9759829b4c14658990d91769a9166a0aaf19763cbb442dbe4fc5",
+          "expert.beta": "aadf0812241d9759829b4c14658990d91769a9166a0aaf19763cbb442dbe4fc5",
+          "planner": "2280982dcfd045f9467854e0c800d9f0e409bede4444b09627a56daedd1609d4"
+        }
+      },
+      "budget": {
+        "control_turn_ids": [
+          "control-r3-3",
+          "control-r3-4",
+          null
+        ],
+        "reserved": [
+          "0.250000",
+          "0.250000",
+          "0.250000"
+        ],
+        "spent_after_calls": "0.25400000"
+      },
+      "cleaner": {
+        "condense_entries": [
+          "e-1",
+          "e-2",
+          "e-5",
+          "e-6",
+          "e-14",
+          "e-16",
+          "e-15"
+        ],
+        "eviction_candidates": [
+          "e-2",
+          "e-5",
+          "e-6",
+          "e-14",
+          "e-16",
+          "e-15"
+        ]
+      },
+      "consensus": {
+        "evidence": {
+          "exact": "The final value is 42.",
+          "token_similarity": "The final value is 42."
+        },
+        "majority": {
+          "exact": "The final value is 42.",
+          "token_similarity": "The final value is 42."
+        }
+      },
+      "control": {
+        "cu_prompt": "26e45a904d6ddc2679f0705099e7828b1e62ceabf36c77df80ffe5eaceaea913",
+        "fallback": {
+          "1": [
+            "planner",
+            "expert.alpha",
+            "expert.beta"
+          ],
+          "2": [
+            "decider"
+          ],
+          "5": [
+            "decider"
+          ]
+        },
+        "fallback_rationale": {
+          "1": "Discovery round: seeded the board by activating the planner and all domain experts (planner).",
+          "3": "Heuristic routing for round 3: activated critic.",
+          "4": "No open critiques or conflicts remain \u2014 routed to the decider to judge sufficiency and post a solution."
+        },
+        "normalized": [
+          "decider",
+          "planner",
+          "expert.alpha",
+          "critic"
+        ]
+      },
+      "evidence": {
+        "normalized_sources": [
+          "https://a.example",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        "round_lacks_evidence": {
+          "0": false,
+          "1": true,
+          "2": false,
+          "3": true,
+          "4": false,
+          "5": true,
+          "7": false,
+          "8": false
+        }
+      },
+      "memory": {
+        "response_ids": {
+          "cleaner": "response-cleaner-1",
+          "conflict_resolver": "response-conflict_resolver-1",
+          "critic": "response-critic-2",
+          "decider": "response-decider-1",
+          "expert.alpha": "response-expert.alpha-3",
+          "expert.beta": "response-expert.beta-4",
+          "planner": "response-planner-1"
+        },
+        "session": {
+          "decider": {
+            "previous_response_id": "response-decider-1",
+            "session_id": "task-golden-classic:decider"
+          },
+          "expert.alpha": {
+            "previous_response_id": "response-expert.alpha-3",
+            "session_id": "task-golden-classic:expert.alpha"
+          }
+        }
+      },
+      "prompts": {
+        "payloads": {
+          "cleaner": "4c5ff972a5a9817a7b84b4324e51ab9016362affe199bd98142972b603b6c2d1",
+          "conflict_resolver": "c1a3442a56fd31bae341018d51240905aafdcea7e88eb71e83c112a175c1b7f8",
+          "critic": "1bc0c12b67177a14394e558366fe2c6d314fba78c1900e35bfd160bb52502da9",
+          "decider": "5aa531545725403e2199bb1975baae7f4ce700314cb2c2b6473bcf3b2116bf92",
+          "expert.alpha": "f5e045054f57a5270793845c21ff301d08ec2afc0989c9f0e3f30a5eb314b282",
+          "expert.beta": "30932feb027f4d9003c37fec3149e0fab64f9efc3314eb62915ff80a39433c95",
+          "planner": "cf957d1470161eab34402fdbf870773c818689ae4fef4a2be738c68628397fd5"
+        }
+      },
+      "roster": {
+        "default_experts": [
+          "domain_analyst",
+          "systems_thinker",
+          "evidence_reviewer",
+          "root_cause_analyst",
+          "constraint_mapper",
+          "counterexample_hunter",
+          "quantitative_modeler",
+          "historical_precedent_analyst",
+          "stakeholder_analyst",
+          "risk_assessor",
+          "implementation_planner",
+          "synthesis_editor"
+        ],
+        "edge_rotation": 3,
+        "edge_sequence": [
+          "edge-node-1",
+          "edge-node-2",
+          "edge-node-1",
+          "fixed-role-model"
+        ]
+      },
+      "scheduling": {
+        "activation_id": "activation-6f60891706125d73961817e13e53a391",
+        "activations": [
+          {
+            "activation_id": null,
+            "actor": "planner",
+            "model": "fixed-role-model",
+            "node_endpoint": "http://node-a:8000",
+            "profile": "planner-profile",
+            "role": "planner"
+          },
+          {
+            "activation_id": null,
+            "actor": "expert.alpha",
+            "model": "expert-model-alpha",
+            "node_endpoint": "http://node-b:8000",
+            "profile": "expert-profile",
+            "role": "expert"
+          },
+          {
+            "activation_id": null,
+            "actor": "expert.beta",
+            "model": "expert-model-beta",
+            "node_endpoint": "http://node-c:8000",
+            "profile": "expert-profile",
+            "role": "expert"
+          },
+          {
+            "activation_id": null,
+            "actor": "critic",
+            "model": "fixed-role-model",
+            "node_endpoint": "http://node-a:8000",
+            "profile": "critic-profile",
+            "role": "critic"
+          },
+          {
+            "activation_id": null,
+            "actor": "decider",
+            "model": "fixed-role-model",
+            "node_endpoint": "http://node-a:8000",
+            "profile": "decider-profile",
+            "role": "decider"
+          }
+        ],
+        "phase": {
+          "1": "Convergence",
+          "3": "Convergence",
+          "9": "Convergence"
+        }
+      },
+      "termination": {
+        "best_finding": "Private review confirms that alpha remains required.",
+        "revision_headroom": [
+          true,
+          false
+        ],
+        "stall": [
+          {
+            "counter": 0,
+            "hashes": [
+              "9e12aed2274a9105"
+            ],
+            "round": 2,
+            "stalled": false,
+            "token_sets": [
+              [
+                "alpha",
+                "constraint",
+                "holds",
+                "the",
+                "tightly"
+              ]
+            ]
+          },
+          {
+            "counter": 1,
+            "hashes": [
+              "9e12aed2274a9105"
+            ],
+            "round": 3,
+            "stalled": false,
+            "token_sets": [
+              [
+                "alpha",
+                "constraint",
+                "holds",
+                "the",
+                "tightly"
+              ]
+            ]
+          },
+          {
+            "counter": 0,
+            "hashes": [
+              "9e12aed2274a9105",
+              "d550ffd0e67210cb"
+            ],
+            "round": 4,
+            "stalled": false,
+            "token_sets": [
+              [
+                "alpha",
+                "constraint",
+                "holds",
+                "the",
+                "tightly"
+              ],
+              [
+                "alpha",
+                "constraint",
+                "holds",
+                "indeed",
+                "the",
+                "tightly"
+              ]
+            ]
+          },
+          {
+            "counter": 0,
+            "hashes": [
+              "9e12aed2274a9105",
+              "d550ffd0e67210cb",
+              "59cae76817a0327f"
+            ],
+            "round": 5,
+            "stalled": false,
+            "token_sets": [
+              [
+                "alpha",
+                "constraint",
+                "holds",
+                "the",
+                "tightly"
+              ],
+              [
+                "alpha",
+                "constraint",
+                "holds",
+                "indeed",
+                "the",
+                "tightly"
+              ],
+              [
+                "beta",
+                "completely",
+                "different",
+                "measured",
+                "quantity",
+                "today"
+              ]
+            ]
+          }
+        ],
+        "terminal": [
+          true,
+          "solution"
+        ]
+      },
+      "verification": {
+        "accepted": "e-22",
+        "accepted_unreviewed": "e-22",
+        "reviewed_id": "e-22",
+        "verification_status": "critic_reviewed"
+      }
+    },
+    "worker_calls": [
+      {
+        "activation_id": "activation-5e9db521991d54a190ffa363fab84917",
+        "actor": "planner",
+        "endpoint": "http://node-a:8000",
+        "model": "fixed-role-model",
+        "previous_response_id": null,
+        "private": false,
+        "profile": "planner-profile",
+        "prompt_digest": "822524a2ca5a3e5ac9f0b855e7e4045886c400eb27c70d9d6a4adecfee7a2d0b",
+        "role": "planner",
+        "round_no": 1,
+        "session_id": "task-golden-classic:planner",
+        "turn_id": "activation-5e9db521991d54a190ffa363fab84917"
+      },
+      {
+        "activation_id": "activation-7d2730e4a63456bfa6c5526a717e369d",
+        "actor": "expert.alpha",
+        "endpoint": "http://node-b:8000",
+        "model": "expert-model-alpha",
+        "previous_response_id": null,
+        "private": false,
+        "profile": "expert-profile",
+        "prompt_digest": "d23063cdbd4502c6dcd9c8f93b7b1c9173bbe9bfd85ac10d587d7a99b4930030",
+        "role": "expert",
+        "round_no": 1,
+        "session_id": "task-golden-classic:expert.alpha",
+        "turn_id": "activation-7d2730e4a63456bfa6c5526a717e369d"
+      },
+      {
+        "activation_id": "activation-5d56b9a25aa854419283adfd566d00a2",
+        "actor": "expert.beta",
+        "endpoint": "http://node-c:8000",
+        "model": "expert-model-beta",
+        "previous_response_id": null,
+        "private": false,
+        "profile": "expert-profile",
+        "prompt_digest": "e9aeb784b6b9e71e0b6567b7cb4aa81b571d5eb496b922c99d198d555c1cd6dd",
+        "role": "expert",
+        "round_no": 1,
+        "session_id": "task-golden-classic:expert.beta",
+        "turn_id": "activation-5d56b9a25aa854419283adfd566d00a2"
+      },
+      {
+        "activation_id": "activation-4c8e4fdc9bf557858b8d1dbc2595a09c",
+        "actor": "critic",
+        "endpoint": "http://node-a:8000",
+        "model": "fixed-role-model",
+        "previous_response_id": null,
+        "private": false,
+        "profile": "critic-profile",
+        "prompt_digest": "538df0e2c51ff12134eb633c48ff1eca0e749b90687eb6e680ff1636c9b0076e",
+        "role": "critic",
+        "round_no": 2,
+        "session_id": "task-golden-classic:critic",
+        "turn_id": "activation-4c8e4fdc9bf557858b8d1dbc2595a09c"
+      },
+      {
+        "activation_id": "activation-cc4eed289532555b84c4650d9022ca96",
+        "actor": "expert.beta",
+        "endpoint": "http://node-c:8000",
+        "model": "expert-model-beta",
+        "previous_response_id": "response-expert.beta-1",
+        "private": false,
+        "profile": "expert-profile",
+        "prompt_digest": "bb1792df75ecfdd294749c02a7df4d0510fd4818817389d332c4090acd3d5b08",
+        "role": "expert",
+        "round_no": 3,
+        "session_id": "task-golden-classic:expert.beta",
+        "turn_id": "activation-cc4eed289532555b84c4650d9022ca96"
+      },
+      {
+        "activation_id": "activation-770b7727599a53689ffda4754be7260e",
+        "actor": "conflict_resolver",
+        "endpoint": "http://node-a:8000",
+        "model": "fixed-role-model",
+        "previous_response_id": null,
+        "private": false,
+        "profile": "conflict_resolver-profile",
+        "prompt_digest": "a5b54682830d57f5649adfc540decea04ecae67a4e0ec48f0677b7affb3a37a6",
+        "role": "conflict_resolver",
+        "round_no": 4,
+        "session_id": "task-golden-classic:conflict_resolver",
+        "turn_id": "activation-770b7727599a53689ffda4754be7260e"
+      },
+      {
+        "activation_id": "activation-f1ba09bad32f5e1eaf12e889ebe4c2cc",
+        "actor": "expert.alpha",
+        "endpoint": "http://node-b:8000",
+        "model": "expert-model-alpha",
+        "previous_response_id": "response-expert.alpha-1",
+        "private": true,
+        "profile": "expert-profile",
+        "prompt_digest": "543ab1a9c2855202c715aef3d10392dd47ec044d5f824862845b6e070b6ba6db",
+        "role": "expert",
+        "round_no": 1,
+        "session_id": "task-golden-classic:expert.alpha",
+        "turn_id": "activation-f1ba09bad32f5e1eaf12e889ebe4c2cc"
+      },
+      {
+        "activation_id": "activation-e7ecf9c9315852ea8d8bd6f4e696d52f",
+        "actor": "expert.beta",
+        "endpoint": "http://node-c:8000",
+        "model": "expert-model-beta",
+        "previous_response_id": "response-expert.beta-2",
+        "private": true,
+        "profile": "expert-profile",
+        "prompt_digest": "b1b30cdee9052650296136d3e0f9e09764450aa059772ef0b480f3c89c595e0d",
+        "role": "expert",
+        "round_no": 1,
+        "session_id": "task-golden-classic:expert.beta",
+        "turn_id": "activation-e7ecf9c9315852ea8d8bd6f4e696d52f"
+      },
+      {
+        "activation_id": "activation-ccd546453d56584f9662825db5eba562",
+        "actor": "expert.alpha",
+        "endpoint": "http://node-b:8000",
+        "model": "expert-model-alpha",
+        "previous_response_id": "response-expert.alpha-2",
+        "private": true,
+        "profile": "expert-profile",
+        "prompt_digest": "cdd60bbfe76944d947eb61c1b9c18cc504a6e9f093f359023137c73b37c81f6c",
+        "role": "expert",
+        "round_no": 2,
+        "session_id": "task-golden-classic:expert.alpha",
+        "turn_id": "activation-ccd546453d56584f9662825db5eba562"
+      },
+      {
+        "activation_id": "activation-0f0bb5b2c3f05892bc1aee0db71ed3f7",
+        "actor": "expert.beta",
+        "endpoint": "http://node-c:8000",
+        "model": "expert-model-beta",
+        "previous_response_id": "response-expert.beta-3",
+        "private": true,
+        "profile": "expert-profile",
+        "prompt_digest": "14c3e68f3843105fa6049c5a671da6cf78061bcf3b8da58625831f687016b2a6",
+        "role": "expert",
+        "round_no": 2,
+        "session_id": "task-golden-classic:expert.beta",
+        "turn_id": "activation-0f0bb5b2c3f05892bc1aee0db71ed3f7"
+      },
+      {
+        "activation_id": "activation-257bbefdbef25296aff746d517d6ac31",
+        "actor": "cleaner",
+        "endpoint": "http://node-a:8000",
+        "model": "fixed-role-model",
+        "previous_response_id": null,
+        "private": false,
+        "profile": "cleaner-profile",
+        "prompt_digest": "57fd4ca43145654293b9950e015bacff205bf1bee83105394c6273358f05f6d3",
+        "role": "cleaner",
+        "round_no": 6,
+        "session_id": "task-golden-classic:cleaner",
+        "turn_id": "activation-257bbefdbef25296aff746d517d6ac31"
+      },
+      {
+        "activation_id": "activation-1a65be26b2d75833aee6d83f021b087b",
+        "actor": "decider",
+        "endpoint": "http://node-a:8000",
+        "model": "fixed-role-model",
+        "previous_response_id": null,
+        "private": false,
+        "profile": "decider-profile",
+        "prompt_digest": "682858657bad680ac24078b2a884423fd5333e19233a60fa4d5bd7c241665286",
+        "role": "decider",
+        "round_no": 7,
+        "session_id": "task-golden-classic:decider",
+        "turn_id": "activation-1a65be26b2d75833aee6d83f021b087b"
+      },
+      {
+        "activation_id": "activation-402b799b21f45eae8e24b30654950d29",
+        "actor": "critic",
+        "endpoint": "http://node-a:8000",
+        "model": "fixed-role-model",
+        "previous_response_id": "response-critic-1",
+        "private": false,
+        "profile": "critic-profile",
+        "prompt_digest": "ac626e6658323d207d090beac899d64f1fec4551d1fc2979e648aedb80c14e10",
+        "role": "critic",
+        "round_no": 8,
+        "session_id": "task-golden-classic:critic",
+        "turn_id": "activation-402b799b21f45eae8e24b30654950d29"
+      }
+    ]
+  }
+}

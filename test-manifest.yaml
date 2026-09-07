@@ -620,6 +620,21 @@ groups:
     artifacts:
       - "test-results/classic-native-column/**"
 
+  - id: daemon.classic-policy-parity
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the Classic policy extraction keeps the legacy behavior: the
+      deterministic lifecycle harness runs through the engine, which
+      delegates to the extracted policies, and every policy's slice of
+      the parity trace equals the frozen trace, and the direct policy
+      path equals the delegated path.
+    argv: ["python3", "-m", "pytest", "tests/test_classic_policy_parity.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
   - id: daemon.foundation-release-gate
     state: active_required
     owner: daemon
@@ -1279,6 +1294,7 @@ profiles:
         - daemon.behavioral-conformance
         - daemon.behavioral-conformance-stack
         - daemon.classic-native-column
+        - daemon.classic-policy-parity
         - daemon.populated-migration
         - daemon.release-gates
         - daemon.complete-stack-journey

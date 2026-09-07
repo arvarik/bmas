@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -113,6 +113,10 @@ class WorkerCall:
     board: dict[str, Any]
     status: str
     cost_usd: float
+    # The rendered prompt inputs of the turn: the persona text and the
+    # context the daemon sent. The parity trace digests them.
+    persona: str = ""
+    context: dict[str, Any] = field(default_factory=dict)
 
     @property
     def private(self) -> bool:
@@ -130,6 +134,11 @@ class LifecycleRun:
     meta: dict[str, Any]
     external_actions: Counter[str]
     mutation_checks: int
+    # One record per round: the step result and the round state the
+    # engine saved for it. The parity trace compares them.
+    round_plans: list[dict[str, Any]] = field(default_factory=list)
+    # The board metadata after every checkpoint, in order.
+    checkpoint_metas: list[dict[str, Any]] = field(default_factory=list)
 
 
 class DeterministicWorker:
@@ -307,8 +316,78 @@ class DeterministicWorker:
             board=board,
             status=str(response["status"]),
             cost_usd=cost,
+            persona=str(kwargs.get("persona") or ""),
+            context=copy.deepcopy(context),
         ))
         return response
+
+
+HARNESS_ENDPOINTS = [
+    "http://node-a:8000",
+    "http://node-b:8000",
+    "http://node-c:8000",
+]
+HARNESS_ROLE_REGISTRY = {
+    role: {
+        "profile": f"{role}-profile",
+        "endpoints": list(HARNESS_ENDPOINTS),
+        "enabled": True,
+    }
+    for role in (
+        "planner", "expert", "critic", "conflict_resolver",
+        "cleaner", "decider",
+    )
+}
+HARNESS_MODEL_ROUTING = {
+    "light": "control-model",
+    "medium": "fixed-role-model",
+}
+HARNESS_MODEL_POOLS = {
+    "medium": ["expert-model-alpha", "expert-model-beta"],
+}
+
+
+def harness_engine_config(mode: str) -> dict[str, Any]:
+    """The engine configuration of the deterministic harness."""
+    return {
+        "max_rounds": 10,
+        "max_duration_s": 600,
+        "budget_ceiling_usd": 1.0,
+        "max_concurrent_activations": 3,
+        "experts_per_tier": {
+            "simple": 0,
+            "light": 1,
+            "medium": 2,
+            "complex": 2,
+        },
+        "cleaner_entry_threshold": 100,
+        "cleaner_token_threshold": 100000,
+        "stall_rounds": 50,
+        "cu_mode": "llm",
+        "round_execution": mode,
+    }
+
+
+def harness_engine(
+    mode: str,
+    gateway: Any,
+    store: Any,
+    emitter: Any,
+) -> TraditionalVariant:
+    """Build the engine exactly as the harness configures it."""
+    return TraditionalVariant(
+        gateway=gateway,
+        board_store=store,
+        event_emitter=emitter,
+        triage=None,
+        config=harness_engine_config(mode),
+        litellm_url="http://unused",
+        litellm_key="unused",
+        node_endpoints=list(HARNESS_ENDPOINTS),
+        role_registry=copy.deepcopy(HARNESS_ROLE_REGISTRY),
+        model_routing=dict(HARNESS_MODEL_ROUTING),
+        model_pools=copy.deepcopy(HARNESS_MODEL_POOLS),
+    )
 
 
 class ClassicLifecycleHarness:
@@ -329,60 +408,11 @@ class ClassicLifecycleHarness:
             int(usage.get("prompt_tokens", 0))
             + int(usage.get("completion_tokens", 0))
         ) / 1_000_000
-        self.variant = TraditionalVariant(
-            gateway=self.gateway,
-            board_store=self.store,
-            event_emitter=self.emitter,
-            triage=None,
-            config={
-                "max_rounds": 10,
-                "max_duration_s": 600,
-                "budget_ceiling_usd": 1.0,
-                "max_concurrent_activations": 3,
-                "experts_per_tier": {
-                    "simple": 0,
-                    "light": 1,
-                    "medium": 2,
-                    "complex": 2,
-                },
-                "cleaner_entry_threshold": 100,
-                "cleaner_token_threshold": 100000,
-                "stall_rounds": 50,
-                "cu_mode": "llm",
-                "round_execution": mode,
-            },
-            litellm_url="http://unused",
-            litellm_key="unused",
-            node_endpoints=[
-                "http://node-a:8000",
-                "http://node-b:8000",
-                "http://node-c:8000",
-            ],
-            role_registry={
-                role: {
-                    "profile": f"{role}-profile",
-                    "endpoints": [
-                        "http://node-a:8000",
-                        "http://node-b:8000",
-                        "http://node-c:8000",
-                    ],
-                    "enabled": True,
-                }
-                for role in (
-                    "planner", "expert", "critic", "conflict_resolver",
-                    "cleaner", "decider",
-                )
-            },
-            model_routing={
-                "light": "control-model",
-                "medium": "fixed-role-model",
-            },
-            model_pools={
-                "medium": ["expert-model-alpha", "expert-model-beta"],
-            },
-        )
+        self.variant = harness_engine(mode, self.gateway, self.store, self.emitter)
         self.variant._generate_experts = self._generate_experts
         self.variant._cu_select = self._select
+        self.round_plans: list[dict[str, Any]] = []
+        self.checkpoint_metas: list[dict[str, Any]] = []
 
     async def _safe_log(self, *args: Any, **kwargs: Any) -> None:
         return None
@@ -445,6 +475,15 @@ class ClassicLifecycleHarness:
                 if step.terminal:
                     terminal_reason = step.reason or "unknown"
                     break
+                self.round_plans.append({
+                    "selected": list(step.selected),
+                    "rationale": step.rationale,
+                    "selection_source": step.selection_source,
+                    "phase": step.phase,
+                    "round_state": copy.deepcopy(
+                        (await self.store.get_meta(TASK_ID)).get("round_state"),
+                    ),
+                })
 
                 conflicts = [
                     entry for entry in board.values()
@@ -499,7 +538,11 @@ class ClassicLifecycleHarness:
                         phase=step.phase,
                     )
                 await self.variant.finish_round(TASK_ID)
+                self.round_plans[-1]["completed"] = dict(
+                    ((await self.store.get_meta(TASK_ID)).get("round_state") or {}).get("completed") or {},
+                )
                 await self.variant.checkpoint(TASK_ID)
+                self.checkpoint_metas.append(copy.deepcopy(await self.store.get_meta(TASK_ID)))
                 await assert_state_invariants(self.store, TASK_ID)
             else:
                 raise AssertionError("The golden lifecycle did not terminate")
@@ -507,6 +550,7 @@ class ClassicLifecycleHarness:
             snapshot = await self.store.get_snapshot(TASK_ID)
             result = await self.variant.finalize(task, snapshot, terminal_reason)
             await self.variant.checkpoint(TASK_ID)
+            self.checkpoint_metas.append(copy.deepcopy(await self.store.get_meta(TASK_ID)))
             events = await self.store.get_events(TASK_ID)
             meta = await self.store.get_meta(TASK_ID)
             await assert_state_invariants(self.store, TASK_ID)
@@ -519,6 +563,8 @@ class ClassicLifecycleHarness:
                 meta=meta,
                 external_actions=Counter(self.worker.external_actions),
                 mutation_checks=self.gateway.mutation_checks,
+                round_plans=list(self.round_plans),
+                checkpoint_metas=list(self.checkpoint_metas),
             )
         finally:
             await self.variant.close()

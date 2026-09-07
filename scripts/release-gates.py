@@ -39,6 +39,8 @@ RELEASE_GATES: dict[str, list[str]] = {
     "foundation_privacy_boundary": ["daemon.privacy-boundary"],
     "foundation_evidence_and_goals": ["daemon.evidence-authority", "daemon.goal-concurrency"],
     "foundation_shared_conformance": ["daemon.cross-runtime-conformance", "daemon.behavioral-conformance", "daemon.behavioral-conformance-stack", "daemon.classic-native-column", "daemon.foundation-release-gate"],
+    # ── Classic conditions ───────────────────────────────────────
+    "classic_legacy_frozen": ["daemon.tests", "daemon.foundation-release-gate", "daemon.behavioral-conformance-stack", "daemon.classic-policy-parity"],
     "foundation_populated_migration": ["daemon.populated-migration"],
     "foundation_complete_stack_journey": ["daemon.complete-stack-journey", "daemon.foundation-process-journey"],
     "foundation_golden_fixtures": ["daemon.foundation-release-gate"],
