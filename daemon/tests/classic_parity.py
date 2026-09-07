@@ -80,6 +80,25 @@ def prompt_digest(call: WorkerCall) -> str:
     return digest({"persona": call.persona, "context": call.context})
 
 
+def completed_pairs(completed: Any) -> list[list[str]]:
+    """The completed activations as sorted (identifier, status) pairs.
+
+    A pair list keeps the activation identifiers out of the JSON keys of
+    the frozen trace.
+    """
+    if not isinstance(completed, dict):
+        return []
+    return sorted([str(key), str(value)] for key, value in completed.items())
+
+
+def round_state_rows(state: Any) -> Any:
+    """The saved round state with its completed map as pairs."""
+    scrubbed = scrub(state)
+    if isinstance(scrubbed, dict) and "completed" in scrubbed:
+        scrubbed["completed"] = completed_pairs(scrubbed["completed"])
+    return scrubbed
+
+
 def board_rows(snapshot: dict[str, BoardEntry]) -> list[list[Any]]:
     """The board as sorted rows with every field the policies read."""
     return sorted(
@@ -296,8 +315,8 @@ async def parity_trace(harness: ClassicLifecycleHarness, run: LifecycleRun) -> d
                 "rationale": plan["rationale"],
                 "selection_source": plan["selection_source"],
                 "phase": plan["phase"],
-                "round_state": scrub(plan["round_state"]),
-                "completed": plan.get("completed", {}),
+                "round_state": round_state_rows(plan["round_state"]),
+                "completed": completed_pairs(plan.get("completed", {})),
             }
             for plan in run.round_plans
         ],

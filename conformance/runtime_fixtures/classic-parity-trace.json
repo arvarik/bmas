@@ -461,11 +461,20 @@
     },
     "rounds": [
       {
-        "completed": {
-          "activation-5d56b9a25aa854419283adfd566d00a2": "completed",
-          "activation-5e9db521991d54a190ffa363fab84917": "completed",
-          "activation-7d2730e4a63456bfa6c5526a717e369d": "completed"
-        },
+        "completed": [
+          [
+            "activation-5d56b9a25aa854419283adfd566d00a2",
+            "completed"
+          ],
+          [
+            "activation-5e9db521991d54a190ffa363fab84917",
+            "completed"
+          ],
+          [
+            "activation-7d2730e4a63456bfa6c5526a717e369d",
+            "completed"
+          ]
+        ],
         "phase": "Discovery",
         "rationale": "golden schedule",
         "round_state": {
@@ -495,7 +504,7 @@
               "role": "expert"
             }
           ],
-          "completed": {},
+          "completed": [],
           "phase": "Discovery",
           "rationale": "golden schedule",
           "round": 1,
@@ -510,9 +519,12 @@
         "selection_source": "llm"
       },
       {
-        "completed": {
-          "activation-4c8e4fdc9bf557858b8d1dbc2595a09c": "completed"
-        },
+        "completed": [
+          [
+            "activation-4c8e4fdc9bf557858b8d1dbc2595a09c",
+            "completed"
+          ]
+        ],
         "phase": "Debate",
         "rationale": "golden schedule",
         "round_state": {
@@ -526,7 +538,7 @@
               "role": "critic"
             }
           ],
-          "completed": {},
+          "completed": [],
           "phase": "Debate",
           "rationale": "golden schedule",
           "round": 2,
@@ -539,9 +551,12 @@
         "selection_source": "llm"
       },
       {
-        "completed": {
-          "activation-cc4eed289532555b84c4650d9022ca96": "completed"
-        },
+        "completed": [
+          [
+            "activation-cc4eed289532555b84c4650d9022ca96",
+            "completed"
+          ]
+        ],
         "phase": "Debate",
         "rationale": "golden schedule",
         "round_state": {
@@ -555,7 +570,7 @@
               "role": "expert"
             }
           ],
-          "completed": {},
+          "completed": [],
           "phase": "Debate",
           "rationale": "golden schedule",
           "round": 3,
@@ -568,9 +583,12 @@
         "selection_source": "llm"
       },
       {
-        "completed": {
-          "activation-770b7727599a53689ffda4754be7260e": "completed"
-        },
+        "completed": [
+          [
+            "activation-770b7727599a53689ffda4754be7260e",
+            "completed"
+          ]
+        ],
         "phase": "Convergence",
         "rationale": "golden schedule",
         "round_state": {
@@ -584,7 +602,7 @@
               "role": "conflict_resolver"
             }
           ],
-          "completed": {},
+          "completed": [],
           "phase": "Convergence",
           "rationale": "golden schedule",
           "round": 4,
@@ -597,9 +615,12 @@
         "selection_source": "llm"
       },
       {
-        "completed": {
-          "activation-9ea4eb650f9851b3b84310af6de48a84": "completed"
-        },
+        "completed": [
+          [
+            "activation-9ea4eb650f9851b3b84310af6de48a84",
+            "completed"
+          ]
+        ],
         "phase": "Convergence",
         "rationale": "golden schedule",
         "round_state": {
@@ -613,7 +634,7 @@
               "role": "conflict_resolver"
             }
           ],
-          "completed": {},
+          "completed": [],
           "phase": "Convergence",
           "rationale": "golden schedule",
           "round": 5,
@@ -626,9 +647,12 @@
         "selection_source": "llm"
       },
       {
-        "completed": {
-          "activation-257bbefdbef25296aff746d517d6ac31": "completed"
-        },
+        "completed": [
+          [
+            "activation-257bbefdbef25296aff746d517d6ac31",
+            "completed"
+          ]
+        ],
         "phase": "Convergence",
         "rationale": "golden schedule",
         "round_state": {
@@ -642,7 +666,7 @@
               "role": "cleaner"
             }
           ],
-          "completed": {},
+          "completed": [],
           "phase": "Convergence",
           "rationale": "golden schedule",
           "round": 6,
@@ -655,9 +679,12 @@
         "selection_source": "llm"
       },
       {
-        "completed": {
-          "activation-1a65be26b2d75833aee6d83f021b087b": "completed"
-        },
+        "completed": [
+          [
+            "activation-1a65be26b2d75833aee6d83f021b087b",
+            "completed"
+          ]
+        ],
         "phase": "Convergence",
         "rationale": "golden schedule",
         "round_state": {
@@ -671,7 +698,7 @@
               "role": "decider"
             }
           ],
-          "completed": {},
+          "completed": [],
           "phase": "Convergence",
           "rationale": "golden schedule",
           "round": 7,
@@ -684,9 +711,12 @@
         "selection_source": "llm"
       },
       {
-        "completed": {
-          "activation-402b799b21f45eae8e24b30654950d29": "completed"
-        },
+        "completed": [
+          [
+            "activation-402b799b21f45eae8e24b30654950d29",
+            "completed"
+          ]
+        ],
         "phase": "Convergence",
         "rationale": "Solution e-22 requires an independent critic review before completion.",
         "round_state": {
@@ -700,7 +730,7 @@
               "role": "critic"
             }
           ],
-          "completed": {},
+          "completed": [],
           "phase": "Convergence",
           "rationale": "Solution e-22 requires an independent critic review before completion.",
           "round": 8,
