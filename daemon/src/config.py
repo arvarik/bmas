@@ -22,7 +22,11 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from config_schema import validate_config_document
+from config_schema import (
+    DEFAULT_CONSENSUS_STRATEGY,
+    resolve_consensus_strategy,
+    validate_config_document,
+)
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -532,7 +536,6 @@ def _trad_float(key: str, default: float, min_val: float = 0.0) -> float:
 
 
 _VALID_CU_MODES = {"llm", "heuristic_first"}
-_VALID_SOLE_SIMILARITY = {"auto", "exact", "embedding", "judge"}
 
 _trad_cu_mode = str(_trad.get("cu_mode", "llm"))
 if _trad_cu_mode not in _VALID_CU_MODES:
@@ -541,11 +544,17 @@ if _trad_cu_mode not in _VALID_CU_MODES:
         f"Must be one of: {', '.join(sorted(_VALID_CU_MODES))}.",
     )
 
-_trad_sole_sim = str(_trad.get("sole_similarity", "auto"))
-if _trad_sole_sim not in _VALID_SOLE_SIMILARITY:
+# The legacy value ``auto`` names the token-similarity strategy. The
+# schema resolves the alias and rejects an unregistered strategy.
+try:
+    _trad_sole_sim = resolve_consensus_strategy(
+        _trad.get("sole_similarity", DEFAULT_CONSENSUS_STRATEGY)
+    )
+except ValueError as _strategy_error:
     _fatal(
-        f"Invalid coordination.classic.sole_similarity: '{_trad_sole_sim}'",
-        f"Must be one of: {', '.join(sorted(_VALID_SOLE_SIMILARITY))}.",
+        f"Invalid coordination.classic.sole_similarity: "
+        f"'{_trad.get('sole_similarity')}'",
+        str(_strategy_error),
     )
 
 # Validate experts_per_tier shape
@@ -553,7 +562,7 @@ _experts_raw = _trad.get("experts_per_tier", {"simple": 0, "light": 1, "medium":
 if not isinstance(_experts_raw, dict):
     _fatal(
         "coordination.classic.experts_per_tier must be a mapping",
-        'Expected: { simple: 0, light: 1, medium: 2, complex: 3 }',
+        'Expected: { simple: 0, light: 1, medium: 2, complex: 4 }',
     )
 for _tier_key in ("simple", "light", "medium", "complex"):
     if _tier_key not in _experts_raw:

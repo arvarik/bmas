@@ -41,6 +41,12 @@ from core.protocol import (
     EVENT_ENTRY_REMOVED,
     EVENT_ENTRY_STATUS_CHANGED,
 )
+from core.salience import (
+    OPERATOR_BOOST_FACTOR,
+    SalienceWeights,
+    apply_salience_boosts,
+    compute_salience,
+)
 
 if TYPE_CHECKING:
     from core.event_emitter import EventEmitter
@@ -453,6 +459,62 @@ class BoardGateway:
             })
             return new_salience
 
+    async def boost_salience(
+        self,
+        task_id: str,
+        entry_id: str,
+        actor: str,
+        factor: float = OPERATOR_BOOST_FACTOR,
+    ) -> float:
+        """Record one operator boost as a separate salience component.
+
+        The boost multiplies the entry salience by ``factor`` now, and the
+        recorded factor stays in the board metadata, so the recompute hook
+        applies it again after every later commit. A second boost of the
+        same entry multiplies the recorded factor.
+        """
+        async with self._task_lock(task_id):
+            await self._assert_commit_allowed(task_id)
+            entry = await self._store.get_entry(task_id, entry_id)
+            if entry is None:
+                raise KeyError(entry_id)
+            multiplier = float(factor)
+            if multiplier <= 0.0:
+                raise ValueError("A salience boost factor must be positive")
+            meta = await self._store.get_meta(task_id)
+            recorded = meta.get(SALIENCE_BOOSTS_META_KEY)
+            boosts = dict(recorded) if isinstance(recorded, dict) else {}
+            previous_factor = float(boosts.get(entry_id, 1.0) or 1.0)
+            boosts[entry_id] = previous_factor * multiplier
+            old_salience = float(entry.salience)
+            new_salience = max(0.0, min(1.0, old_salience * multiplier))
+            seq = await self._store.get_next_seq(task_id)
+            event = make_event(
+                task_id=task_id,
+                seq=seq,
+                actor=actor,
+                event_type="entry_salience_changed",
+                entry_id=entry_id,
+                payload={
+                    "entry_id": entry_id,
+                    "old_salience": old_salience,
+                    "salience": new_salience,
+                    "boost_factor": boosts[entry_id],
+                },
+            )
+            await self._store.append_event(task_id, event)
+            await self._store.set_meta(task_id, **{SALIENCE_BOOSTS_META_KEY: boosts})
+            await self._store.set_salience(task_id, entry_id, new_salience)
+            await self._emit(task_id, EVENT_ENTRY_STATUS_CHANGED, {
+                "entry_id": entry_id,
+                "by": actor,
+                "old_salience": old_salience,
+                "salience": new_salience,
+                "boost_factor": boosts[entry_id],
+                "action": "boost",
+            })
+            return new_salience
+
     async def set_meta(self, task_id: str, **fields: Any) -> None:
         """Update board metadata (phase, round, budget_spent, etc.)."""
         async with self._task_lock(task_id):
@@ -780,28 +842,45 @@ class BoardGateway:
 
 # ── Salience Recompute Hook ──────────────────────────────────────────
 
-async def salience_recompute_hook(
-    task_id: str, store: BoardStore
-) -> None:
-    """Default recompute hook: recompute salience for all entries.
+# The board metadata key that stores the operator boost factors, keyed
+# by entry identifier. The recompute hook applies them after it derives
+# the base score, so a boost survives every later commit.
+SALIENCE_BOOSTS_META_KEY = "salience_boosts"
 
-    This is the classic runtime's derived-field computation.
-    Import SalienceWeights from config if needed.
+
+def make_salience_recompute_hook(
+    weights: SalienceWeights | None = None,
+) -> RecomputeHook:
+    """Build the classic salience recompute hook for one weight set.
+
+    The hook derives the base score of every open entry from the board
+    with the configured weights, applies the recorded operator boosts,
+    and saves the scores that changed in one storage operation.
     """
-    from core.salience import compute_salience
+    async def recompute(task_id: str, store: BoardStore) -> None:
+        snapshot = await store.get_snapshot(task_id)
+        meta = await store.get_meta(task_id)
+        current_round = int(meta.get("round", 0))
 
-    snapshot = await store.get_snapshot(task_id)
-    meta = await store.get_meta(task_id)
-    current_round = int(meta.get("round", 0))
+        scores = compute_salience(snapshot, current_round, weights)
+        boosts = meta.get(SALIENCE_BOOSTS_META_KEY)
+        scores = apply_salience_boosts(
+            scores, boosts if isinstance(boosts, dict) else None,
+        )
+        changed = {
+            entry_id: score
+            for entry_id, score in scores.items()
+            if abs(snapshot[entry_id].salience - score) > 1e-12
+        }
+        if changed:
+            await store.set_salience_many(task_id, changed)
 
-    scores = compute_salience(snapshot, current_round)
-    changed = {
-        entry_id: score
-        for entry_id, score in scores.items()
-        if abs(snapshot[entry_id].salience - score) > 1e-12
-    }
-    if changed:
-        await store.set_salience_many(task_id, changed)
+    return recompute
+
+
+# The default hook keeps the default weights. The classic runtime
+# builds its own hook from the effective configuration.
+salience_recompute_hook: RecomputeHook = make_salience_recompute_hook()
 
 
 MAX_SOURCES_PER_ENTRY = 8

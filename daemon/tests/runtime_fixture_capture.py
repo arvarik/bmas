@@ -65,10 +65,27 @@ def fixture_path(fixture_id: str) -> Path:
     return FIXTURES_DIR / f"{fixture_id}.json"
 
 
+# A deliberate contract change updates a fixture in a reviewed commit
+# and states its reason here. The reason lands in the fixture metadata,
+# so the frozen bytes carry the justification of their last change.
+FIXTURE_REVISIONS: dict[str, dict[str, str]] = {
+    "classic-effective-configuration": {
+        "revised": "2026-09-07",
+        "reason": (
+            "Classic work package 2: the effective configuration now carries "
+            "the board limits and salience weights under settings.board, and "
+            "the strategy alias auto is stored as token_similarity."
+        ),
+    },
+}
+
+
 def wrap(fixture_id: str, record: Any) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"contract_version": FIXTURE_CONTRACT_VERSION}
+    metadata.update(FIXTURE_REVISIONS.get(fixture_id, {}))
     return {
         "fixture_id": fixture_id,
-        "metadata": {"contract_version": FIXTURE_CONTRACT_VERSION},
+        "metadata": metadata,
         "record": record,
     }
 

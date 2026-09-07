@@ -934,3 +934,30 @@ async def test_blocked_configuration_reenters_recovery_when_supported(
 
     retry.assert_awaited_once_with("task-supported-config")
     assert blocked_snapshot == {}
+
+
+@pytest.mark.asyncio
+async def test_capture_configuration_validates_roles_and_carries_the_board_settings(monkeypatch):
+    from core.variants import VariantConfigurationError
+
+    with pytest.raises(VariantConfigurationError, match="Unknown role registry key"):
+        await ClassicVariantRuntime.capture_configuration({
+            "role_registry": {"researcher": {"profile": "researcher"}},
+        })
+    with pytest.raises(VariantConfigurationError, match="required role"):
+        await ClassicVariantRuntime.capture_configuration({
+            "role_registry": {"planner": {"enabled": False}},
+        })
+    monkeypatch.setattr(classic_module, "MAX_TITLE_LEN", 77)
+    monkeypatch.setattr(classic_module, "SALIENCE_W_P", 0.05)
+    configuration = await ClassicVariantRuntime.capture_configuration({
+        "role_registry": {"cleaner": {"enabled": False}},
+    })
+    assert configuration["role_registry"]["cleaner"]["enabled"] is False
+    assert configuration["settings"]["board"] == {
+        "max_entry_chars": 8000,
+        "max_title_len": 77,
+        "salience_weights": {
+            "confidence": 0.4, "recency": 0.2, "refs_in": 0.3, "penalty": 0.05,
+        },
+    }

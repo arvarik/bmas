@@ -428,3 +428,32 @@ class TestTriageBackend:
         )
         assert r.returncode == 0
         assert "False" in r.stdout
+
+
+class TestConsensusStrategyValues:
+    """The strategy alias resolves and unregistered strategies fail."""
+
+    def test_auto_alias_resolves_to_token_similarity(self):
+        r = _run_config_probe(
+            yaml_override={"coordination": {"classic": {"sole_similarity": "auto"}}},
+            probe_expr="print(config.CLASSIC_CONFIG['sole_similarity'])",
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip().splitlines()[-1] == "token_similarity"
+
+    def test_unregistered_strategy_fails(self):
+        for hidden in ("embedding", "judge"):
+            r = _run_config_probe(
+                yaml_override={"coordination": {"classic": {"sole_similarity": hidden}}}
+            )
+            assert r.returncode != 0
+            assert "sole_similarity" in r.stderr
+
+    def test_custom_role_key_fails(self):
+        r = _run_config_probe(
+            yaml_override={"coordination": {"role_registry": {
+                "researcher": {"profile": "researcher", "dispatch_port": 8000},
+            }}}
+        )
+        assert r.returncode != 0
+        assert "researcher" in r.stderr

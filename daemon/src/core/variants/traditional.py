@@ -29,6 +29,7 @@ from typing import Any
 
 import httpx
 
+from config_schema import DEFAULT_CONSENSUS_STRATEGY, resolve_consensus_strategy
 from core.capabilities import capabilities_for_role
 from core.entry import BoardEntry, entry_to_dict
 from core.model_parameters import (
@@ -99,6 +100,39 @@ class AgentRoster:
         return [a[0] for a in self.all_actors()]
 
 
+# ── Fallback experts ─────────────────────────────────────────────────
+#
+# The deterministic roster the engine uses when the agent generator
+# fails. The list holds the largest expert count the settings accept
+# (twelve per tier), in a fixed order.
+
+FALLBACK_EXPERTS: tuple[dict[str, str], ...] = (
+    {"name": "Domain Analyst", "slug": "domain_analyst",
+     "ability": "Deep analysis of the core domain question"},
+    {"name": "Systems Thinker", "slug": "systems_thinker",
+     "ability": "Identifies systemic factors and second-order effects"},
+    {"name": "Evidence Reviewer", "slug": "evidence_reviewer",
+     "ability": "Verifies claims against available evidence and data"},
+    {"name": "Root Cause Analyst", "slug": "root_cause_analyst",
+     "ability": "Traces failure chains to their underlying structural causes"},
+    {"name": "Constraint Mapper", "slug": "constraint_mapper",
+     "ability": "Lists the hard constraints and checks each candidate against them"},
+    {"name": "Counterexample Hunter", "slug": "counterexample_hunter",
+     "ability": "Searches for cases that break a proposed answer"},
+    {"name": "Quantitative Modeler", "slug": "quantitative_modeler",
+     "ability": "Builds the numeric model behind an estimate and states its assumptions"},
+    {"name": "Historical Precedent Analyst", "slug": "historical_precedent_analyst",
+     "ability": "Finds prior cases and reports what happened and why"},
+    {"name": "Stakeholder Analyst", "slug": "stakeholder_analyst",
+     "ability": "Identifies who is affected and what each party needs"},
+    {"name": "Risk Assessor", "slug": "risk_assessor",
+     "ability": "Ranks the failure modes by likelihood and impact"},
+    {"name": "Implementation Planner", "slug": "implementation_planner",
+     "ability": "Turns a conclusion into ordered steps with owners and checks"},
+    {"name": "Synthesis Editor", "slug": "synthesis_editor",
+     "ability": "Merges the findings into one consistent account and flags gaps"},
+)
+
 # ── Constant Role Descriptions (for CU roster) ──────────────────────
 
 CONSTANT_ROLE_DESCRIPTIONS: dict[str, str] = {
@@ -150,7 +184,7 @@ class TraditionalVariant:
         self.budget_ceiling: float = float(config.get("budget_ceiling_usd", 0.50))
         self.max_concurrent: int = int(config.get("max_concurrent_activations", 3))
         self.experts_per_tier: dict[str, int] = config.get(
-            "experts_per_tier", {"simple": 0, "light": 1, "medium": 2, "complex": 3}
+            "experts_per_tier", {"simple": 0, "light": 1, "medium": 2, "complex": 4}
         )
         self.cleaner_threshold: int = int(config.get("cleaner_entry_threshold", 12))
         self.cleaner_token_threshold: int = int(config.get("cleaner_token_threshold", 8000))
@@ -163,7 +197,12 @@ class TraditionalVariant:
         self.cu_mode: str = str(config.get("cu_mode", "llm"))
         self.round_execution: str = str(config.get("round_execution", "concurrent"))
         self.coordinator_narration: bool = bool(config.get("coordinator_narration", False))
-        self.sole_similarity: str = str(config.get("sole_similarity", "auto"))
+        # The strategy resolves through the schema vocabulary: the legacy
+        # alias ``auto`` names the token-similarity strategy, and an
+        # unregistered strategy fails closed instead of degrading silently.
+        self.sole_similarity: str = resolve_consensus_strategy(
+            config.get("sole_similarity", DEFAULT_CONSENSUS_STRATEGY)
+        )
         self.view_budget_tokens: int = max(
             512, int(config.get("view_budget_tokens", 12000))
         )
@@ -560,18 +599,12 @@ class TraditionalVariant:
         return experts
 
     def _default_experts(self, n: int) -> list[dict]:
-        """Fallback expert definitions when AG call fails."""
-        defaults = [
-            {"name": "Domain Analyst", "slug": "domain_analyst",
-             "ability": "Deep analysis of the core domain question"},
-            {"name": "Systems Thinker", "slug": "systems_thinker",
-             "ability": "Identifies systemic factors and second-order effects"},
-            {"name": "Evidence Reviewer", "slug": "evidence_reviewer",
-             "ability": "Verifies claims against available evidence and data"},
-            {"name": "Root Cause Analyst", "slug": "root_cause_analyst",
-             "ability": "Traces failure chains to their underlying structural causes"},
-        ]
-        return defaults[:n]
+        """Fallback expert definitions when the AG call fails.
+
+        The list covers the largest configurable expert count, so a
+        fallback roster always holds the complete requested count.
+        """
+        return [dict(expert) for expert in FALLBACK_EXPERTS[:max(0, n)]]
 
 
     async def _attach_uploads(self, task_id: str, task: dict) -> None:
@@ -835,14 +868,13 @@ class TraditionalVariant:
                 phase=self._infer_phase(snapshot, current_round),
             )
 
-        # Clamp to max_concurrent
-        selected = selected[:self.max_concurrent]
-
         # ── Paper §3.2 guard: decider MUST run alone ─────────────────
         # The decider must see ALL board writes (including critiques)
         # before judging. If the CU co-selected decider with other agents,
         # strip it — the next round's CU call will re-select it once the
-        # other agents have finished writing.
+        # other agents have finished writing. The guard runs before the
+        # concurrency clamp, so the slot the decider held goes to the
+        # next selected agent instead of staying empty.
         if "decider" in selected and len(selected) > 1:
             logger.info(
                 "Decider exclusion guard | task=%s round=%d — "
@@ -856,6 +888,9 @@ class TraditionalVariant:
                 + " [Decider deferred: must run alone per paper §3.2"
                   " so it can see all prior board writes.]"
             ).strip()
+
+        # Clamp to max_concurrent
+        selected = selected[:self.max_concurrent]
 
         # Emit coordinator narration event (doc 05 §1.2, doc 13 §3)
         # Gated by flag — when off, no event fires and the UI lane hides entirely.
@@ -1705,7 +1740,9 @@ class TraditionalVariant:
                     if ref_entry:
                         critiqued_authors.add(ref_entry.author)
             if critiqued_authors:
-                return list(critiqued_authors)
+                # A sorted list keeps the selection order independent of
+                # the set iteration order and the hash seed.
+                return sorted(critiqued_authors)
 
         # Open conflicts → conflict_resolver
         conflicts = [
@@ -2149,6 +2186,7 @@ class TraditionalVariant:
                     "title": private_entry.title,
                     "body": private_entry.body,
                     "refs": refs,
+                    "sources": list(private_entry.sources),
                     "confidence": private_entry.confidence,
                     "_mutation_id": (
                         f"conflict-public:{conflict_id}:"
@@ -2908,17 +2946,21 @@ def parse_cu_output(
 
 def sole_majority_vote(
     answers: list[tuple[str, str]],
-    similarity_mode: str = "auto",
+    similarity_mode: str = DEFAULT_CONSENSUS_STRATEGY,
 ) -> str:
     """Majority-similarity vote: V(a_i) = Σ_j sim(a_i, a_j), argmax V.
 
-    Implements tiered similarity:
+    The registered strategies:
       - exact: normalized exact match (for short/numeric answers)
-      - embedding: cosine similarity (requires LiteLLM embeddings, future)
-      - auto: selects tier based on answer length
+      - token_similarity: the legacy tiered behavior. Short answers
+        (under 100 characters on average) compare by normalized exact
+        match, longer answers by token Jaccard similarity.
 
-    For now, implements exact-match similarity with normalized comparison.
+    The legacy alias ``auto`` resolves to ``token_similarity``. An
+    unregistered strategy raises ``ValueError`` instead of degrading to
+    token similarity.
     """
+    strategy = resolve_consensus_strategy(similarity_mode)
     if not answers:
         return "No answer could be determined."
 
@@ -2926,16 +2968,14 @@ def sole_majority_vote(
         return answers[0][1]
 
     # Determine similarity function
-    if similarity_mode == "auto":
+    if strategy == "exact":
+        sim_fn = _exact_similarity
+    else:
         avg_len = sum(len(a[1]) for a in answers) / len(answers)
         if avg_len < 100:
             sim_fn = _exact_similarity
         else:
             sim_fn = _fuzzy_similarity
-    elif similarity_mode == "exact":
-        sim_fn = _exact_similarity
-    else:
-        sim_fn = _fuzzy_similarity
 
     # Compute V(a_i) = Σ_j sim(a_i, a_j)
     scores: list[tuple[float, str, str]] = []
@@ -2961,15 +3001,16 @@ def sole_majority_vote(
 def sole_evidence_vote(
     answers: list[tuple[str, str]],
     evidence: list[tuple[str, float, float]],
-    similarity_mode: str = "auto",
+    similarity_mode: str = DEFAULT_CONSENSUS_STRATEGY,
 ) -> str:
     """Select an answer by peer support and independent board evidence."""
+    strategy = resolve_consensus_strategy(similarity_mode)
     if not answers:
         return "No answer could be determined."
     if not evidence:
-        return sole_majority_vote(answers, similarity_mode)
+        return sole_majority_vote(answers, strategy)
 
-    if similarity_mode == "exact":
+    if strategy == "exact":
         peer_similarity = _exact_similarity
     else:
         peer_similarity = _fuzzy_similarity

@@ -25,11 +25,19 @@ import copy
 import logging
 from typing import Any
 
+from config_schema import (
+    CLASSIC_ROLES,
+    CONSENSUS_STRATEGIES,
+    REQUIRED_CLASSIC_ROLES,
+    resolve_consensus_strategy,
+    validate_role_registry_keys,
+)
+
 logger = logging.getLogger("bmas.settings_store")
 
 # Lazy imports from config (avoid circular deps at module import time)
 _VALID_COMPLEXITIES = {"simple", "light", "medium", "complex"}
-_VALID_ROLES = {"planner", "expert", "critic", "conflict_resolver", "cleaner", "decider", "universal"}
+_VALID_ROLES = set(CLASSIC_ROLES)
 
 
 # ── Classic runtime field contract ───────────────────────────────────────
@@ -54,8 +62,8 @@ CLASSIC_FIELD_METADATA: list[dict[str, Any]] = [
     {"key": "coordinator_narration", "label": "Coordinator narration", "type": "boolean",
      "group": "control", "description": "Save the control unit's routing rationale for the task page."},
     {"key": "sole_similarity", "label": "Sole-answer check", "type": "enum",
-     "options": ["auto", "exact", "embedding", "judge"],
-     "group": "control", "description": "How the decider verifies a single unchallenged answer."},
+     "options": list(CONSENSUS_STRATEGIES),
+     "group": "control", "description": "How the solution-extraction vote compares answers. Token similarity compares short answers exactly and longer answers by shared tokens."},
     {"key": "grace_verification", "label": "Grace verification", "type": "boolean",
      "group": "control", "description": "Before a limit stop, spend one extra round so the critic can review the answer."},
     {"key": "require_evidence", "label": "Require evidence", "type": "boolean",
@@ -84,7 +92,7 @@ def _seed_classic_defaults() -> dict[str, Any]:
     """Read the classic runtime settings that bmas.yaml configured at startup."""
     from config import CLASSIC_CONFIG, ROUND_EXECUTION, VIEW_BUDGET_TOKENS
 
-    return {
+    seeded = {
         **copy.deepcopy(dict(CLASSIC_CONFIG)),
         "round_execution": ROUND_EXECUTION,
         "view_budget_tokens": VIEW_BUDGET_TOKENS,
@@ -92,6 +100,11 @@ def _seed_classic_defaults() -> dict[str, Any]:
         "actor_context": str(CLASSIC_CONFIG.get("actor_context", "chained")),
         "require_evidence": bool(CLASSIC_CONFIG.get("require_evidence", False)),
     }
+    # The store holds the canonical strategy name. The legacy alias
+    # ``auto`` from an older configuration becomes ``token_similarity``.
+    if "sole_similarity" in seeded:
+        seeded["sole_similarity"] = resolve_consensus_strategy(seeded["sole_similarity"])
+    return seeded
 
 
 def _validate_classic(candidate: dict[str, Any]) -> dict[str, Any]:
@@ -151,6 +164,27 @@ def validate_classic_settings(candidate: dict[str, Any]) -> dict[str, Any]:
     if unknown:
         raise ValueError(f"Unknown classic setting(s): {', '.join(sorted(unknown))}")
     return _validate_classic(candidate)
+
+
+def validate_role_registry(registry: dict[str, Any]) -> None:
+    """Validate the role registry one task runs with.
+
+    Every key names a classic role, and every required role stays
+    enabled. A registry that fails either rule stops every task before
+    it starts, so the check runs before task creation.
+    """
+    validate_role_registry_keys(registry)
+    disabled = [
+        role for role in REQUIRED_CLASSIC_ROLES
+        if isinstance(registry.get(role), dict)
+        and registry[role].get("enabled") is False
+    ]
+    if disabled:
+        raise ValueError(
+            "The role registry disables a required role: "
+            f"{', '.join(disabled)}. Required roles: "
+            f"{', '.join(REQUIRED_CLASSIC_ROLES)}."
+        )
 
 
 def _first_validation_message(exc: Exception) -> str:
@@ -278,6 +312,10 @@ class SettingsStore:
         async with self._lock:
             self._ensure_seeded()
 
+            # A custom role key needs a complete role specification,
+            # which does not exist yet. The store rejects it instead of
+            # keeping a role that never becomes an actor.
+            validate_role_registry_keys(overrides)
             for role_name, entry in overrides.items():
                 if not isinstance(entry, dict):
                     raise ValueError(f"Role registry entry for '{role_name}' must be a mapping, got {type(entry).__name__}")

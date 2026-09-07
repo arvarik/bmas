@@ -19,8 +19,9 @@ their reported results as design evidence, not settled guarantees.
   control unit, a shared blackboard, and an LLM agent group with
   planner, critic, cleaner, conflict-resolver, and decider roles.
   Used for: the Classic blackboard runtime design
-  (`daemon/src/core/variants/classic.py`, `docs/CLASSIC_HARNESS.md`),
-  including role selection, cleanup, and explicit finalization.
+  (`daemon/src/core/variants/classic/`, `daemon/src/core/variants/traditional.py`,
+  `docs/CLASSIC_HARNESS.md`), including role selection, the decider-alone
+  guard in `TraditionalVariant.step`, cleanup, and explicit finalization.
 - [PatchBoard: Schema-Grounded State Mutation for Reliable and
   Auditable LLM Multi-Agent
   Collaboration](https://arxiv.org/abs/2605.29313) — Replaces

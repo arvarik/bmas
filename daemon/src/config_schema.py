@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class StrictModel(BaseModel):
@@ -92,6 +92,53 @@ class CleanerWeights(StrictModel):
     size_penalty: float = 0.01
 
 
+# The consensus strategies the classic runtime implements today. The
+# legacy value ``auto`` names the token-similarity strategy through a
+# recorded alias. ``embedding`` and ``judge`` stay unregistered until the
+# consensus registry ships, so the schema rejects them.
+CONSENSUS_STRATEGIES: tuple[str, ...] = ("token_similarity", "exact")
+CONSENSUS_STRATEGY_ALIASES: dict[str, str] = {"auto": "token_similarity"}
+DEFAULT_CONSENSUS_STRATEGY: Literal["token_similarity"] = "token_similarity"
+
+# The classic roles a registry entry can name. A custom role key needs
+# a complete role specification, which does not exist yet, so the
+# schema rejects an unknown key instead of storing a role that never
+# becomes an actor.
+CLASSIC_ROLES: tuple[str, ...] = (
+    "planner", "expert", "critic", "conflict_resolver", "cleaner", "decider", "universal",
+)
+# The roles every classic task needs: the planner opens the first round
+# and every replan, the critic reviews the answer, and the decider posts
+# it. A registry that disables one of them stops every task.
+REQUIRED_CLASSIC_ROLES: tuple[str, ...] = ("planner", "critic", "decider")
+
+
+def resolve_consensus_strategy(value: object) -> str:
+    """Return the canonical strategy name for one configured value.
+
+    The alias ``auto`` resolves to ``token_similarity``. An unregistered
+    strategy raises ``ValueError``.
+    """
+    name = str(value).strip()
+    name = CONSENSUS_STRATEGY_ALIASES.get(name, name)
+    if name not in CONSENSUS_STRATEGIES:
+        raise ValueError(
+            f"Unsupported consensus strategy {value!r}. "
+            f"Supported strategies: {', '.join(CONSENSUS_STRATEGIES)}."
+        )
+    return name
+
+
+def validate_role_registry_keys(registry: dict[str, object]) -> None:
+    """Reject a role key outside the classic role vocabulary."""
+    unknown = sorted(str(key) for key in registry if str(key) not in CLASSIC_ROLES)
+    if unknown:
+        raise ValueError(
+            f"Unknown role registry key(s): {', '.join(unknown)}. "
+            f"Known roles: {', '.join(CLASSIC_ROLES)}."
+        )
+
+
 class ClassicConfig(StrictModel):
     max_rounds: int = Field(default=4, ge=1)
     max_duration_s: int = Field(default=1800, ge=1)
@@ -107,10 +154,18 @@ class ClassicConfig(StrictModel):
     max_replans: int = Field(default=2, ge=0)
     cu_mode: Literal["llm", "heuristic_first"] = "llm"
     coordinator_narration: bool = False
-    sole_similarity: Literal["auto", "exact", "embedding", "judge"] = "auto"
+    sole_similarity: Literal["token_similarity", "exact"] = DEFAULT_CONSENSUS_STRATEGY
     grace_verification: bool = True
     actor_context: Literal["chained", "fresh"] = "chained"
     require_evidence: bool = False
+
+    @field_validator("sole_similarity", mode="before")
+    @classmethod
+    def _resolve_strategy(cls, value: object) -> object:
+        """Rewrite the ``auto`` alias before the literal check runs."""
+        if isinstance(value, str):
+            return CONSENSUS_STRATEGY_ALIASES.get(value.strip(), value)
+        return value
 
 
 class RoleConfig(StrictModel):
@@ -153,6 +208,13 @@ class CoordinationConfig(StrictModel):
     traditional: ClassicConfig | None = None
     role_registry: dict[str, RoleConfig] = Field(default_factory=dict)
     board: BoardConfig = Field(default_factory=BoardConfig)
+
+    @field_validator("role_registry", mode="before")
+    @classmethod
+    def _known_roles_only(cls, value: object) -> object:
+        if isinstance(value, dict):
+            validate_role_registry_keys(value)
+        return value
 
 
 class FoundationGatesConfig(StrictModel):

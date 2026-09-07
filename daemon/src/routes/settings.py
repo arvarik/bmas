@@ -17,7 +17,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from auth import require_api_key
 from config import BMAS_API_KEY
@@ -54,7 +54,13 @@ class RoleEntryPatch(BaseModel):
 
 
 class ClassicPatch(BaseModel):
-    """Partial override for the classic runtime limits. Only provided keys change."""
+    """Partial override for the classic runtime limits. Only provided keys change.
+
+    The model lists every classic setting the store exposes and rejects
+    an unknown field, so a misspelled key never passes silently.
+    """
+    model_config = ConfigDict(extra="forbid")
+
     max_rounds: int | None = None
     max_duration_s: int | None = None
     budget_ceiling_usd: float | None = None
@@ -70,6 +76,9 @@ class ClassicPatch(BaseModel):
     sole_similarity: str | None = None
     round_execution: str | None = None
     view_budget_tokens: int | None = None
+    grace_verification: bool | None = None
+    actor_context: str | None = None
+    require_evidence: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return self.model_dump(exclude_unset=True, exclude_none=True)

@@ -81,7 +81,7 @@ coordination:
     max_replans: 2
     cu_mode: llm
     coordinator_narration: false
-    sole_similarity: auto
+    sole_similarity: token_similarity
 
   # Every classic role uses the one starter agent. Production deployments can
   # set preferred_host values or add more nodes.
