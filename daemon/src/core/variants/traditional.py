@@ -38,12 +38,15 @@ from core.model_parameters import (
     truncated,
 )
 from core.response_parser import parse_entries
+from core.variants.classic.board_views import BoardViewPolicy
 from core.variants.classic.control import (
     ControlLimits,
     ControlPolicy,
     ControlProgress,
     parse_cu_output,
 )
+from core.variants.classic.memory import ContextSessionPolicy
+from core.variants.classic.prompts import PromptPolicy
 from core.variants.classic.roster import (
     CONSTANT_ROLE_DESCRIPTIONS,
     FALLBACK_EXPERTS,
@@ -184,6 +187,9 @@ class TraditionalVariant:
         )
         self.control_policy = ControlPolicy()
         self.scheduling_policy = SchedulingPolicy()
+        self.board_view_policy = BoardViewPolicy()
+        self.session_policy = ContextSessionPolicy()
+        self.prompt_policy = PromptPolicy()
 
         # Per-task state (set during genesis)
         self.roster: AgentRoster | None = None
@@ -196,8 +202,6 @@ class TraditionalVariant:
         self._round_token_sets: list[frozenset[str]] = []
         self._tier: str = "medium"
 
-        # Phase 5: stateful turn response IDs (doc 12 §5.2)
-        self._response_ids: dict[str, str] = {}
 
         # Phase 5: HITL pause flag (doc 05 §6)
         self._paused: bool = False
@@ -212,6 +216,14 @@ class TraditionalVariant:
     @_actor_nodes.setter
     def _actor_nodes(self, value: dict[str, str]) -> None:
         self.scheduling_policy.actor_nodes = dict(value)
+
+    @property
+    def _response_ids(self) -> dict[str, str]:
+        return self.session_policy.response_ids
+
+    @_response_ids.setter
+    def _response_ids(self, value: dict[str, str]) -> None:
+        self.session_policy.response_ids = dict(value)
 
     @property
     def _edge_models(self) -> list[str]:
@@ -1000,26 +1012,10 @@ class TraditionalVariant:
         self, task: Any, actor: str, board: Any,
     ) -> dict:
         """Build the payload dispatched to a KS for this turn (doc 03 §4)."""
-        from models.personas import ROLE_PERSONAS, generate_expert_persona
-
         task_id = task["task_id"]
         query = task["query"]
 
-        # Resolve role prompt
-        base_role = actor.split(".")[0] if "." in actor else actor
-        if actor.startswith("expert.") and self.roster:
-            slug = actor.split(".", 1)[1]
-            expert = next(
-                (e for e in self.roster.experts if e.slug == slug), None
-            )
-            if expert:
-                role_prompt = generate_expert_persona(
-                    expert.name, expert.ability, query,
-                )
-            else:
-                role_prompt = ROLE_PERSONAS.get(base_role, "")
-        else:
-            role_prompt = ROLE_PERSONAS.get(actor, "")
+        role_prompt = self.prompt_policy.role_prompt(actor, self.roster, query)
 
         # Serialize board for prompt
         if actor == "cleaner":
@@ -1034,42 +1030,21 @@ class TraditionalVariant:
         else:
             board_data = self._serialize_board(board, actor=actor)
 
-        payload = {
-            "task_id": task_id,
-            "turn_id": f"turn-{uuid.uuid4().hex[:8]}",
-            "round": board.get("round", 0) if isinstance(board, dict) else 0,
-            "role": actor,
-            "role_prompt": role_prompt,
-            "objective": query,
-            "board": board_data,
-            "response_contract": "entries_v1",
-            "budget_remaining_usd": max(0, self.budget_ceiling - self.budget_spent),
-            # Phase 5: stateful turns (doc 12 §5.2). In fresh context mode the
-            # bounded board view is the whole memory: the model conversation
-            # does not chain, so per-round cost stays flat over long runs.
-            "session_id": f"{task_id}:{actor}",
-            "previous_response_id": (
-                self.get_response_id(actor)
-                if self.actor_context == "chained"
-                else None
+        return self.prompt_policy.render(
+            task_id=task_id,
+            query=query,
+            actor=actor,
+            role_prompt=role_prompt,
+            board_data=board_data,
+            round_no=board.get("round", 0) if isinstance(board, dict) else 0,
+            session=self.session_policy.session_fields(
+                task_id, actor, actor_context=self.actor_context,
             ),
-        }
-        if self.require_evidence and base_role in ("expert", "planner"):
-            payload["evidence_status"] = (
-                "Evidence required: ground every new finding in an external "
-                "source. List the URLs or tool citations in the entry's "
-                "\"sources\" array. A round of unsourced restatement counts "
-                "as a stall."
-            )
-        if (
-            self.budget_ceiling > 0
-            and self.budget_spent / self.budget_ceiling >= 0.8
-        ):
-            payload["budget_status"] = (
-                "Over 80% of the task budget is spent. Converge now: "
-                "verify or finalize existing work instead of opening new work."
-            )
-        return payload
+            budget_remaining_usd=max(0, self.budget_ceiling - self.budget_spent),
+            budget_ceiling=self.budget_ceiling,
+            budget_spent=self.budget_spent,
+            require_evidence=self.require_evidence,
+        )
 
     # ── Parse Agent Response ─────────────────────────────────────────
 
@@ -2007,15 +1982,15 @@ class TraditionalVariant:
 
     def get_response_id(self, actor: str) -> str | None:
         """Get the last response_id for an actor (cross-round memory)."""
-        return self._response_ids.get(actor)
+        return self.session_policy.get_response_id(actor)
 
     def set_response_id(self, actor: str, response_id: str) -> None:
         """Store the response_id from an actor's latest turn."""
-        self._response_ids[actor] = response_id
+        self.session_policy.set_response_id(actor, response_id)
 
     def clear_response_id(self, actor: str) -> None:
         """Drop stateful response context after a safe endpoint failover."""
-        self._response_ids.pop(actor, None)
+        self.session_policy.clear_response_id(actor)
 
     def set_actor_node(self, actor: str, endpoint: str) -> None:
         """Pin an actor to the endpoint that completed its last turn."""
@@ -2057,216 +2032,18 @@ class TraditionalVariant:
         board: dict[str, BoardEntry] | dict[str, Any],
         actor: str | None = None,
     ) -> dict[str, Any]:
-        """Build a bounded role-specific view over the classic board."""
-        if not board:
-            return {
-                "mode": "bounded",
-                "entries": [],
-                "omitted_count": 0,
-                "estimated_tokens": 0,
-            }
-
-        entries: list[dict[str, Any]] = []
-        if isinstance(board, dict):
-            for entry in board.values():
-                if isinstance(entry, BoardEntry):
-                    if entry.status != "removed":
-                        entries.append(entry_to_dict(entry))
-                elif (
-                    isinstance(entry, dict)
-                    and entry.get("status") != "removed"
-                ):
-                    entries.append(dict(entry))
-
-        relevant_types = {
-            "planner": {"objective", "directive", "ledger", "plan", "finding", "critique", "conflict"},
-            "critic": {"objective", "directive", "ledger", "plan", "finding", "solution", "conflict"},
-            "decider": {"objective", "directive", "ledger", "plan", "finding", "critique", "conflict", "solution"},
-            "conflict_resolver": {"objective", "directive", "ledger", "finding", "critique", "conflict", "solution"},
-        }
-        base_role = (actor or "").split(".", 1)[0]
-        preferred = relevant_types.get(base_role)
-
-        pinned_types = {"objective", "directive", "ledger"}
-        pinned = [entry for entry in entries if entry.get("type") in pinned_types]
-        candidates = [entry for entry in entries if entry not in pinned]
-        referenced_ids = {
-            str(ref)
-            for entry in entries
-            if entry.get("status", "open") == "open"
-            for ref in entry.get("refs", [])
-        }
-
-        def _priority(entry: dict[str, Any]) -> tuple:
-            entry_type = str(entry.get("type", ""))
-            role_relevant = 1 if preferred is None or entry_type in preferred else 0
-            referenced = 1 if str(entry.get("id", "")) in referenced_ids else 0
-            open_status = 1 if entry.get("status", "open") == "open" else 0
-            return (
-                open_status,
-                referenced,
-                role_relevant,
-                float(entry.get("salience", 0.0) or 0.0),
-                float(entry.get("confidence", 0.0) or 0.0),
-                int(entry.get("round", 0) or 0),
-                str(entry.get("id", "")),
-            )
-
-        candidates.sort(key=_priority, reverse=True)
-        pinned.sort(key=lambda entry: (
-            entry.get("type") != "directive",
-            int(entry.get("round", 0) or 0),
-            str(entry.get("id", "")),
-        ))
-
-        selected: list[dict[str, Any]] = []
-        used_tokens = 0
-        budget = self.view_budget_tokens
-        index_share = 0.40 if base_role == "decider" else 0.20
-        index_budget = max(64, int(budget * index_share))
-        entry_budget = max(1, budget - index_budget)
-        for entry in [*pinned, *candidates]:
-            remaining = entry_budget - used_tokens
-            if remaining <= 32:
-                break
-            item = dict(entry)
-            body = str(item.get("body", ""))
-            overhead_chars = len(json.dumps({**item, "body": ""}, default=str))
-            overhead_tokens = max(1, overhead_chars // 4)
-            if overhead_tokens >= remaining:
-                if item.get("type") not in pinned_types:
-                    continue
-                item = {
-                    "id": item.get("id"),
-                    "type": item.get("type"),
-                    "title": str(item.get("title") or "")[:200],
-                    "body": "",
-                    "status": item.get("status", "open"),
-                    "context_truncated": True,
-                }
-                item_tokens = max(
-                    1, (len(json.dumps(item, default=str)) + 3) // 4,
-                )
-                if item_tokens > remaining:
-                    continue
-            else:
-                body_chars = max(0, (remaining - overhead_tokens) * 4)
-                if len(body) > body_chars:
-                    item["body"] = body[:body_chars]
-                    item["context_truncated"] = True
-                item_tokens = overhead_tokens + max(
-                    1, (len(str(item.get("body", ""))) + 3) // 4,
-                )
-                if item_tokens > remaining:
-                    continue
-            selected.append(item)
-            used_tokens += item_tokens
-
-        selected_ids = {str(entry.get("id", "")) for entry in selected}
-        omitted_ids = [
-            str(entry.get("id", ""))
-            for entry in entries
-            if str(entry.get("id", "")) not in selected_ids
-        ]
-        omitted = [
-            entry
-            for entry in entries
-            if str(entry.get("id", "")) not in selected_ids
-        ]
-        omitted.sort(key=_priority, reverse=True)
-        omitted_index: list[dict[str, Any]] = []
-        index_tokens = 0
-        excerpt_chars = 160 if base_role == "decider" else 80
-        available_index_tokens = min(index_budget, budget - used_tokens)
-        for entry in omitted:
-            compact = {
-                "id": entry.get("id"),
-                "type": entry.get("type"),
-                "title": str(entry.get("title") or "")[:120],
-                "author": entry.get("author"),
-                "round": int(entry.get("round", 0) or 0),
-                "status": entry.get("status", "open"),
-                "refs": list(entry.get("refs") or [])[:8],
-                "salience": round(float(entry.get("salience", 0.0) or 0.0), 3),
-                "body_excerpt": str(entry.get("body") or "")[:excerpt_chars],
-            }
-            item_tokens = max(
-                1, (len(json.dumps(compact, default=str)) + 3) // 4,
-            )
-            remaining = available_index_tokens - index_tokens
-            while item_tokens > remaining and compact["body_excerpt"]:
-                compact["body_excerpt"] = compact["body_excerpt"][:
-                    len(compact["body_excerpt"]) // 2
-                ]
-                item_tokens = max(
-                    1, (len(json.dumps(compact, default=str)) + 3) // 4,
-                )
-            while item_tokens > remaining and compact["refs"]:
-                compact["refs"] = compact["refs"][:-1]
-                item_tokens = max(
-                    1, (len(json.dumps(compact, default=str)) + 3) // 4,
-                )
-            if item_tokens > remaining:
-                continue
-            omitted_index.append(compact)
-            index_tokens += item_tokens
-
-        return {
-            "mode": "bounded",
-            "entries": selected,
-            "omitted_count": len(omitted_ids),
-            "omitted_ids": [item["id"] for item in omitted_index],
-            "omitted_index": omitted_index,
-            "omitted_index_count": len(omitted_index),
-            "omitted_index_truncated": len(omitted_index) < len(omitted),
-            "estimated_tokens": used_tokens + index_tokens,
-            "entry_estimated_tokens": used_tokens,
-            "index_estimated_tokens": index_tokens,
-            "index_token_budget": index_budget,
-            "token_budget": budget,
-        }
+        """Build a bounded role-specific view through the board view policy."""
+        return self.board_view_policy.serialize_board(
+            board, actor, view_budget_tokens=self.view_budget_tokens,
+        )
 
     def _serialize_board_for_cu(
         self, snapshot: dict[str, BoardEntry],
     ) -> str:
-        """Serialize board to a compact text format for the CU prompt."""
-        if not snapshot:
-            return "(empty board)"
-
-        lines = []
-        used_tokens = 0
-        cu_budget = min(4000, self.view_budget_tokens)
-        for entry in sorted(
-            snapshot.values(),
-            key=lambda e: (
-                e.type in ("objective", "directive", "ledger"),
-                e.status == "open",
-                e.salience,
-                e.round,
-                e.id,
-            ),
-            reverse=True,
-        ):
-            if entry.status == "removed":
-                continue
-            refs_str = f" refs=[{','.join(entry.refs)}]" if entry.refs else ""
-            conf_str = f" conf={entry.confidence:.1f}" if entry.confidence else ""
-            summary = (
-                entry.body[:240]
-                if entry.type == "directive"
-                else entry.title or entry.body[:240]
-            )
-            line = (
-                f"[{entry.id}] ({entry.type}) by {entry.author} "
-                f"R{entry.round}{refs_str}{conf_str}: "
-                f"{summary}"
-            )
-            line_tokens = max(1, len(line) // 4)
-            if used_tokens + line_tokens > cu_budget:
-                continue
-            lines.append(line)
-            used_tokens += line_tokens
-        return "\n".join(lines)
+        """Serialize the board for the CU prompt through the board view policy."""
+        return self.board_view_policy.serialize_for_cu(
+            snapshot, view_budget_tokens=self.view_budget_tokens,
+        )
 
     # ── Edge Model Resolution ────────────────────────────────────────
 
