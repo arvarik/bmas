@@ -222,3 +222,93 @@ def test_scheduling_policy_parity(lifecycle):
 def test_every_sample_actor_has_a_prompt(lifecycle):
     _harness, _run, trace = lifecycle
     assert set(trace["samples"]["prompts"]["payloads"]) == set(SAMPLE_ACTORS)
+
+
+# ── Pull request 2: board views, sessions, prompts ───────────────────
+
+
+def test_board_view_policy_parity(lifecycle):
+    from core.variants.classic.board_views import BoardViewPolicy
+
+    harness, run, trace = lifecycle
+    frozen = frozen_trace()
+    assert trace["samples"]["board_views"] == frozen["samples"]["board_views"]
+    variant = harness.variant
+    policy = variant.board_view_policy
+    assert isinstance(policy, BoardViewPolicy)
+    for actor in SAMPLE_ACTORS:
+        direct = policy.serialize_board(run.snapshot, actor, view_budget_tokens=variant.view_budget_tokens)
+        assert direct == variant._serialize_board(run.snapshot, actor=actor)
+        assert digest(direct) == frozen["samples"]["board_views"]["views"][actor]
+    cu_view = policy.serialize_for_cu(run.snapshot, view_budget_tokens=variant.view_budget_tokens)
+    assert cu_view == variant._serialize_board_for_cu(run.snapshot)
+    assert digest(cu_view) == frozen["samples"]["board_views"]["cu_view"]
+    # A budget changed after construction reaches the next view.
+    narrow = policy.serialize_board(run.snapshot, "decider", view_budget_tokens=600)
+    assert narrow["token_budget"] == 600
+    assert narrow["estimated_tokens"] <= 600
+
+
+def test_context_session_policy_parity(lifecycle):
+    from core.variants.classic.memory import ContextSessionPolicy
+
+    harness, run, trace = lifecycle
+    frozen = frozen_trace()
+    assert trace["samples"]["memory"] == frozen["samples"]["memory"]
+    assert [(call["session_id"], call["previous_response_id"]) for call in trace["worker_calls"]] == [
+        (call["session_id"], call["previous_response_id"]) for call in frozen["worker_calls"]
+    ]
+    variant = harness.variant
+    policy = variant.session_policy
+    assert isinstance(policy, ContextSessionPolicy)
+    assert policy.response_ids is variant._response_ids
+    assert dict(policy.response_ids) == run.meta["response_ids"]
+    for actor in ("expert.alpha", "decider"):
+        chained = policy.session_fields(TASK_ID, actor, actor_context="chained")
+        assert chained == {
+            "session_id": f"{TASK_ID}:{actor}",
+            "previous_response_id": variant.get_response_id(actor),
+        }
+        assert chained == frozen["samples"]["memory"]["session"][actor]
+        fresh = policy.session_fields(TASK_ID, actor, actor_context="fresh")
+        assert fresh["previous_response_id"] is None
+    # The mutation path writes through both ways. Restore the recorded
+    # identity afterwards, because later parity tests share this engine.
+    original = policy.get_response_id("critic")
+    assert original == run.meta["response_ids"]["critic"]
+    policy.set_response_id("critic", "response-parity")
+    assert variant.get_response_id("critic") == "response-parity"
+    variant.clear_response_id("critic")
+    assert policy.get_response_id("critic") is None
+    variant.set_response_id("critic", original)
+    assert policy.get_response_id("critic") == original
+
+
+def test_prompt_policy_parity(lifecycle):
+    from core.variants.classic.prompts import PromptPolicy
+
+    harness, run, trace = lifecycle
+    frozen = frozen_trace()
+    assert trace["samples"]["prompts"] == frozen["samples"]["prompts"]
+    assert [call["prompt_digest"] for call in trace["worker_calls"]] == [
+        call["prompt_digest"] for call in frozen["worker_calls"]
+    ]
+    variant = harness.variant
+    policy = variant.prompt_policy
+    assert isinstance(policy, PromptPolicy)
+    task = {"task_id": TASK_ID, "query": OBJECTIVE}
+    for actor in SAMPLE_ACTORS:
+        delegated = variant.build_turn_payload(task, actor, run.snapshot)
+        role_prompt = policy.role_prompt(actor, variant.roster, OBJECTIVE)
+        assert role_prompt == delegated["role_prompt"]
+        direct = policy.render(
+            task_id=TASK_ID, query=OBJECTIVE, actor=actor, role_prompt=role_prompt,
+            board_data=delegated["board"], round_no=0,
+            session=variant.session_policy.session_fields(TASK_ID, actor, actor_context=variant.actor_context),
+            budget_remaining_usd=max(0, variant.budget_ceiling - variant.budget_spent),
+            budget_ceiling=variant.budget_ceiling, budget_spent=variant.budget_spent,
+            require_evidence=variant.require_evidence,
+        )
+        assert digest(direct) == digest(delegated) == frozen["samples"]["prompts"]["payloads"][actor]
+        assert direct["turn_id"] != delegated["turn_id"]  # each render names a fresh turn
+    assert policy.role_prompt("expert.unknown", variant.roster, OBJECTIVE) == policy.role_prompt("expert", None, OBJECTIVE)
