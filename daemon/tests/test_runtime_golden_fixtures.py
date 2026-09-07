@@ -50,6 +50,12 @@ PINNED_CONFIGURATION = {
         "complex": "test-pro",
     },
     "ROLE_REGISTRY": {},
+    "MAX_ENTRY_CHARS": 8000,
+    "MAX_TITLE_LEN": 200,
+    "SALIENCE_W_C": 0.4,
+    "SALIENCE_W_R": 0.2,
+    "SALIENCE_W_X": 0.3,
+    "SALIENCE_W_P": 0.3,
     "CLASSIC_CONFIG": {
         "max_rounds": 4,
         "max_duration_s": 1800,

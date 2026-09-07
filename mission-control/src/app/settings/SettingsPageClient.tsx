@@ -134,10 +134,8 @@ const REQUEST_TIMEOUT_MS = 12_000;
 const OPTION_LABELS: Record<string, string> = {
   llm: "LLM",
   heuristic_first: "Heuristic first",
-  auto: "Auto",
+  token_similarity: "Token similarity",
   exact: "Exact match",
-  embedding: "Embedding",
-  judge: "LLM judge",
   concurrent: "Concurrent",
   sequential: "Sequential",
 };

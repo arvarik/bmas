@@ -14,9 +14,11 @@ Pure function, no I/O, fully deterministic.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from core.entry import BoardEntry
 
 
@@ -28,13 +30,70 @@ class SalienceWeights:
     w_x: float = 0.3   # refs-in weight (citations)
     w_p: float = 0.3   # penalty weight (open critiques)
 
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any] | None) -> SalienceWeights:
+        """Build the weights from the ``coordination.board.salience_weights`` shape.
+
+        The mapping names the components ``confidence``, ``recency``,
+        ``refs_in``, and ``penalty``. A missing component keeps its
+        default weight.
+        """
+        values = dict(mapping or {})
+        defaults = cls()
+        return cls(
+            w_c=float(values.get("confidence", defaults.w_c)),
+            w_r=float(values.get("recency", defaults.w_r)),
+            w_x=float(values.get("refs_in", defaults.w_x)),
+            w_p=float(values.get("penalty", defaults.w_p)),
+        )
+
+    def to_mapping(self) -> dict[str, float]:
+        """Return the ``coordination.board.salience_weights`` shape."""
+        return {
+            "confidence": self.w_c,
+            "recency": self.w_r,
+            "refs_in": self.w_x,
+            "penalty": self.w_p,
+        }
+
 
 DEFAULT_WEIGHTS = SalienceWeights()
+
+# The multiplier one operator boost applies. A boost is a separate
+# salience component: the recompute hook derives the base score from
+# the board and then applies every recorded boost factor.
+OPERATOR_BOOST_FACTOR = 2.0
 
 
 def _clamp01(value: float) -> float:
     """Clamp a float to [0.0, 1.0]."""
     return max(0.0, min(1.0, value))
+
+
+def apply_salience_boosts(
+    scores: dict[str, float],
+    boosts: Mapping[str, Any] | None,
+) -> dict[str, float]:
+    """Apply the recorded operator boost factors to computed scores.
+
+    ``boosts`` maps an entry identifier to its accumulated factor. An
+    entry without a score, or a factor that is not a positive number,
+    leaves the score unchanged.
+    """
+    if not boosts:
+        return dict(scores)
+    boosted = dict(scores)
+    for entry_id, factor in boosts.items():
+        if entry_id not in boosted:
+            continue
+        try:
+            multiplier = float(factor)
+        except (TypeError, ValueError):
+            continue
+        if multiplier <= 0.0:
+            continue
+        boosted[entry_id] = max(0.0, min(1.0, boosted[entry_id] * multiplier))
+    return boosted
 
 
 def _recency(entry_round: int, current_round: int) -> float:

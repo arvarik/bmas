@@ -1,7 +1,9 @@
 {
   "fixture_id": "classic-effective-configuration",
   "metadata": {
-    "contract_version": "1.0.0"
+    "contract_version": "1.0.0",
+    "reason": "Classic work package 2: the effective configuration now carries the board limits and salience weights under settings.board, and the strategy alias auto is stored as token_similarity.",
+    "revised": "2026-09-07"
   },
   "record": {
     "configuration_schema_version": "1",
@@ -14,6 +16,16 @@
     },
     "role_registry": {},
     "settings": {
+      "board": {
+        "max_entry_chars": 8000,
+        "max_title_len": 200,
+        "salience_weights": {
+          "confidence": 0.4,
+          "penalty": 0.3,
+          "recency": 0.2,
+          "refs_in": 0.3
+        }
+      },
       "classic": {
         "actor_context": "chained",
         "budget_ceiling_usd": 0.5,
@@ -33,7 +45,7 @@
         "max_rounds": 4,
         "require_evidence": false,
         "round_execution": "concurrent",
-        "sole_similarity": "auto",
+        "sole_similarity": "token_similarity",
         "stall_rounds": 2,
         "view_budget_tokens": 12000
       },

@@ -286,3 +286,64 @@ def test_validate_classic_settings_rejects_unknown_keys(classic_store):
     assert validate_classic_settings(base)["max_rounds"] == 4
     with pytest.raises(ValueError):
         validate_classic_settings({**base, "mystery": 1})
+
+
+# ── Classic work package 2 repairs ───────────────────────────────────────
+
+
+def test_strategy_alias_is_rewritten_and_unregistered_strategies_are_rejected(classic_store):
+    # The seed rewrites the legacy alias from the configuration.
+    assert asyncio.run(classic_store.get_classic())["sole_similarity"] == "token_similarity"
+    updated = asyncio.run(classic_store.patch_classic({"sole_similarity": "auto"}))
+    assert updated["sole_similarity"] == "token_similarity"
+    exact = asyncio.run(classic_store.patch_classic({"sole_similarity": "exact"}))
+    assert exact["sole_similarity"] == "exact"
+    # The unregistered strategies stay hidden and rejected.
+    for hidden in ("embedding", "judge"):
+        with pytest.raises(ValueError):
+            asyncio.run(classic_store.patch_classic({"sole_similarity": hidden}))
+    assert asyncio.run(classic_store.get_classic())["sole_similarity"] == "exact"
+    schema = asyncio.run(classic_store.get_schema())
+    field = next(f for f in schema["classic_fields"] if f["key"] == "sole_similarity")
+    assert field["options"] == ["token_similarity", "exact"]
+
+
+def test_role_registry_patch_rejects_a_custom_role_key(classic_store):
+    with pytest.raises(ValueError, match="Unknown role registry key"):
+        asyncio.run(classic_store.patch_role_registry({
+            "researcher": {"profile": "researcher", "dispatch_port": 8000},
+        }))
+    assert "researcher" not in asyncio.run(classic_store.get_role_registry())
+    updated = asyncio.run(classic_store.patch_role_registry({"cleaner": {"enabled": False}}))
+    assert updated["cleaner"]["enabled"] is False
+
+
+def test_classic_patch_route_accepts_every_setting_and_rejects_unknown_fields(classic_store, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import routes.settings as settings_routes
+
+    monkeypatch.setattr(settings_routes, "BMAS_API_KEY", "")
+    monkeypatch.setattr(settings_routes, "get_store", lambda: classic_store)
+    application = FastAPI()
+    application.include_router(settings_routes.router)
+    client = TestClient(application)
+
+    accepted = client.patch("/settings/classic", json={
+        "grace_verification": False, "actor_context": "fresh", "require_evidence": True,
+    })
+    assert accepted.status_code == 200, accepted.text
+    classic = accepted.json()["classic"]
+    assert classic["grace_verification"] is False
+    assert classic["actor_context"] == "fresh"
+    assert classic["require_evidence"] is True
+    assert sorted(accepted.json()["changed"]) == [
+        "actor_context", "grace_verification", "require_evidence",
+    ]
+
+    unknown = client.patch("/settings/classic", json={"max_rouds": 3})
+    assert unknown.status_code == 422, unknown.text
+    unsupported = client.patch("/settings/classic", json={"sole_similarity": "judge"})
+    assert unsupported.status_code == 422, unsupported.text
+    assert asyncio.run(classic_store.get_classic())["actor_context"] == "fresh"

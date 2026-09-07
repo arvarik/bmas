@@ -111,12 +111,10 @@
           "type": "boolean"
         },
         "sole_similarity": {
-          "default": "auto",
+          "default": "token_similarity",
           "enum": [
-            "auto",
-            "exact",
-            "embedding",
-            "judge"
+            "token_similarity",
+            "exact"
           ],
           "title": "Sole Similarity",
           "type": "string"

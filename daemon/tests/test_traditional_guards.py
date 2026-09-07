@@ -308,3 +308,49 @@ class TestEntriesHash:
         h1 = _entries_hash([e1])
         h2 = _entries_hash([e2])
         assert h1 != h2
+
+
+# ── Classic work package 2 repairs ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_engine_default_complex_expert_count_matches_the_schema():
+    from config_schema import ClassicConfig
+
+    variant = TraditionalVariant(
+        gateway=AsyncMock(),
+        board_store=None,
+        event_emitter=None,
+        triage=None,
+        config={},
+        litellm_url="",
+        litellm_key="",
+        node_endpoints=[],
+        role_registry={},
+        model_routing={},
+    )
+    try:
+        assert variant.experts_per_tier == ClassicConfig().experts_per_tier
+        assert variant.experts_per_tier["complex"] == 4
+    finally:
+        await variant.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_generator_fallback_supplies_the_complete_expert_count():
+    from core.variants.traditional import FALLBACK_EXPERTS
+
+    variant = _make_variant()
+    variant.http.post = AsyncMock(side_effect=RuntimeError("provider down"))
+    try:
+        experts = await variant._generate_experts("question", 12, "complex")
+        assert len(experts) == 12
+        assert [expert.slug for expert in experts] == [
+            fallback["slug"] for fallback in FALLBACK_EXPERTS
+        ]
+        assert len({expert.slug for expert in experts}) == 12
+        # The fallback never exceeds the roster it defines.
+        assert len(variant._default_experts(20)) == 12
+        assert variant._default_experts(0) == []
+    finally:
+        await variant.close()

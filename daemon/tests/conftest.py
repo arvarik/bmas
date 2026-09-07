@@ -76,6 +76,13 @@ _fake_config.TRADITIONAL_CONFIG = {  # type: ignore
 }
 _fake_config.CLASSIC_CONFIG = _fake_config.TRADITIONAL_CONFIG  # type: ignore
 _fake_config.ROLE_REGISTRY = {}  # type: ignore
+# Board limits and salience weights (doc 04 §4, §7)
+_fake_config.MAX_ENTRY_CHARS = 8000  # type: ignore
+_fake_config.MAX_TITLE_LEN = 200  # type: ignore
+_fake_config.SALIENCE_W_C = 0.4  # type: ignore
+_fake_config.SALIENCE_W_R = 0.2  # type: ignore
+_fake_config.SALIENCE_W_X = 0.3  # type: ignore
+_fake_config.SALIENCE_W_P = 0.3  # type: ignore
 _fake_config.MODEL_ROUTING = {"simple": "local", "light": "test-light", "medium": "test-medium", "complex": "test-pro"}  # type: ignore
 _fake_config.MODEL_POOLS = {}  # type: ignore
 _fake_config.ROUND_EXECUTION = "concurrent"  # type: ignore

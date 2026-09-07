@@ -210,7 +210,7 @@ Set `variant: classic` for the deployment default. Mission Control can select an
 | `max_replans` | `2` | Limits control-unit replans. |
 | `cu_mode` | `llm` | Selects `llm` or `heuristic_first`. |
 | `coordinator_narration` | `false` | Adds control-unit reasons to the event stream. |
-| `sole_similarity` | `auto` | Selects `auto`, `exact`, `embedding`, or `judge`. |
+| `sole_similarity` | `token_similarity` | Selects the solution-extraction vote strategy: `token_similarity` (short answers compare exactly, longer answers by shared tokens) or `exact`. The legacy value `auto` is an alias for `token_similarity`. `embedding` and `judge` are rejected until the consensus registry ships. |
 | `grace_verification` | `true` | Adds one critic round before a limit stop, so the final answer gets a review. If the critic rejects the answer and budget remains, the decider gets one revision round. |
 | `require_evidence` | `false` | Treats a round of unsourced findings as a stall. Agents ground findings with a `sources` list (URLs or tool citations). |
 | `actor_context` | `chained` | Selects the agent model-session mode. `chained` keeps each agent's session across rounds. `fresh` sends only the board view each turn. |
@@ -252,6 +252,8 @@ Every non-null `preferred_host` must match a `nodes[].host` value.
 | `max_entry_chars` | `8000` | Limits one board entry body. |
 | `max_title_len` | `200` | Limits one board entry title. |
 | `salience_weights` | weight mapping | Scores entries by confidence, recency, references, and penalties. |
+
+The daemon copies these values into the effective configuration of every new task, so the board of that task uses the limits and weights in force at submission.
 
 ## `storage`
 

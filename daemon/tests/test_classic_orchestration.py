@@ -1231,3 +1231,143 @@ async def test_paused_task_observes_abort_immediately(monkeypatch):
             await variant.check_pause("task-1")
     finally:
         await variant.close()
+
+
+@pytest.mark.asyncio
+async def test_board_limits_and_salience_weights_reach_the_board():
+    """The board settings of the effective configuration govern the run."""
+    from core.salience import SalienceWeights
+
+    orch = _orchestrator_without_clients()
+    orch.bb = SimpleNamespace(publish_event=AsyncMock(), set_board_snapshot=AsyncMock())
+    store = InMemoryBoardStore()
+    configuration = {"settings": {"board": {
+        "max_title_len": 12,
+        "max_entry_chars": 40,
+        "salience_weights": {
+            "confidence": 1.0, "recency": 0.0, "refs_in": 0.0, "penalty": 0.0,
+        },
+    }}}
+    gateway = orch._classic_board_gateway(store, InMemoryEventEmitter(), configuration)
+    await store.set_meta("task-board", round=1)
+
+    committed = await gateway.append(
+        "task-board",
+        "expert.alpha",
+        ["finding_writer"],
+        [{
+            "type": "finding",
+            "title": "A title that is far too long for the limit",
+            "body": "Short body",
+            "confidence": 0.25,
+        }],
+        turn_id="turn-1",
+        round_no=1,
+    )
+    assert committed[0].title == "A title that"
+    # With every other weight at zero the salience equals the confidence.
+    stored = await store.get_entry("task-board", committed[0].id)
+    assert stored.salience == pytest.approx(0.25)
+    rejected = await gateway.append(
+        "task-board",
+        "expert.alpha",
+        ["finding_writer"],
+        [{"type": "finding", "body": "x" * 41, "confidence": 0.9}],
+        turn_id="turn-2",
+        round_no=1,
+    )
+    assert rejected == []
+    # A configuration saved before the board section existed keeps the
+    # deployment values.
+    assert Orchestrator.classic_board_settings({}) == (
+        200, 8000, SalienceWeights(0.4, 0.2, 0.3, 0.3),
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_conflict_mediation_finishes_its_activation():
+    """A failed private mediation leaves a finished activation, not a hole."""
+    from core.variants.traditional import StepResult
+
+    store = InMemoryBoardStore()
+    gateway = BoardGateway(store, InMemoryEventEmitter())
+    endpoints = ["http://node:8000"]
+    variant = TraditionalVariant(
+        gateway=gateway,
+        board_store=store,
+        event_emitter=None,
+        triage=None,
+        config={"max_rounds": 8},
+        litellm_url="http://litellm.test",
+        litellm_key="key",
+        node_endpoints=endpoints,
+        role_registry={
+            "expert": {"endpoints": endpoints},
+            "conflict_resolver": {"endpoints": endpoints},
+            "critic": {"endpoints": endpoints},
+        },
+        model_routing={"medium": "test-model"},
+    )
+    task_id = "task-conflict-failure"
+    task = {"task_id": task_id, "query": "resolve"}
+    first = (await gateway.append(
+        task_id, "expert.alpha", ["finding_writer"],
+        [{"type": "finding", "body": "Alpha position"}], turn_id="turn-a", round_no=1,
+    ))[0]
+    second = (await gateway.append(
+        task_id, "expert.beta", ["finding_writer"],
+        [{"type": "finding", "body": "Beta position"}], turn_id="turn-b", round_no=1,
+    ))[0]
+    await gateway.append(
+        task_id, "conflict_resolver", ["conflict_mediator"],
+        [{"type": "conflict", "body": "The positions conflict", "refs": [first.id, second.id]}],
+        turn_id="turn-c", round_no=2,
+    )
+    mediation = Activation(
+        actor="conflict_resolver", role="conflict_resolver", model="test-model",
+        node_endpoint=endpoints[0], activation_id="activation-conflict",
+    )
+    review = Activation(
+        actor="critic", role="critic", model="test-model",
+        node_endpoint=endpoints[0], activation_id="activation-critic",
+    )
+    await gateway.set_meta(task_id, round=3, round_state={
+        "round": 3, "status": "active",
+        "activations": [
+            {"actor": mediation.actor, "activation_id": mediation.activation_id},
+            {"actor": review.actor, "activation_id": review.activation_id},
+        ],
+        "completed": {},
+    })
+    step_result = StepResult(
+        terminal=False, activations=[mediation, review],
+        selected=["conflict_resolver", "critic"],
+    )
+
+    async def explode(*args, **kwargs):
+        raise RuntimeError("private debate crashed")
+
+    variant.handle_conflict_resolution = explode
+    orch = _orchestrator_without_clients()
+    try:
+        board = await store.get_snapshot(task_id)
+        await orch._mediate_open_conflict(variant, task, step_result, board)
+        state = (await store.get_meta(task_id))["round_state"]
+        assert state["completed"] == {"activation-conflict": "failed"}
+        assert [activation.actor for activation in step_result.activations] == ["critic"]
+        # The round checkpoint closes once the remaining activation ends.
+        await variant.mark_activation_complete(task_id, "activation-critic", "completed")
+        await variant.finish_round(task_id)
+    finally:
+        await variant.close()
+
+    closed = (await store.get_meta(task_id))["round_state"]
+    assert closed["status"] == "completed"
+    assert closed["completed"] == {
+        "activation-conflict": "failed", "activation-critic": "completed",
+    }
+    logged = [
+        call.kwargs.get("fields", {}).get("event")
+        for call in orch._safe_log.await_args_list
+    ]
+    assert "conflict_resolution_failed" in logged

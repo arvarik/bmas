@@ -286,3 +286,125 @@ async def test_complete_private_conflict_failure_keeps_public_evidence_open():
         event["event_type"] == "space_archived"
         for event in await store.get_events("task-private-failure")
     )
+
+
+# ── Classic work package 2 repairs ───────────────────────────────────
+
+
+def _entry(entry_id: str, entry_type: str, author: str, body: str, *, refs=None, round_no: int = 1):
+    from core.entry import BoardEntry
+
+    return BoardEntry(
+        id=entry_id, task_id="task-sort", type=entry_type, author=author,
+        body=body, refs=list(refs or []), round=round_no,
+    )
+
+
+def test_deterministic_fallback_sorts_critiqued_authors():
+    experts = [
+        ExpertIdentity(name="Zulu", slug="zulu", ability="z", model="test-model"),
+        ExpertIdentity(name="Alpha", slug="alpha", ability="a", model="test-model"),
+        ExpertIdentity(name="Mike", slug="mike", ability="m", model="test-model"),
+    ]
+    variant, _store, _gateway = _variant(experts=experts)
+    snapshot = {
+        "e-1": _entry("e-1", "finding", "expert.zulu", "zulu claim"),
+        "e-2": _entry("e-2", "finding", "expert.mike", "mike claim"),
+        "e-3": _entry("e-3", "finding", "expert.alpha", "alpha claim"),
+        "e-4": _entry(
+            "e-4", "critique", "critic", "all three lack evidence",
+            refs=["e-1", "e-2", "e-3"], round_no=2,
+        ),
+    }
+    selected = variant._deterministic_fallback(snapshot, 3)
+    assert selected == ["expert.alpha", "expert.mike", "expert.zulu"]
+
+
+@pytest.mark.asyncio
+async def test_decider_isolation_runs_before_the_concurrency_clamp():
+    experts = [
+        ExpertIdentity(name=slug.title(), slug=slug, ability="analyze", model="test-model")
+        for slug in ("alpha", "beta", "gamma")
+    ]
+    variant, _store, _gateway = _variant(
+        config={"max_concurrent_activations": 3}, experts=experts,
+    )
+
+    async def select(*args, **kwargs):
+        return ["expert.alpha", "decider", "expert.beta", "expert.gamma"], "co-selected"
+
+    variant._cu_select = select
+    try:
+        step = await variant.step({"task_id": "task-clamp", "query": "question"}, {})
+    finally:
+        await variant.close()
+
+    # The decider leaves first, so the freed slot goes to the next agent.
+    assert step.selected == ["expert.alpha", "expert.beta", "expert.gamma"]
+    assert "Decider deferred" in (step.rationale or "")
+
+
+@pytest.mark.asyncio
+async def test_conflict_publication_keeps_evidence_sources():
+    variant, store, gateway = _variant(role_registry={
+        "expert": {"enabled": True, "endpoints": ["http://node-a:8000"]},
+    })
+    task_id = "task-conflict-sources"
+    first = (await gateway.append(
+        task_id, "expert.alpha", ["finding_writer"],
+        [{"type": "finding", "body": "alpha"}], turn_id="alpha-turn",
+    ))[0]
+    second = (await gateway.append(
+        task_id, "expert.beta", ["finding_writer"],
+        [{"type": "finding", "body": "beta"}], turn_id="beta-turn",
+    ))[0]
+    conflict = (await gateway.append(
+        task_id, "conflict_resolver", ["conflict_mediator"],
+        [{"type": "conflict", "body": "alpha conflicts with beta", "refs": [first.id, second.id]}],
+        turn_id="conflict-turn",
+    ))[0]
+
+    async def dispatch_with_sources(**kwargs):
+        actor = kwargs["activation"].actor
+        return {
+            "status": "completed",
+            "entries": [{
+                "type": "finding",
+                "title": f"Resolved by {actor}",
+                "body": f"{actor} reconciled the evidence",
+                "sources": [f"https://evidence.example/{actor}"],
+                "confidence": 0.8,
+            }],
+        }
+
+    try:
+        published = await variant.handle_conflict_resolution(
+            {"task_id": task_id, "query": "resolve"}, conflict, dispatch_with_sources,
+        )
+    finally:
+        await variant.close()
+
+    assert published
+    assert all(entry.space == "public" for entry in published)
+    assert {tuple(entry.sources) for entry in published} == {
+        ("https://evidence.example/expert.alpha",),
+        ("https://evidence.example/expert.beta",),
+    }
+
+
+def test_unregistered_consensus_strategies_fail_closed():
+    from core.variants.traditional import sole_majority_vote
+
+    answers = [("a", "The answer is 42"), ("b", "The answer is 42"), ("c", "forty-one")]
+    # The legacy alias and the canonical name select the same winner.
+    assert sole_majority_vote(answers, "auto") == sole_majority_vote(answers, "token_similarity")
+    assert sole_majority_vote(answers, "exact") == "The answer is 42"
+    for hidden in ("embedding", "judge", "cosine"):
+        with pytest.raises(ValueError, match="Unsupported consensus strategy"):
+            sole_majority_vote(answers, hidden)
+        with pytest.raises(ValueError, match="Unsupported consensus strategy"):
+            sole_evidence_vote(answers, [("42", 0.9, 0.5)], hidden)
+        with pytest.raises(ValueError, match="Unsupported consensus strategy"):
+            _variant(config={"sole_similarity": hidden})
+    variant, _store, _gateway = _variant(config={"sole_similarity": "auto"})
+    assert variant.sole_similarity == "token_similarity"

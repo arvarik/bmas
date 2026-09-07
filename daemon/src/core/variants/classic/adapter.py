@@ -12,8 +12,14 @@ from typing import Any, Protocol, cast
 from config import (
     AGENT_ENDPOINTS,
     EDGE_NODE_MODELS,
+    MAX_ENTRY_CHARS,
+    MAX_TITLE_LEN,
     MODEL_POOLS,
     MODEL_PRICING,
+    SALIENCE_W_C,
+    SALIENCE_W_P,
+    SALIENCE_W_R,
+    SALIENCE_W_X,
 )
 from core.protocol import LEGACY_EVENT_NAMES, V2_EVENT_NAMES
 from core.variants import (
@@ -33,7 +39,11 @@ from core.variants.effort import (
     resolve_effort,
 )
 from core.variants.traditional import StepResult, TraditionalVariant
-from settings_store import get_store, validate_classic_settings
+from settings_store import (
+    get_store,
+    validate_classic_settings,
+    validate_role_registry,
+)
 
 
 class ClassicHost(VariantHost, Protocol):
@@ -134,6 +144,13 @@ class ClassicVariantRuntime:
                 existing = copy.deepcopy(registry.get(role_name, {}))
                 existing.update(role_patch)
                 registry[role_name] = existing
+        # The registry the task runs with names known roles only and
+        # keeps every required role enabled. The check runs here, before
+        # the task row exists, so a bad registry never creates a task.
+        try:
+            validate_role_registry(registry)
+        except ValueError as exc:
+            raise VariantConfigurationError(str(exc)) from exc
         return {
             "variant": cls.descriptor.id,
             "variant_contract_version": cls.descriptor.contract_version,
@@ -141,6 +158,10 @@ class ClassicVariantRuntime:
             "effort": effort,
             "settings": {
                 "classic": classic_settings,
+                # The board limits and the salience weights travel with
+                # the task, so the run uses the values the deployment
+                # declared and the saved configuration is truthful.
+                "board": cls.board_settings(),
                 "model_pools": copy.deepcopy(MODEL_POOLS),
                 "model_pricing": copy.deepcopy(MODEL_PRICING),
                 "edge_node_models": copy.deepcopy(EDGE_NODE_MODELS),
@@ -148,6 +169,20 @@ class ClassicVariantRuntime:
             },
             "model_routing": routing,
             "role_registry": registry,
+        }
+
+    @staticmethod
+    def board_settings() -> dict[str, Any]:
+        """The board limits and salience weights of the deployment."""
+        return {
+            "max_entry_chars": int(MAX_ENTRY_CHARS),
+            "max_title_len": int(MAX_TITLE_LEN),
+            "salience_weights": {
+                "confidence": float(SALIENCE_W_C),
+                "recency": float(SALIENCE_W_R),
+                "refs_in": float(SALIENCE_W_X),
+                "penalty": float(SALIENCE_W_P),
+            },
         }
 
     @classmethod

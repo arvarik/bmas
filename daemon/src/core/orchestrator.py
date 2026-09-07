@@ -36,8 +36,10 @@ from config import (
 )
 from core.blackboard import Blackboard, normalize_level
 from core.circuit_breaker import EndpointCircuitBreaker
+from core.entry import DEFAULT_MAX_BODY_LEN, DEFAULT_MAX_TITLE_LEN
 from core.event_delivery import ensure_system_terminal_event, ensure_terminal_event
 from core.gateway import LeaseLostError
+from core.salience import DEFAULT_WEIGHTS, SalienceWeights
 from core.triage import MODEL_ROUTING, Complexity, TriageResult, TriageRouter
 from core.variants import (
     RuntimeKey,
@@ -888,6 +890,66 @@ class Orchestrator:
             )
             return False
 
+    async def _mediate_open_conflict(
+        self,
+        variant: Any,
+        task: dict,
+        step_result: Any,
+        board: dict[str, Any],
+    ) -> None:
+        """Run the private conflict mediation for a selected conflict resolver.
+
+        The mediation replaces the conflict resolver's public turn. Its
+        activation always reaches a finished state: ``completed`` after
+        the mediation, ``failed`` after an error. The round checkpoint
+        then closes with every planned activation accounted for.
+        """
+        task_id = task["task_id"]
+        conflict_activations = [
+            activation for activation in step_result.activations
+            if activation.actor == "conflict_resolver"
+        ]
+        open_conflicts = [
+            entry for entry in board.values()
+            if entry.type == "conflict" and entry.status == "open"
+        ]
+        if not conflict_activations or not open_conflicts:
+            return
+        logger.info("Conflict resolver selected with open conflicts — triggering private debate")
+        conflict_entry = sorted(open_conflicts, key=lambda e: getattr(e, "round", 0))[0]
+        activation = conflict_activations[0]
+        status = "completed"
+        try:
+            await variant.handle_conflict_resolution(
+                task, conflict_entry, self._dispatch_traditional_turn,
+            )
+        except Exception as exc:
+            status = "failed"
+            logger.error(f"Error during private conflict resolution: {exc}")
+            await self._safe_log(
+                activation.actor,
+                f"Private conflict resolution failed: {_summarize(str(exc))}",
+                task_id=task_id,
+                level="error",
+                turn_id=activation.activation_id,
+                fields={
+                    "event": "conflict_resolution_failed",
+                    "actor": activation.actor,
+                    "conflict_id": conflict_entry.id,
+                    "error": str(exc),
+                },
+            )
+        await variant.mark_activation_complete(
+            task_id, activation.activation_id or "", status,
+            actor=activation.actor,
+            node_endpoint=activation.node_endpoint,
+        )
+        # The mediation replaced the public turn of the conflict resolver.
+        step_result.activations = [
+            other for other in step_result.activations
+            if other.actor != "conflict_resolver"
+        ]
+
     async def _run_variant(
         self,
         variant_id: str,
@@ -947,9 +1009,8 @@ class Orchestrator:
                 'routing' (dict[str, str]) and/or 'role_registry' (dict[str, dict]).
                 These are merged on top of the session settings_store values.
         """
-        from core.board_store import SqliteRedisBoardStore, make_board_persist_hook
+        from core.board_store import SqliteRedisBoardStore
         from core.event_emitter import RedisEventEmitter
-        from core.gateway import BoardGateway, salience_recompute_hook
 
         task_id = request.task_id
         user_task = request.user_task
@@ -1005,13 +1066,11 @@ class Orchestrator:
         event_emitter = RedisEventEmitter(self.bb.redis)
         # Durable persistence: mirror the in-process snapshot into Redis
         # (no TTL) after every commit so the board survives for the life
-        # of the task and is retained for completed tasks.
-        gateway = BoardGateway(
-            board_store, event_emitter,
-            recompute_hooks=[
-                salience_recompute_hook,
-                make_board_persist_hook(self.bb),
-            ],
+        # of the task and is retained for completed tasks. The board
+        # limits and the salience weights come from the run's effective
+        # configuration, so the saved configuration is the one in force.
+        gateway = self._classic_board_gateway(
+            board_store, event_emitter, request.effective_configuration,
             commit_guard=self._commit_allowed,
         )
         events = await board_store.get_events(task_id)
@@ -1203,25 +1262,11 @@ class Orchestrator:
                 # Dispatch activations — decider runs AFTER all others
                 # so it can see the critic's board writes (doc 05 §1.1).
                 if step_result.activations:
-                    # Phase 0: Intercept conflict_resolver if there are open conflicts
-                    conflict_activations = [a for a in step_result.activations if a.actor == "conflict_resolver"]
-                    open_conflicts = [e for e in board.values() if e.type == "conflict" and e.status == "open"]
-                    
-                    if conflict_activations and open_conflicts:
-                        logger.info("Conflict resolver selected with open conflicts — triggering private debate")
-                        conflict_entry = sorted(open_conflicts, key=lambda e: getattr(e, 'round', 0))[0]
-                        try:
-                            await variant.handle_conflict_resolution(
-                                task, conflict_entry, self._dispatch_traditional_turn
-                            )
-                            activation_id = conflict_activations[0].activation_id or ""
-                            await variant.mark_activation_complete(
-                                task_id, activation_id, "completed",
-                            )
-                        except Exception as e:
-                            logger.error(f"Error during private conflict resolution: {e}")
-                        # Remove conflict_resolver from activations since we handled the mediation
-                        step_result.activations = [a for a in step_result.activations if a.actor != "conflict_resolver"]
+                    # Phase 0: a selected conflict resolver mediates the
+                    # oldest open conflict in a private space first.
+                    await self._mediate_open_conflict(
+                        variant, task, step_result, board,
+                    )
 
                 if step_result.activations:
                     # Split into non-decider and decider groups
@@ -1469,11 +1514,8 @@ class Orchestrator:
             raise KeyError(entry_id)
         if action == "boost":
             old_salience = float(entry.salience)
-            new_salience = await gateway.set_salience(
-                task_id,
-                entry_id,
-                min(1.0, old_salience * 2.0),
-                "operator",
+            new_salience = await gateway.boost_salience(
+                task_id, entry_id, "operator",
             )
             return {
                 "status": "boosted",
@@ -1499,19 +1541,78 @@ class Orchestrator:
         if gateway is not None:
             return gateway
 
-        from core.board_store import SqliteRedisBoardStore, make_board_persist_hook
+        from core.board_store import SqliteRedisBoardStore
         from core.event_emitter import RedisEventEmitter
-        from core.gateway import BoardGateway, salience_recompute_hook
 
         store = SqliteRedisBoardStore()
         await store.load_task(task_id)
+        persisted = await db.get_board_meta(task_id)
+        return self._classic_board_gateway(
+            store, RedisEventEmitter(self.bb.redis),
+            persisted.get("effective_configuration"),
+        )
+
+    @staticmethod
+    def classic_board_settings(
+        effective_configuration: dict[str, Any] | None,
+    ) -> tuple[int, int, SalienceWeights]:
+        """Return the board limits and salience weights of one run.
+
+        The values come from ``settings.board`` in the effective
+        configuration. A configuration saved before the board section
+        existed falls back to the deployment configuration, so an older
+        task keeps the limits its deployment declared.
+        """
+        import config
+
+        settings = dict((effective_configuration or {}).get("settings") or {})
+        board = settings.get("board")
+        board = dict(board) if isinstance(board, dict) else {}
+        default_weights = SalienceWeights(
+            w_c=float(getattr(config, "SALIENCE_W_C", DEFAULT_WEIGHTS.w_c)),
+            w_r=float(getattr(config, "SALIENCE_W_R", DEFAULT_WEIGHTS.w_r)),
+            w_x=float(getattr(config, "SALIENCE_W_X", DEFAULT_WEIGHTS.w_x)),
+            w_p=float(getattr(config, "SALIENCE_W_P", DEFAULT_WEIGHTS.w_p)),
+        )
+        max_title_len = int(board.get(
+            "max_title_len", getattr(config, "MAX_TITLE_LEN", DEFAULT_MAX_TITLE_LEN),
+        ))
+        max_body_len = int(board.get(
+            "max_entry_chars", getattr(config, "MAX_ENTRY_CHARS", DEFAULT_MAX_BODY_LEN),
+        ))
+        raw_weights = board.get("salience_weights")
+        weights = (
+            SalienceWeights.from_mapping({**default_weights.to_mapping(), **raw_weights})
+            if isinstance(raw_weights, dict)
+            else default_weights
+        )
+        return max(1, max_title_len), max(1, max_body_len), weights
+
+    def _classic_board_gateway(
+        self,
+        board_store: Any,
+        event_emitter: Any,
+        effective_configuration: dict[str, Any] | None,
+        *,
+        commit_guard: Any = None,
+    ) -> Any:
+        """Build the classic board gateway for one run's configuration."""
+        from core.board_store import make_board_persist_hook
+        from core.gateway import BoardGateway, make_salience_recompute_hook
+
+        max_title_len, max_body_len, weights = self.classic_board_settings(
+            effective_configuration,
+        )
         return BoardGateway(
-            store,
-            RedisEventEmitter(self.bb.redis),
+            board_store,
+            event_emitter,
             recompute_hooks=[
-                salience_recompute_hook,
+                make_salience_recompute_hook(weights),
                 make_board_persist_hook(self.bb),
             ],
+            commit_guard=commit_guard,
+            max_title_len=max_title_len,
+            max_body_len=max_body_len,
         )
 
     async def append_task_entry(

@@ -1007,3 +1007,53 @@ class TestDurableEventIdentity:
         ]
         assert len(rejections) == 1
         assert len(emitter.events_of_type(EVENT_ENTRY_REJECTED)) == 1
+
+
+class TestOperatorBoost:
+    """The operator boost is a salience component the recompute keeps."""
+
+    @pytest.mark.asyncio
+    async def test_operator_boost_survives_recompute(self, board_store, event_emitter):
+        gw = BoardGateway(
+            board_store, event_emitter,
+            recompute_hooks=[salience_recompute_hook],
+        )
+        await board_store.set_meta("task-1", round=1)
+        first = (await gw.append(
+            task_id="task-1",
+            actor="expert.x",
+            capabilities=["finding_writer"],
+            proposed=[make_proposed_entry(confidence=0.3)],
+            turn_id="turn-1",
+            round_no=1,
+        ))[0]
+        base = (await board_store.get_entry("task-1", first.id)).salience
+        assert 0.0 < base < 0.5
+
+        boosted = await gw.boost_salience("task-1", first.id, "operator")
+        assert boosted == pytest.approx(base * 2.0)
+        meta = await board_store.get_meta("task-1")
+        assert meta["salience_boosts"] == {first.id: 2.0}
+
+        # A later commit recomputes every score and keeps the boost.
+        await gw.append(
+            task_id="task-1",
+            actor="expert.y",
+            capabilities=["finding_writer"],
+            proposed=[make_proposed_entry(body="Another finding", confidence=0.3)],
+            turn_id="turn-2",
+            round_no=1,
+        )
+        kept = await board_store.get_entry("task-1", first.id)
+        assert kept.salience == pytest.approx(base * 2.0)
+
+        # A second boost multiplies the recorded factor.
+        again = await gw.boost_salience("task-1", first.id, "operator")
+        assert again == pytest.approx(min(1.0, base * 4.0))
+        assert (await board_store.get_meta("task-1"))["salience_boosts"] == {first.id: 4.0}
+        events = await board_store.get_events("task-1")
+        boost_events = [
+            event for event in events
+            if event["event_type"] == "entry_salience_changed"
+        ]
+        assert [event["payload"]["boost_factor"] for event in boost_events] == [2.0, 4.0]
