@@ -24,7 +24,6 @@ import logging
 import re
 import time
 import uuid
-from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -36,112 +35,46 @@ from core.model_parameters import (
     completion_parameters,
     message_content,
     profile_for_alias,
-    retry_budget,
     truncated,
 )
 from core.response_parser import parse_entries
-
-logger = logging.getLogger("bmas.traditional")
-
-
-# ── Data Models ──────────────────────────────────────────────────────
-
-@dataclass
-class StepResult:
-    """Result of one round of the blackboard cycle."""
-    terminal: bool
-    reason: str | None = None
-    activations: list[Activation] = field(default_factory=list)
-    # Coordinator (CU) routing decision metadata for this round (doc 05 §1.2).
-    # Surfaced to the orchestrator so it can both log WHO was selected and WHY,
-    # and persist that rationale/phase on each turn record — which powers the
-    # execution-graph handoff/decision visualization on the Graph tab.
-    selected: list[str] = field(default_factory=list)
-    rationale: str | None = None
-    selection_source: str = "heuristic"
-    phase: str | None = None
-
-
-@dataclass
-class Activation:
-    """A single agent activation for this round."""
-    actor: str              # opaque actor id (e.g. "critic", "expert.valuation")
-    role: str               # base role for capability lookup
-    model: str              # pool-drawn model for this turn
-    node_endpoint: str      # target node URL
-    profile: str | None = None
-    activation_id: str | None = None
-
-
-@dataclass
-class ExpertIdentity:
-    """An AG-generated expert."""
-    name: str               # display name (e.g. "Valuation Analyst")
-    slug: str               # actor id suffix (e.g. "valuation_analyst")
-    ability: str            # one-line ability description D_i
-    model: str              # pool-drawn model for this expert
-
-
-@dataclass
-class AgentRoster:
-    """The complete agent group for a task."""
-    constants: dict[str, str]    # role → ability description
-    experts: list[ExpertIdentity]
-
-    def all_actors(self) -> list[tuple[str, str]]:
-        """Return [(actor_id, ability_description)] for all agents."""
-        result = [(role, desc) for role, desc in self.constants.items()]
-        for expert in self.experts:
-            result.append((f"expert.{expert.slug}", expert.ability))
-        return result
-
-    def actor_names(self) -> list[str]:
-        """Return all actor names."""
-        return [a[0] for a in self.all_actors()]
-
-
-# ── Fallback experts ─────────────────────────────────────────────────
-#
-# The deterministic roster the engine uses when the agent generator
-# fails. The list holds the largest expert count the settings accept
-# (twelve per tier), in a fixed order.
-
-FALLBACK_EXPERTS: tuple[dict[str, str], ...] = (
-    {"name": "Domain Analyst", "slug": "domain_analyst",
-     "ability": "Deep analysis of the core domain question"},
-    {"name": "Systems Thinker", "slug": "systems_thinker",
-     "ability": "Identifies systemic factors and second-order effects"},
-    {"name": "Evidence Reviewer", "slug": "evidence_reviewer",
-     "ability": "Verifies claims against available evidence and data"},
-    {"name": "Root Cause Analyst", "slug": "root_cause_analyst",
-     "ability": "Traces failure chains to their underlying structural causes"},
-    {"name": "Constraint Mapper", "slug": "constraint_mapper",
-     "ability": "Lists the hard constraints and checks each candidate against them"},
-    {"name": "Counterexample Hunter", "slug": "counterexample_hunter",
-     "ability": "Searches for cases that break a proposed answer"},
-    {"name": "Quantitative Modeler", "slug": "quantitative_modeler",
-     "ability": "Builds the numeric model behind an estimate and states its assumptions"},
-    {"name": "Historical Precedent Analyst", "slug": "historical_precedent_analyst",
-     "ability": "Finds prior cases and reports what happened and why"},
-    {"name": "Stakeholder Analyst", "slug": "stakeholder_analyst",
-     "ability": "Identifies who is affected and what each party needs"},
-    {"name": "Risk Assessor", "slug": "risk_assessor",
-     "ability": "Ranks the failure modes by likelihood and impact"},
-    {"name": "Implementation Planner", "slug": "implementation_planner",
-     "ability": "Turns a conclusion into ordered steps with owners and checks"},
-    {"name": "Synthesis Editor", "slug": "synthesis_editor",
-     "ability": "Merges the findings into one consistent account and flags gaps"},
+from core.variants.classic.control import (
+    ControlLimits,
+    ControlPolicy,
+    ControlProgress,
+    parse_cu_output,
+)
+from core.variants.classic.roster import (
+    CONSTANT_ROLE_DESCRIPTIONS,
+    FALLBACK_EXPERTS,
+    AgentRoster,
+    ExpertIdentity,
+    RosterPolicy,
+)
+from core.variants.classic.scheduling import (
+    DECIDER_DEFERRAL_NOTE,
+    Activation,
+    SchedulingPolicy,
+    StepResult,
+    activation_identity,
 )
 
-# ── Constant Role Descriptions (for CU roster) ──────────────────────
+# The engine re-exports the data models and the parser it once defined,
+# so every existing import path stays valid after the extraction.
+__all__ = [
+    "CONSTANT_ROLE_DESCRIPTIONS",
+    "FALLBACK_EXPERTS",
+    "Activation",
+    "AgentRoster",
+    "ExpertIdentity",
+    "StepResult",
+    "TraditionalVariant",
+    "parse_cu_output",
+    "sole_evidence_vote",
+    "sole_majority_vote",
+]
 
-CONSTANT_ROLE_DESCRIPTIONS: dict[str, str] = {
-    "planner": "Decomposes the objective into actionable sub-goals and plans.",
-    "critic": "Identifies errors, hallucinations, and weak reasoning in findings.",
-    "conflict_resolver": "Detects contradictions between entries and mediates resolution.",
-    "cleaner": "Removes redundant or obsolete entries to keep the board focused.",
-    "decider": "Judges whether the board is sufficient and posts the final solution.",
-}
+logger = logging.getLogger("bmas.traditional")
 
 
 # ── TraditionalVariant ───────────────────────────────────────────────
@@ -241,12 +174,16 @@ class TraditionalVariant:
             for model, pricing in model_pricing.items()
         }
 
-        # Edge inference round-robin state.
-        # When model_routing resolves to "local", _resolve_edge_model()
-        # cycles through edge_node_models so consecutive LLM calls hit
-        # different inference GPUs instead of always targeting edge-node-1.
-        self._edge_models: list[str] = edge_node_models or ["edge-node-1"]
-        self._edge_rr_counter: int = 0
+        # The policies the engine delegates to. The roster policy keeps
+        # the edge round-robin state and the scheduling policy keeps the
+        # actor-to-endpoint pins; the engine checkpoints both.
+        self.roster_policy = RosterPolicy(
+            model_routing=self.model_routing,
+            model_pools=self.model_pools,
+            edge_models=edge_node_models or ["edge-node-1"],
+        )
+        self.control_policy = ControlPolicy()
+        self.scheduling_policy = SchedulingPolicy()
 
         # Per-task state (set during genesis)
         self.roster: AgentRoster | None = None
@@ -261,11 +198,82 @@ class TraditionalVariant:
 
         # Phase 5: stateful turn response IDs (doc 12 §5.2)
         self._response_ids: dict[str, str] = {}
-        self._actor_nodes: dict[str, str] = {}
 
         # Phase 5: HITL pause flag (doc 05 §6)
         self._paused: bool = False
         self._checkpoint_lock = asyncio.Lock()
+
+    # ── Policy state under the engine's historical names ─────────────
+
+    @property
+    def _actor_nodes(self) -> dict[str, str]:
+        return self.scheduling_policy.actor_nodes
+
+    @_actor_nodes.setter
+    def _actor_nodes(self, value: dict[str, str]) -> None:
+        self.scheduling_policy.actor_nodes = dict(value)
+
+    @property
+    def _edge_models(self) -> list[str]:
+        return self.roster_policy.edge_models
+
+    @_edge_models.setter
+    def _edge_models(self, value: list[str]) -> None:
+        self.roster_policy.edge_models = list(value)
+
+    @property
+    def _edge_rr_counter(self) -> int:
+        return self.roster_policy.edge_rotation
+
+    @_edge_rr_counter.setter
+    def _edge_rr_counter(self, value: int) -> None:
+        self.roster_policy.edge_rotation = int(value)
+
+    def _control_limits(self) -> ControlLimits:
+        """The live limits of this engine for one control decision."""
+        return ControlLimits(
+            max_rounds=self.max_rounds,
+            max_concurrent=self.max_concurrent,
+            stall_rounds=self.stall_rounds,
+            max_replans=self.max_replans,
+            budget_ceiling=self.budget_ceiling,
+            require_evidence=self.require_evidence,
+            cleaner_threshold=self.cleaner_threshold,
+        )
+
+    def _control_progress(self) -> ControlProgress:
+        """The live control state of this engine for one decision."""
+        return ControlProgress(
+            budget_spent=self.budget_spent,
+            stall_counter=self._stall_counter,
+            replan_count=self._replan_count,
+        )
+
+    async def _post_control_completion(
+        self,
+        task_id: str | None,
+        body: dict[str, Any],
+        phase: str,
+        *,
+        round_no: int | None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Post one control-plane completion and record its cost."""
+        request: dict[str, Any] = {
+            "headers": {"Authorization": f"Bearer {self.litellm_key}"},
+            "json": body,
+        }
+        if timeout is not None:
+            request["timeout"] = timeout
+        resp = await self.http.post(f"{self.litellm_url}/chat/completions", **request)
+        resp.raise_for_status()
+        resp_json = resp.json()
+        # Capture control-plane LLM usage/cost (doc 06 §3.1)
+        await self._record_llm_cost(
+            task_id, resp_json.get("usage"), str(body.get("model")), phase,
+            round_no=round_no,
+        )
+        return resp_json
 
     # ── Genesis ──────────────────────────────────────────────────────
 
@@ -322,10 +330,7 @@ class TraditionalVariant:
         experts = await self._generate_experts(query, n_experts, self._tier, task_id)
 
         # 3. Build roster
-        self.roster = AgentRoster(
-            constants=dict(CONSTANT_ROLE_DESCRIPTIONS),
-            experts=experts,
-        )
+        self.roster = self.roster_policy.build_roster(experts)
 
         logger.info(
             "genesis | task=%s tier=%s experts=%d model=%s",
@@ -371,18 +376,7 @@ class TraditionalVariant:
             decider_state="waiting",
             tier=self._tier,
             genesis_started_at=self.genesis_started_at,
-            roster={
-                "constants": self.roster.constants,
-                "experts": [
-                    {
-                        "name": expert.name,
-                        "slug": expert.slug,
-                        "ability": expert.ability,
-                        "model": expert.model,
-                    }
-                    for expert in self.roster.experts
-                ],
-            },
+            roster=self.roster_policy.roster_to_metadata(self.roster),
             response_ids={},
             actor_nodes={},
             stall_counter=0,
@@ -399,47 +393,7 @@ class TraditionalVariant:
         """Restore the control state for a durable classic-board task."""
         task_id = task["task_id"]
         meta = await self.store.get_meta(task_id)
-        roster_data = meta.get("roster", {})
-        if isinstance(roster_data, str):
-            try:
-                roster_data = json.loads(roster_data)
-            except (json.JSONDecodeError, TypeError):
-                roster_data = {}
-
-        constants = dict(CONSTANT_ROLE_DESCRIPTIONS)
-        experts: list[ExpertIdentity] = []
-        if isinstance(roster_data, dict):
-            raw_constants = roster_data.get("constants")
-            if isinstance(raw_constants, dict):
-                constants = {
-                    str(role): str(description)
-                    for role, description in raw_constants.items()
-                }
-            for raw in roster_data.get("experts", []):
-                if not isinstance(raw, dict):
-                    continue
-                experts.append(ExpertIdentity(
-                    name=str(raw.get("name", "Expert")),
-                    slug=str(raw.get("slug", "expert")),
-                    ability=str(raw.get("ability", "Domain expert")),
-                    model=str(raw.get("model", self.model_routing.get("medium", "medium"))),
-                ))
-        elif isinstance(roster_data, list):
-            # Read legacy metadata written before the durable roster format.
-            for raw in roster_data:
-                if not isinstance(raw, dict):
-                    continue
-                actor = str(raw.get("actor", ""))
-                if actor.startswith("expert."):
-                    slug = actor.split(".", 1)[1]
-                    experts.append(ExpertIdentity(
-                        name=slug.replace("_", " ").title(),
-                        slug=slug,
-                        ability=str(raw.get("ability", "Domain expert")),
-                        model=self.model_routing.get("medium", "medium"),
-                    ))
-
-        self.roster = AgentRoster(constants=constants, experts=experts)
+        self.roster = self.roster_policy.roster_from_metadata(meta.get("roster", {}))
         self._tier = str(meta.get("tier", "medium"))
         self.budget_spent = float(meta.get("budget_spent", 0.0))
         self._response_ids = {
@@ -472,9 +426,6 @@ class TraditionalVariant:
 
     async def checkpoint(self, task_id: str) -> None:
         """Persist the control state at a safe round boundary."""
-        roster = self.roster or AgentRoster(
-            constants=dict(CONSTANT_ROLE_DESCRIPTIONS), experts=[],
-        )
         await self.gateway.set_meta(
             task_id,
             tier=self._tier,
@@ -490,121 +441,43 @@ class TraditionalVariant:
             turn_durations=list(self._turn_durations),
             edge_rr_counter=self._edge_rr_counter,
             genesis_started_at=self.genesis_started_at,
-            roster={
-                "constants": roster.constants,
-                "experts": [
-                    {
-                        "name": expert.name,
-                        "slug": expert.slug,
-                        "ability": expert.ability,
-                        "model": expert.model,
-                    }
-                    for expert in roster.experts
-                ],
-            },
+            roster=self.roster_policy.roster_to_metadata(self.roster),
         )
 
     async def _generate_experts(
         self, query: str, n: int, tier: str, task_id: str | None = None,
     ) -> list[ExpertIdentity]:
         """AG: one LiteLLM call to generate n expert identities (doc 05 §2.1)."""
-        if n <= 0:
-            return []
 
-        from models.personas import AG_SYSTEM_PROMPT
-
-        ag_model = self._resolve_model(self.model_routing.get(tier, "medium"))
-        fallback_reason: str | None = None
-        try:
-            resp = await self.http.post(
-                f"{self.litellm_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.litellm_key}"},
-                json={
-                    "model": ag_model,
-                    "messages": [
-                        {"role": "system", "content": AG_SYSTEM_PROMPT.format(n=n)},
-                        {"role": "user", "content": f"Task: {query}"},
-                    ],
-                    # 4 experts x ~200 tokens each plus the JSON wrapper; the
-                    # provider profile adds the reasoning headroom a thinking
-                    # model needs before it writes the visible JSON.
-                    **completion_parameters(
-                        profile_for_alias(ag_model), output_tokens=1024,
-                        temperature=0.4, reasoning="low", json_object=True,
-                    ),
-                },
+        async def complete(body: dict[str, Any]) -> dict[str, Any]:
+            return await self._post_control_completion(
+                task_id, body, "control_plane:ag", round_no=0,
             )
-            resp.raise_for_status()
-            resp_json = resp.json()
-            # Capture control-plane LLM usage/cost (doc 06 §3.1)
-            await self._record_llm_cost(
-                task_id, resp_json.get("usage"), ag_model, "control_plane:ag",
-                round_no=0,
-            )
-            choice = resp_json["choices"][0]
-            finish_reason = choice.get("finish_reason", "stop")
-            raw_content = message_content(resp_json)
 
-            # Guard against truncated JSON: if the model hit the token limit
-            # the JSON will be incomplete and json.loads will raise.  Detect
-            # this early so the except block can log a meaningful reason.
-            if finish_reason == "length":
-                usage = resp_json.get("usage", {})
-                raise ValueError(
-                    f"AG response truncated (finish_reason=length): "
-                    f"completion_tokens={usage.get('completion_tokens')}, "
-                    f"reasoning_tokens={usage.get('completion_tokens_details', {}).get('reasoning_tokens')}. "
-                    f"Increase max_tokens or switch to a non-thinking model for the AG call."
-                )
-
-            data = json.loads(raw_content)
-            raw_experts = data.get("experts", [])[:n]
-            if not raw_experts:
-                raise ValueError(
-                    f"AG returned empty experts list. "
-                    f"Raw content preview: {raw_content[:200]!r}"
-                )
-        except Exception as e:
-            fallback_reason = str(e)
-            logger.warning("AG call failed (%s), using default experts", e)
-            raw_experts = self._default_experts(n)
-
-            # Emit a visible ag_fallback event to the task stream so the operator
-            # can diagnose why generic experts appeared in Mission Control.
+        async def on_fallback(
+            model: str, error: str, fallback_experts: list[dict[str, Any]],
+        ) -> None:
+            # Emit a visible ag_fallback event to the task stream so the
+            # operator can diagnose why generic experts appeared in
+            # Mission Control.
             if task_id and self.emitter:
                 try:
                     await self.emitter.emit(task_id, "ag_fallback", {
-                        "model": ag_model,
+                        "model": model,
                         "tier": tier,
-                        "error": fallback_reason,
-                        "fallback_experts": [ex["slug"] for ex in raw_experts],
+                        "error": error,
+                        "fallback_experts": [ex["slug"] for ex in fallback_experts],
                     })
                 except Exception as emit_err:
                     logger.debug("Failed to emit ag_fallback event: %s", emit_err)
 
-        # Assign models with pool diversity (doc 05 §2.1)
-        experts = []
-        pool = self.model_pools.get(tier) or [self.model_routing.get(tier, "medium")]
-        for i, ex in enumerate(raw_experts):
-            model = pool[i % len(pool)] if pool else self.model_routing.get(tier, "medium")
-            slug = str(ex.get("slug", f"expert_{i}")).replace(" ", "_").lower()
-            # Sanitize slug: only alphanumeric and underscores
-            slug = "".join(c for c in slug if c.isalnum() or c == "_")
-            experts.append(ExpertIdentity(
-                name=str(ex.get("name", f"Expert {i+1}")),
-                slug=slug,
-                ability=str(ex.get("ability", "Domain expert")),
-                model=model,
-            ))
-        return experts
+        return await self.roster_policy.generate_experts(
+            query, n, tier, complete=complete, on_fallback=on_fallback,
+        )
 
     def _default_experts(self, n: int) -> list[dict]:
-        """Fallback expert definitions when the AG call fails.
-
-        The list covers the largest configurable expert count, so a
-        fallback roster always holds the complete requested count.
-        """
-        return [dict(expert) for expert in FALLBACK_EXPERTS[:max(0, n)]]
+        """Fallback expert definitions when the AG call fails."""
+        return self.roster_policy.default_experts(n)
 
 
     async def _attach_uploads(self, task_id: str, task: dict) -> None:
@@ -868,29 +741,17 @@ class TraditionalVariant:
                 phase=self._infer_phase(snapshot, current_round),
             )
 
-        # ── Paper §3.2 guard: decider MUST run alone ─────────────────
-        # The decider must see ALL board writes (including critiques)
-        # before judging. If the CU co-selected decider with other agents,
-        # strip it — the next round's CU call will re-select it once the
-        # other agents have finished writing. The guard runs before the
-        # concurrency clamp, so the slot the decider held goes to the
-        # next selected agent instead of staying empty.
-        if "decider" in selected and len(selected) > 1:
+        # The scheduling policy applies the paper §3.2 guard (the decider
+        # runs alone) before it clamps the plan to the concurrency limit.
+        selected, decider_deferred = self.scheduling_policy.isolate_decider(selected)
+        if decider_deferred:
             logger.info(
                 "Decider exclusion guard | task=%s round=%d — "
                 "CU co-selected decider with %s; deferring decider to next round",
-                task_id, current_round,
-                [a for a in selected if a != "decider"],
+                task_id, current_round, selected,
             )
-            selected = [a for a in selected if a != "decider"]
-            rationale = (
-                (rationale or "")
-                + " [Decider deferred: must run alone per paper §3.2"
-                  " so it can see all prior board writes.]"
-            ).strip()
-
-        # Clamp to max_concurrent
-        selected = selected[:self.max_concurrent]
+            rationale = ((rationale or "") + DECIDER_DEFERRAL_NOTE).strip()
+        selected = self.scheduling_policy.clamp(selected, self.max_concurrent)
 
         # Emit coordinator narration event (doc 05 §1.2, doc 13 §3)
         # Gated by flag — when off, no event fires and the UI lane hides entirely.
@@ -977,41 +838,12 @@ class TraditionalVariant:
         task_id: str, round_no: int, actor: str, index: int,
     ) -> str:
         """Build a stable activation identity for retries and restarts."""
-        value = f"bmas:{task_id}:{round_no}:{actor}:{index}"
-        return f"activation-{uuid.uuid5(uuid.NAMESPACE_URL, value).hex}"
+        return activation_identity(task_id, round_no, actor, index)
 
     async def restore_active_round(self, task_id: str) -> StepResult | None:
         """Restore the unfinished activation plan for one classic round."""
         meta = await self.store.get_meta(task_id)
-        state = meta.get("round_state")
-        if not isinstance(state, dict) or state.get("status") != "active":
-            return None
-        completed = state.get("completed", {})
-        if not isinstance(completed, dict):
-            completed = {}
-        activations = []
-        for raw in state.get("activations", []):
-            if not isinstance(raw, dict):
-                continue
-            activation_id = str(raw.get("activation_id", ""))
-            if activation_id and activation_id in completed:
-                continue
-            activations.append(Activation(
-                actor=str(raw.get("actor", "")),
-                role=str(raw.get("role", "")),
-                model=str(raw.get("model", "")),
-                node_endpoint=str(raw.get("node_endpoint", "")),
-                profile=raw.get("profile"),
-                activation_id=activation_id or None,
-            ))
-        return StepResult(
-            terminal=False,
-            activations=activations,
-            selected=[activation.actor for activation in activations],
-            rationale=str(state.get("rationale", "Recovered round")),
-            selection_source=str(state.get("selection_source", "checkpoint")),
-            phase=str(state.get("phase", meta.get("phase", "Discovery"))),
-        )
+        return SchedulingPolicy.plan_from_state(meta.get("round_state"), meta)
 
     async def mark_activation_complete(
         self,
@@ -1430,68 +1262,10 @@ class TraditionalVariant:
         snapshot: dict[str, BoardEntry],
         meta: dict[str, Any],
     ) -> str:
-        """Build the control-unit prompt with an explicit progress block.
-
-        The CU sees how the task is trending — budget pressure, new entries
-        last round, unresolved critiques, and the stall state — so it can
-        prefer verification and convergence when returns diminish.
-        """
-        budget_remaining = max(0.0, self.budget_ceiling - self.budget_spent)
-        budget_pct = (
-            min(100, int(100 * self.budget_spent / self.budget_ceiling))
-            if self.budget_ceiling > 0 else 0
-        )
-        ledger_rows = list(meta.get("progress_ledger") or [])
-        last = ledger_rows[-1] if ledger_rows else {}
-        entries_last_round = int(last.get("entries_added", 0) or 0)
-        open_critiques = sum(
-            1 for entry in snapshot.values()
-            if entry.status == "open" and entry.type == "critique"
-        )
-        open_conflicts = sum(
-            1 for entry in snapshot.values()
-            if entry.status == "open" and entry.type == "conflict"
-        )
-        evidence_last_round = sum(
-            1 for entry in snapshot.values()
-            if entry.status == "open"
-            and entry.round == current_round - 1
-            and getattr(entry, "sources", None)
-        )
-        pressure_line = ""
-        if budget_pct >= 80:
-            pressure_line = (
-                "- BUDGET PRESSURE: over 80% of the budget is spent. "
-                "Select agents that converge (critic, decider). "
-                "Do not open new lines of work.\n"
-            )
-        evidence_line = ""
-        if self.require_evidence:
-            evidence_line = (
-                "- EVIDENCE REQUIRED: this effort level treats a round of "
-                "unsourced findings as a stall. Prefer agents that can cite "
-                "tool or web sources.\n"
-            )
-        return (
-            f"## Objective\n{query}\n\n"
-            f"## Current Board (round {current_round})\n{board_text}\n\n"
-            f"## Available Agents\n{roster_text}\n\n"
-            f"## Progress\n"
-            f"- Budget: ${self.budget_spent:.4f} spent of "
-            f"${self.budget_ceiling:.2f} ({budget_pct}%)\n"
-            f"- Last round added {entries_last_round} entries "
-            f"({evidence_last_round} with external sources); "
-            f"{open_critiques} unresolved critiques; "
-            f"{open_conflicts} open conflicts\n"
-            f"- Stall counter: {self._stall_counter}/{self.stall_rounds}; "
-            f"replans used: {self._replan_count}/{self.max_replans}\n"
-            f"- A round that only restates existing content counts as a stall.\n"
-            f"{evidence_line}"
-            f"{pressure_line}\n"
-            f"## Constraints\n"
-            f"- Round: {current_round}/{self.max_rounds}\n"
-            f"- Budget remaining: ${budget_remaining:.4f}\n"
-            f"- Select 1-{self.max_concurrent} agents\n"
+        """Build the control-unit prompt through the control policy."""
+        return self.control_policy.cu_prompt(
+            query, board_text, roster_text, current_round, snapshot, meta,
+            limits=self._control_limits(), progress=self._control_progress(),
         )
 
     async def _cu_select(
@@ -1511,71 +1285,20 @@ class TraditionalVariant:
         if not self.roster:
             return self._deterministic_fallback(snapshot, current_round), None
 
-        from models.personas import CU_SYSTEM_PROMPT
-
         board_text = self._serialize_board_for_cu(snapshot)
-        roster_text = "\n".join(
-            f"- {actor}: {desc}"
-            for actor, desc in self.roster.all_actors()
-        )
-
-        prompt = self._cu_prompt(
-            query, board_text, roster_text, current_round, snapshot, meta,
-        )
-
-        system = CU_SYSTEM_PROMPT.format(max_concurrent=self.max_concurrent)
-
         cu_model = self._resolve_model(self.model_routing.get("light", "medium"))
-        # The visible reply is a short JSON object; a reasoning model
-        # spends completion tokens on reasoning first, so the budget
-        # comes from the provider profile and grows once on truncation.
-        parameters = completion_parameters(
-            profile_for_alias(cu_model), output_tokens=256, temperature=0.2,
-            reasoning="low", json_object=True,
-        )
-        # Try up to 2 times (1 retry on garbled or truncated output)
-        for attempt in range(2):
-            try:
-                resp = await self.http.post(
-                    f"{self.litellm_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {self.litellm_key}"},
-                    json={
-                        "model": cu_model,
-                        "messages": [
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": prompt},
-                        ],
-                        **parameters,
-                    },
-                    timeout=30.0,
-                )
-                resp.raise_for_status()
-                resp_json = resp.json()
-                # Capture control-plane LLM usage/cost (doc 06 §3.1)
-                await self._record_llm_cost(
-                    task_id, resp_json.get("usage"), cu_model, "control_plane:cu",
-                    round_no=current_round,
-                )
-                cut = truncated(resp_json)
-                if cut is not None:
-                    logger.warning(
-                        "CU reply truncated at %s tokens (%s reasoning); "
-                        "retrying with a larger budget",
-                        cut["completion_tokens"], cut["reasoning_tokens"],
-                    )
-                    parameters = retry_budget(parameters)
-                    continue
-                raw = message_content(resp_json)
-                selected, rationale = parse_cu_output(raw, self.roster.actor_names())
-                if selected:
-                    return selected, rationale
-                logger.warning("CU returned empty selection (attempt %d)", attempt + 1)
-            except Exception as e:
-                logger.warning("CU call failed (attempt %d): %s", attempt + 1, e)
 
-        # Fallback to deterministic table
-        logger.info("CU failed after retries, using deterministic fallback")
-        return self._deterministic_fallback(snapshot, current_round), None
+        async def complete(body: dict[str, Any]) -> dict[str, Any]:
+            return await self._post_control_completion(
+                task_id, body, "control_plane:cu", round_no=current_round, timeout=30.0,
+            )
+
+        return await self.control_policy.select(
+            query, snapshot, current_round, meta,
+            roster=self.roster, board_text=board_text, model=cu_model,
+            limits=self._control_limits(), progress=self._control_progress(),
+            complete=complete,
+        )
 
     def _fallback_rationale(
         self,
@@ -1583,49 +1306,8 @@ class TraditionalVariant:
         current_round: int,
         selected: list[str],
     ) -> str:
-        """Synthesize a human-readable routing rationale for the graph.
-
-        Used when the CU did not return a usable rationale (deterministic
-        fallback or garbled LLM output). Mirrors the decision rules in
-        ``_deterministic_fallback`` so the Graph tab can always explain WHY
-        a handoff happened, even on replayed/completed tasks (doc 05 §1.2).
-        """
-        names = ", ".join(selected) if selected else "no agents"
-        if current_round <= 1:
-            return (
-                f"Discovery round: seeded the board by activating the planner "
-                f"and all domain experts ({names})."
-            )
-
-        open_entries = [e for e in snapshot.values() if e.status == "open"]
-        addressed_refs = {ref for e in open_entries if e.type != "critique" for ref in e.refs}
-        has_unaddressed_critique = any(
-            e.type == "critique" and e.id not in addressed_refs
-            for e in open_entries
-        )
-        has_conflict = any(e.type == "conflict" for e in open_entries)
-
-        if "conflict_resolver" in selected and has_conflict:
-            return (
-                "Open conflict detected between board entries — routed to the "
-                "conflict_resolver to mediate."
-            )
-        if "cleaner" in selected:
-            return (
-                f"Board grew past the cleaner threshold "
-                f"({len(open_entries)} open entries) — routed to the cleaner to prune."
-            )
-        if "decider" in selected and len(selected) == 1:
-            return (
-                "No open critiques or conflicts remain — routed to the decider "
-                "to judge sufficiency and post a solution."
-            )
-        if has_unaddressed_critique:
-            return (
-                f"Unaddressed critiques on the board — routed back to the critiqued "
-                f"authors ({names}) to rebut or revise."
-            )
-        return f"Heuristic routing for round {current_round}: activated {names}."
+        """Explain a heuristic selection through the control policy."""
+        return self.control_policy.fallback_rationale(snapshot, current_round, selected)
 
     def _get_eviction_candidates(self, snapshot: dict[str, BoardEntry] | dict[str, Any], max_candidates: int = 12) -> list[BoardEntry]:
         """Calculate Retention Value and return the bottom N eviction candidates."""
@@ -1697,66 +1379,11 @@ class TraditionalVariant:
         snapshot: dict[str, BoardEntry],
         current_round: int,
     ) -> list[str]:
-        """Deterministic fallback policy (doc 05 §1.1).
-
-        Round 1 → planner + all experts
-        Open critiques without rebuttals → critiqued authors
-        Open conflicts → conflict_resolver
-        Entry count > cleaner_threshold → cleaner
-        Otherwise → decider
-        """
-        if not self.roster:
-            return ["planner"]
-
-        # Round 1: planner + all experts
-        if current_round <= 1:
-            selected = ["planner"]
-            for expert in self.roster.experts:
-                selected.append(f"expert.{expert.slug}")
-            return selected
-
-        # Open critiques without rebuttals → critiqued authors
-        open_entries = {
-            eid: e for eid, e in snapshot.items()
-            if e.status == "open"
-        }
-        critiques = [
-            e for e in open_entries.values() if e.type == "critique"
-        ]
-        addressed_refs = set()
-        for e in open_entries.values():
-            if e.type != "critique":
-                addressed_refs.update(e.refs)
-
-        unaddressed_critiques = [
-            c for c in critiques if c.id not in addressed_refs
-        ]
-        if unaddressed_critiques:
-            # Find the authors of the critiqued entries
-            critiqued_authors = set()
-            for c in unaddressed_critiques:
-                for ref_id in c.refs:
-                    ref_entry = snapshot.get(ref_id)
-                    if ref_entry:
-                        critiqued_authors.add(ref_entry.author)
-            if critiqued_authors:
-                # A sorted list keeps the selection order independent of
-                # the set iteration order and the hash seed.
-                return sorted(critiqued_authors)
-
-        # Open conflicts → conflict_resolver
-        conflicts = [
-            e for e in open_entries.values() if e.type == "conflict"
-        ]
-        if conflicts:
-            return ["conflict_resolver"]
-
-        # Entry count > threshold → cleaner
-        if len(open_entries) > self.cleaner_threshold:
-            return ["cleaner"]
-
-        # Default → decider
-        return ["decider"]
+        """Deterministic fallback policy (doc 05 §1.1) through the control policy."""
+        return self.control_policy.deterministic_fallback(
+            snapshot, current_round, self.roster,
+            cleaner_threshold=self.cleaner_threshold,
+        )
 
     # ── SolE (doc 05 §3, path 2) ─────────────────────────────────────
 
@@ -2392,127 +2019,35 @@ class TraditionalVariant:
 
     def set_actor_node(self, actor: str, endpoint: str) -> None:
         """Pin an actor to the endpoint that completed its last turn."""
-        if endpoint:
-            self._actor_nodes[actor] = endpoint
+        self.scheduling_policy.pin_actor(actor, endpoint)
 
     # ── Node Assignment ──────────────────────────────────────────────
 
     def _to_activations(self, selected: list[str]) -> list[Activation]:
-        """Assign selected actors to nodes (load-balanced, one-per-host)."""
-        activations = []
-        used_hosts: set[str] = set()
-
-        for actor in selected:
-            base_role = actor.split(".")[0] if "." in actor else actor
-            # Look up in registry
-            reg = self.role_registry.get(base_role, {})
-            if reg.get("enabled") is False:
-                logger.info("Actor %s is disabled", actor)
-                continue
-            profile = reg.get("profile")
-            raw_endpoints = reg.get("endpoints", list(self.node_endpoints))
-            endpoints: list[str] = [
-                str(endpoint) for endpoint in raw_endpoints if endpoint
-            ]
-            if not endpoints:
-                logger.warning("No endpoint is configured for actor %s", actor)
-                continue
-
-            # Expert model from roster
-            model = self._resolve_model(self.model_routing.get(self._tier, "medium"))
-            if actor.startswith("expert.") and self.roster:
-                slug = actor.split(".", 1)[1]
-                expert = next(
-                    (e for e in self.roster.experts if e.slug == slug), None
-                )
-                if expert:
-                    model = self._resolve_model(expert.model)
-
-            # Keep stateful response IDs on the node that created them.
-            pinned_endpoint = self._actor_nodes.get(actor)
-            endpoint = (
-                pinned_endpoint
-                if pinned_endpoint in endpoints
-                else endpoints[0]
-            )
-            if pinned_endpoint not in endpoints:
-                for ep in endpoints:
-                    if ep not in used_hosts:
-                        endpoint = ep
-                        break
-                self._actor_nodes[actor] = endpoint
-            used_hosts.add(endpoint)
-
-            activations.append(Activation(
-                actor=actor,
-                role=base_role,
-                model=model,
-                node_endpoint=endpoint,
-                profile=profile,
-            ))
-
-        return activations
+        """Assign selected actors to nodes through the scheduling policy."""
+        return self.scheduling_policy.to_activations(
+            selected,
+            roster=self.roster,
+            tier=self._tier,
+            role_registry=self.role_registry,
+            node_endpoints=self.node_endpoints,
+            model_routing=self.model_routing,
+            resolve_model=self._resolve_model,
+        )
 
     def _normalize_selection(self, selected: list[str]) -> list[str]:
         """Remove unknown, disabled, and duplicate actor selections."""
-        valid_names = (
-            set(self.roster.actor_names())
-            if self.roster
-            else set(CONSTANT_ROLE_DESCRIPTIONS)
+        return self.control_policy.normalize_selection(
+            selected, self.roster, self.role_registry,
         )
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for actor in selected:
-            if actor in seen or actor not in valid_names:
-                continue
-            base_role = actor.split(".", 1)[0]
-            if self.role_registry.get(base_role, {}).get("enabled") is False:
-                continue
-            seen.add(actor)
-            normalized.append(actor)
-        return normalized
 
     # ── Phase Inference ──────────────────────────────────────────────
 
     def _infer_phase(
         self, snapshot: dict[str, BoardEntry], current_round: int,
     ) -> str:
-        """Infer the board phase from entry composition.
-
-        Phases:
-          Discovery   — round 1, board has only objective / plan entries.
-          Debate      — at least one open critique has NOT yet been addressed
-                        (no other open entry references it).
-          Convergence — a solution exists, OR all open critiques have been
-                        addressed by at least one referencing entry (rebuttal,
-                        finding, or otherwise) — board is ready for the decider.
-        """
-        open_entries = [e for e in snapshot.values() if e.status == "open"]
-
-        has_solutions = any(e.type == "solution" for e in open_entries)
-        if has_solutions:
-            return "Convergence"
-
-        critiques = [e for e in open_entries if e.type == "critique"]
-
-        if critiques:
-            # Collect all entry IDs that other open entries reference.
-            # A critique is "addressed" when at least one non-critique open
-            # entry (e.g. rebuttal, finding) lists that critique's id in refs.
-            addressed_ids: set[str] = set()
-            for e in open_entries:
-                if e.type != "critique":
-                    addressed_ids.update(e.refs)
-
-            unaddressed = [c for c in critiques if c.id not in addressed_ids]
-            if unaddressed:
-                return "Debate"
-            # All critiques have been responded to — board is converging.
-            return "Convergence"
-
-        if current_round <= 1:
-            return "Discovery"
-        return "Debate"
+        """Infer the board phase through the scheduling policy."""
+        return self.scheduling_policy.infer_phase(snapshot, current_round)
 
 
     # ── Board Serialization ──────────────────────────────────────────
@@ -2736,29 +2271,12 @@ class TraditionalVariant:
     # ── Edge Model Resolution ────────────────────────────────────────
 
     def _resolve_model(self, model: str) -> str:
-        """Resolve a model alias, distributing 'local' across edge nodes.
-
-        When `model` is the "local" sentinel, picks the next edge-node-N
-        alias via round-robin so consecutive LLM calls are spread across
-        all inference GPUs.  Non-local aliases pass through unchanged.
-        """
-        if model == "local":
-            return self._resolve_edge_model()
-        return model
+        """Resolve a model alias through the roster policy."""
+        return self.roster_policy.resolve_model(model)
 
     def _resolve_edge_model(self) -> str:
-        """Round-robin across edge inference node model aliases.
-
-        Returns "edge-node-1", "edge-node-2", ... cycling through all
-        available inference nodes.  The counter persists across rounds
-        within a single task so distribution is even over the task's
-        lifetime, not just within a single round.
-        """
-        if not self._edge_models:
-            return "edge-node-1"  # safety fallback
-        model = self._edge_models[self._edge_rr_counter % len(self._edge_models)]
-        self._edge_rr_counter += 1
-        return model
+        """Round-robin across edge inference node model aliases."""
+        return self.roster_policy.resolve_edge_model()
 
     # ── Cost Tracking ────────────────────────────────────────────────
 
@@ -2885,61 +2403,6 @@ class TraditionalVariant:
     async def close(self) -> None:
         """Close HTTP client."""
         await self.http.aclose()
-
-
-# ── CU Output Parser (doc 05 §1.1) ──────────────────────────────────
-
-def parse_cu_output(
-    raw: str, valid_names: list[str],
-) -> tuple[list[str], str | None]:
-    """Parse CU selection JSON.  Returns (valid_actor_names, rationale).
-
-    Drops unknown names with warning.  Returns ([], None) on garbled output.
-    A malformed or missing rationale is returned as None — it NEVER raises
-    or blocks the loop (doc 05 §1.2).
-    """
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        # Try to extract JSON from markdown code blocks
-        import re
-        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
-        if match:
-            try:
-                data = json.loads(match.group(1))
-            except (json.JSONDecodeError, TypeError):
-                return [], None
-        else:
-            return [], None
-
-    if not isinstance(data, dict):
-        return [], None
-
-    selected = data.get("selected", [])
-    if not isinstance(selected, list):
-        return [], None
-
-    # Extract rationale — must be a non-empty string, else None.
-    # A malformed rationale never blocks the loop.
-    raw_rationale = data.get("rationale")
-    rationale: str | None = (
-        str(raw_rationale).strip() or None
-    ) if isinstance(raw_rationale, str) else None
-
-    # Filter to valid names
-    result = []
-    seen: set[str] = set()
-    valid_set = set(valid_names)
-    for name in selected:
-        if not isinstance(name, str):
-            continue
-        if name in valid_set and name not in seen:
-            result.append(name)
-            seen.add(name)
-        else:
-            logger.warning("CU selected unknown agent '%s' — dropping", name)
-
-    return result, rationale
 
 
 # ── SolE Majority-Similarity Vote (doc 05 §3) ───────────────────────
