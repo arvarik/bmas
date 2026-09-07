@@ -141,6 +141,14 @@ class TaskSubmission(BaseModel):
 
     task: str
     variant: str | None = None
+    # The exact contract version of the runtime pair. The bare variant
+    # identifier binds one pair. A submission names this field to reach
+    # another registered pair of the same family, for example a
+    # test-only pair on a test deployment. Admission still accepts only
+    # an admissible pair.
+    runtime_contract_version: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9._-]{1,32}$",
+    )
     effort: str | None = Field(
         default=None, pattern=r"^[a-z]{1,32}$",
         description="Named effort level from the runtime's effort profiles",
@@ -593,6 +601,10 @@ async def _admit_task(
 
     try:
         runtime_key = resolve_runtime_key(req.variant or COORDINATION_VARIANT)
+        if req.runtime_contract_version is not None:
+            runtime_key = RuntimeKey(
+                runtime_key.runtime_id, req.runtime_contract_version,
+            )
         variant_class = require_admissible_runtime(runtime_key)
         variant_id = runtime_key.runtime_id
     except UnknownVariantError as exc:

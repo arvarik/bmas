@@ -180,15 +180,25 @@ legacy path. A daemon-side ledger error returns one failed turn and
 never opens the endpoint circuit, because it is not an endpoint
 failure.
 
-`daemon/tests/test_behavioral_conformance_stack.py` runs the Classic
-column with the real classic runtime. The test stack starts Redis, the
-fake provider, the daemon, and the agent with every writer gate on.
-The suite submits real tasks over `POST /submit`, aborts one through
+`daemon/tests/test_behavioral_conformance_stack.py` runs the two
+Classic columns with the real classic runtime. The test stack starts
+Redis, the fake provider, the daemon, and the agent with every writer
+gate on. Each column submits real tasks over `POST /submit` with the
+exact runtime pair in `runtime_contract_version`, aborts one through
 `POST /api/tasks/{task_id}/abort`, resumes one through a real daemon
 restart, and reads the durable footprint from the daemon's own
-database. The `daemon.behavioral-conformance-stack` group runs it and
-feeds the `foundation_shared_conformance` gate. The daemon job in
-continuous integration installs `redis-server` for it.
+database. The `daemon.behavioral-conformance-stack` group runs the
+legacy column and the `daemon.classic-native-column` group runs the
+native column. Both feed the `foundation_shared_conformance` gate. The
+daemon job in continuous integration installs `redis-server` for them.
+
+The native column runs the test-only pair `classic/2`. Production
+admission accepts only a qualified pair, so the stack sets
+`coordination.admit_test_only_runtimes: true` in its generated
+configuration. The column asserts that every observed value equals the
+declared value of the native capability record. Each Classic work
+package that earns a native value updates the record, and the column
+proves the change on the stack.
 
 Three stack details make that run real. The stack points every role
 in the registry at its own agent process, so the classic activations

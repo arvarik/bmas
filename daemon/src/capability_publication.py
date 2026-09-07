@@ -234,6 +234,30 @@ def _native_capabilities() -> dict[str, str]:
     return {capability: "native" for capability in CONFORMANCE_CAPABILITIES}
 
 
+def _classic_native_starting_capabilities() -> dict[str, str]:
+    """The honest starting values of the Classic native column.
+
+    Work package 1 registers the native pair as a delegate of the legacy
+    engine. The host still admits, dispatches, acknowledges, and
+    receipts on its behalf, the cancellation and the evidence stay
+    legacy, the budget stays advisory, and the seed stays recorded. The
+    shared submission, the immutable assets, and the generic panels
+    already serve the pair natively. Each later work package flips the
+    values it earns, and the native column on the test stack proves
+    every flip.
+    """
+    values = _legacy_capabilities()
+    values["shared_submission"] = "native"
+    values["immutable_assets"] = "native"
+    # The pair reads checkpoints through the legacy adapter's reader
+    # until the journal-backed board brings its own.
+    values["recovery_reader_retained"] = "compatibility_adapter"
+    # Mission Control has no native Classic adapter yet, so the pair
+    # renders through the generic fallback panels.
+    values["ui_adapter"] = "unavailable"
+    return values
+
+
 # The published capability records for the Foundation runtime pairs.
 # The deterministic reference adapter and the three legacy compatibility
 # adapters qualify in Stage 0. The native native runtimes stay planned
@@ -344,29 +368,35 @@ def build_records() -> dict[RuntimeKey, RuntimeCapabilityRecord]:
         ui_adapter="stigmergic_legacy",
     ))
 
-    # The native Classic and PatchBoard records stay planned until their
-    # conformance columns pass. Available for interface development.
+    # The native Classic record is test-only: the registry runs the pair
+    # on a test deployment, and the record declares the honest starting
+    # values of the conformance ladder. The pair still speaks the legacy
+    # agent contract through the host adapter, so its protocol, receipt,
+    # and effect versions stay the legacy ones until the work package
+    # that earns the native protocol flips them.
     add(RuntimeCapabilityRecord(
         runtime_key=RuntimeKey("classic", "2"),
         canonical_label="Classic v2",
         historical_label="Classic v1",
-        availability="planned",
-        schema_versions=dict(_NATIVE_SCHEMA_VERSIONS),
-        capabilities=_native_capabilities(),
-        agent_protocol_version="2",
-        agent_receipt_version="1",
-        effect_schema_version="1",
+        availability="test_only",
+        schema_versions=_legacy_schema_versions(),
+        capabilities=_classic_native_starting_capabilities(),
+        agent_protocol_version="1",
+        agent_receipt_version=None,
+        effect_schema_version=None,
         supports_seed_state=True,
         supports_assets=True,
         supports_cancellation=True,
         supports_recovery=True,
         supports_evidence=True,
         supports_budget=True,
-        nested_effect_receipts=True,
-        provider_qualification="planned",
-        benchmark_qualification="planned",
+        nested_effect_receipts=False,
+        provider_qualification="compatibility",
+        benchmark_qualification="compatibility",
         ui_adapter="classic_native",
     ))
+    # The native PatchBoard record stays planned until its conformance
+    # column passes. Available for interface development.
     add(RuntimeCapabilityRecord(
         runtime_key=RuntimeKey("patchboard", "2"),
         canonical_label="PatchBoard v2",
@@ -431,6 +461,14 @@ class CapabilityDirectory:
             if record.availability == "planned"
         )
 
+    def test_only_pairs(self) -> list[RuntimeKey]:
+        """List every test-only pair, runnable on a test deployment only."""
+        return sorted(
+            key
+            for key, record in self.records.items()
+            if record.availability == "test_only"
+        )
+
     def select_ui_adapter(self, key: RuntimeKey) -> str:
         """Select the UI adapter for one pair or the generic fallback.
 
@@ -443,13 +481,13 @@ class CapabilityDirectory:
         return record.ui_adapter
 
     def qualify(self, key: RuntimeKey) -> RuntimeCapabilityRecord:
-        """Promote one planned pair to qualified after its column passes."""
+        """Promote one planned or test-only pair after its column passes."""
         record = self.get(key)
         if record.availability == "qualified":
             return record
-        if record.availability != "planned":
+        if record.availability not in ("planned", "test_only"):
             raise CapabilityPublicationError(
-                f"Only a planned pair qualifies; {key} is "
+                f"Only a planned or test-only pair qualifies; {key} is "
                 f"{record.availability}"
             )
         promoted = dataclasses.replace(record, availability="qualified")

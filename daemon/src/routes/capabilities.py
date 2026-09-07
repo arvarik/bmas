@@ -22,4 +22,5 @@ async def runtime_pair_capabilities():
         "records": [record.to_dict() for _key, record in sorted(directory.records.items())],
         "runnable": [key.to_dict() for key in directory.runnable_choices()],
         "planned": [key.to_dict() for key in directory.planned_pairs()],
+        "test_only": [key.to_dict() for key in directory.test_only_pairs()],
     }

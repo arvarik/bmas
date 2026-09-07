@@ -120,7 +120,11 @@ def write_daemon_config(root: Path, ports: dict[str, int]) -> Path:
     # example registry names the deployed port, which would send the
     # classic activations to a foreign agent and fall back to the
     # control plane, so no signed grant would ever reach the agent.
-    registry = (example.get("coordination") or {}).get("role_registry") or {}
+    coordination = example.setdefault("coordination", {})
+    # The stack runs the conformance columns of test-only pairs, so the
+    # daemon admits a submission that names such a pair exactly.
+    coordination["admit_test_only_runtimes"] = True
+    registry = coordination.get("role_registry") or {}
     for entry in registry.values():
         if isinstance(entry, dict):
             entry["preferred_host"] = "127.0.0.1"

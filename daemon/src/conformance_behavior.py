@@ -94,6 +94,26 @@ BEHAVIOR_CASES = (
     "ui_fallback",
 )
 
+# The declared capability each behavioral case asserts. A column test
+# reads the declared value of the record through this map and compares
+# it with the observed value of the case.
+CASE_CAPABILITIES = {
+    "admission_identity": "shared_submission",
+    "assets_privacy": "immutable_assets",
+    "seed_state": "applied_seed_evidence",
+    "cancellation_deadlines": "cancellation_signal",
+    "lease_fencing_restart_replay": "task_fence_validation",
+    "activation_effect_ledgers": "durable_activation_ledger",
+    "agent_protocol_negotiation": "agent_protocol",
+    "budget_reservations": "budget_reservation",
+    "evidence_decisions": "typed_evidence_index",
+    "goals": "common_event_envelope",
+    "trace_envelope": "trusted_envelope_creator",
+    "post_terminal_invalidation": "deterministic_analysis_replay",
+    "reference_scoring_replay": "foundation_reference_scoring",
+    "ui_fallback": "generic_ui_fallback",
+}
+
 TASK_TEXT = "Add 20 and 22."
 # The journal operations only a runtime authors. The host's
 # compatibility adapter commits admission, activation, and effect
@@ -351,10 +371,11 @@ class StackExecutor:
 
     The daemon and the agent run as real processes over the fake
     provider (``scripts/test-stack.py``). The executor submits the task
-    over HTTP, aborts it through the operator route, resumes it through
-    a real daemon restart, and reads the durable footprint from the
-    daemon's own database file. The runtime records the requested seed
-    through its run admission and never applies it.
+    over HTTP with the exact runtime pair, aborts it through the
+    operator route, resumes it through a real daemon restart, and reads
+    the durable footprint from the daemon's own database file. The
+    runtime records the requested seed through its run admission and
+    never applies it.
     """
 
     runtime_key: RuntimeKey
@@ -437,7 +458,10 @@ class StackExecutor:
                 client.post, "/submit",
                 json={
                     "task": user_task,
+                    # The bare identifier binds one pair, so the executor
+                    # names the exact contract version of its column.
                     "variant": self.runtime_key.runtime_id,
+                    "runtime_contract_version": self.runtime_key.runtime_contract_version,
                     "overrides": {
                         "seed": seed,
                         "classic": {

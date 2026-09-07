@@ -893,8 +893,18 @@ class Orchestrator:
         variant_id: str,
         request: VariantExecutionRequest,
     ) -> dict[str, Any]:
-        """Run the registered coordination runtime for one task."""
-        variant_class = require_variant_class(variant_id)
+        """Run the registered coordination runtime for one task.
+
+        The task stores its exact runtime pair, so the run resolves that
+        pair. A caller with no stored pair resolves the identifier's
+        bound pair.
+        """
+        stored_keys = getattr(self, "_task_runtime_keys", {})
+        runtime_key = stored_keys.get(request.task_id)
+        if runtime_key is not None:
+            variant_class = require_runtime(runtime_key)
+        else:
+            variant_class = require_variant_class(variant_id)
         outcome = await variant_class.run(self, request)
         if not isinstance(outcome, VariantOutcome):
             raise TypeError(

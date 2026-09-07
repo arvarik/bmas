@@ -10,7 +10,7 @@ from fastapi import HTTPException, Request
 from pydantic import ValidationError
 
 import core.orchestrator as orchestrator_module
-import core.variants.classic as classic_module
+import core.variants.classic.adapter as classic_module
 import routes.submit as submit
 import routes.tasks as tasks_route
 from core.gateway import LeaseLostError

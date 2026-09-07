@@ -192,6 +192,7 @@ Set `variant: classic` for the deployment default. Mission Control can select an
 | `variant` | string | `classic` | Selects the deployment default runtime. The file schema keeps Classic as the supported default. |
 | `view_budget_tokens` | integer | `12000` | Limits the blackboard text supplied to a model. |
 | `round_execution` | value | `concurrent` | Selects `concurrent` or `sequential` role execution. |
+| `admit_test_only_runtimes` | boolean | `false` | Admits a test-only runtime pair when a submission names its exact contract version. Production admission accepts only a qualified pair. Only a test deployment sets this to `true`. The test stack sets it. |
 
 ### `coordination.classic`
 

@@ -89,9 +89,20 @@ def test_admission_compiles_for_every_qualified_pair():
 
 def test_admission_rejects_an_unknown_pair_without_fallback():
     with pytest.raises(UnsupportedContractError):
-        compile_admission(runtime_key=RuntimeKey("classic", "2"))
+        compile_admission(runtime_key=RuntimeKey("classic", "3"))
     with pytest.raises(UnknownVariantError):
         compile_admission(runtime_key=RuntimeKey("unheard-of", "1"))
+
+
+def test_admission_rejects_the_test_only_native_pair():
+    # The native Classic pair is registered and resolvable, and
+    # production admission still refuses it.
+    with pytest.raises(RuntimeNotAdmissibleError):
+        compile_admission(runtime_key=RuntimeKey("classic", "2"))
+    admission = compile_admission(
+        runtime_key=RuntimeKey("classic", "2"), require_qualified=False,
+    )
+    assert admission.runtime_key == RuntimeKey("classic", "2")
 
 
 def test_admission_rejects_a_missing_reader_without_fallback():
@@ -257,7 +268,7 @@ def test_recovery_fails_closed_without_a_complete_pair():
 def test_recovery_fails_closed_after_a_reader_disappears():
     with pytest.raises(UnsupportedContractError):
         submit.resolve_stored_runtime(
-            {"variant": "classic", "runtime_contract_version": "2"},
+            {"variant": "classic", "runtime_contract_version": "3"},
         )
     with pytest.raises(UnknownVariantError):
         submit.resolve_stored_runtime(
@@ -298,3 +309,77 @@ def test_a_resume_requires_a_checkpoint_reader():
     finally:
         _VARIANTS.pop(key, None)
         _ALIASES.pop("no-reader", None)
+
+
+# ── The exact pair on the submit route ───────────────────────────────
+
+
+@pytest.fixture()
+def submit_client(tmp_path, monkeypatch):
+    """A submit router over a fresh database and an empty task queue."""
+    import asyncio
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr("database.DB_PATH", str(tmp_path / "submit.db"))
+    asyncio.run(db.init_db())
+    previous_queue = submit._task_queue
+    previous_ids = set(submit._scheduled_ids)
+    submit._task_queue = asyncio.Queue(maxsize=5)
+    submit._scheduled_ids.clear()
+    application = FastAPI()
+    application.include_router(submit.router)
+    yield TestClient(application)
+    submit._task_queue = previous_queue
+    submit._scheduled_ids.clear()
+    submit._scheduled_ids.update(previous_ids)
+
+
+def _submitted_pair(task_id: str) -> tuple[str, str, str]:
+    import asyncio
+
+    async def read() -> tuple[str, str, str]:
+        row = await db.get_task(task_id)
+        assert row is not None
+        envelope = (await db.get_board_meta(task_id)).get("effective_configuration") or {}
+        return (
+            str(row["variant"]),
+            str(row["runtime_contract_version"]),
+            str(envelope.get("variant_contract_version")),
+        )
+
+    return asyncio.run(read())
+
+
+def test_a_submission_without_a_contract_version_keeps_the_bound_pair(submit_client):
+    response = submit_client.post("/submit", json={"task": "Add 20 and 22.", "variant": "classic"})
+    assert response.status_code == 202, response.text
+    queued = submit._task_queue.get_nowait()
+    submit._task_queue.task_done()
+    assert (queued.variant_id, queued.runtime_contract_version) == ("classic", "1")
+    assert _submitted_pair(queued.task_id) == ("classic", "1", "1")
+
+
+def test_a_submission_names_a_test_only_pair_only_on_a_test_deployment(submit_client, monkeypatch):
+    import config
+
+    body = {"task": "Add 20 and 22.", "variant": "classic", "runtime_contract_version": "2"}
+    # Production admission refuses the test-only native pair.
+    refused = submit_client.post("/submit", json=body)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["detail"]["code"] == "variant_unavailable"
+    assert submit._task_queue.empty()
+    # A test deployment admits it, and the stored pair is exact.
+    monkeypatch.setattr(config, "ADMIT_TEST_ONLY_RUNTIMES", True, raising=False)
+    admitted = submit_client.post("/submit", json=body)
+    assert admitted.status_code == 202, admitted.text
+    queued = submit._task_queue.get_nowait()
+    submit._task_queue.task_done()
+    assert (queued.variant_id, queued.runtime_contract_version) == ("classic", "2")
+    assert _submitted_pair(queued.task_id) == ("classic", "2", "2")
+    # An unregistered contract version stays refused, without fallback.
+    unknown = submit_client.post("/submit", json={**body, "runtime_contract_version": "3"})
+    assert unknown.status_code == 422, unknown.text
+    assert unknown.json()["detail"]["code"] == "variant_unavailable"
+    assert submit._task_queue.empty()
