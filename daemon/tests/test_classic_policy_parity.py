@@ -404,3 +404,146 @@ def test_verification_policy_parity(lifecycle):
         within_overrun=lambda: True, revision_headroom=lambda: True,
     )
     assert plan.candidate is not None and plan.candidate.type == "solution"
+
+
+# ── Pull request 4: consensus, budget, termination ───────────────────
+
+
+def test_consensus_policy_parity(lifecycle):
+    from classic_parity import SAMPLE_ANSWERS, SAMPLE_EVIDENCE
+
+    from core.variants.classic.consensus import ConsensusPolicy
+
+    harness, run, trace = lifecycle
+    frozen = frozen_trace()
+    assert trace["samples"]["consensus"] == frozen["samples"]["consensus"]
+    policy = harness.variant.consensus_policy
+    assert isinstance(policy, ConsensusPolicy)
+    for strategy in ("token_similarity", "exact", "auto"):
+        canonical = "token_similarity" if strategy == "auto" else strategy
+        assert policy.majority_vote(SAMPLE_ANSWERS, strategy) == traditional.sole_majority_vote(SAMPLE_ANSWERS, strategy)
+        assert policy.majority_vote(SAMPLE_ANSWERS, strategy) == frozen["samples"]["consensus"]["majority"][canonical]
+        assert policy.evidence_vote(SAMPLE_ANSWERS, SAMPLE_EVIDENCE, strategy) == (
+            traditional.sole_evidence_vote(SAMPLE_ANSWERS, SAMPLE_EVIDENCE, strategy)
+        ) == frozen["samples"]["consensus"]["evidence"][canonical]
+    assert traditional.sole_majority_vote is ConsensusPolicy.majority_vote
+    assert traditional._fuzzy_similarity("the final value", "the final answer") == pytest.approx(2 / 4)
+    assert traditional._exact_similarity("Value: 42!", "value 42") == 1.0
+    with pytest.raises(ValueError):
+        policy.majority_vote(SAMPLE_ANSWERS, "judge")
+
+
+@pytest.mark.asyncio
+async def test_budget_policy_parity(lifecycle):
+    from classic_parity import SAMPLE_PRICING, fresh_engine
+
+    from core.variants.classic.budget import BudgetPolicy
+
+    harness, run, trace = lifecycle
+    frozen = frozen_trace()
+    assert trace["samples"]["budget"] == frozen["samples"]["budget"]
+    assert trace["result"]["budget_spent"] == frozen["result"]["budget_spent"]
+    assert [call["cost_usd"] for call in [c.__dict__ for c in run.calls]] == [
+        call.cost_usd for call in run.calls
+    ]
+    variant = harness.variant
+    policy = variant.budget_policy
+    assert isinstance(policy, BudgetPolicy)
+    assert policy.spent == variant.budget_spent == run.result["budget_spent"]
+    assert policy.ceiling == variant.budget_ceiling
+    # The direct path equals the delegated path on a fresh engine.
+    engine = fresh_engine(model_pricing=dict(SAMPLE_PRICING))
+    direct = BudgetPolicy(ceiling=engine.budget_ceiling)
+    engine.track_cost(0.25)
+    direct.track_cost(0.25)
+    assert engine.reserve_activation_budgets(3) == direct.reserve_activation_budgets(3)
+    assert [f"{share:.6f}" for share in direct.reserve_activation_budgets(3)] == frozen["samples"]["budget"]["reserved"]
+    priced = direct.price_usage({"prompt_tokens": 1000, "completion_tokens": 500}, "priced-model", SAMPLE_PRICING)
+    assert priced is not None and priced.price_source == "fixture"
+    unpriced = direct.price_usage({"prompt_tokens": 10, "completion_tokens": 5}, "unpriced-model", SAMPLE_PRICING)
+    assert unpriced is not None and unpriced.cost_usd == 0.0 and unpriced.price_source == "missing"
+    assert direct.price_usage({"prompt_tokens": 0, "completion_tokens": 0}, "priced-model", SAMPLE_PRICING) is None
+    await engine._record_llm_cost(
+        "task-parity-sample", {"prompt_tokens": 1000, "completion_tokens": 500},
+        "priced-model", "control_plane:cu", round_no=2,
+    )
+    await engine._record_llm_cost(
+        "task-parity-sample", {"prompt_tokens": 10, "completion_tokens": 5},
+        "unpriced-model", "control_plane:ag", round_no=0,
+    )
+    direct.track_cost(priced.cost_usd)
+    direct.track_cost(unpriced.cost_usd)
+    assert f"{engine.budget_spent:.8f}" == f"{direct.spent:.8f}" == frozen["samples"]["budget"]["spent_after_calls"]
+    assert [
+        engine._control_turn_id("task-parity-sample", 3),
+        engine._control_turn_id("task-parity-sample", 3),
+        engine._control_turn_id(None, 3),
+    ] == frozen["samples"]["budget"]["control_turn_ids"]
+    assert engine.budget_policy.budget_event()["spent"] == round(engine.budget_spent, 6)
+    await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_termination_policy_parity(lifecycle):
+    from classic_parity import fresh_engine, stall_sample_rounds
+
+    from core.variants.classic.termination import TerminationPolicy
+
+    harness, run, trace = lifecycle
+    frozen = frozen_trace()
+    assert trace["samples"]["termination"] == frozen["samples"]["termination"]
+    assert trace["result"]["terminated_by"] == frozen["result"]["terminated_by"]
+    assert trace["checkpoints"] == frozen["checkpoints"]
+    variant = harness.variant
+    policy = variant.termination_policy
+    assert isinstance(policy, TerminationPolicy)
+    assert list(policy.is_terminal(run.snapshot, variant._accepted_solution)) == list(variant.is_terminal(run.snapshot))
+    assert list(variant.is_terminal(run.snapshot)) == frozen["samples"]["termination"]["terminal"]
+    assert policy.best_finding(run.snapshot) == variant._best_finding(run.snapshot) == frozen["samples"]["termination"]["best_finding"]
+    # The stall detector: the delegated engine and a direct policy agree.
+    engine = fresh_engine()
+    engine.stall_rounds = 2
+    direct = TerminationPolicy()
+    observed = []
+    for index, board in enumerate(stall_sample_rounds()[1:], start=2):
+        delegated = engine._is_stalled(board, index)
+        straight = direct.is_stalled(
+            board, index, stall_rounds=2, require_evidence=False,
+            round_lacks_evidence=engine.evidence_policy.round_lacks_evidence,
+        )
+        assert delegated == straight
+        assert (engine._stall_counter, engine._round_hashes, engine._round_token_sets) == (
+            direct.stall_counter, direct.round_hashes, direct.round_token_sets,
+        )
+        observed.append({
+            "round": index, "stalled": delegated, "counter": engine._stall_counter,
+            "hashes": list(engine._round_hashes),
+            "token_sets": [sorted(tokens) for tokens in engine._round_token_sets],
+        })
+    assert observed == frozen["samples"]["termination"]["stall"]
+    # The state properties write through to the policy.
+    engine._stall_counter = 7
+    engine._round_hashes = ["abc"]
+    assert engine.termination_policy.stall_counter == 7 and engine.termination_policy.round_hashes == ["abc"]
+    assert [
+        fresh_engine()._revision_headroom({"budget_spent": 0.1}),
+        fresh_engine()._revision_headroom({"budget_spent": 1.0}),
+    ] == frozen["samples"]["termination"]["revision_headroom"]
+    assert policy.revision_headroom({"budget_spent": 1.0}, budget_ceiling=1.0, elapsed_s=0.0, max_duration_s=600) is False
+    assert policy.revision_headroom({"budget_spent": 0.1}, budget_ceiling=1.0, elapsed_s=0.0, max_duration_s=600) is True
+    verdict = policy.limit_verdict(
+        current_round=11, max_rounds=10, budget_spent=0.0, budget_ceiling=1.0,
+        elapsed_s=0.0, duration_limit_s=600.0, stalled=lambda: False,
+        stall_counter=lambda: 0, stall_rounds=2, replan_count=0, max_replans=2,
+    )
+    assert (verdict.force_decider, verdict.term_reason, verdict.force_replan) == (True, "max_rounds", False)
+    stalled = policy.limit_verdict(
+        current_round=3, max_rounds=10, budget_spent=0.0, budget_ceiling=1.0,
+        elapsed_s=0.0, duration_limit_s=600.0, stalled=lambda: True,
+        stall_counter=lambda: 2, stall_rounds=2, replan_count=0, max_replans=2,
+    )
+    assert (stalled.force_replan, stalled.force_decider) == (True, False)
+    engine.note_turn_duration(5)
+    assert engine._turn_durations == engine.termination_policy.turn_durations == [0.005]
+    assert engine.closing_turn_timeout_s() == 120
+    await engine.close()

@@ -18,10 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
 import json
 import logging
-import re
 import time
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -30,15 +28,20 @@ import httpx
 
 from config_schema import DEFAULT_CONSENSUS_STRATEGY, resolve_consensus_strategy
 from core.capabilities import capabilities_for_role
-from core.model_parameters import (
-    completion_parameters,
-    message_content,
-    profile_for_alias,
-    truncated,
-)
+from core.model_parameters import message_content, truncated
 from core.response_parser import parse_entries
 from core.variants.classic.board_views import BoardViewPolicy
+from core.variants.classic.budget import BudgetPolicy
 from core.variants.classic.cleaner import CleanerPolicy
+from core.variants.classic.consensus import (
+    ConsensusPolicy,
+    evidence_similarity,
+    exact_similarity,
+    fuzzy_similarity,
+    normalize_answer,
+    sole_evidence_vote,
+    sole_majority_vote,
+)
 from core.variants.classic.control import (
     ControlLimits,
     ControlPolicy,
@@ -62,6 +65,17 @@ from core.variants.classic.scheduling import (
     StepResult,
     activation_identity,
 )
+from core.variants.classic.termination import (
+    CLOSING_TURN_TIMEOUT_CAP_S,
+    CLOSING_TURN_TIMEOUT_FLOOR_S,
+    STALL_HISTORY_ROUNDS,
+    STALL_SIMILARITY,
+    TURN_DURATION_HISTORY,
+    TerminationPolicy,
+    entries_hash,
+    round_token_set,
+    token_jaccard,
+)
 from core.variants.classic.verification import VerificationPolicy
 
 if TYPE_CHECKING:
@@ -76,6 +90,11 @@ __all__ = [
     "AgentRoster",
     "ExpertIdentity",
     "StepResult",
+    "CLOSING_TURN_TIMEOUT_CAP_S",
+    "CLOSING_TURN_TIMEOUT_FLOOR_S",
+    "STALL_HISTORY_ROUNDS",
+    "STALL_SIMILARITY",
+    "TURN_DURATION_HISTORY",
     "TraditionalVariant",
     "parse_cu_output",
     "sole_evidence_vote",
@@ -122,7 +141,9 @@ class TraditionalVariant:
         # Config (doc 05 §3)
         self.max_rounds: int = int(config.get("max_rounds", 4))
         self.max_duration_s: int = int(config.get("max_duration_s", 1800))
-        self.budget_ceiling: float = float(config.get("budget_ceiling_usd", 0.50))
+        self.budget_policy = BudgetPolicy(
+            ceiling=float(config.get("budget_ceiling_usd", 0.50)),
+        )
         self.max_concurrent: int = int(config.get("max_concurrent_activations", 3))
         self.experts_per_tier: dict[str, int] = config.get(
             "experts_per_tier", {"simple": 0, "light": 1, "medium": 2, "complex": 4}
@@ -150,7 +171,8 @@ class TraditionalVariant:
         self.grace_verification: bool = bool(config.get("grace_verification", True))
         self.actor_context: str = str(config.get("actor_context", "chained"))
         self.require_evidence: bool = bool(config.get("require_evidence", False))
-        self._turn_durations: list[float] = []
+        self.termination_policy = TerminationPolicy()
+        self.consensus_policy = ConsensusPolicy()
         # True while the current step dispatches the closing sequence
         # (forced decider, grace review, grace revision). The orchestrator
         # gives closing turns a full timeout window instead of the clamped
@@ -203,11 +225,7 @@ class TraditionalVariant:
         self.roster: AgentRoster | None = None
         self.genesis_time: float = 0.0
         self.genesis_started_at: float = 0.0
-        self.budget_spent: float = 0.0
-        self._stall_counter: int = 0
         self._replan_count: int = 0
-        self._round_hashes: list[str] = []
-        self._round_token_sets: list[frozenset[str]] = []
         self._tier: str = "medium"
 
 
@@ -224,6 +242,54 @@ class TraditionalVariant:
     @_actor_nodes.setter
     def _actor_nodes(self, value: dict[str, str]) -> None:
         self.scheduling_policy.actor_nodes = dict(value)
+
+    @property
+    def budget_spent(self) -> float:
+        return self.budget_policy.spent
+
+    @budget_spent.setter
+    def budget_spent(self, value: float) -> None:
+        self.budget_policy.spent = float(value)
+
+    @property
+    def budget_ceiling(self) -> float:
+        return self.budget_policy.ceiling
+
+    @budget_ceiling.setter
+    def budget_ceiling(self, value: float) -> None:
+        self.budget_policy.ceiling = float(value)
+
+    @property
+    def _stall_counter(self) -> int:
+        return self.termination_policy.stall_counter
+
+    @_stall_counter.setter
+    def _stall_counter(self, value: int) -> None:
+        self.termination_policy.stall_counter = int(value)
+
+    @property
+    def _round_hashes(self) -> list[str]:
+        return self.termination_policy.round_hashes
+
+    @_round_hashes.setter
+    def _round_hashes(self, value: list[str]) -> None:
+        self.termination_policy.round_hashes = list(value)
+
+    @property
+    def _round_token_sets(self) -> list[frozenset[str]]:
+        return self.termination_policy.round_token_sets
+
+    @_round_token_sets.setter
+    def _round_token_sets(self, value: list[frozenset[str]]) -> None:
+        self.termination_policy.round_token_sets = list(value)
+
+    @property
+    def _turn_durations(self) -> list[float]:
+        return self.termination_policy.turn_durations
+
+    @_turn_durations.setter
+    def _turn_durations(self, value: list[float]) -> None:
+        self.termination_policy.turn_durations = list(value)
 
     @property
     def _response_ids(self) -> dict[str, str]:
@@ -575,43 +641,29 @@ class TraditionalVariant:
                 reason=meta.get("terminal_reason", "forced_decider_finished")
             )
 
-        force_decider = False
-        force_replan = False
-        term_reason = None
-
-        # Guard: max rounds
-        if current_round > self.max_rounds:
-            force_decider = True
-            term_reason = "max_rounds"
-        
-        # Guard: budget ceiling
+        # The termination policy runs the hard limits in their fixed
+        # order: rounds, budget, duration, then the stall breaker. The
+        # duration reserve keeps enough wall clock for the forced decider
+        # and one grace verification round, scaled up when turns are slow.
         self.budget_spent = float(meta.get("budget_spent", 0.0))
-        if not force_decider and self.budget_spent >= self.budget_ceiling:
-            force_decider = True
-            term_reason = "budget"
-
-        # Guard: duration cap. The reserve keeps enough wall clock for the
-        # forced decider (and one grace verification round) to actually run,
-        # scaled up when observed turns are slow.
-        elapsed = time.monotonic() - self.genesis_time
-        if not force_decider and elapsed >= self.max_duration_s - self._current_duration_reserve_s():
-            force_decider = True
-            term_reason = "duration"
-
-        # Guard: stall breaker
-        if not force_decider and self._is_stalled(snapshot, current_round):
-            logger.info(
-                "Stall detected at round %d (stall_counter=%d)",
-                current_round, self._stall_counter,
-            )
-            if self._stall_counter >= self.stall_rounds:
-                if self._replan_count < self.max_replans:
-                    force_replan = True
-                    self._replan_count += 1
-                else:
-                    force_decider = True
-                    term_reason = "stalled"
-            # Not yet at threshold — continue but note the stall
+        verdict = self.termination_policy.limit_verdict(
+            current_round=current_round,
+            max_rounds=self.max_rounds,
+            budget_spent=self.budget_spent,
+            budget_ceiling=self.budget_ceiling,
+            elapsed_s=time.monotonic() - self.genesis_time,
+            duration_limit_s=self.max_duration_s - self._current_duration_reserve_s(),
+            stalled=lambda: self._is_stalled(snapshot, current_round),
+            stall_counter=lambda: self._stall_counter,
+            stall_rounds=self.stall_rounds,
+            replan_count=self._replan_count,
+            max_replans=self.max_replans,
+        )
+        force_decider = verdict.force_decider
+        force_replan = verdict.force_replan
+        term_reason = verdict.term_reason
+        if force_replan:
+            self._replan_count += 1
 
         # ── 1.5 Board Pressure Guard (Deterministic Cleaner) ─────────
         open_entries = [e for e in snapshot.values() if e.status == "open"]
@@ -1174,15 +1226,7 @@ class TraditionalVariant:
 
     def is_terminal(self, board: Any) -> tuple[bool, str | None]:
         """Pure check: is the board in a terminal state?"""
-        if isinstance(board, dict):
-            snapshot = board
-        else:
-            # Synchronous check — only works with pre-fetched snapshot
-            return (False, None)
-
-        if self._accepted_solution(snapshot):
-            return (True, "solution")
-        return (False, None)
+        return self.termination_policy.is_terminal(board, self._accepted_solution)
 
     # ── CU Selection (doc 05 §1.1) ───────────────────────────────────
 
@@ -1278,70 +1322,25 @@ class TraditionalVariant:
         task_id = task["task_id"]
         board_text = self._serialize_board_for_cu(snapshot)
 
-        # Collect one answer per agent identity (bare LiteLLM calls)
-        answers: list[tuple[str, str]] = []
-        tasks = []
+        async def answer(actor: str) -> str:
+            return await self._sole_answer(actor, query, board_text, task_id)
 
-        for actor, _ in self.roster.all_actors():
-            tasks.append(self._sole_answer(actor, query, board_text, task_id))
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for (actor, _), result in zip(self.roster.all_actors(), results, strict=False):
-            if isinstance(result, str) and result.strip():
-                answers.append((actor, result.strip()))
-            elif isinstance(result, Exception):
-                logger.warning("SolE answer failed for %s: %s", actor, result)
-
-        if not answers:
-            return self._best_finding(snapshot)
-
-        evidence = [
-            (entry.body, float(entry.confidence), float(entry.salience))
-            for entry in snapshot.values()
-            if entry.status == "open"
-            and entry.type in ("finding", "rebuttal", "artifact")
-        ]
-        winner = sole_evidence_vote(
-            answers,
-            evidence,
-            self.sole_similarity,
+        return await self.termination_policy.solution_extraction(
+            snapshot,
+            roster=self.roster,
+            strategy=self.sole_similarity,
+            answer=answer,
         )
-        return winner
 
     async def _sole_answer(
         self, actor: str, query: str, board_text: str, task_id: str | None = None,
     ) -> str:
         """One bare LiteLLM call per agent for SolE answer collection."""
-        from models.personas import SOLE_SYSTEM_PROMPT
-
         sole_model = self._resolve_model(self.model_routing.get("light", "medium"))
+        body = self.termination_policy.sole_request(actor, query, board_text, sole_model)
         try:
-            resp = await self.http.post(
-                f"{self.litellm_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.litellm_key}"},
-                json={
-                    "model": sole_model,
-                    "messages": [
-                        {"role": "system", "content": SOLE_SYSTEM_PROMPT},
-                        {"role": "user", "content": (
-                            f"Objective: {query}\n\n"
-                            f"Board state:\n{board_text}\n\n"
-                            f"Your role: {actor}\n"
-                            f"Provide your answer:"
-                        )},
-                    ],
-                    **completion_parameters(
-                        profile_for_alias(sole_model), output_tokens=512,
-                        temperature=0.1, reasoning="low",
-                    ),
-                },
-                timeout=30.0,
-            )
-            resp.raise_for_status()
-            resp_json = resp.json()
-            # Capture control-plane LLM usage/cost (doc 06 §3.1)
-            await self._record_llm_cost(
-                task_id, resp_json.get("usage"), sole_model, "control_plane:sole",
+            resp_json = await self._post_control_completion(
+                task_id, body, "control_plane:sole", round_no=None, timeout=30.0,
             )
             cut = truncated(resp_json)
             if cut is not None:
@@ -1355,14 +1354,7 @@ class TraditionalVariant:
 
     def _best_finding(self, snapshot: dict[str, BoardEntry]) -> str:
         """Last-resort: return the highest-salience finding."""
-        findings = [
-            e for e in snapshot.values()
-            if e.type in ("finding", "solution") and e.status == "open"
-        ]
-        if not findings:
-            return "No answer could be determined."
-        findings.sort(key=lambda e: e.salience, reverse=True)
-        return findings[0].body
+        return self.termination_policy.best_finding(snapshot)
 
     # ── Guard Helpers ────────────────────────────────────────────────
 
@@ -1401,90 +1393,38 @@ class TraditionalVariant:
         snapshot: dict[str, BoardEntry],
         current_round: int,
     ) -> bool:
-        """Check if the board is stalled (doc 05 §5).
-
-        Stall = rounds with no accepted entries, exact-duplicate bodies, or
-        paraphrased near-duplicates of a recent round (token-set overlap).
-        """
-        # Get entries from the previous round
-        prev_round = current_round - 1
-        prev_entries = [
-            e for e in snapshot.values()
-            if e.round == prev_round and e.status == "open"
-        ]
-
-        if not prev_entries:
-            # No entries produced last round
-            self._stall_counter += 1
-            return self._stall_counter >= self.stall_rounds
-
-        # Exact repetition: normalized hash of the round's bodies.
-        round_hash = _entries_hash(prev_entries)
-        round_tokens = _round_token_set(prev_entries)
-        if round_hash in self._round_hashes:
-            self._stall_counter += 1
-        elif any(
-            _token_jaccard(round_tokens, seen) >= STALL_SIMILARITY
-            for seen in self._round_token_sets[-STALL_HISTORY_ROUNDS:]
-        ):
-            # Paraphrased repetition: the round restates recent content in
-            # new words without adding new information.
-            self._stall_counter += 1
-        elif self.require_evidence and self.evidence_policy.round_lacks_evidence(prev_entries):
-            # Novel words without external grounding: at evidence-gated
-            # effort levels an unsourced contribution round is not progress.
-            self._stall_counter += 1
-            self._round_hashes.append(round_hash)
-        else:
-            self._stall_counter = 0
-            self._round_hashes.append(round_hash)
-        if (
-            not self._round_token_sets
-            or round_tokens != self._round_token_sets[-1]
-        ):
-            self._round_token_sets.append(round_tokens)
-            del self._round_token_sets[:-STALL_HISTORY_ROUNDS]
-
-        return self._stall_counter >= self.stall_rounds
+        """Check if the board is stalled through the termination policy."""
+        return self.termination_policy.is_stalled(
+            snapshot, current_round,
+            stall_rounds=self.stall_rounds,
+            require_evidence=self.require_evidence,
+            round_lacks_evidence=self.evidence_policy.round_lacks_evidence,
+        )
 
     def _revision_headroom(self, meta: dict[str, Any]) -> bool:
         """True when budget and wall clock allow one revision round."""
-        budget_spent = float(meta.get("budget_spent", 0.0))
-        if self.budget_ceiling > 0 and budget_spent >= self.budget_ceiling:
-            return False
-        elapsed = time.monotonic() - self.genesis_time
-        return elapsed < self.max_duration_s - 30.0
+        return self.termination_policy.revision_headroom(
+            meta,
+            budget_ceiling=self.budget_ceiling,
+            elapsed_s=time.monotonic() - self.genesis_time,
+            max_duration_s=self.max_duration_s,
+        )
 
     def note_turn_duration(self, duration_ms: Any) -> None:
         """Record one completed turn's wall-clock duration."""
-        if not isinstance(duration_ms, (int, float)) or duration_ms <= 0:
-            return
-        self._turn_durations.append(float(duration_ms) / 1000.0)
-        del self._turn_durations[:-TURN_DURATION_HISTORY]
+        self.termination_policy.note_turn_duration(duration_ms)
 
     def _avg_turn_s(self) -> float:
-        if not self._turn_durations:
-            return 0.0
-        return sum(self._turn_durations) / len(self._turn_durations)
+        return self.termination_policy.average_turn_s()
 
     def closing_turn_timeout_s(self) -> int:
         """Timeout floor for closing-sequence turns (decider, grace)."""
-        return int(min(
-            CLOSING_TURN_TIMEOUT_CAP_S,
-            max(CLOSING_TURN_TIMEOUT_FLOOR_S, 2.0 * self._avg_turn_s()),
-        ))
+        return self.termination_policy.closing_turn_timeout_s()
 
     def _current_duration_reserve_s(self) -> float:
-        """Duration reserve scaled to observed turn latency.
-
-        The static reserve assumes fast API models. On a slow local tier
-        one turn can outlast the whole reserve, so the guard must fire
-        early enough that the closing sequence starts before the cap.
-        """
-        adaptive = 2.0 * self._avg_turn_s()
-        return min(
-            max(self._duration_reserve_s, adaptive),
-            0.4 * self.max_duration_s,
+        """Duration reserve scaled to observed turn latency."""
+        return self.termination_policy.duration_reserve_s(
+            self._duration_reserve_s, self.max_duration_s,
         )
 
     # ── Private Sub-board Conflict Resolution (doc 05 §4) ────────────
@@ -1837,15 +1777,7 @@ class TraditionalVariant:
             return
         # Budget events are best-effort
         with contextlib.suppress(Exception):
-            await self.emitter.emit(task_id, "budget", {
-                "spent": round(self.budget_spent, 6),
-                "ceiling": self.budget_ceiling,
-                "percentage": round(
-                    (self.budget_spent / self.budget_ceiling * 100)
-                    if self.budget_ceiling > 0 else 0.0,
-                    1,
-                ),
-            })
+            await self.emitter.emit(task_id, "budget", self.budget_policy.budget_event())
 
     # ── Phase 5: Stateful Turn Helpers (doc 12 §5.2) ─────────────────
 
@@ -1928,36 +1860,15 @@ class TraditionalVariant:
 
     def track_cost(self, cost_usd: float) -> None:
         """Update the running budget total."""
-        self.budget_spent += cost_usd
+        self.budget_policy.track_cost(cost_usd)
 
     def reserve_activation_budgets(self, count: int) -> list[float]:
-        """Split the available task budget across concurrent activations.
-
-        Each activation receives an exclusive share instead of seeing the full
-        remaining budget. The daemon reconciles actual usage after completion.
-        """
-        if count <= 0:
-            return []
-        available = max(0.0, self.budget_ceiling - self.budget_spent)
-        share = available / count
-        return [share for _ in range(count)]
+        """Split the available task budget across concurrent activations."""
+        return self.budget_policy.reserve_activation_budgets(count)
 
     def _control_turn_id(self, task_id: str | None, round_no: int | None) -> str | None:
-        """One synthetic turn id per control-plane call, keyed by round.
-
-        Actor turns carry their round through the turns table; a
-        control-plane call has no turn row, so its id names the round
-        and a per-task sequence number, and the cost summary groups
-        both kinds of spend by round.
-        """
-        if task_id is None or round_no is None:
-            return None
-        counters = getattr(self, "_control_call_sequence", None)
-        if counters is None:
-            counters = {}
-            self._control_call_sequence = counters
-        counters[task_id] = counters.get(task_id, 0) + 1
-        return f"control-r{int(round_no)}-{counters[task_id]}"
+        """One synthetic turn id per control-plane call, keyed by round."""
+        return self.budget_policy.control_turn_id(task_id, round_no)
 
     async def _record_llm_cost(
         self,
@@ -1972,41 +1883,21 @@ class TraditionalVariant:
 
         The CU/AG/SolE calls are real billable LiteLLM completions whose
         `usage` field was previously discarded — the daemon is the sole
-        authority on dollar cost (doc 06 §3.1). This records a per-call
-        cost entry, accumulates the running budget, and emits a `cost`
-        SSE event so the live UI updates. Best-effort: never blocks the
-        loop on a pricing miss or DB/SSE failure.
+        authority on dollar cost (doc 06 §3.1). The budget policy prices
+        the usage; this method records the cost entry, accumulates the
+        running budget, and emits a `cost` SSE event so the live UI
+        updates. Best-effort: never blocks the loop on a pricing miss or
+        DB/SSE failure.
         """
-        if not task_id or not usage or not isinstance(usage, dict):
+        if not task_id:
+            return
+        record = self.budget_policy.price_usage(usage, model, self.model_pricing)
+        if record is None:
             return
 
         import database as db
 
-        # LiteLLM may report the resolved alias on the response; prefer it,
-        # falling back to the alias we requested (both match MODEL_PRICING).
-        resolved_model = usage.get("model") or model
-        pricing = (
-            self.model_pricing.get(resolved_model)
-            or self.model_pricing.get(model)
-            or {}
-        )
-        price_model = (
-            resolved_model if resolved_model in self.model_pricing else model
-        )
-
-        in_tok = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
-        out_tok = int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
-        if in_tok == 0 and out_tok == 0:
-            return
-
-        cost = 0.0
-        if pricing:
-            cost = round(
-                in_tok * float(pricing.get("input_cost_per_token", 0))
-                + out_tok * float(pricing.get("output_cost_per_token", 0)),
-                8,
-            )
-        self.budget_spent += cost
+        self.budget_policy.track_cost(record.cost_usd)
 
         # Keep the live checkpoint aligned with control-plane spend. This also
         # preserves AG cost before the first coordination round begins.
@@ -2020,28 +1911,28 @@ class TraditionalVariant:
         with contextlib.suppress(Exception):
             await db.insert_cost_entry_v2(
                 task_id=task_id,
-                model=price_model,
-                input_tokens=in_tok,
-                output_tokens=out_tok,
-                cost_usd=cost,
+                model=record.model,
+                input_tokens=record.input_tokens,
+                output_tokens=record.output_tokens,
+                cost_usd=record.cost_usd,
                 phase=phase,
                 node_id="control_plane",
                 turn_id=self._control_turn_id(task_id, round_no),
                 provider=None,
-                price_source=str(pricing.get("source", "bmas.yaml")) if pricing else "missing",
+                price_source=record.price_source,
                 joules_estimate=0.0,
             )
 
         if self.emitter:
             with contextlib.suppress(Exception):
                 await self.emitter.emit(task_id, "cost", {
-                    "model": price_model,
-                    "input_tokens": in_tok,
-                    "output_tokens": out_tok,
-                    "cost_usd": cost,
+                    "model": record.model,
+                    "input_tokens": record.input_tokens,
+                    "output_tokens": record.output_tokens,
+                    "cost_usd": record.cost_usd,
                     "node_id": "control_plane",
                     "phase": phase,
-                    "price_source": str(pricing.get("source", "bmas.yaml")) if pricing else "missing",
+                    "price_source": record.price_source,
                 })
 
     # ── Cleanup ──────────────────────────────────────────────────────
@@ -2051,166 +1942,15 @@ class TraditionalVariant:
         await self.http.aclose()
 
 
-# ── SolE Majority-Similarity Vote (doc 05 §3) ───────────────────────
+# ── The helpers the engine once defined, under their historical names ─
 
-def sole_majority_vote(
-    answers: list[tuple[str, str]],
-    similarity_mode: str = DEFAULT_CONSENSUS_STRATEGY,
-) -> str:
-    """Majority-similarity vote: V(a_i) = Σ_j sim(a_i, a_j), argmax V.
-
-    The registered strategies:
-      - exact: normalized exact match (for short/numeric answers)
-      - token_similarity: the legacy tiered behavior. Short answers
-        (under 100 characters on average) compare by normalized exact
-        match, longer answers by token Jaccard similarity.
-
-    The legacy alias ``auto`` resolves to ``token_similarity``. An
-    unregistered strategy raises ``ValueError`` instead of degrading to
-    token similarity.
-    """
-    strategy = resolve_consensus_strategy(similarity_mode)
-    if not answers:
-        return "No answer could be determined."
-
-    if len(answers) == 1:
-        return answers[0][1]
-
-    # Determine similarity function
-    if strategy == "exact":
-        sim_fn = _exact_similarity
-    else:
-        avg_len = sum(len(a[1]) for a in answers) / len(answers)
-        if avg_len < 100:
-            sim_fn = _exact_similarity
-        else:
-            sim_fn = _fuzzy_similarity
-
-    # Compute V(a_i) = Σ_j sim(a_i, a_j)
-    scores: list[tuple[float, str, str]] = []
-    for i, (actor_i, answer_i) in enumerate(answers):
-        v = 0.0
-        for j, (_actor_j, answer_j) in enumerate(answers):
-            if i != j:
-                v += sim_fn(answer_i, answer_j)
-        scores.append((v, actor_i, answer_i))
-
-    # argmax V
-    scores.sort(key=lambda x: x[0], reverse=True)
-    winner = scores[0][2]
-
-    logger.info(
-        "SolE vote: winner=%s (score=%.2f), %d answers",
-        scores[0][1], scores[0][0], len(answers),
-    )
-
-    return winner
-
-
-def sole_evidence_vote(
-    answers: list[tuple[str, str]],
-    evidence: list[tuple[str, float, float]],
-    similarity_mode: str = DEFAULT_CONSENSUS_STRATEGY,
-) -> str:
-    """Select an answer by peer support and independent board evidence."""
-    strategy = resolve_consensus_strategy(similarity_mode)
-    if not answers:
-        return "No answer could be determined."
-    if not evidence:
-        return sole_majority_vote(answers, strategy)
-
-    if strategy == "exact":
-        peer_similarity = _exact_similarity
-    else:
-        peer_similarity = _fuzzy_similarity
-
-    scored: list[tuple[float, str, str]] = []
-    for index, (actor, answer) in enumerate(answers):
-        peer_score = sum(
-            peer_similarity(answer, other_answer)
-            for other_index, (_other_actor, other_answer) in enumerate(answers)
-            if index != other_index
-        )
-        evidence_score = sum(
-            _evidence_similarity(answer, body)
-            * max(0.0, min(2.0, confidence + salience))
-            * 2.0
-            for body, confidence, salience in evidence
-        )
-        scored.append((peer_score + evidence_score, actor, answer))
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][2]
-
-
-def _normalize_answer(text: str) -> str:
-    """Normalize an answer for comparison."""
-    import re
-    # Lowercase, strip whitespace and punctuation
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s]", "", text)
-    text = re.sub(r"\s+", " ", text)
-    return text
-
-
-def _exact_similarity(a: str, b: str) -> float:
-    """Exact match after normalization."""
-    return 1.0 if _normalize_answer(a) == _normalize_answer(b) else 0.0
-
-
-def _fuzzy_similarity(a: str, b: str) -> float:
-    """Token-overlap Jaccard similarity (cheap, no LLM)."""
-    tokens_a = set(_normalize_answer(a).split())
-    tokens_b = set(_normalize_answer(b).split())
-    if not tokens_a or not tokens_b:
-        return 0.0
-    intersection = tokens_a & tokens_b
-    union = tokens_a | tokens_b
-    return len(intersection) / len(union) if union else 0.0
-
-
-def _evidence_similarity(answer: str, evidence: str) -> float:
-    """Measure whether a concise answer appears in an evidence statement."""
-    answer_tokens = set(_normalize_answer(answer).split())
-    evidence_tokens = set(_normalize_answer(evidence).split())
-    if not answer_tokens or not evidence_tokens:
-        return 0.0
-    if len(answer_tokens) <= 4 and answer_tokens.issubset(evidence_tokens):
-        return 1.0
-    return _fuzzy_similarity(answer, evidence)
-
-
-STALL_SIMILARITY = 0.9
-TURN_DURATION_HISTORY = 12
-CLOSING_TURN_TIMEOUT_FLOOR_S = 120
-CLOSING_TURN_TIMEOUT_CAP_S = 600
-STALL_HISTORY_ROUNDS = 6
-
-
-def _round_token_set(entries: list[BoardEntry]) -> frozenset[str]:
-    """Return the normalized word set of one round's open entry bodies."""
-    words: set[str] = set()
-    for entry in entries:
-        body = (entry.body or "").lower()
-        words.update(
-            token for token in re.findall(r"[a-z0-9]+", body) if len(token) > 2
-        )
-    return frozenset(words)
-
-
-def _token_jaccard(left: frozenset[str], right: frozenset[str]) -> float:
-    """Jaccard overlap of two word sets; 0.0 when either side is empty."""
-    if not left or not right:
-        return 0.0
-    union = len(left | right)
-    return len(left & right) / union if union else 0.0
-
-
-def _entries_hash(entries: list[BoardEntry]) -> str:
-    """Hash entry bodies for near-duplicate detection."""
-    bodies = sorted(e.body.strip().lower() for e in entries)
-    combined = "|".join(bodies)
-    return hashlib.sha256(combined.encode()).hexdigest()[:16]
-
+_normalize_answer = normalize_answer
+_exact_similarity = exact_similarity
+_fuzzy_similarity = fuzzy_similarity
+_evidence_similarity = evidence_similarity
+_round_token_set = round_token_set
+_token_jaccard = token_jaccard
+_entries_hash = entries_hash
 
 # The evidence rule the engine once defined, under its historical name.
 _round_lacks_evidence = EvidencePolicy.round_lacks_evidence
