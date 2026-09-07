@@ -47,6 +47,9 @@ from core.salience import (
     apply_salience_boosts,
     compute_salience,
 )
+from core.variants.classic.evidence import (
+    EvidencePolicy,
+)
 
 if TYPE_CHECKING:
     from core.event_emitter import EventEmitter
@@ -883,24 +886,6 @@ def make_salience_recompute_hook(
 salience_recompute_hook: RecomputeHook = make_salience_recompute_hook()
 
 
-MAX_SOURCES_PER_ENTRY = 8
-MAX_SOURCE_CHARS = 500
-
-
-def _normalize_sources(value) -> list[str]:
-    """Return a clean list of source strings from agent-supplied data."""
-    if isinstance(value, str):
-        value = [value]
-    if not isinstance(value, list):
-        return []
-    cleaned: list[str] = []
-    for item in value:
-        if not isinstance(item, str):
-            continue
-        text = item.strip()
-        if not text:
-            continue
-        cleaned.append(text[:MAX_SOURCE_CHARS])
-        if len(cleaned) >= MAX_SOURCES_PER_ENTRY:
-            break
-    return cleaned
+# The source normalization is the classic evidence policy's rule. The
+# gateway keeps the historical names for its callers.
+_normalize_sources = EvidencePolicy.normalize_sources

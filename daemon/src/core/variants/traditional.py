@@ -24,13 +24,12 @@ import logging
 import re
 import time
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from config_schema import DEFAULT_CONSENSUS_STRATEGY, resolve_consensus_strategy
 from core.capabilities import capabilities_for_role
-from core.entry import BoardEntry, entry_to_dict
 from core.model_parameters import (
     completion_parameters,
     message_content,
@@ -39,12 +38,14 @@ from core.model_parameters import (
 )
 from core.response_parser import parse_entries
 from core.variants.classic.board_views import BoardViewPolicy
+from core.variants.classic.cleaner import CleanerPolicy
 from core.variants.classic.control import (
     ControlLimits,
     ControlPolicy,
     ControlProgress,
     parse_cu_output,
 )
+from core.variants.classic.evidence import EvidencePolicy
 from core.variants.classic.memory import ContextSessionPolicy
 from core.variants.classic.prompts import PromptPolicy
 from core.variants.classic.roster import (
@@ -61,6 +62,10 @@ from core.variants.classic.scheduling import (
     StepResult,
     activation_identity,
 )
+from core.variants.classic.verification import VerificationPolicy
+
+if TYPE_CHECKING:
+    from core.entry import BoardEntry
 
 # The engine re-exports the data models and the parser it once defined,
 # so every existing import path stays valid after the extraction.
@@ -190,6 +195,9 @@ class TraditionalVariant:
         self.board_view_policy = BoardViewPolicy()
         self.session_policy = ContextSessionPolicy()
         self.prompt_policy = PromptPolicy()
+        self.cleaner_policy = CleanerPolicy()
+        self.evidence_policy = EvidencePolicy()
+        self.verification_policy = VerificationPolicy()
 
         # Per-task state (set during genesis)
         self.roster: AgentRoster | None = None
@@ -547,49 +555,25 @@ class TraditionalVariant:
         # stop rule still owes work: a grace critic review of an unseen
         # answer, or one decider revision after the critic rejected it.
         self.closing_sequence = False
-        grace_candidate = None
-        grace_revision = False
-        if meta.get("decider_forced"):
-            critic_enabled = (
+        grace = self.verification_policy.grace_plan(
+            snapshot, meta,
+            grace_verification=self.grace_verification,
+            critic_enabled=(
                 self.role_registry.get("critic", {}).get("enabled") is not False
+            ),
+            within_overrun=lambda: (
+                time.monotonic() - self.genesis_time
+                < self.max_duration_s + self.closing_turn_timeout_s()
+            ),
+            revision_headroom=lambda: self._revision_headroom(meta),
+        )
+        grace_candidate = grace.candidate
+        grace_revision = grace.revision
+        if meta.get("decider_forced") and grace_candidate is None and not grace_revision:
+            return StepResult(
+                terminal=True,
+                reason=meta.get("terminal_reason", "forced_decider_finished")
             )
-            if self.grace_verification and critic_enabled:
-                open_solutions = sorted(
-                    (
-                        entry for entry in snapshot.values()
-                        if entry.type == "solution" and entry.status == "open"
-                    ),
-                    key=lambda entry: (entry.round, entry.id),
-                    reverse=True,
-                )
-                latest_solution = open_solutions[0] if open_solutions else None
-                elapsed_now = time.monotonic() - self.genesis_time
-                overrun_limit = self.max_duration_s + self.closing_turn_timeout_s()
-                if (
-                    latest_solution is not None
-                    and latest_solution.id != meta.get("solution_reviewed_id")
-                    and elapsed_now < overrun_limit
-                ):
-                    if latest_solution.id != meta.get("solution_candidate_id"):
-                        # The critic has not seen this answer yet.
-                        grace_candidate = latest_solution
-                    elif not meta.get("grace_revision_done"):
-                        # The critic saw this answer and did not approve it.
-                        # If it posted a critique and resources remain, the
-                        # decider gets exactly one revision round.
-                        rejected = any(
-                            entry.type == "critique"
-                            and entry.status == "open"
-                            and latest_solution.id in (entry.refs or [])
-                            for entry in snapshot.values()
-                        )
-                        if rejected and self._revision_headroom(meta):
-                            grace_revision = True
-            if grace_candidate is None and not grace_revision:
-                return StepResult(
-                    terminal=True,
-                    reason=meta.get("terminal_reason", "forced_decider_finished")
-                )
 
         force_decider = False
         force_replan = False
@@ -631,7 +615,7 @@ class TraditionalVariant:
 
         # ── 1.5 Board Pressure Guard (Deterministic Cleaner) ─────────
         open_entries = [e for e in snapshot.values() if e.status == "open"]
-        total_tokens = sum(len(e.body) // 4 for e in open_entries)
+        total_tokens = self.cleaner_policy.board_tokens(open_entries)
         solution_candidates = sorted(
             (entry for entry in open_entries if entry.type == "solution"),
             key=lambda entry: (entry.round, entry.id),
@@ -697,7 +681,9 @@ class TraditionalVariant:
             )
         elif total_tokens > self.cleaner_token_threshold:
             selected = ["cleaner"]
-            rationale = f"Board exceeded token threshold ({total_tokens} > {self.cleaner_token_threshold}) — forced cleaner invocation."
+            rationale = self.cleaner_policy.pressure_rationale(
+                total_tokens, self.cleaner_token_threshold,
+            )
             source = "heuristic"
         else:
             # ── 2. CU selection (one bare LiteLLM call, doc 05 §1.1) ─────
@@ -952,32 +938,18 @@ class TraditionalVariant:
         # Decider path: accepted solution on the board
         meta = await self.store.get_meta(task_id)
         reviewed_solution_id = meta.get("solution_reviewed_id")
-        solution_entry = self._accepted_solution(
+        resolved = self.verification_policy.resolve_answer(
             snapshot,
-            reviewed_solution_id=str(reviewed_solution_id)
-            if reviewed_solution_id else None,
-            require_review=True,
+            str(reviewed_solution_id) if reviewed_solution_id else None,
         )
-        if solution_entry:
-            answer = solution_entry.body
-            answer_source = "decider"
-            verification_status = "critic_reviewed"
+        if resolved is not None:
+            answer = resolved.answer
+            answer_source = resolved.answer_source
+            verification_status = resolved.verification_status
         else:
-            open_solutions = sorted(
-                (
-                    entry for entry in snapshot.values()
-                    if entry.type == "solution" and entry.status == "open"
-                ),
-                key=lambda entry: (entry.round, entry.id),
-                reverse=True,
-            )
-            if open_solutions:
-                answer = open_solutions[0].body
-                answer_source = "decider_unverified"
-            else:
-                # SolE provides a fallback answer. Agreement is not verification.
-                answer = await self._solution_extraction(task, snapshot)
-                answer_source = "sole_unverified"
+            # SolE provides a fallback answer. Agreement is not verification.
+            answer = await self._solution_extraction(task, snapshot)
+            answer_source = "sole_unverified"
             verification_status = "unverified"
 
         # Update board meta
@@ -1019,14 +991,9 @@ class TraditionalVariant:
 
         # Serialize board for prompt
         if actor == "cleaner":
-            eviction_candidates = self._get_eviction_candidates(board)
-            protected_context = [
-                entry
-                for entry in board.values()
-                if getattr(entry, "type", None) in {"objective", "directive", "ledger"}
-            ]
-            subset = [*protected_context, *eviction_candidates]
-            board_data = {"mode": "condense", "entries": [entry_to_dict(e) for e in subset]}
+            board_data = self.cleaner_policy.condense_view(
+                board, self._get_eviction_candidates(board),
+            )
         else:
             board_data = self._serialize_board(board, actor=actor)
 
@@ -1131,18 +1098,9 @@ class TraditionalVariant:
                     continue
                 solution = referenced[0]
                 mutation_id = mutation.get("_mutation_id")
-                proposed = {
-                    "type": "critique",
-                    "title": "Verification passed",
-                    "body": (
-                        "The independent critic found no blocking issue in "
-                        f"solution {solution.id}."
-                    ),
-                    "refs": [solution.id],
-                    "confidence": 1.0,
-                }
-                if mutation_id:
-                    proposed["_mutation_id"] = f"{mutation_id}:approval"
+                proposed = self.verification_policy.approval_entry(
+                    solution.id, mutation_id,
+                )
                 committed = await self.gateway.append(
                     task_id,
                     actor,
@@ -1284,70 +1242,17 @@ class TraditionalVariant:
         """Explain a heuristic selection through the control policy."""
         return self.control_policy.fallback_rationale(snapshot, current_round, selected)
 
-    def _get_eviction_candidates(self, snapshot: dict[str, BoardEntry] | dict[str, Any], max_candidates: int = 12) -> list[BoardEntry]:
-        """Calculate Retention Value and return the bottom N eviction candidates."""
-        open_entries = []
-        for e in snapshot.values():
-            status = getattr(e, "status", e.get("status", "")) if isinstance(e, dict) else getattr(e, "status", "")
-            if status == "open":
-                open_entries.append(e)
-                
-        protected_ids = set()
-        
-        # 1. Protect critical entries. Structural types stay protected
-        # always; plans and critiques stay protected only while recent, so
-        # a long run can condense its own history instead of hoarding it.
-        latest_round = max(
-            (
-                int((getattr(e, "round", e.get("round", 0)) if isinstance(e, dict) else getattr(e, "round", 0)) or 0)
-                for e in open_entries
-            ),
-            default=0,
+    def _get_eviction_candidates(
+        self,
+        snapshot: dict[str, BoardEntry] | dict[str, Any],
+        max_candidates: int = 12,
+    ) -> list[BoardEntry]:
+        """Return the bottom N eviction candidates through the cleaner policy."""
+        return self.cleaner_policy.eviction_candidates(
+            snapshot,
+            retention_weights=self.cleaner_retention_weights,
+            max_candidates=max_candidates,
         )
-        recent_floor = latest_round - CLEANER_RECENT_ROUNDS
-        for e in open_entries:
-            etype = getattr(e, "type", e.get("type", "")) if isinstance(e, dict) else getattr(e, "type", "")
-            round_no = int((getattr(e, "round", e.get("round", 0)) if isinstance(e, dict) else getattr(e, "round", 0)) or 0)
-            always = etype in ("objective", "directive", "ledger", "conflict", "solution")
-            recent = etype in ("plan", "critique") and round_no >= recent_floor
-            if always or recent:
-                eid = getattr(e, "id", e.get("id")) if isinstance(e, dict) else getattr(e, "id", None)
-                protected_ids.add(eid)
-                refs = getattr(e, "refs", e.get("refs", [])) if isinstance(e, dict) else getattr(e, "refs", [])
-                if refs:
-                    for ref in refs:
-                        protected_ids.add(ref)
-                    
-        candidates = []
-        for e in open_entries:
-            eid = getattr(e, "id", e.get("id")) if isinstance(e, dict) else getattr(e, "id", None)
-            if eid in protected_ids:
-                continue
-                
-            w_sal = self.cleaner_retention_weights.get("salience", 2.0)
-            w_conf = self.cleaner_retention_weights.get("confidence", 1.0)
-            w_rec = self.cleaner_retention_weights.get("recency", 0.1)
-            w_size = self.cleaner_retention_weights.get("size_penalty", 0.01)
-            
-            body = getattr(e, "body", e.get("body", "")) if isinstance(e, dict) else getattr(e, "body", "")
-            salience = getattr(e, "salience", e.get("salience", 0.0)) if isinstance(e, dict) else getattr(e, "salience", 0.0)
-            confidence = getattr(e, "confidence", e.get("confidence", 0.5)) if isinstance(e, dict) else getattr(e, "confidence", 0.5)
-            round_raw = getattr(e, "round", e.get("round", 0)) if isinstance(e, dict) else getattr(e, "round", 0)
-            
-            body_str = str(body) if body is not None else ""
-            sal_val = float(salience) if salience is not None else 0.0
-            conf_val = float(confidence) if confidence is not None else 0.5
-            round_val = int(round_raw) if round_raw is not None else 0
-            
-            # RV = (Salience * W_sal) + (Confidence * W_conf) + (Round * W_rec) - (Tokens * W_size)
-            tokens = len(body_str) // 4
-            rv = (sal_val * w_sal) + (conf_val * w_conf) + (round_val * w_rec) - (tokens * w_size)
-            
-            candidates.append((rv, e))
-            
-        # Sort by RV ascending
-        candidates.sort(key=lambda x: x[0])
-        return [c[1] for c in candidates[:max_candidates]]
 
     def _deterministic_fallback(
         self,
@@ -1468,32 +1373,10 @@ class TraditionalVariant:
         reviewed_solution_id: str | None = None,
         require_review: bool = False,
     ) -> BoardEntry | None:
-        """Find an accepted solution (survived one round without critique).
-
-        A solution is 'accepted' if no open critique referencing it was
-        posted in the same round (doc 05 §3).
-        """
-        solutions = [
-            e for e in snapshot.values()
-            if e.type == "solution" and e.status == "open"
-        ]
-        if not solutions:
-            return None
-
-        for sol in sorted(solutions, key=lambda e: e.round, reverse=True):
-            if require_review and sol.id != reviewed_solution_id:
-                continue
-            # Check if any open critique references this solution
-            contested = any(
-                e.type == "critique"
-                and e.status == "open"
-                and sol.id in e.refs
-                and (current_round is None or e.round >= sol.round)
-                for e in snapshot.values()
-            )
-            if not contested:
-                return sol
-        return None
+        """Find an accepted solution through the verification policy."""
+        return self.verification_policy.accepted_solution(
+            snapshot, current_round, reviewed_solution_id, require_review,
+        )
 
     async def mark_solution_reviewed(
         self,
@@ -1502,24 +1385,10 @@ class TraditionalVariant:
     ) -> str | None:
         """Record a review only when a committed critique names the solution."""
         snapshot = await self.store.get_snapshot(task_id)
-        candidates = sorted(
-            (
-                entry for entry in snapshot.values()
-                if entry.type == "solution" and entry.status == "open"
-            ),
-            key=lambda entry: (entry.round, entry.id),
-            reverse=True,
+        solution_id = self.verification_policy.reviewed_solution(
+            snapshot, committed_critiques,
         )
-        if not candidates:
-            return None
-        solution_id = candidates[0].id
-        if not any(
-            entry.type == "critique"
-            and entry.status == "superseded"
-            and entry.title == "Verification passed"
-            and solution_id in entry.refs
-            for entry in committed_critiques
-        ):
+        if solution_id is None:
             return None
         await self.gateway.set_meta(
             task_id,
@@ -1561,7 +1430,7 @@ class TraditionalVariant:
             # Paraphrased repetition: the round restates recent content in
             # new words without adding new information.
             self._stall_counter += 1
-        elif self.require_evidence and _round_lacks_evidence(prev_entries):
+        elif self.require_evidence and self.evidence_policy.round_lacks_evidence(prev_entries):
             # Novel words without external grounding: at evidence-gated
             # effort levels an unsourced contribution round is not progress.
             self._stall_counter += 1
@@ -2315,7 +2184,6 @@ TURN_DURATION_HISTORY = 12
 CLOSING_TURN_TIMEOUT_FLOOR_S = 120
 CLOSING_TURN_TIMEOUT_CAP_S = 600
 STALL_HISTORY_ROUNDS = 6
-CLEANER_RECENT_ROUNDS = 2
 
 
 def _round_token_set(entries: list[BoardEntry]) -> frozenset[str]:
@@ -2344,15 +2212,5 @@ def _entries_hash(entries: list[BoardEntry]) -> str:
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
 
 
-_EVIDENCE_TYPES = frozenset({"finding", "rebuttal"})
-
-
-def _round_lacks_evidence(entries: list[BoardEntry]) -> bool:
-    """True when a round contributed findings but none carries a source."""
-    contributions = [
-        entry for entry in entries
-        if getattr(entry, "type", None) in _EVIDENCE_TYPES
-    ]
-    if not contributions:
-        return False
-    return not any(getattr(entry, "sources", None) for entry in contributions)
+# The evidence rule the engine once defined, under its historical name.
+_round_lacks_evidence = EvidencePolicy.round_lacks_evidence

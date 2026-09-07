@@ -312,3 +312,95 @@ def test_prompt_policy_parity(lifecycle):
         assert digest(direct) == digest(delegated) == frozen["samples"]["prompts"]["payloads"][actor]
         assert direct["turn_id"] != delegated["turn_id"]  # each render names a fresh turn
     assert policy.role_prompt("expert.unknown", variant.roster, OBJECTIVE) == policy.role_prompt("expert", None, OBJECTIVE)
+
+
+# ── Pull request 3: cleaner, evidence, verification ──────────────────
+
+
+def test_cleaner_policy_parity(lifecycle):
+    from core.variants.classic.cleaner import CleanerPolicy
+
+    harness, run, trace = lifecycle
+    frozen = frozen_trace()
+    assert trace["samples"]["cleaner"] == frozen["samples"]["cleaner"]
+    cleaner_calls = [call for call in trace["worker_calls"] if call["actor"] == "cleaner"]
+    frozen_cleaner_calls = [call for call in frozen["worker_calls"] if call["actor"] == "cleaner"]
+    assert cleaner_calls and [call["prompt_digest"] for call in cleaner_calls] == [
+        call["prompt_digest"] for call in frozen_cleaner_calls
+    ]
+    variant = harness.variant
+    policy = variant.cleaner_policy
+    assert isinstance(policy, CleanerPolicy)
+    direct = policy.eviction_candidates(run.snapshot, retention_weights=variant.cleaner_retention_weights)
+    assert [entry.id for entry in direct] == [entry.id for entry in variant._get_eviction_candidates(run.snapshot)]
+    assert [entry.id for entry in direct] == frozen["samples"]["cleaner"]["eviction_candidates"]
+    view = policy.condense_view(run.snapshot, direct)
+    task = {"task_id": TASK_ID, "query": OBJECTIVE}
+    assert view == variant.build_turn_payload(task, "cleaner", run.snapshot)["board"]
+    assert [item["id"] for item in view["entries"]] == frozen["samples"]["cleaner"]["condense_entries"]
+    open_entries = [entry for entry in run.snapshot.values() if entry.status == "open"]
+    assert policy.board_tokens(open_entries) == sum(len(entry.body) // 4 for entry in open_entries)
+    assert "forced cleaner invocation" in policy.pressure_rationale(9000, 8000)
+
+
+def test_evidence_policy_parity(lifecycle):
+    from core.gateway import _normalize_sources
+    from core.variants.classic.evidence import EvidencePolicy
+
+    harness, run, trace = lifecycle
+    frozen = frozen_trace()
+    assert trace["samples"]["evidence"] == frozen["samples"]["evidence"]
+    assert [row[5] for row in trace["board"]] == [row[5] for row in frozen["board"]]  # sources
+    variant = harness.variant
+    policy = variant.evidence_policy
+    assert isinstance(policy, EvidencePolicy)
+    rounds: dict[int, list] = {}
+    for entry in run.snapshot.values():
+        rounds.setdefault(int(entry.round), []).append(entry)
+    for round_no, entries in sorted(rounds.items()):
+        assert policy.round_lacks_evidence(entries) == traditional._round_lacks_evidence(entries)
+        assert policy.round_lacks_evidence(entries) == frozen["samples"]["evidence"]["round_lacks_evidence"][str(round_no)]
+    sample = [" https://a.example ", "", 7, "b" * 600]
+    assert policy.normalize_sources(sample) == _normalize_sources(sample)
+    assert policy.normalize_sources(sample) == frozen["samples"]["evidence"]["normalized_sources"]
+    assert policy.normalize_sources("single") == ["single"]
+    assert policy.normalize_sources(None) == []
+
+
+def test_verification_policy_parity(lifecycle):
+    from core.variants.classic.verification import VerificationPolicy
+
+    harness, run, trace = lifecycle
+    frozen = frozen_trace()
+    assert trace["samples"]["verification"] == frozen["samples"]["verification"]
+    assert trace["result"] == frozen["result"]
+    assert [row[6] for row in trace["board"]] == [row[6] for row in frozen["board"]]  # statuses
+    variant = harness.variant
+    policy = variant.verification_policy
+    assert isinstance(policy, VerificationPolicy)
+    reviewed_id = run.meta.get("solution_reviewed_id")
+    direct = policy.accepted_solution(run.snapshot, reviewed_solution_id=reviewed_id, require_review=True)
+    delegated = variant._accepted_solution(run.snapshot, reviewed_solution_id=reviewed_id, require_review=True)
+    assert direct is delegated
+    assert getattr(direct, "id", None) == frozen["samples"]["verification"]["accepted"]
+    assert getattr(policy.accepted_solution(run.snapshot), "id", None) == frozen["samples"]["verification"]["accepted_unreviewed"]
+    resolved = policy.resolve_answer(run.snapshot, reviewed_id)
+    assert resolved is not None
+    assert (resolved.answer, resolved.answer_source, resolved.verification_status) == (
+        run.result["answer"], run.result["answer_source"], run.result["verification_status"],
+    )
+    assert policy.resolve_answer({}, None) is None
+    approval = policy.approval_entry("e-9", "mutation-1")
+    assert approval["refs"] == ["e-9"] and approval["_mutation_id"] == "mutation-1:approval"
+    # The grace plan of a finished run owes nothing.
+    plan = policy.grace_plan(
+        run.snapshot, run.meta, grace_verification=True, critic_enabled=True,
+        within_overrun=lambda: True, revision_headroom=lambda: True,
+    )
+    assert plan.candidate is None and plan.revision is False
+    forced = {**run.meta, "decider_forced": True, "solution_reviewed_id": None, "solution_candidate_id": None}
+    plan = policy.grace_plan(
+        run.snapshot, forced, grace_verification=True, critic_enabled=True,
+        within_overrun=lambda: True, revision_headroom=lambda: True,
+    )
+    assert plan.candidate is not None and plan.candidate.type == "solution"
