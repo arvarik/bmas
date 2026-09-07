@@ -23,6 +23,7 @@ VARIANT_API_VERSION = "1"
 # Production run admission accepts only a qualified pair.
 RUNTIME_AVAILABILITY_STATES = ("planned", "test_only", "qualified", "retired")
 QUALIFIED_AVAILABILITY = "qualified"
+TEST_ONLY_AVAILABILITY = "test_only"
 
 
 class UnknownVariantError(ValueError):
@@ -409,6 +410,14 @@ def load_builtin_variants() -> None:
         module.ClassicVariantRuntime,
         aliases=(LEGACY_CLASSIC_VARIANT,),
     )
+    # The native Classic pair is test-only. The bare identifier and the
+    # legacy alias stay bound to the legacy pair.
+    register_variant(
+        CLASSIC_VARIANT,
+        module.ClassicRuntime,
+        availability=TEST_ONLY_AVAILABILITY,
+        bind_aliases=False,
+    )
     collaborative = importlib.import_module("core.variants.collaborative")
     for runtime_id, runtime in (
         (PATCHBOARD_VARIANT, collaborative.PatchboardVariantRuntime),
@@ -457,11 +466,26 @@ def runtime_availability(key: RuntimeKey) -> str:
     return _AVAILABILITY[key]
 
 
+def admissible_availabilities() -> tuple[str, ...]:
+    """Return the availability states this deployment admits.
+
+    Production admission accepts only a qualified pair. A deployment
+    that sets ``coordination.admit_test_only_runtimes`` also admits a
+    test-only pair, so the test stack and an operator can route a run
+    through a pair before it qualifies.
+    """
+    import config
+
+    if bool(getattr(config, "ADMIT_TEST_ONLY_RUNTIMES", False)):
+        return (QUALIFIED_AVAILABILITY, TEST_ONLY_AVAILABILITY)
+    return (QUALIFIED_AVAILABILITY,)
+
+
 def require_admissible_runtime(key: RuntimeKey) -> type[CoordinationVariant]:
-    """Return the runtime for one exact qualified pair or fail closed."""
+    """Return the runtime for one exact admissible pair or fail closed."""
     cls = require_runtime(key)
     availability = _AVAILABILITY[key]
-    if availability != QUALIFIED_AVAILABILITY:
+    if availability not in admissible_availabilities():
         raise RuntimeNotAdmissibleError(
             f"Runtime pair {key} is {availability}; production admission "
             "accepts only a qualified pair"

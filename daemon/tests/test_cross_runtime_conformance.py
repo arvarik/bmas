@@ -47,10 +47,60 @@ def test_one_capability_record_per_runtime_pair(directory):
 
 def test_only_qualified_pairs_are_runnable_choices(directory):
     assert set(directory.runnable_choices()) == set(STAGE0_QUALIFIED)
-    # The planned native records exist for interface development.
-    assert set(directory.planned_pairs()) == {CLASSIC_NATIVE, PATCHBOARD_NATIVE}
-    for planned in directory.planned_pairs():
-        assert not directory.get(planned).is_runnable_choice()
+    # The planned native record exists for interface development, and
+    # the test-only native record runs on a test deployment only.
+    assert set(directory.planned_pairs()) == {PATCHBOARD_NATIVE}
+    assert set(directory.test_only_pairs()) == {CLASSIC_NATIVE}
+    for pair in (*directory.planned_pairs(), *directory.test_only_pairs()):
+        assert not directory.get(pair).is_runnable_choice()
+
+
+def test_the_classic_native_record_declares_the_ladder_start(directory):
+    record = directory.get(CLASSIC_NATIVE)
+    legacy = directory.get(CLASSIC_LEGACY)
+    assert record.availability == "test_only"
+    # The admission and the generic panels already serve the pair.
+    for capability in ("shared_submission", "immutable_assets", "generic_ui_fallback"):
+        assert record.capabilities[capability] == "native", capability
+    # The host adapter serves the ledgers, the outbox, the protocol, the
+    # acknowledgement, the receipts, the envelope, the fence, and the
+    # retained checkpoint reader.
+    for capability in (
+        "durable_activation_ledger", "activation_dispatch_outbox", "agent_protocol",
+        "signed_activation_acknowledgement", "nested_receipts", "trusted_envelope_creator",
+        "task_fence_validation", "recovery_reader_retained", "benchmark_scoring",
+    ):
+        assert record.capabilities[capability] == "compatibility_adapter", capability
+    assert record.capabilities["cancellation_signal"] == "legacy"
+    assert record.capabilities["typed_evidence_index"] == "legacy"
+    assert record.capabilities["budget_reservation"] == "advisory_legacy"
+    assert record.capabilities["applied_seed_evidence"] == "recorded_only"
+    assert record.capabilities["ui_adapter"] == "unavailable"
+    for capability in ("common_event_envelope", "deterministic_analysis_replay", "foundation_reference_scoring"):
+        assert record.capabilities[capability] == legacy.capabilities[capability] == "compatibility_projection"
+    assert record.capabilities["immutable_policy_set"] == "compatibility_record"
+    # The pair speaks the legacy agent contract through the host adapter.
+    assert record.agent_protocol_version == "1"
+    assert record.agent_receipt_version is None
+    assert record.effect_schema_version is None
+    assert not record.nested_effect_receipts
+    assert record.schema_versions == legacy.schema_versions
+    assert record.ui_adapter == "classic_native"
+
+
+def test_a_test_only_pair_qualifies_after_its_column_passes(directory):
+    import dataclasses
+
+    promoted = directory.qualify(CLASSIC_NATIVE)
+    assert promoted.availability == "qualified"
+    assert directory.get(CLASSIC_NATIVE).is_runnable_choice()
+    # A retired pair never qualifies again.
+    retired = RuntimeKey("retired-runtime", "1")
+    directory.records[retired] = dataclasses.replace(
+        directory.get(CLASSIC_LEGACY), runtime_key=retired, availability="retired",
+    )
+    with pytest.raises(cap.CapabilityPublicationError):
+        directory.qualify(retired)
 
 
 def test_legacy_records_mark_unsupported_native_capabilities(directory):

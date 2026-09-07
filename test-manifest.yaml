@@ -586,20 +586,39 @@ groups:
     state: active_required
     owner: daemon
     purpose: >-
-      Run the behavioral conformance suite for the Classic v1 column
+      Run the behavioral conformance suite for the Classic legacy column
       with the real runtime: the test stack starts Redis, the fake
       provider, the daemon, and the agent, the suite submits real
       tasks, aborts one through the operator route, resumes one through
       a real daemon restart, and proves the host dispatched signed
       grants on the legacy runtime's behalf while the runtime authored
       no native authority record.
-    argv: ["python3", "-m", "pytest", "tests/test_behavioral_conformance_stack.py", "-q", "--tb=short"]
+    argv: ["python3", "-m", "pytest", "tests/test_behavioral_conformance_stack.py::test_the_classic_column_passes_with_the_real_runtime", "-q", "--tb=short"]
     working_directory: daemon
     timeout_seconds: 1200
     tools: [python, pytest, redis-server]
     parser: pytest_summary
     artifacts:
       - "test-results/behavioral-conformance-stack/**"
+
+  - id: daemon.classic-native-column
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Run the behavioral conformance suite for the Classic native column
+      with the real runtime: the test stack admits the test-only native
+      pair, the suite submits real tasks that name the exact pair,
+      aborts one, resumes one through a real daemon restart, and proves
+      every observed value equals the declared starting value of the
+      conformance ladder. Each Classic work package that flips a value
+      updates the declaration and this column proves the flip.
+    argv: ["python3", "-m", "pytest", "tests/test_behavioral_conformance_stack.py::test_the_classic_native_column_passes_with_the_real_runtime", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 1200
+    tools: [python, pytest, redis-server]
+    parser: pytest_summary
+    artifacts:
+      - "test-results/classic-native-column/**"
 
   - id: daemon.foundation-release-gate
     state: active_required
@@ -1259,6 +1278,7 @@ profiles:
         - daemon.cross-runtime-conformance
         - daemon.behavioral-conformance
         - daemon.behavioral-conformance-stack
+        - daemon.classic-native-column
         - daemon.populated-migration
         - daemon.release-gates
         - daemon.complete-stack-journey

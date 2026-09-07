@@ -24,8 +24,8 @@ import pytest
 import runtime_fixture_capture as capture
 
 import config
-from core.variants import classic as classic_runtime_module
 from core.variants import collaborative as collaborative_runtime_module
+from core.variants.classic import adapter as classic_runtime_module
 from core.variants.collaborative import (
     PatchboardVariantRuntime,
     StigmergicVariantRuntime,

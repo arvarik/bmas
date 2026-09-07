@@ -65,7 +65,11 @@ def test_public_paths_stay_open_and_everything_else_needs_a_key(keyed_client):
     assert listing.status_code == 200
     ids = {(r["runtime_key"]["runtime_id"], r["runtime_key"]["runtime_contract_version"]) for r in listing.json()["records"]}
     assert ("reference", "1") in ids and ("classic", "2") in ids
-    assert {"runtime_id": "classic", "runtime_contract_version": "2"} in listing.json()["planned"]
+    native = {"runtime_id": "classic", "runtime_contract_version": "2"}
+    assert native in listing.json()["test_only"]
+    assert native not in listing.json()["planned"]
+    assert native not in listing.json()["runnable"]
+    assert {"runtime_id": "patchboard", "runtime_contract_version": "2"} in listing.json()["planned"]
 
 
 def test_recovery_center_answers_over_http(keyed_client):

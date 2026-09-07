@@ -91,16 +91,19 @@ def successor_runtime(
 
 
 def register_successors() -> dict[str, RuntimeKey]:
-    """Register the planned successor pairs beside the built-in pairs."""
-    keys = {}
-    for runtime_id in ("classic", "patchboard"):
-        keys[runtime_id] = register_variant(
-            runtime_id,
-            successor_runtime(runtime_id),
+    """Register the planned successor pair beside the built-in pairs.
+
+    The Classic successor is built in as the test-only native pair, so
+    only the PatchBoard successor is a stub here.
+    """
+    return {
+        "patchboard": register_variant(
+            "patchboard",
+            successor_runtime("patchboard"),
             availability="planned",
             bind_aliases=False,
-        )
-    return keys
+        ),
+    }
 
 
 def test_registry_stores_both_contract_versions_together():
@@ -139,6 +142,54 @@ def test_unknown_runtime_fails_closed():
 def test_unknown_contract_version_fails_closed():
     with pytest.raises(UnsupportedContractError):
         require_runtime(RuntimeKey("classic", "3"))
+
+
+def test_the_classic_native_pair_is_built_in_and_test_only():
+    from core.variants.classic import ClassicRuntime, ClassicVariantRuntime
+
+    native = RuntimeKey("classic", "2")
+    assert require_runtime(native) is ClassicRuntime
+    assert require_checkpoint_reader(native) is ClassicRuntime
+    assert runtime_availability(native) == "test_only"
+    assert ClassicRuntime.descriptor.contract_version == "2"
+    assert ClassicRuntime.descriptor.supports_recovery
+    assert not ClassicRuntime.descriptor.listed
+    assert ClassicRuntime.descriptor.aliases == ()
+    # The bare identifier and the legacy alias keep the legacy pair.
+    assert resolve_runtime_key("classic") == RuntimeKey("classic", "1")
+    assert resolve_runtime_key("traditional") == RuntimeKey("classic", "1")
+    assert require_runtime(RuntimeKey("classic", "1")) is ClassicVariantRuntime
+    # Production admission refuses the test-only pair.
+    with pytest.raises(RuntimeNotAdmissibleError):
+        require_admissible_runtime(native)
+    # The public capability document never lists it.
+    published = {
+        (record["id"], record["contract_version"])
+        for record in variant_capabilities()["variants"]
+    }
+    assert ("classic", "2") not in published
+
+
+def test_a_test_deployment_admits_the_test_only_pair(monkeypatch):
+    import config
+    from core.variants import admissible_availabilities
+    from core.variants.classic import ClassicRuntime
+
+    native = RuntimeKey("classic", "2")
+    assert admissible_availabilities() == ("qualified",)
+    monkeypatch.setattr(config, "ADMIT_TEST_ONLY_RUNTIMES", True, raising=False)
+    assert admissible_availabilities() == ("qualified", "test_only")
+    assert require_admissible_runtime(native) is ClassicRuntime
+    # A planned pair stays refused even on a test deployment.
+    planned = register_successors()["patchboard"]
+    with pytest.raises(RuntimeNotAdmissibleError):
+        require_admissible_runtime(planned)
+    # The document still hides the test-only pair.
+    published = {
+        (record["id"], record["contract_version"])
+        for record in variant_capabilities()["variants"]
+    }
+    assert ("classic", "2") not in published
 
 
 def test_missing_checkpoint_reader_is_rejected():
@@ -210,20 +261,27 @@ def test_interface_adapter_identity_matches_the_frozen_fixture():
 def test_production_admission_denies_planned_and_test_only():
     successor_keys = register_successors()
     test_key = register_variant(
-        "classic",
-        successor_runtime("classic"),
+        "stigmergic",
+        successor_runtime("stigmergic"),
         availability="test_only",
         bind_aliases=False,
     )
-    assert test_key == successor_keys["classic"]
+    assert test_key == RuntimeKey("stigmergic", "2")
     with pytest.raises(RuntimeNotAdmissibleError):
         require_admissible_runtime(successor_keys["patchboard"])
     with pytest.raises(RuntimeNotAdmissibleError):
         require_admissible_runtime(test_key)
+    with pytest.raises(RuntimeNotAdmissibleError):
+        require_admissible_runtime(RuntimeKey("classic", "2"))
 
 
 def test_qualified_pair_is_admissible():
+    # Every built-in pair is qualified except the test-only native
+    # Classic pair.
     for key in registered_runtime_keys():
+        if key == RuntimeKey("classic", "2"):
+            assert runtime_availability(key) == "test_only"
+            continue
         assert runtime_availability(key) == "qualified"
         assert require_admissible_runtime(key)
 

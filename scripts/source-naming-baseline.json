@@ -140,7 +140,7 @@
         "token": "_clamp01 (numeric-suffix)"
       }
     ],
-    "daemon/src/core/variants/classic.py": [
+    "daemon/src/core/variants/classic/adapter.py": [
       {
         "count": 2,
         "kind": "identifier",

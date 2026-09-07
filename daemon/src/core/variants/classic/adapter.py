@@ -1,4 +1,9 @@
-"""Registered lifecycle adapter for the classic blackboard runtime."""
+"""The lifecycle adapter of the Classic legacy pair.
+
+The adapter connects the legacy classic engine to the shared task
+lifecycle. The package ``__init__`` registers it under the legacy
+pair with the ``traditional`` alias.
+"""
 from __future__ import annotations
 
 import copy
@@ -20,7 +25,6 @@ from core.variants import (
     VariantFeatures,
     VariantHost,
     VariantOutcome,
-    register_variant,
 )
 from core.variants.effort import (
     CLASSIC_EFFORT_PROFILES,
@@ -216,9 +220,3 @@ class ClassicVariantRuntime:
             step_result_class=StepResult,
         )
 
-
-register_variant(
-    CLASSIC_VARIANT,
-    ClassicVariantRuntime,
-    aliases=(LEGACY_CLASSIC_VARIANT,),
-)

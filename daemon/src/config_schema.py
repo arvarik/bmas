@@ -142,6 +142,13 @@ class CoordinationConfig(StrictModel):
     )
     view_budget_tokens: int = Field(default=12000, ge=1)
     round_execution: Literal["concurrent", "sequential"] = "concurrent"
+    admit_test_only_runtimes: bool = Field(
+        default=False,
+        description=(
+            "Admit a test-only runtime pair when a submission names its exact "
+            "contract version. Only a test deployment sets this to true."
+        ),
+    )
     classic: ClassicConfig | None = None
     traditional: ClassicConfig | None = None
     role_registry: dict[str, RoleConfig] = Field(default_factory=dict)

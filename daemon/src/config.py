@@ -469,6 +469,13 @@ if ROUND_EXECUTION not in _VALID_ROUND_EXECUTION:
         f"Must be one of: {', '.join(sorted(_VALID_ROUND_EXECUTION))}.",
     )
 
+# Production admission accepts only a qualified runtime pair. A test
+# deployment can also admit a test-only pair that a submission names by
+# its exact contract version. core/variants/__init__.py reads this value.
+ADMIT_TEST_ONLY_RUNTIMES: bool = bool(
+    _coordination.get("admit_test_only_runtimes", False)
+)
+
 # Gates for the planned shared Foundation writers. Every gate stays
 # disabled by default. No current writer consults a gate yet, so the
 # default deployment keeps existing runtime behavior unchanged.

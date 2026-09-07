@@ -59,6 +59,10 @@ coordination:
   variant: classic
   view_budget_tokens: 12000
   round_execution: concurrent
+  # Production admission accepts only a qualified runtime pair. A test
+  # deployment sets this to true so a submission can name the exact
+  # contract version of a test-only pair. Keep it false in production.
+  admit_test_only_runtimes: false
 
   classic:
     max_rounds: 4
