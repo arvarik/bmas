@@ -287,9 +287,14 @@ async def admit_run(body: RunAdmissionRequest) -> dict[str, Any]:
 
     _require_operator()
     if await db.get_task(body.task_id) is None:
+        # The task anchors the run for the journey's own dispatches. It
+        # stays in the staging state, so the recovery scanner of a
+        # restarted daemon never picks it up as work and dispatches
+        # classic activations under the same run.
         await db.create_task_with_meta(
             body.task_id, "foundation run", "foundation run", body.runtime_id, {},
             runtime_contract_version=body.runtime_contract_version,
+            run_state="staging",
         )
     try:
         admitted = await interactive_admission.admit_task_run(
