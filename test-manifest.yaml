@@ -650,6 +650,25 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.classic-journal-projection
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the journal-backed board of the Classic native pair: every
+      board mutation commits one proposal decision with its projection
+      rows in the same transaction, a replay from cursor zero rebuilds
+      the board projection digest, the durable projection check
+      compares the rows with the replay, the checkpoint is a verified
+      snapshot that a restart resumes under the same fence, a stale
+      fence, an expired lease, a deadline, and a cancellation reject the
+      mutation, and every native run ends with exactly one terminal
+      outcome under the registered Classic reasons.
+    argv: ["python3", "-m", "pytest", "tests/test_classic_journal_projection.py", "tests/test_classic_terminal_outcome.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
   - id: daemon.foundation-release-gate
     state: active_required
     owner: daemon
@@ -1311,6 +1330,7 @@ profiles:
         - daemon.classic-native-column
         - daemon.classic-policy-parity
         - daemon.classic-spec-compiler
+        - daemon.classic-journal-projection
         - daemon.populated-migration
         - daemon.release-gates
         - daemon.complete-stack-journey

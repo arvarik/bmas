@@ -249,9 +249,16 @@ def _classic_native_starting_capabilities() -> dict[str, str]:
     values = _legacy_capabilities()
     values["shared_submission"] = "native"
     values["immutable_assets"] = "native"
-    # The pair reads checkpoints through the legacy adapter's reader
-    # until the journal-backed board brings its own.
-    values["recovery_reader_retained"] = "compatibility_adapter"
+    # Work package 5A: the runtime runs under the fenced run context
+    # of its admission, validates the task fence and the live
+    # run-control row inside every board mutation, authors its board
+    # and its terminal outcome as journal records with the common
+    # event envelope, and reads its checkpoint as a verified snapshot
+    # of the journal state.
+    values["immutable_policy_set"] = "native"
+    values["task_fence_validation"] = "native"
+    values["common_event_envelope"] = "native"
+    values["recovery_reader_retained"] = "native"
     # Mission Control has no native Classic adapter yet, so the pair
     # renders through the generic fallback panels.
     values["ui_adapter"] = "unavailable"

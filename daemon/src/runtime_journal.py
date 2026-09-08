@@ -795,8 +795,106 @@ def empty_projection_state() -> dict[str, Any]:
         "outcomes": {},
         "invalidation_validity": {},
         "controls": {},
+        "board": {},
         "replay_status": {"status": "complete", "redactions": []},
     }
+
+
+# The board section of one accepted ``proposal_decision`` payload. A
+# runtime that projects its board through the journal states the new
+# entries, the status changes, and the tombstones of one mutation.
+# Bodies live as promoted artifacts and the rows hold their digests.
+BOARD_SECTION_SCHEMA_VERSION = "1"
+BOARD_ENTRY_FIELDS = (
+    "entry_id", "entry_type", "author", "activation_id", "round", "space",
+    "title", "body_digest", "refs", "sources", "confidence", "status",
+)
+
+
+def empty_board_state() -> dict[str, Any]:
+    """Return the empty board projection of one run."""
+    return {"entries": {}, "tombstones": {}}
+
+
+def fold_board_section(
+    board: dict[str, Any],
+    section: dict[str, Any],
+    *,
+    task_id: str,
+    journal_cursor: int | None,
+    recorded_at: str | None,
+) -> dict[str, Any]:
+    """Fold one accepted board section into one run's board projection.
+
+    The fold is deterministic. With a journal cursor and a recorded
+    time it produces the exact durable rows; without them it produces
+    the content view a runtime digests before the commit.
+    """
+    if str(section.get("schema_version") or "") != BOARD_SECTION_SCHEMA_VERSION:
+        raise JournalIntegrityError(
+            "The board section carries an unknown schema version"
+        )
+    entries = board.setdefault("entries", {})
+    tombstones = board.setdefault("tombstones", {})
+    actor = str(section.get("actor") or "")
+    activation_id = section.get("activation_id")
+    for entry in section.get("entries") or []:
+        entry_id = str(entry["entry_id"])
+        if entry_id in entries:
+            raise JournalIntegrityError(
+                f"The board projection already holds entry {entry_id}"
+            )
+        row = {field: entry.get(field) for field in BOARD_ENTRY_FIELDS}
+        row["entry_id"] = entry_id
+        row["task_id"] = task_id
+        row["round"] = int(entry.get("round") or 0)
+        row["refs"] = [str(value) for value in entry.get("refs") or []]
+        row["sources"] = [str(value) for value in entry.get("sources") or []]
+        row["confidence"] = str(entry.get("confidence"))
+        row["status"] = str(entry.get("status") or "open")
+        if journal_cursor is not None:
+            row["created_cursor"] = journal_cursor
+            row["journal_cursor"] = journal_cursor
+            row["created_at"] = recorded_at
+            row["updated_at"] = recorded_at
+        entries[entry_id] = row
+    for change in section.get("status_changes") or []:
+        entry_id = str(change["entry_id"])
+        row = entries.get(entry_id)
+        if row is None:
+            raise JournalIntegrityError(
+                f"The board projection has no entry {entry_id} to change"
+            )
+        row["status"] = str(change["status"])
+        if journal_cursor is not None:
+            row["journal_cursor"] = journal_cursor
+            row["updated_at"] = recorded_at
+    for tombstone in section.get("tombstones") or []:
+        entry_id = str(tombstone["entry_id"])
+        row = entries.get(entry_id)
+        if row is None:
+            raise JournalIntegrityError(
+                f"The board projection has no entry {entry_id} to remove"
+            )
+        if entry_id in tombstones:
+            raise JournalIntegrityError(
+                f"The board projection already removed entry {entry_id}"
+            )
+        row["status"] = str(tombstone.get("status") or "removed")
+        marker = {
+            "entry_id": entry_id,
+            "task_id": task_id,
+            "actor": actor,
+            "activation_id": activation_id,
+            "reason": str(tombstone.get("reason") or ""),
+        }
+        if journal_cursor is not None:
+            row["journal_cursor"] = journal_cursor
+            row["updated_at"] = recorded_at
+            marker["journal_cursor"] = journal_cursor
+            marker["removed_at"] = recorded_at
+        tombstones[entry_id] = marker
+    return board
 
 
 def apply_record_to_state(
@@ -878,6 +976,15 @@ def apply_record_to_state(
                 state["effects"].setdefault(run_id, {})[
                     payload["effect_id"]
                 ] = payload.get("effect_state", "approved")
+            board_section = payload.get("board")
+            if isinstance(board_section, dict):
+                fold_board_section(
+                    state["board"].setdefault(run_id, empty_board_state()),
+                    board_section,
+                    task_id=record.task_id,
+                    journal_cursor=record.journal_cursor,
+                    recorded_at=record.recorded_at,
+                )
     elif record.operation_type == "terminal_outcome":
         state["outcomes"][run_id] = dict(payload)
         state["runs"][run_id]["state"] = TERMINAL_STATE_FOR_CLASS[
@@ -1120,6 +1227,30 @@ async def verify_durable_projections() -> None:
     if durable != result.state["runs"]:
         raise JournalIntegrityError(
             "The durable run projection disagrees with journal replay"
+        )
+    async with _journal_connect() as connection:
+        entry_rows, tombstone_rows = (
+            await db.read_classic_board_projection_tables(connection)
+        )
+    durable_board: dict[str, dict[str, Any]] = {}
+    for row in entry_rows:
+        board = durable_board.setdefault(str(row["run_id"]), empty_board_state())
+        board["entries"][str(row["entry_id"])] = {
+            key: value for key, value in row.items() if key != "run_id"
+        }
+    for row in tombstone_rows:
+        board = durable_board.setdefault(str(row["run_id"]), empty_board_state())
+        board["tombstones"][str(row["entry_id"])] = {
+            key: value for key, value in row.items() if key != "run_id"
+        }
+    replayed_board = {
+        run_id: board
+        for run_id, board in result.state["board"].items()
+        if board["entries"] or board["tombstones"]
+    }
+    if durable_board != replayed_board:
+        raise JournalIntegrityError(
+            "The durable board projection disagrees with journal replay"
         )
 
 

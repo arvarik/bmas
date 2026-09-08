@@ -227,8 +227,21 @@ def registered_mapping(
 _builtin_loaded = False
 
 
+def _reason_table_for(runtime: Any) -> dict[str, dict[str, str]]:
+    """The reason table of one registered runtime class.
+
+    A runtime that publishes its own terminal reasons declares
+    ``outcome_reasons``; every other runtime registers the shared task
+    reasons the daemon task layer derives.
+    """
+    table = getattr(runtime, "outcome_reasons", None)
+    if callable(table):
+        return dict(table())
+    return dict(SHARED_TASK_REASONS)
+
+
 def _register_builtin_mappings() -> None:
-    """Register one mapping for every qualified runtime pair."""
+    """Register one mapping for every registered runtime pair."""
     global _builtin_loaded
     if _builtin_loaded:
         return
@@ -239,7 +252,7 @@ def _register_builtin_mappings() -> None:
             build_outcome_mapping(
                 runtime_id=key.runtime_id,
                 runtime_contract_version=key.runtime_contract_version,
-                reasons=SHARED_TASK_REASONS,
+                reasons=_reason_table_for(variants.require_runtime(key)),
             ),
         )
     _builtin_loaded = True

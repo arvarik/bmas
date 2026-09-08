@@ -17,8 +17,15 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import logging
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+import database as db
+import runtime_journal as journal
+from core.foundation_gates import WriterDisabledError, require_writer_gates
+from core.gateway import LeaseLostError
+from core.runtime_services import AuthorityError
 from core.variants import VariantConfigurationError
 from core.variants.classic.adapter import ClassicHost, ClassicVariantRuntime
 from core.variants.classic.compiler import (
@@ -29,7 +36,29 @@ from core.variants.classic.compiler import (
     specification_store,
     store_specification,
 )
+from core.variants.classic.outcomes import (
+    CLASSIC_REASON_TABLE_VERSION,
+    TERMINAL_OUTCOME_PRODUCER,
+    classic_benchmark_reasons,
+    classic_reason_registry,
+    commit_terminal_outcome,
+    reason_for_exception,
+    reason_for_result,
+)
 from core.variants.classic.profiles import resolve_effort_level, resolve_fidelity
+from core.variants.classic.projection import (
+    BoardMutation,
+    ClassicIntegrityError,
+    RunCancelledError,
+    RunDeadlineError,
+    VerifiedCheckpoint,
+    board_projection_digest,
+    build_checkpoint,
+    content_state_after,
+    promote_text,
+    read_checkpoint,
+    replay_run_board,
+)
 from core.variants.classic.spec import (
     BoardSettings,
     ClassicSpecInput,
@@ -41,14 +70,275 @@ from core.variants.classic.spec import (
 from core.variants.traditional import StepResult, TraditionalVariant
 
 if TYPE_CHECKING:
+    from core.run_context import RunContext
+    from core.run_contracts import ReasonRegistry
+    from core.runtime_services import ReferenceRuntimeServices
     from core.variants import (
         VariantExecutionRequest,
         VariantHost,
         VariantOutcome,
     )
 
+logger = logging.getLogger("bmas.classic.runtime")
+
 NATIVE_CONTRACT_VERSION = "2"
 NATIVE_CONFIGURATION_SCHEMA_VERSION = "2"
+# The writer gates the native pair checks before its first journal
+# write. The admission checked the run context and the unit of work;
+# the runtime checks the unit of work again and the trace envelope.
+NATIVE_WRITER_GATES = ("runtime_unit_of_work", "trace_envelope")
+
+
+@dataclass
+class NativeRunBinding:
+    """The unit-of-work binding of one native run.
+
+    The binding holds the fenced run context, the runtime services the
+    host built from the durable rows, and the board content state it
+    commits against. It is the committer of the native board gateway:
+    every mutation validates the live run-control row, promotes its
+    bodies, and commits one ``proposal_decision`` with the projection
+    rows in the same transaction. It also writes the run's one
+    terminal outcome.
+    """
+
+    context: RunContext
+    services: ReferenceRuntimeServices
+    tenant_id: str = "tenant-default"
+    board: dict[str, Any] = field(default_factory=journal.empty_board_state)
+    phase: str = "start"
+    reason_registry: ReasonRegistry | None = None
+    outcome_record: journal.JournalRecord | None = None
+    mutation_count: int = 0
+
+    @property
+    def run_id(self) -> str:
+        return self.context.run_id
+
+    @property
+    def task_id(self) -> str:
+        return self.context.task_id
+
+    @property
+    def task_fence(self) -> str:
+        return self.context.task_fence
+
+    @property
+    def artifacts(self) -> Any:
+        return self.services.artifacts
+
+    def board_state(self) -> dict[str, Any]:
+        return self.board
+
+    def board_digest(self) -> str:
+        return board_projection_digest(self.board)
+
+    async def load_board(self) -> None:
+        """Rebuild the board content state from the run's journal."""
+        board, _run_state, _cursor = await replay_run_board(self.run_id)
+        self.board = board
+
+    async def authorize(self) -> dict[str, Any]:
+        """Validate the live run-control row or raise the matching stop."""
+        try:
+            return await self.services.authority.authorize()
+        except AuthorityError as exc:
+            raise self._authority_stop(exc.reason) from exc
+
+    @staticmethod
+    def _authority_stop(reason: str) -> Exception:
+        if reason == "cancelled":
+            return RunCancelledError("The run was cancelled")
+        if reason == "deadline":
+            return RunDeadlineError("The run passed its deadline")
+        if reason in ("clock_fault", "unknown_run"):
+            return ClassicIntegrityError(f"The run authority is unusable: {reason}")
+        return LeaseLostError(f"The run authority rejected the mutation: {reason}")
+
+    async def commit(self, mutation: BoardMutation) -> journal.JournalRecord:
+        """Commit one validated board mutation as one proposal decision."""
+        await self.authorize()
+        accepted = mutation.decision == "accepted"
+        section = mutation.section if accepted else None
+        if accepted and section is not None:
+            for entry_id, body in mutation.bodies.items():
+                promote_text(self.artifacts, body, referenced_by=f"{self.run_id}:{entry_id}")
+            next_board = content_state_after(self.board, section, task_id=self.task_id)
+        else:
+            next_board = self.board
+        digest = board_projection_digest(next_board)
+        payload: dict[str, Any] = {
+            "decision": mutation.decision,
+            "proposal_digest": mutation.proposal_digest(),
+            "execution_envelope_digest": mutation.envelope_digest(),
+            "projection_changes": {"board_projection_digest": digest} if accepted else {},
+            "checkpoint_digest": digest,
+            "circuit_state": "closed",
+            "circuit_decision": "allow",
+            "activation_id": mutation.activation_id or "host",
+            "activation_state": "proposal_recorded",
+            "budget": {"reserved": 0, "consumed": 0},
+            "trace_event": {
+                "event": f"board.{mutation.kind}",
+                "decision": mutation.decision,
+                "entry_ids": mutation.entry_ids(),
+            },
+            "mutation": {
+                "kind": mutation.kind,
+                "actor": mutation.actor,
+                "activation_id": mutation.activation_id,
+                "round": int(mutation.round),
+                "mutation_id": (section or {}).get("mutation_id") if section else mutation.proposal.get("mutation_id"),
+            },
+            "policy_set_digest": self.context.policy_set_digest,
+            "specification_digest": self.context.effective_spec_digest,
+        }
+        if accepted and section is not None:
+            payload["board"] = section
+        else:
+            payload["rejection"] = {"reason": mutation.reason or "rejected"}
+        operation = journal.JournalOperation(
+            operation_type="proposal_decision",
+            task_id=self.task_id,
+            run_id=self.run_id,
+            runtime_id=self.context.runtime_key.runtime_id,
+            runtime_contract_version=self.context.runtime_key.runtime_contract_version,
+            payload=payload,
+            idempotency_token=mutation.token,
+            producer=TERMINAL_OUTCOME_PRODUCER,
+            authority_type="runtime",
+            correlation_id=mutation.activation_id,
+            tenant_id=self.tenant_id,
+            task_fence=self.task_fence,
+        )
+        try:
+            record = await journal.commit_operation(
+                operation, extra_writes=self._projection_writer(section) if accepted else None,
+            )
+        except journal.JournalFenceError as exc:
+            raise LeaseLostError(f"The task fence is stale: {exc}") from exc
+        except journal.JournalIntegrityError as exc:
+            raise ClassicIntegrityError(str(exc)) from exc
+        if accepted:
+            self.board = next_board
+        self.mutation_count += 1
+        return record
+
+    def _projection_writer(self, section: dict[str, Any] | None) -> Any:
+        run_id = self.run_id
+        task_id = self.task_id
+        actor = str((section or {}).get("actor") or "")
+        activation_id = (section or {}).get("activation_id")
+
+        async def write(connection: Any, journal_cursor: int, now: str) -> None:
+            if section is None:
+                return
+            rows = [
+                {
+                    **entry, "run_id": run_id, "task_id": task_id,
+                    "created_cursor": journal_cursor, "journal_cursor": journal_cursor,
+                    "created_at": now, "updated_at": now,
+                }
+                for entry in section.get("entries") or []
+            ]
+            await db.insert_classic_board_projection_rows(connection, rows)
+            for change in section.get("status_changes") or []:
+                await db.update_classic_board_projection_status(
+                    connection, run_id=run_id, entry_id=str(change["entry_id"]),
+                    status=str(change["status"]), journal_cursor=journal_cursor, updated_at=now,
+                )
+            tombstones = []
+            for tombstone in section.get("tombstones") or []:
+                await db.update_classic_board_projection_status(
+                    connection, run_id=run_id, entry_id=str(tombstone["entry_id"]),
+                    status=str(tombstone.get("status") or "removed"),
+                    journal_cursor=journal_cursor, updated_at=now,
+                )
+                tombstones.append({
+                    "run_id": run_id, "entry_id": str(tombstone["entry_id"]), "task_id": task_id,
+                    "actor": actor, "activation_id": activation_id,
+                    "reason": str(tombstone.get("reason") or ""),
+                    "journal_cursor": journal_cursor, "removed_at": now,
+                })
+            await db.insert_classic_board_tombstones(connection, tombstones)
+
+        return write
+
+    async def checkpoint(self, control_meta: dict[str, Any]) -> dict[str, Any]:
+        """Build the verified snapshot of the run at its current journal head."""
+        board, run_state, last_cursor = await replay_run_board(self.run_id)
+        if board_projection_digest(board) != self.board_digest():
+            raise ClassicIntegrityError(
+                "The board content state disagrees with the journal replay"
+            )
+        self.board = board
+        return build_checkpoint(
+            run_id=self.run_id,
+            task_fence=self.task_fence,
+            policy_set_digest=self.context.policy_set_digest,
+            board=board,
+            run_state=run_state,
+            control_meta=control_meta,
+            last_cursor=last_cursor,
+        )
+
+    async def verify_checkpoint(self, checkpoint: dict[str, Any]) -> VerifiedCheckpoint:
+        """Verify one stored checkpoint under the live fence."""
+        verified = await read_checkpoint(
+            checkpoint, run_id=self.run_id, task_fence=self.task_fence,
+        )
+        self.board = verified.board
+        return verified
+
+    async def set_deadline(self, seconds: float) -> None:
+        """Set the durable run deadline once, from the database clock."""
+        from core.variants.classic.projection import deadline_after
+
+        control = await self.services.run_controls.read()
+        if control is None or control.get("deadline_at"):
+            return
+        now = await self.services.database_clock.now()
+        await self.services.run_controls.set_deadline(deadline_after(now, seconds), "cancel")
+
+    async def ensure_terminal_outcome(
+        self,
+        reason_code: str,
+        *,
+        final_references: tuple[str, ...] = (),
+        resource_references: tuple[str, ...] = (),
+        detail: dict[str, Any] | None = None,
+    ) -> journal.JournalRecord:
+        """Write the run's one terminal outcome, or return the written one."""
+        if self.outcome_record is not None:
+            return self.outcome_record
+        if not resource_references:
+            admission = await db.get_runtime_admission(self.run_id) or {}
+            resource_references = tuple(
+                str(admission[name]) for name in ("run_budget_id", "initial_reservation_id")
+                if admission.get(name)
+            )
+        self.outcome_record = await commit_terminal_outcome(
+            context=self.context,
+            reason_code=reason_code,
+            tenant_id=self.tenant_id,
+            final_references=final_references,
+            resource_references=resource_references,
+            detail=detail,
+            registry=self.reason_registry,
+        )
+        return self.outcome_record
+
+    def outcome_reason_for_result(self, result: dict[str, Any]) -> str:
+        return reason_for_result(result)
+
+    def outcome_reason_for_exception(self, exc: BaseException) -> str | None:
+        return reason_for_exception(exc, phase=self.phase)
+
+    def promote_final_answer(self, answer: str) -> tuple[str, ...]:
+        """Promote the final answer as the outcome's final reference."""
+        if not answer:
+            return ()
+        return (promote_text(self.artifacts, answer, referenced_by=f"{self.run_id}:final-answer"),)
 
 
 def _price_text(value: Any) -> str:
@@ -262,14 +552,73 @@ class ClassicRuntime:
         spec = compile_specification(spec_input)
         return store_specification(spec, store=specification_store(), referenced_by=run_id)
 
+    # The host builds the fenced run context and the runtime services
+    # from the durable admission rows for this pair.
+    consumes_run_context = True
+
+    @classmethod
+    def reason_registry(cls) -> ReasonRegistry:
+        """The reason registry that publishes the Classic reason table."""
+        return classic_reason_registry()
+
+    @classmethod
+    def outcome_reasons(cls) -> dict[str, dict[str, str]]:
+        """The benchmark reason table of the native pair."""
+        return classic_benchmark_reasons()
+
+    @classmethod
+    def reason_table_version(cls) -> str:
+        return CLASSIC_REASON_TABLE_VERSION
+
+    @classmethod
+    async def read_checkpoint(
+        cls, checkpoint: dict[str, Any], *, run_id: str, task_fence: str,
+    ) -> VerifiedCheckpoint:
+        """The recovery reader: verify one native checkpoint before use."""
+        return await read_checkpoint(checkpoint, run_id=run_id, task_fence=task_fence)
+
+    @classmethod
+    def bind_run(
+        cls, request: VariantExecutionRequest, *, tenant_id: str = "tenant-default",
+    ) -> NativeRunBinding | None:
+        """Bind the run context and the services the host supplied.
+
+        The writer gates are checked here, before the first native
+        write. A request without a run context keeps the delegated
+        path with no native write, because the admission was gated off.
+        """
+        context = request.run_context
+        services = request.runtime_services
+        if context is None or services is None:
+            return None
+        try:
+            require_writer_gates(*NATIVE_WRITER_GATES)
+        except WriterDisabledError as exc:
+            raise VariantConfigurationError(
+                f"The native classic pair cannot write its journal: {exc}"
+            ) from exc
+        return NativeRunBinding(
+            context=context,
+            services=services,
+            tenant_id=tenant_id,
+            reason_registry=cls.reason_registry(),
+        )
+
     @classmethod
     async def run(
         cls, host: VariantHost, request: VariantExecutionRequest,
     ) -> VariantOutcome:
-        """Delegate the coordination loop to the legacy engine."""
+        """Run the coordination loop through the host under the run binding.
+
+        The engine stays the legacy engine. The binding routes every
+        board mutation through the unit of work, verifies the
+        checkpoint at resume, and writes the terminal outcome.
+        """
         classic_host = cast("ClassicHost", host)
+        binding = cls.bind_run(request)
         return await classic_host.run_classic_runtime(
             request,
             engine_class=TraditionalVariant,
             step_result_class=StepResult,
+            binding=binding,
         )

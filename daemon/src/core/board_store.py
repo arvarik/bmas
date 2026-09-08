@@ -254,6 +254,16 @@ class InMemoryBoardStore:
         self._seq_counters[task_id] = counter
         return counter
 
+    async def advance_seq(self, task_id: str, seq: int) -> None:
+        """Move the sequence counter past one externally assigned number.
+
+        A projection restore imports entries with their stored
+        identifiers, so the next gateway-assigned identifier must not
+        collide with an imported one.
+        """
+        if seq > self._seq_counters.get(task_id, 0):
+            self._seq_counters[task_id] = int(seq)
+
     async def set_meta(self, task_id: str, **fields: Any) -> None:
         if task_id not in self._meta:
             self._meta[task_id] = {}

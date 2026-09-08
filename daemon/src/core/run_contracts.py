@@ -416,6 +416,20 @@ class RunLedger:
             raise RunContractError(f"Unknown run: {run_id}")
         return run
 
+    def restore_run(self, record: RunRecord) -> RunRecord:
+        """Restore one durable run into the ledger under its stored identifier.
+
+        A host that rebuilds its services from the ``runs`` table keeps
+        the run identifier the admission created. A second restore of
+        the same identifier raises, because one run has one record.
+        """
+        if record.run_id in self._runs:
+            raise RunContractError(
+                f"Run {record.run_id} is already in the ledger"
+            )
+        self._runs[record.run_id] = record
+        return record
+
     def runs_for_task(self, task_id: str) -> list[RunRecord]:
         return [run for run in self._runs.values() if run.task_id == task_id]
 

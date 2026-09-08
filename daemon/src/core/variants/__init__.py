@@ -179,6 +179,11 @@ class VariantExecutionRequest:
     overrides: dict[str, Any] | None = None
     resume: bool = False
     effective_configuration: dict[str, Any] | None = None
+    # The host builds the fenced run context and the runtime services
+    # from the durable admission rows for a runtime that consumes them.
+    # A runtime on the legacy path receives neither.
+    run_context: Any = None
+    runtime_services: Any = None
 
 
 @dataclass(frozen=True)

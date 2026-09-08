@@ -55,8 +55,13 @@ class ClassicHost(VariantHost, Protocol):
         *,
         engine_class: type,
         step_result_class: type,
+        binding: Any = None,
     ) -> VariantOutcome:
-        """Run the classic engine and return its coordination outcome."""
+        """Run the classic engine and return its coordination outcome.
+
+        The native pair passes its run binding; the legacy pair passes
+        none and keeps the legacy checkpoint path.
+        """
         ...
 
 
