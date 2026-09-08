@@ -121,6 +121,11 @@ class ClassicVariantRuntime:
         routing = await store.get_routing()
         registry = await store.get_role_registry()
         classic_settings = await store.get_classic()
+        if overrides and overrides.get("fidelity") is not None:
+            raise VariantConfigurationError(
+                "The legacy classic pair has no fidelity profile. "
+                "Name the native contract version to select one."
+            )
         try:
             effort = resolve_effort((overrides or {}).get("effort"))
         except ValueError as exc:

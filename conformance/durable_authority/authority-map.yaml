@@ -1811,6 +1811,30 @@ sqlite_tables:
       - { name: run_id, owner: daemon.evaluation-service, derived: false }
       - { name: reconciliation_id, owner: daemon.evaluation-service, derived: false }
       - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: classic_specifications
+    authority: daemon.classic-specification
+    purpose: "Immutable compiled Classic specifications of native runs with the artifact reference of each complete object."
+    writers:
+      - database
+    fields:
+      - name: specification_digest
+        owner: daemon.classic-specification
+        derived: true
+        reconstruction: "Digest the normalized specification under the classic-specification domain."
+      - { name: run_id, owner: daemon.classic-specification, derived: false }
+      - { name: task_id, owner: daemon.classic-specification, derived: false }
+      - { name: runtime_id, owner: daemon.classic-specification, derived: false }
+      - { name: runtime_contract_version, owner: daemon.classic-specification, derived: false }
+      - { name: schema_version, owner: daemon.classic-specification, derived: false }
+      - name: artifact_digest
+        owner: daemon.classic-specification
+        derived: true
+        reconstruction: "Digest the promoted artifact bytes of the specification."
+      - { name: fidelity_profile_id, owner: daemon.classic-specification, derived: false }
+      - { name: effort_profile_id, owner: daemon.classic-specification, derived: false }
+      - { name: requested_effort_level, owner: daemon.classic-specification, derived: false }
+      - { name: journal_cursor, owner: daemon.classic-specification, derived: false }
+      - { name: created_at, owner: daemon.classic-specification, derived: false }
 transient_migration_tables:
   - board_entries_v3
 redis_domains:

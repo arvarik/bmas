@@ -23,8 +23,11 @@ their reported results as design evidence, not settled guarantees.
   `docs/CLASSIC_HARNESS.md`), including the control-unit selection in
   `classic/control.py`, the decider-alone guard in
   `classic/scheduling.py`, the board compaction in `classic/cleaner.py`,
-  and the majority-similarity solution extraction in
-  `classic/consensus.py` and `classic/termination.py`.
+  the majority-similarity solution extraction in
+  `classic/consensus.py` and `classic/termination.py`, and the
+  `paper_aligned` fidelity profile in `classic/profiles.py` (sequential
+  rounds over the full board, no cleaner, no actor memory, seeded random
+  model assignment, and the pinned vote with no verifier).
 - [PatchBoard: Schema-Grounded State Mutation for Reliable and
   Auditable LLM Multi-Agent
   Collaboration](https://arxiv.org/abs/2605.29313) — Replaces

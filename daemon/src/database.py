@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 28
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -2219,6 +2219,33 @@ CREATE TABLE IF NOT EXISTS signing_keys (
     revoked_at     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_signing_keys_agent ON signing_keys(agent_id);
+
+CREATE TABLE IF NOT EXISTS classic_specifications (
+    specification_digest     TEXT PRIMARY KEY,
+    run_id                   TEXT NOT NULL UNIQUE,
+    task_id                  TEXT NOT NULL,
+    runtime_id               TEXT NOT NULL,
+    runtime_contract_version TEXT NOT NULL,
+    schema_version           TEXT NOT NULL,
+    artifact_digest          TEXT NOT NULL,
+    fidelity_profile_id      TEXT NOT NULL,
+    effort_profile_id        TEXT NOT NULL,
+    requested_effort_level   TEXT NOT NULL,
+    journal_cursor           INTEGER NOT NULL,
+    created_at               TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS classic_specifications_immutable_update
+BEFORE UPDATE ON classic_specifications
+BEGIN
+    SELECT RAISE(ABORT, 'classic_specifications rows are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS classic_specifications_immutable_delete
+BEFORE DELETE ON classic_specifications
+BEGIN
+    SELECT RAISE(ABORT, 'classic_specifications rows are immutable');
+END;
 """
 
 
@@ -3374,6 +3401,38 @@ async def _migrate_add_agent_signing_keys(db: aiosqlite.Connection) -> None:
     )
 
 
+async def _migrate_add_classic_specifications(db: aiosqlite.Connection) -> None:
+    """Add the immutable compiled Classic specifications of native runs."""
+    await db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS classic_specifications (
+            specification_digest     TEXT PRIMARY KEY,
+            run_id                   TEXT NOT NULL UNIQUE,
+            task_id                  TEXT NOT NULL,
+            runtime_id               TEXT NOT NULL,
+            runtime_contract_version TEXT NOT NULL,
+            schema_version           TEXT NOT NULL,
+            artifact_digest          TEXT NOT NULL,
+            fidelity_profile_id      TEXT NOT NULL,
+            effort_profile_id        TEXT NOT NULL,
+            requested_effort_level   TEXT NOT NULL,
+            journal_cursor           INTEGER NOT NULL,
+            created_at               TEXT NOT NULL
+        );
+        CREATE TRIGGER IF NOT EXISTS classic_specifications_immutable_update
+        BEFORE UPDATE ON classic_specifications
+        BEGIN
+            SELECT RAISE(ABORT, 'classic_specifications rows are immutable');
+        END;
+        CREATE TRIGGER IF NOT EXISTS classic_specifications_immutable_delete
+        BEFORE DELETE ON classic_specifications
+        BEGIN
+            SELECT RAISE(ABORT, 'classic_specifications rows are immutable');
+        END;
+        """
+    )
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -3403,6 +3462,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         25: _migrate_add_calibration_failure_ledger_storage,
         26: _migrate_add_lineage_supersession_anchor_study_storage,
         27: _migrate_add_agent_signing_keys,
+        28: _migrate_add_classic_specifications,
     }
     fn = migrations.get(version)
     if fn is None:
@@ -6130,6 +6190,51 @@ async def create_run_control(
             (run_id, task_id, task_fence, now),
         )
         await db.commit()
+
+
+async def insert_classic_specification(
+    connection: aiosqlite.Connection,
+    *,
+    specification_digest: str,
+    run_id: str,
+    task_id: str,
+    runtime_id: str,
+    runtime_contract_version: str,
+    schema_version: str,
+    artifact_digest: str,
+    fidelity_profile_id: str,
+    effort_profile_id: str,
+    requested_effort_level: str,
+    journal_cursor: int,
+    created_at: str,
+) -> None:
+    """Insert one compiled specification row inside the caller's transaction.
+
+    The admission writer calls this inside the admission transaction, so
+    the specification row commits together with the journal genesis.
+    """
+    await connection.execute(
+        "INSERT INTO classic_specifications ("
+        "specification_digest, run_id, task_id, runtime_id, runtime_contract_version, "
+        "schema_version, artifact_digest, fidelity_profile_id, effort_profile_id, "
+        "requested_effort_level, journal_cursor, created_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            specification_digest, run_id, task_id, runtime_id, runtime_contract_version,
+            schema_version, artifact_digest, fidelity_profile_id, effort_profile_id,
+            requested_effort_level, journal_cursor, created_at,
+        ),
+    )
+
+
+async def get_classic_specification(run_id: str) -> dict | None:
+    """Return the compiled specification row of one run."""
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "SELECT * FROM classic_specifications WHERE run_id = ?", (run_id,),
+        )
+        row = await cursor.fetchone()
+    return dict(row) if row is not None else None
 
 
 async def get_run_control(run_id: str) -> dict | None:
