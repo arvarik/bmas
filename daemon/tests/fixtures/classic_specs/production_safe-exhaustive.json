@@ -1,0 +1,961 @@
+{
+  "board": {
+    "max_entry_body_characters": 8000,
+    "max_title_characters": 200,
+    "retain_counterevidence": true,
+    "salience_weights": {
+      "confidence": "0.4",
+      "operator_boost_factor": "2.0",
+      "penalty": "0.3",
+      "recency": "0.2",
+      "refs_in": "0.3"
+    },
+    "view_budget_tokens": 12000,
+    "view_strategy": "role_bounded"
+  },
+  "cleaner": {
+    "enabled": true,
+    "entry_threshold": 12,
+    "policy_id": "salience_condensation",
+    "policy_version": "salience-condensation/1",
+    "retain_recent_rounds": 2,
+    "retention_weights": {
+      "confidence": "1.0",
+      "minority_claim": "0.0",
+      "recency": "0.1",
+      "salience": "2.0",
+      "size_penalty": "0.01"
+    },
+    "token_threshold": 8000
+  },
+  "consensus": {
+    "failure_behavior": "use_verified_single_candidate",
+    "strategy": "token_similarity",
+    "strategy_version": "token-similarity/1",
+    "threshold": "0.0"
+  },
+  "coordination": {
+    "control_strategy": "model_ranked",
+    "max_parallel_agents": 3,
+    "max_rounds": 32,
+    "narration": false,
+    "proposal_mode": "shared_board",
+    "round_execution": "concurrent"
+  },
+  "deployment_caps": {
+    "adjustments": [],
+    "applied_after_user_overrides": true,
+    "policy_version": "deployment-caps/1"
+  },
+  "effort": {
+    "alias_table_version": "classic-effort-aliases/1",
+    "profile_id": "long_horizon",
+    "profile_version": "long-horizon/1",
+    "requested_level": "exhaustive"
+  },
+  "estimate": {
+    "cost_maximum": {
+      "amount_nanos": 10000000000,
+      "currency": "USD"
+    },
+    "cost_minimum": {
+      "amount_nanos": 1404800,
+      "currency": "USD"
+    },
+    "latency_maximum_seconds": 10800,
+    "latency_minimum_seconds": 10,
+    "max_in_flight_activations": 3
+  },
+  "fidelity": {
+    "profile_id": "production_safe",
+    "profile_version": "production-safe/1"
+  },
+  "inputs": {
+    "asset_manifest_digest": null,
+    "deployment_snapshot_digest": "ff854841479cb83607e981b367bdf8c02272b685282e2eba31d683d5a3741334",
+    "task_overrides_digest": "2423054d487904030876d7bd1565b8bbe5b40d9387a6bbebff925ae54e42d8c7"
+  },
+  "limits": {
+    "max_cost": {
+      "amount_nanos": 10000000000,
+      "currency": "USD"
+    },
+    "max_duration_seconds": 10800,
+    "max_input_tokens": 250000,
+    "max_output_tokens": 50000,
+    "strict_pricing": true
+  },
+  "memory": {
+    "actor_memory": "host_owned",
+    "causal_retrieval": true,
+    "durable_goals": true,
+    "provider_session_scope": "activation"
+  },
+  "model_lineage": {
+    "assignments": {
+      "fixture/fast-model": {
+        "lineage_id": "fixture/fast-model",
+        "lineage_status": "unverified"
+      },
+      "fixture/strong-model": {
+        "lineage_id": "fixture/strong-model",
+        "lineage_status": "unverified"
+      }
+    },
+    "registry_digest": "2294b06b6d331e60b79d537a963585959efc5cf32bbe95fdbe73095549f6bf2f",
+    "registry_version": "model-lineage/1"
+  },
+  "models": {
+    "control_unit": {
+      "alias": "model-fast",
+      "model_id": "fixture/fast-model",
+      "model_revision": "fast-model",
+      "reasoning": "off",
+      "tokenizer_id": "bmas-character-estimate",
+      "tokenizer_revision": "four-characters-per-token/1"
+    },
+    "expert_pool": {
+      "complex": [
+        {
+          "alias": "model-strong",
+          "model_id": "fixture/strong-model",
+          "model_revision": "strong-model",
+          "reasoning": "provider_default",
+          "tokenizer_id": "bmas-character-estimate",
+          "tokenizer_revision": "four-characters-per-token/1"
+        }
+      ],
+      "light": [
+        {
+          "alias": "model-fast",
+          "model_id": "fixture/fast-model",
+          "model_revision": "fast-model",
+          "reasoning": "off",
+          "tokenizer_id": "bmas-character-estimate",
+          "tokenizer_revision": "four-characters-per-token/1"
+        }
+      ],
+      "medium": [
+        {
+          "alias": "model-strong",
+          "model_id": "fixture/strong-model",
+          "model_revision": "strong-model",
+          "reasoning": "provider_default",
+          "tokenizer_id": "bmas-character-estimate",
+          "tokenizer_revision": "four-characters-per-token/1"
+        },
+        {
+          "alias": "model-fast",
+          "model_id": "fixture/fast-model",
+          "model_revision": "fast-model",
+          "reasoning": "off",
+          "tokenizer_id": "bmas-character-estimate",
+          "tokenizer_revision": "four-characters-per-token/1"
+        }
+      ],
+      "simple": [
+        {
+          "alias": "model-fast",
+          "model_id": "fixture/fast-model",
+          "model_revision": "fast-model",
+          "reasoning": "off",
+          "tokenizer_id": "bmas-character-estimate",
+          "tokenizer_revision": "four-characters-per-token/1"
+        }
+      ]
+    },
+    "role_tier_binding": {
+      "cleaner": "triage_tier",
+      "conflict_resolver": "triage_tier",
+      "control_unit": "light",
+      "critic": "triage_tier",
+      "decider": "triage_tier",
+      "expert": "triage_tier",
+      "expert_generator": "triage_tier",
+      "planner": "triage_tier",
+      "sole": "light",
+      "verifier": "medium"
+    },
+    "sole": {
+      "alias": "model-fast",
+      "model_id": "fixture/fast-model",
+      "model_revision": "fast-model",
+      "reasoning": "off",
+      "tokenizer_id": "bmas-character-estimate",
+      "tokenizer_revision": "four-characters-per-token/1"
+    },
+    "temperature": null,
+    "tier_models": {
+      "complex": {
+        "alias": "model-strong",
+        "model_id": "fixture/strong-model",
+        "model_revision": "strong-model",
+        "reasoning": "provider_default",
+        "tokenizer_id": "bmas-character-estimate",
+        "tokenizer_revision": "four-characters-per-token/1"
+      },
+      "light": {
+        "alias": "model-fast",
+        "model_id": "fixture/fast-model",
+        "model_revision": "fast-model",
+        "reasoning": "off",
+        "tokenizer_id": "bmas-character-estimate",
+        "tokenizer_revision": "four-characters-per-token/1"
+      },
+      "medium": {
+        "alias": "model-strong",
+        "model_id": "fixture/strong-model",
+        "model_revision": "strong-model",
+        "reasoning": "provider_default",
+        "tokenizer_id": "bmas-character-estimate",
+        "tokenizer_revision": "four-characters-per-token/1"
+      },
+      "simple": {
+        "alias": "model-fast",
+        "model_id": "fixture/fast-model",
+        "model_revision": "fast-model",
+        "reasoning": "off",
+        "tokenizer_id": "bmas-character-estimate",
+        "tokenizer_revision": "four-characters-per-token/1"
+      }
+    },
+    "triage": {
+      "alias": "model-fast",
+      "model_id": "fixture/fast-model",
+      "model_revision": "fast-model",
+      "reasoning": "off",
+      "tokenizer_id": "bmas-character-estimate",
+      "tokenizer_revision": "four-characters-per-token/1"
+    },
+    "verifier": {
+      "alias": "model-strong",
+      "model_id": "fixture/strong-model",
+      "model_revision": "strong-model",
+      "reasoning": "provider_default",
+      "tokenizer_id": "bmas-character-estimate",
+      "tokenizer_revision": "four-characters-per-token/1"
+    }
+  },
+  "prices": {
+    "rates": {
+      "model-fast": {
+        "input_per_million": {
+          "amount_nanos": 100000000,
+          "currency": "USD"
+        },
+        "output_per_million": {
+          "amount_nanos": 400000000,
+          "currency": "USD"
+        }
+      },
+      "model-strong": {
+        "input_per_million": {
+          "amount_nanos": 3000000000,
+          "currency": "USD"
+        },
+        "output_per_million": {
+          "amount_nanos": 15000000000,
+          "currency": "USD"
+        }
+      }
+    },
+    "source_amount_strings": {
+      "model-fast": {
+        "input_per_million": "0.1",
+        "output_per_million": "0.4"
+      },
+      "model-strong": {
+        "input_per_million": "3",
+        "output_per_million": "15"
+      }
+    },
+    "table_version": "task-price-snapshot/1"
+  },
+  "prompts": {
+    "activation_render_receipt_schema_version": "prompt-render-receipt/1",
+    "generated_definition_asset_digest": null,
+    "generated_definition_schema_version": "expert-definition/1",
+    "registry_version": "classic-prompts/1",
+    "render_engine_version": "classic-prompt-renderer/1",
+    "static_template_digests": {
+      "cleaner": "92664e73a99d96d3d0f2378e5a49faef4aa6f101a0e5de02fc2002c377ecbd94",
+      "conflict_resolver": "d0559eed6cd02a9549102a6771975e565dc56c3c9a28ee761d92d8368dc0d915",
+      "control_unit": "2ab07bc42f579aacf8810b3c5b269cbdd2afb7f969e33ff65135036ba6d07fc3",
+      "critic": "3a9716217b0a77db6b9ca619a79c8512a32bbf59b6252a41cf7869aaa46a9bf5",
+      "decider": "f8e250b9bd20000852434c0fe2d5c2a16ef7944c37c89060c2e130ebd40a804f",
+      "expert": "144cdc07882e4a32a208690767ed0b7c43072bef5749cd8b34fa9dbc69d9c431",
+      "expert_generator": "37f2980b29db5088d5f4dcb3bda3b609e453e52679a9375c3bd693f257b06c86",
+      "planner": "62da24d1aa0214d3d379e0cd62a3dc0ece05715423bf187871baf5c3c58c038d",
+      "sole": "732dbd09f262dd7b55c874578eea5a2c911e38f369ea423c0b8bcace2ea2dff7",
+      "triage": "a10608c3028b305b52072c374e0a20e694d11c28d974ce405e0aedfb045bc8fe"
+    }
+  },
+  "provider_capabilities": {
+    "qualification_ids": [],
+    "seed_support": "unsupported",
+    "session_support": false,
+    "snapshot_digest": "4088195857fe22f55447f0121dd9c2013271a7db9b578aa68b7a6d1fb7b1f80b",
+    "snapshot_version": "provider-capabilities/1"
+  },
+  "randomness": {
+    "candidate_order": "board_order",
+    "candidate_order_seed": 3286764051226875,
+    "roster_seed": 1461851308647722,
+    "seed_policy": "recorded",
+    "task_seed": 7
+  },
+  "recovery": {
+    "checkpoint_every_rounds": 1,
+    "fault_policy": "retry_then_replan",
+    "loop_detection": "strong",
+    "max_replans": 5,
+    "stall_rounds": 3
+  },
+  "resolution": {
+    "board.max_entry_body_characters": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": 8000,
+        "schema_default": 8000
+      }
+    },
+    "board.max_title_characters": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": 200,
+        "schema_default": 200
+      }
+    },
+    "board.retain_counterevidence": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": true,
+        "schema_default": true
+      }
+    },
+    "board.salience_weights.confidence": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": "0.4",
+        "schema_default": "0.4"
+      }
+    },
+    "board.salience_weights.operator_boost_factor": {
+      "layer": "schema_default",
+      "not_applied": [],
+      "offered": {
+        "schema_default": "2.0"
+      }
+    },
+    "board.salience_weights.penalty": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": "0.3",
+        "schema_default": "0.3"
+      }
+    },
+    "board.salience_weights.recency": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": "0.2",
+        "schema_default": "0.2"
+      }
+    },
+    "board.salience_weights.refs_in": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": "0.3",
+        "schema_default": "0.3"
+      }
+    },
+    "board.view_budget_tokens": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": 12000,
+        "schema_default": 12000
+      }
+    },
+    "board.view_strategy": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": "role_bounded",
+        "schema_default": "role_bounded"
+      }
+    },
+    "cleaner.enabled": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": true,
+        "schema_default": true
+      }
+    },
+    "cleaner.entry_threshold": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": 12,
+        "schema_default": 12
+      }
+    },
+    "cleaner.policy_id": {
+      "layer": "schema_default",
+      "not_applied": [],
+      "offered": {
+        "schema_default": "salience_condensation"
+      }
+    },
+    "cleaner.policy_version": {
+      "layer": "schema_default",
+      "not_applied": [],
+      "offered": {
+        "schema_default": "salience-condensation/1"
+      }
+    },
+    "cleaner.retain_recent_rounds": {
+      "layer": "schema_default",
+      "not_applied": [],
+      "offered": {
+        "schema_default": 2
+      }
+    },
+    "cleaner.retention_weights.confidence": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": "1.0",
+        "schema_default": "1.0"
+      }
+    },
+    "cleaner.retention_weights.minority_claim": {
+      "layer": "schema_default",
+      "not_applied": [],
+      "offered": {
+        "schema_default": "0.0"
+      }
+    },
+    "cleaner.retention_weights.recency": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": "0.1",
+        "schema_default": "0.1"
+      }
+    },
+    "cleaner.retention_weights.salience": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": "2.0",
+        "schema_default": "2.0"
+      }
+    },
+    "cleaner.retention_weights.size_penalty": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": "0.01",
+        "schema_default": "0.01"
+      }
+    },
+    "cleaner.token_threshold": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": 8000,
+        "schema_default": 8000
+      }
+    },
+    "consensus.failure_behavior": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": "use_verified_single_candidate",
+        "schema_default": "continue_work"
+      }
+    },
+    "consensus.strategy": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": "token_similarity",
+        "fidelity": "token_similarity",
+        "schema_default": "token_similarity"
+      }
+    },
+    "consensus.strategy_version": {
+      "layer": "schema_default",
+      "not_applied": [],
+      "offered": {
+        "schema_default": "token-similarity/1"
+      }
+    },
+    "consensus.threshold": {
+      "layer": "schema_default",
+      "not_applied": [],
+      "offered": {
+        "schema_default": "0.0"
+      }
+    },
+    "coordination.control_strategy": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": "model_ranked",
+        "fidelity": "model_ranked",
+        "schema_default": "model_ranked"
+      }
+    },
+    "coordination.max_parallel_agents": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": 3,
+        "schema_default": 3
+      }
+    },
+    "coordination.max_rounds": {
+      "layer": "effort",
+      "not_applied": [
+        "deployment"
+      ],
+      "offered": {
+        "deployment": 4,
+        "effort": 32,
+        "schema_default": 4
+      }
+    },
+    "coordination.narration": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": false,
+        "schema_default": false
+      }
+    },
+    "coordination.proposal_mode": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": "shared_board",
+        "schema_default": "shared_board"
+      }
+    },
+    "coordination.round_execution": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": "concurrent",
+        "schema_default": "concurrent"
+      }
+    },
+    "limits.max_cost": {
+      "layer": "effort",
+      "not_applied": [
+        "deployment"
+      ],
+      "offered": {
+        "deployment": "0.5",
+        "effort": "10.00",
+        "schema_default": "0.50"
+      }
+    },
+    "limits.max_duration_seconds": {
+      "layer": "effort",
+      "not_applied": [
+        "deployment"
+      ],
+      "offered": {
+        "deployment": 1800,
+        "effort": 10800,
+        "schema_default": 1800
+      }
+    },
+    "limits.max_input_tokens": {
+      "layer": "schema_default",
+      "not_applied": [],
+      "offered": {
+        "schema_default": 250000
+      }
+    },
+    "limits.max_output_tokens": {
+      "layer": "schema_default",
+      "not_applied": [],
+      "offered": {
+        "schema_default": 50000
+      }
+    },
+    "limits.strict_pricing": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": true,
+        "schema_default": false
+      }
+    },
+    "memory.actor_memory": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": "host_owned",
+        "schema_default": "none"
+      }
+    },
+    "memory.causal_retrieval": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": true,
+        "schema_default": false
+      }
+    },
+    "memory.durable_goals": {
+      "layer": "effort",
+      "not_applied": [],
+      "offered": {
+        "effort": true,
+        "fidelity": true,
+        "schema_default": false
+      }
+    },
+    "memory.provider_session_scope": {
+      "layer": "effort",
+      "not_applied": [
+        "deployment"
+      ],
+      "offered": {
+        "deployment": "task",
+        "effort": "activation",
+        "fidelity": "task",
+        "schema_default": "task"
+      }
+    },
+    "models.temperature": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": null,
+        "schema_default": null
+      }
+    },
+    "randomness.candidate_order": {
+      "layer": "schema_default",
+      "not_applied": [],
+      "offered": {
+        "schema_default": "board_order"
+      }
+    },
+    "recovery.checkpoint_every_rounds": {
+      "layer": "effort",
+      "not_applied": [],
+      "offered": {
+        "effort": 1,
+        "schema_default": 1
+      }
+    },
+    "recovery.fault_policy": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": "retry_then_replan",
+        "schema_default": "retry_then_replan"
+      }
+    },
+    "recovery.loop_detection": {
+      "layer": "effort",
+      "not_applied": [],
+      "offered": {
+        "effort": "strong",
+        "schema_default": "standard"
+      }
+    },
+    "recovery.max_replans": {
+      "layer": "effort",
+      "not_applied": [
+        "deployment"
+      ],
+      "offered": {
+        "deployment": 2,
+        "effort": 5,
+        "schema_default": 2
+      }
+    },
+    "recovery.stall_rounds": {
+      "layer": "effort",
+      "not_applied": [
+        "deployment"
+      ],
+      "offered": {
+        "deployment": 2,
+        "effort": 3,
+        "schema_default": 2
+      }
+    },
+    "team.experts_by_tier.complex": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": 4,
+        "schema_default": 4
+      }
+    },
+    "team.experts_by_tier.light": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": 1,
+        "schema_default": 1
+      }
+    },
+    "team.experts_by_tier.medium": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": 2,
+        "schema_default": 2
+      }
+    },
+    "team.experts_by_tier.simple": {
+      "layer": "deployment",
+      "not_applied": [],
+      "offered": {
+        "deployment": 0,
+        "schema_default": 0
+      }
+    },
+    "team.independent_model_families": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": 1,
+        "schema_default": 1
+      }
+    },
+    "team.model_assignment": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": "capability_round_robin",
+        "schema_default": "capability_round_robin"
+      }
+    },
+    "termination.allow_empty_candidate_set": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": false,
+        "schema_default": false
+      }
+    },
+    "termination.policy_id": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": "verified_candidate",
+        "schema_default": "verified_candidate"
+      }
+    },
+    "termination.policy_version": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": "verified-candidate/1",
+        "schema_default": "verified-candidate/1"
+      }
+    },
+    "termination.require_completion_evidence": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": true,
+        "schema_default": false
+      }
+    },
+    "verification.adversarial_critic": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": false,
+        "schema_default": false
+      }
+    },
+    "verification.critical_claims_only": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": false,
+        "schema_default": false
+      }
+    },
+    "verification.evidence_policy": {
+      "layer": "effort",
+      "not_applied": [
+        "deployment"
+      ],
+      "offered": {
+        "deployment": "optional_sources",
+        "effort": "typed_sources",
+        "fidelity": "typed_sources",
+        "schema_default": "optional_sources"
+      }
+    },
+    "verification.final_verification": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": true,
+        "schema_default": false
+      }
+    },
+    "verification.independent_verifiers": {
+      "layer": "fidelity",
+      "not_applied": [],
+      "offered": {
+        "fidelity": 1,
+        "schema_default": 0
+      }
+    },
+    "verification.solution_review": {
+      "layer": "effort",
+      "not_applied": [
+        "deployment"
+      ],
+      "offered": {
+        "deployment": "required",
+        "effort": "required",
+        "fidelity": "required",
+        "schema_default": "required"
+      }
+    }
+  },
+  "routing": {
+    "control_plane_adapter": {
+      "adapter_id": "bmas-local-model",
+      "adapter_version": "local-model-adapter/1"
+    },
+    "endpoint_sets": {
+      "worker_primary": {
+        "endpoint_set_version": "endpoint-set/1",
+        "endpoints": [
+          {
+            "adapter_id": "bmas-agent",
+            "adapter_version": "agent-protocol/2",
+            "capability_record_digest": "fixture-capability-digest",
+            "endpoint_id": "http://agent-a.fixture",
+            "order": 1
+          },
+          {
+            "adapter_id": "bmas-agent",
+            "adapter_version": "agent-protocol/2",
+            "capability_record_digest": null,
+            "endpoint_id": "http://agent-b.fixture",
+            "order": 2
+          }
+        ],
+        "failover_policy": {
+          "max_endpoint_changes": 1,
+          "policy_id": "ordered-safe-failover",
+          "policy_version": "ordered-safe-failover/1",
+          "retryable_failures": [
+            "capacity",
+            "transport_before_dispatch"
+          ],
+          "stateful_session_action": "clear_or_rebind"
+        }
+      },
+      "worker_secondary": {
+        "endpoint_set_version": "endpoint-set/1",
+        "endpoints": [
+          {
+            "adapter_id": "bmas-agent",
+            "adapter_version": "agent-protocol/2",
+            "capability_record_digest": "fixture-capability-digest",
+            "endpoint_id": "http://agent-a.fixture",
+            "order": 1
+          }
+        ],
+        "failover_policy": {
+          "max_endpoint_changes": 1,
+          "policy_id": "ordered-safe-failover",
+          "policy_version": "ordered-safe-failover/1",
+          "retryable_failures": [
+            "capacity",
+            "transport_before_dispatch"
+          ],
+          "stateful_session_action": "clear_or_rebind"
+        }
+      }
+    },
+    "role_endpoint_sets": {
+      "conflict_resolver": "worker_secondary",
+      "critic": "worker_secondary",
+      "decider": "worker_secondary",
+      "expert": "worker_secondary",
+      "planner": "worker_primary",
+      "universal": "worker_secondary"
+    }
+  },
+  "runtime": {
+    "runtime_contract_version": "2",
+    "runtime_id": "classic",
+    "runtime_spec_schema_version": "classic-spec/1"
+  },
+  "team": {
+    "experts_by_tier": {
+      "complex": 4,
+      "light": 1,
+      "medium": 2,
+      "simple": 0
+    },
+    "independent_model_families": 1,
+    "model_assignment": "capability_round_robin",
+    "required_roles": [
+      "planner",
+      "critic",
+      "decider"
+    ]
+  },
+  "termination": {
+    "allow_empty_candidate_set": false,
+    "policy_id": "verified_candidate",
+    "policy_version": "verified-candidate/1",
+    "require_completion_evidence": true,
+    "terminal_reasons": [
+      "completed",
+      "no_valid_candidate",
+      "budget_exhausted",
+      "deadline_exceeded",
+      "stalled",
+      "no_available_agents",
+      "cancelled",
+      "integrity_failure"
+    ]
+  },
+  "verification": {
+    "adversarial_critic": false,
+    "critical_claims_only": false,
+    "evidence_policy": "typed_sources",
+    "final_verification": true,
+    "independent_verifiers": 1,
+    "solution_review": "required"
+  },
+  "warnings": [
+    {
+      "effective": "long_horizon",
+      "field": "effort.profile_id",
+      "kind": "effort_alias",
+      "layer": "effort",
+      "message": "The shipped level 'exhaustive' resolves to the preset 'long_horizon'.",
+      "requested": "exhaustive"
+    }
+  ]
+}

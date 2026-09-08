@@ -370,14 +370,27 @@ def test_a_submission_names_a_test_only_pair_only_on_a_test_deployment(submit_cl
     assert refused.status_code == 422, refused.text
     assert refused.json()["detail"]["code"] == "variant_unavailable"
     assert submit._task_queue.empty()
-    # A test deployment admits it, and the stored pair is exact.
+    # A test deployment admits it, and the stored pair is exact. The
+    # native capture compiles a specification, which needs one endpoint
+    # for every required role and accepts a fidelity profile and a
+    # preset class as the effort level.
     monkeypatch.setattr(config, "ADMIT_TEST_ONLY_RUNTIMES", True, raising=False)
-    admitted = submit_client.post("/submit", json=body)
+    monkeypatch.setattr(config, "AGENT_ENDPOINTS", {"planner": "http://agent.test"}, raising=False)
+    native_body = {**body, "fidelity": "paper_aligned", "effort": "long_horizon"}
+    admitted = submit_client.post("/submit", json=native_body)
     assert admitted.status_code == 202, admitted.text
     queued = submit._task_queue.get_nowait()
     submit._task_queue.task_done()
     assert (queued.variant_id, queued.runtime_contract_version) == ("classic", "2")
     assert _submitted_pair(queued.task_id) == ("classic", "2", "2")
+    assert queued.effective_configuration["fidelity"] == "paper_aligned"
+    assert queued.effective_configuration["effort"] == "long_horizon"
+    assert queued.effective_configuration["specification_input"]["fidelity"] == "paper_aligned"
+    # The legacy pair has no fidelity profile and keeps the shipped levels.
+    legacy = submit_client.post("/submit", json={"task": "Add 1 and 2.", "variant": "classic", "fidelity": "paper_aligned"})
+    assert legacy.status_code == 422, legacy.text
+    assert legacy.json()["detail"]["code"] == "invalid_configuration"
+    assert submit._task_queue.empty()
     # An unregistered contract version stays refused, without fallback.
     unknown = submit_client.post("/submit", json={**body, "runtime_contract_version": "3"})
     assert unknown.status_code == 422, unknown.text

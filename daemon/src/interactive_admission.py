@@ -43,6 +43,7 @@ SPECIFICATION_DIGEST_DOMAIN = "runtime-specification"
 STORAGE_REPORT_TTL_SECONDS = 300.0
 DEFAULT_BUDGET_CEILING_USD = 0.50
 USD_MILLIONTHS = 1_000_000
+NANOS_PER_MILLIONTH = 1_000
 _storage_report: tuple[float, dict[str, Any]] | None = None
 
 
@@ -163,6 +164,65 @@ def budget_ceiling_usd(effective_configuration: dict[str, Any] | None) -> float:
     return DEFAULT_BUDGET_CEILING_USD
 
 
+def compile_specification_for(
+    runtime: Any,
+    effective_configuration: dict[str, Any] | None,
+    *,
+    run_id: str,
+    asset_manifest_digest: str,
+    qualification_ids: tuple[str, ...],
+) -> Any | None:
+    """Compile and promote the specification of a runtime that compiles one.
+
+    A runtime class that declares ``compile_specification_for_admission``
+    returns its stored specification. Every other runtime returns None
+    and keeps the envelope digest. A compile failure is an admission
+    prerequisite failure, so the task fails closed.
+    """
+    compile_hook = getattr(runtime, "compile_specification_for_admission", None)
+    if compile_hook is None:
+        return None
+    try:
+        return compile_hook(
+            effective_configuration,
+            run_id=run_id,
+            asset_manifest_digest=asset_manifest_digest,
+            qualification_ids=qualification_ids,
+        )
+    except ValueError as exc:
+        raise run_admission.AdmissionPrerequisiteError(
+            f"The specification did not compile: {exc}"
+        ) from exc
+
+
+def specification_row_writer(
+    compiled: Any | None, *, task_id: str, run_id: str, runtime_key: RuntimeKey,
+) -> Any | None:
+    """The transaction write that stores one compiled specification row."""
+    if compiled is None:
+        return None
+    spec = compiled.spec
+
+    async def write_row(connection: Any, journal_cursor: int, txn_now: str) -> None:
+        await db.insert_classic_specification(
+            connection,
+            specification_digest=compiled.specification_digest,
+            run_id=run_id,
+            task_id=task_id,
+            runtime_id=runtime_key.runtime_id,
+            runtime_contract_version=runtime_key.runtime_contract_version,
+            schema_version=spec.runtime.runtime_spec_schema_version,
+            artifact_digest=compiled.artifact_digest,
+            fidelity_profile_id=spec.fidelity.profile_id,
+            effort_profile_id=spec.effort.profile_id,
+            requested_effort_level=spec.effort.requested_level,
+            journal_cursor=journal_cursor,
+            created_at=txn_now,
+        )
+
+    return write_row
+
+
 async def admit_task_run(
     *,
     task_id: str,
@@ -201,21 +261,34 @@ async def admit_task_run(
     except activations.ActivationServiceError:
         pass
     runtime = require_runtime(runtime_key)
-    ceiling = budget_ceiling if budget_ceiling is not None else budget_ceiling_usd(effective_configuration)
-    limit_millionths = max(int(round(ceiling * USD_MILLIONTHS)), 1)
     policy_set = policy_set_from_configuration()
     manifest = await asset_manifest_for(task_id)
     descriptor = runtime.descriptor.to_dict()
+    qualification_ids = await required_qualification_ids(effective_configuration)
+    # A runtime that compiles a specification binds the compiled digest
+    # and its exact cost limit. The legacy pair keeps the digest of its
+    # configuration envelope and the float ceiling.
+    compiled = compile_specification_for(
+        runtime, effective_configuration,
+        run_id=run_id, asset_manifest_digest=manifest.digest(), qualification_ids=qualification_ids,
+    )
+    if compiled is not None:
+        specification_digest = compiled.specification_digest
+        limit_millionths = max(-(-compiled.spec.limits.max_cost.amount_nanos // NANOS_PER_MILLIONTH), 1)
+    else:
+        specification_digest = digest_hex(SPECIFICATION_DIGEST_DOMAIN, plain_json({
+            "runtime_key": runtime_key.to_dict(),
+            "effective_configuration": effective_configuration or {},
+        }))
+        ceiling = budget_ceiling if budget_ceiling is not None else budget_ceiling_usd(effective_configuration)
+        limit_millionths = max(int(round(ceiling * USD_MILLIONTHS)), 1)
     request = run_admission.AdmissionRequest(
         task_id=task_id,
         run_id=run_id,
         tenant_id=tenant_id,
         runtime_key=runtime_key,
         version_set=version_set_for(runtime_key),
-        specification_digest=digest_hex(SPECIFICATION_DIGEST_DOMAIN, plain_json({
-            "runtime_key": runtime_key.to_dict(),
-            "effective_configuration": effective_configuration or {},
-        })),
+        specification_digest=specification_digest,
         capability_document_digest=digest_hex(SPECIFICATION_DIGEST_DOMAIN, plain_json(descriptor)),
         prompt_profile_digest=digest_hex(SPECIFICATION_DIGEST_DOMAIN, plain_json({
             "prompt_profile": (effective_configuration or {}).get("prompt_profile"),
@@ -230,7 +303,7 @@ async def admit_task_run(
         seed_policy="recorded",
         requested_seed=requested_seed,
         required_reader_ids=(CHECKPOINT_READER,) if runtime.descriptor.supports_recovery else (),
-        required_qualification_ids=await required_qualification_ids(effective_configuration),
+        required_qualification_ids=qualification_ids,
         budget_currency="USD",
         budget_limits=(
             run_admission.budget_service.LimitSpec(
@@ -249,6 +322,7 @@ async def admit_task_run(
         available_reader_ids=available_readers,
         storage_report=await storage_report(),
         database_time=database_time,
+        extra_writes=specification_row_writer(compiled, task_id=task_id, run_id=run_id, runtime_key=runtime_key),
     )
     if await db.get_run_control(run_id) is None:
         await db.create_run_control(run_id, task_id, fence, database_time=database_time)

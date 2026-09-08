@@ -150,8 +150,14 @@ class TaskSubmission(BaseModel):
         default=None, pattern=r"^[A-Za-z0-9._-]{1,32}$",
     )
     effort: str | None = Field(
-        default=None, pattern=r"^[a-z]{1,32}$",
+        default=None, pattern=r"^[a-z_]{1,32}$",
         description="Named effort level from the runtime's effort profiles",
+    )
+    # The fidelity profile of the native Classic pair. The legacy pair
+    # has no fidelity profile and rejects the field.
+    fidelity: str | None = Field(
+        default=None, pattern=r"^[a-z_]{1,32}$",
+        description="Named fidelity profile of a native runtime",
     )
     overrides: TaskOverrides | None = None
     benchmark: BenchmarkContext | None = None
@@ -660,7 +666,7 @@ async def _admit_task(
     # Always stamp the active variant — never rely on schema default.
     # Build per-task overrides dict (None if no overrides provided)
     task_overrides: dict | None = None
-    if req.overrides is not None or req.effort is not None:
+    if req.overrides is not None or req.effort is not None or req.fidelity is not None:
         task_overrides = {}
         if req.overrides is not None:
             routing_dict = req.overrides.routing_dict()
@@ -675,14 +681,25 @@ async def _admit_task(
                 task_overrides["seed"] = int(req.overrides.seed)
         if req.effort is not None:
             task_overrides["effort"] = req.effort
+        if req.fidelity is not None:
+            task_overrides["fidelity"] = req.fidelity
         if not task_overrides:
             task_overrides = None
 
-    effective_configuration = (
-        captured_configuration
-        if captured_configuration is not None
-        else await variant_class.capture_configuration(task_overrides)
-    )
+    # The runtime validates the effort level, the fidelity profile, and
+    # every override at capture time. A rejected value stops the
+    # submission before the task row exists.
+    try:
+        effective_configuration = (
+            captured_configuration
+            if captured_configuration is not None
+            else await variant_class.capture_configuration(task_overrides)
+        )
+    except VariantConfigurationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_configuration", "message": str(exc)},
+        ) from exc
 
     benchmark_context = req.benchmark.model_dump() if req.benchmark else None
     execution_snapshot, snapshot_checksum = build_execution_snapshot(
@@ -814,6 +831,7 @@ async def submit_task_with_files(
     task: str = Form(...),
     variant: str | None = Form(None),
     effort: str | None = Form(None),
+    fidelity: str | None = Form(None),
     overrides: str | None = Form(None),
     files: list[UploadFile] | None = File(None),
 ):
@@ -840,6 +858,7 @@ async def submit_task_with_files(
             task=task,
             variant=variant or None,
             effort=effort or None,
+            fidelity=fidelity or None,
             overrides=parsed_overrides,
         ),
         list(files or []),

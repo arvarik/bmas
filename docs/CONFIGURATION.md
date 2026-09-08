@@ -232,6 +232,26 @@ A task can select an effort level at submission. The composer on the Home page s
 
 The API accepts the level in the `effort` field of `POST /submit`. The effective task configuration records the level in `effective_configuration.effort`. A submission can also carry per-task limits in `overrides.classic` (for example `max_rounds` and `budget_ceiling_usd`); explicit overrides win over the effort profile. The composer exposes these limits behind **Adjust limits** on the exhaustive confirmation step.
 
+#### Fidelity and effort for the native Classic pair
+
+The native Classic pair (contract version `2`, test-only today) compiles every admission into one immutable specification. A submission selects a fidelity profile in the `fidelity` field and an effort level in the `effort` field.
+
+| Fidelity profile | Purpose |
+|:---|:---|
+| `production_safe` | The default. Bounded role views, typed evidence, a required solution review, strict pricing, and host-owned actor memory. |
+| `paper_aligned` | Four sequential rounds over the full board, no cleaner, no actor memory, seeded random model assignment, and no verifier. A board that does not fit the context window stops the run with `paper_aligned_context_limit_exceeded`. |
+
+The native pair accepts the shipped levels and the preset classes. The shipped levels map through one alias table.
+
+| Shipped level | Preset class |
+|:---|:---|
+| `quick` | `quick` |
+| `standard` | `balanced` |
+| `thorough` | `rigorous` |
+| `exhaustive` | `long_horizon` |
+
+The preset classes `exploratory` and `adversarial` have no shipped alias. The compiler resolves the layers in this order: the fidelity profile, the effort preset, the deployment settings, the task overrides, and the deployment caps. The `balanced` preset yields its documented values to the deployment settings, so `standard` runs with the session settings. Every other preset keeps its own limits, and only a task override changes them. A field the fidelity profile fixes rejects every later value, and the specification records each rejection as a warning. The deployment caps clamp every bounded value after the task overrides, and the specification records each clamp. The legacy pair (contract version `1`) rejects the `fidelity` field and keeps the shipped levels only. A rejected level, profile, or override returns status `422` with the code `invalid_configuration`.
+
 ### `coordination.role_registry`
 
 Each key names one classic role. The starter includes `planner`, `expert`, `critic`, `conflict_resolver`, `cleaner`, and `decider`.

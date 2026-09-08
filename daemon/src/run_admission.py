@@ -172,6 +172,7 @@ async def admit_run(
     qualification_fixture: dict[str, QualificationRecord] | None = None,
     storage_report: dict[str, Any],
     database_time: str | None = None,
+    extra_writes: runtime_journal.ExtraWrites | None = None,
 ) -> dict[str, Any]:
     """Admit one run through one atomic unit-of-work transaction.
 
@@ -258,6 +259,11 @@ async def admit_run(
             "state_changed_at = ? WHERE reservation_id = ?",
             (txn_now, reservation_id),
         )
+        # A runtime that compiles a specification stores it in the same
+        # transaction, so the admission and its specification commit
+        # together or not at all.
+        if extra_writes is not None:
+            await extra_writes(connection, journal_cursor, txn_now)
 
     operation = runtime_journal.JournalOperation(
         operation_type="admission_identity",

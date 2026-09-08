@@ -635,6 +635,21 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.classic-spec-compiler
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove the Classic specification compiler: every fidelity and effort
+      pair compiles to its golden specification, every controlled object
+      forbids extra properties, the layers resolve in order with every
+      rejection and clamp recorded, the caps apply after every override,
+      and the native admission stores one immutable specification.
+    argv: ["python3", "-m", "pytest", "tests/test_classic_spec_compiler.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
   - id: daemon.foundation-release-gate
     state: active_required
     owner: daemon
@@ -1295,6 +1310,7 @@ profiles:
         - daemon.behavioral-conformance-stack
         - daemon.classic-native-column
         - daemon.classic-policy-parity
+        - daemon.classic-spec-compiler
         - daemon.populated-migration
         - daemon.release-gates
         - daemon.complete-stack-journey
