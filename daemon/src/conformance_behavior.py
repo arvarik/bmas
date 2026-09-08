@@ -190,6 +190,24 @@ async def native_authority_rows(task_id: str) -> int:
     return int(row[0]) if row is not None else 0
 
 
+async def runtime_ledger_rows(task_id: str) -> int:
+    """Count the activation and effect transitions a runtime authored for one task.
+
+    The host's activation and effect services author their transitions
+    under the host authority. A runtime earns the native ledger value
+    only when it authors those transitions itself.
+    """
+    async with db._connect() as connection:  # noqa: SLF001
+        cursor = await connection.execute(
+            "SELECT COUNT(*) FROM runtime_journal WHERE task_id = ? "
+            "AND operation_type IN ('activation_transition', 'effect_transition') "
+            "AND authority_type != 'host'",
+            (task_id,),
+        )
+        row = await cursor.fetchone()
+    return int(row[0]) if row is not None else 0
+
+
 async def host_dispatch_rows(task_id: str) -> int:
     """Count the activation grants the host dispatched for one task."""
     async with db._connect() as connection:  # noqa: SLF001
@@ -812,8 +830,18 @@ async def _lease_fencing_restart_replay(env: BehaviorEnvironment) -> CaseResult:
             task_id=f"{env.task_id}-complete", user_task=TASK_TEXT, seed=3,
         )
         resume_verified = bool(resumed.result.get("resumed")) and resumed.answer == complete.answer and bool(complete.answer)
-        observed = _verified_value(env, "task_fence_validation", shared and resume_verified)
-        detail = f"stale_denied={stale_denied}, fence_rejected={fence_rejected}, replay_equal={replay_equal}, resumed_answer={resumed.answer[:40]!r}"
+        if expected == "native":
+            # A runtime that declares native fence validation proves it
+            # with its own fenced journal records: the resumed run and
+            # the complete run both authored records under the fence.
+            fenced_runtime = resumed.native_rows > 0 and complete.native_rows > 0
+            observed = "native" if shared and resume_verified and fenced_runtime else "unavailable"
+        else:
+            observed = _verified_value(env, "task_fence_validation", shared and resume_verified)
+        detail = (
+            f"stale_denied={stale_denied}, fence_rejected={fence_rejected}, replay_equal={replay_equal}, "
+            f"resumed_answer={resumed.answer[:40]!r}, resumed_runtime_rows={resumed.native_rows}"
+        )
     else:
         observed = _verified_value(env, "task_fence_validation", shared)
         detail = f"stale_denied={stale_denied}, fence_rejected={fence_rejected}, replay_equal={replay_equal}, fenced_cursor={fenced.journal_cursor}"
@@ -850,18 +878,36 @@ async def _activation_effect_ledgers(env: BehaviorEnvironment) -> CaseResult:
             task_id=f"{env.task_id}-legacy", user_task=TASK_TEXT, seed=1,
         )
         dispatched = await host_dispatch_rows(execution.task_id)
-        if execution.native_rows > 0:
+        ledger_rows = await runtime_ledger_rows(execution.task_id)
+        # A record that declares native fenced records with the common
+        # event envelope authors its board, its evidence, and its
+        # outcome itself while the host adapter still runs its
+        # activations. Any other record must author nothing: one
+        # runtime-authored row of such a pair fails the case closed.
+        authors_natively = (
+            env.declared("task_fence_validation") == "native"
+            and env.declared("common_event_envelope") == "native"
+        )
+        if ledger_rows > 0 or (execution.native_rows > 0 and not authors_natively):
+            # The runtime authored its own activation and effect
+            # transitions, or a pair that declares no native authoring
+            # authored a native record.
             observed = dispatch_observed = "native"
         elif dispatched > 0:
             # The host admitted the task and dispatched signed grants on
-            # the legacy runtime's behalf.
+            # the runtime's behalf. The runtime may author other native
+            # records, such as its board and its terminal outcome, and
+            # the activation ledger still belongs to the host adapter.
             observed = dispatch_observed = "compatibility_adapter"
         elif env.executor.dispatches:
             # A real execution that reached no grant proves nothing.
             observed = dispatch_observed = "unavailable"
         else:
             observed, dispatch_observed = expected, dispatch_expected
-        detail = f"runtime_authored_rows={execution.native_rows}, host_dispatched_grants={dispatched}"
+        detail = (
+            f"runtime_authored_rows={execution.native_rows}, "
+            f"runtime_ledger_rows={ledger_rows}, host_dispatched_grants={dispatched}"
+        )
     passed = observed == expected and dispatch_observed == dispatch_expected
     return CaseResult("activation_effect_ledgers", passed, expected, observed, detail=detail)
 

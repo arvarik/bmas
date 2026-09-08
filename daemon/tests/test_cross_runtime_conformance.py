@@ -62,13 +62,21 @@ def test_the_classic_native_record_declares_the_ladder_start(directory):
     # The admission and the generic panels already serve the pair.
     for capability in ("shared_submission", "immutable_assets", "generic_ui_fallback"):
         assert record.capabilities[capability] == "native", capability
-    # The host adapter serves the ledgers, the outbox, the protocol, the
-    # acknowledgement, the receipts, the envelope, the fence, and the
-    # retained checkpoint reader.
+    # Work package 5A: the runtime runs under its fenced run context,
+    # validates the fence and the live run-control row in every board
+    # mutation, authors its journal records with the common event
+    # envelope, and reads its checkpoint as a verified snapshot.
+    for capability in (
+        "immutable_policy_set", "task_fence_validation", "common_event_envelope",
+        "recovery_reader_retained",
+    ):
+        assert record.capabilities[capability] == "native", capability
+    # The host adapter still serves the ledgers, the outbox, the
+    # protocol, the acknowledgement, the receipts, and the envelope.
     for capability in (
         "durable_activation_ledger", "activation_dispatch_outbox", "agent_protocol",
         "signed_activation_acknowledgement", "nested_receipts", "trusted_envelope_creator",
-        "task_fence_validation", "recovery_reader_retained", "benchmark_scoring",
+        "benchmark_scoring",
     ):
         assert record.capabilities[capability] == "compatibility_adapter", capability
     assert record.capabilities["cancellation_signal"] == "legacy"
@@ -76,9 +84,10 @@ def test_the_classic_native_record_declares_the_ladder_start(directory):
     assert record.capabilities["budget_reservation"] == "advisory_legacy"
     assert record.capabilities["applied_seed_evidence"] == "recorded_only"
     assert record.capabilities["ui_adapter"] == "unavailable"
-    for capability in ("common_event_envelope", "deterministic_analysis_replay", "foundation_reference_scoring"):
+    for capability in ("deterministic_analysis_replay", "foundation_reference_scoring"):
         assert record.capabilities[capability] == legacy.capabilities[capability] == "compatibility_projection"
-    assert record.capabilities["immutable_policy_set"] == "compatibility_record"
+    assert legacy.capabilities["immutable_policy_set"] == "compatibility_record"
+    assert legacy.capabilities["common_event_envelope"] == "compatibility_projection"
     # The pair speaks the legacy agent contract through the host adapter.
     assert record.agent_protocol_version == "1"
     assert record.agent_receipt_version is None

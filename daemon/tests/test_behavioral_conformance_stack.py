@@ -153,22 +153,100 @@ async def test_the_classic_native_column_passes_with_the_real_runtime(monkeypatc
             assert task is not None and str(task["runtime_contract_version"]) == "2", real_id
             envelope = (await db.get_board_meta(real_id)).get("effective_configuration") or {}
             assert envelope.get("variant_contract_version") == "2", real_id
+        # Work package 5A: every native run is journal-backed. Each task's
+        # run holds runtime-authored board decisions with the common
+        # event envelope, exactly one runtime-authored terminal outcome
+        # under a registered Classic reason, a board projection that a
+        # replay from cursor zero rebuilds, and the admitted policy set
+        # bound into every record.
+        await _assert_native_runs_are_journal_backed(executor.task_ids.values())
     assert cap.CapabilityDirectory().get(CLASSIC_NATIVE).availability == "test_only"
-    # The starting values of the ladder.
+    # The values of the ladder after work package 5A.
     assert observed["admission_identity"].observed_value == "native"
     assert observed["assets_privacy"].observed_value == "native"
     assert observed["ui_fallback"].observed_value == "native"
+    assert observed["goals"].observed_value == "native"
     assert observed["seed_state"].observed_value == "recorded_only"
     assert observed["cancellation_deadlines"].observed_value == "legacy"
     assert observed["evidence_decisions"].observed_value == "legacy"
     assert observed["budget_reservations"].observed_value == "advisory_legacy"
-    assert observed["lease_fencing_restart_replay"].observed_value == "compatibility_adapter"
+    # The fence validation is native: the resumed run and the complete
+    # run both authored fenced records, and the restart resumed the
+    # task from its verified snapshot under the same fence.
+    assert observed["lease_fencing_restart_replay"].observed_value == "native"
     assert "resumed_answer" in observed["lease_fencing_restart_replay"].detail
+    assert "resumed_runtime_rows=0" not in observed["lease_fencing_restart_replay"].detail
     assert observed["agent_protocol_negotiation"].observed_value == "compatibility_adapter"
     assert observed["trace_envelope"].observed_value == "compatibility_adapter"
-    # The host dispatched signed grants for the native pair; the delegated
-    # runtime authored no native record yet.
+    # The host still dispatched the signed grants for the native pair,
+    # while the runtime authored its board and its outcome itself.
     assert observed["activation_effect_ledgers"].observed_value == "compatibility_adapter"
     assert "host_dispatched_grants=" in observed["activation_effect_ledgers"].detail
-    assert "runtime_authored_rows=0" in observed["activation_effect_ledgers"].detail
+    assert "runtime_ledger_rows=0" in observed["activation_effect_ledgers"].detail
+    assert "runtime_authored_rows=0" not in observed["activation_effect_ledgers"].detail
+
+
+async def _assert_native_runs_are_journal_backed(task_ids) -> None:
+    """Prove the 5A values on every task the native column ran."""
+    import runtime_journal as journal
+    from core.run_context import PolicySet
+    from core.variants.classic import outcomes, projection
+
+    registry = outcomes.classic_reason_registry()
+    checked = 0
+    for real_id in task_ids:
+        run_id = f"run-{real_id}"
+        chain = await journal.read_journal(run_id=run_id)
+        assert chain, real_id
+        journal.verify_chain(chain)
+        admission = chain[0]
+        assert admission.operation_type == "admission_identity"
+        # The immutable policy set: the members and the digest of the
+        # admission bind every runtime-authored record.
+        policy_digest = PolicySet(**admission.payload["policy_set"]).digest()
+        assert policy_digest == admission.payload["policy_set_digest"]
+        runtime_records = [record for record in chain if record.authority_type == "runtime"]
+        assert runtime_records, real_id
+        for record in runtime_records:
+            assert record.payload["policy_set_digest"] == policy_digest, real_id
+            assert record.producer and record.data_classification and record.redaction_policy_version
+            assert journal.record_transaction_digest(record) == record.transaction_digest
+        decisions = [record for record in runtime_records if record.operation_type == "proposal_decision"]
+        terminal = [record for record in chain if record.operation_type == "terminal_outcome"]
+        # Exactly one terminal outcome, authored by the runtime under a
+        # registered reason, and the run state follows its class.
+        assert len(terminal) == 1, real_id
+        assert terminal[0].authority_type == "runtime"
+        reason = terminal[0].payload["reason_code"]
+        binding = registry.binding_for(CLASSIC_NATIVE, reason)
+        assert terminal[0].payload["common_class"] == binding.common_class.value
+        run_row = await db.get_run(run_id)
+        assert run_row is not None
+        assert run_row["state"] == journal.TERMINAL_STATE_FOR_CLASS[binding.common_class.value], real_id
+        task = await db.get_task(real_id)
+        assert task is not None
+        if str(task["status"]) == "completed":
+            assert reason == "completed", real_id
+            assert decisions, real_id
+        # A replay from cursor zero rebuilds the board projection digest
+        # of the last accepted decision and equals the live rows.
+        accepted = [record for record in decisions if record.payload["decision"] == "accepted"]
+        if accepted:
+            board, _run_state, _cursor = await projection.replay_run_board(run_id)
+            assert projection.board_projection_digest(board) == accepted[-1].payload["checkpoint_digest"], real_id
+            rows = await db.get_classic_board_projection(run_id)
+            assert {row["entry_id"] for row in rows} == set(board["entries"]), real_id
+        # The recovery reader: the stored checkpoint is a verified snapshot
+        # of the journal state under the live fence.
+        checkpoint = (await db.get_board_meta(real_id)).get("variant_checkpoint")
+        if isinstance(checkpoint, dict) and checkpoint.get("snapshot"):
+            control = await db.get_run_control(run_id)
+            assert control is not None
+            verified = await projection.read_checkpoint(
+                checkpoint, run_id=run_id, task_fence=str(control["task_fence"]),
+            )
+            assert verified.board_digest == projection.board_projection_digest(verified.board)
+            checked += 1
+    assert checked, "no native task stored a verified checkpoint"
+    await journal.verify_durable_projections()
 

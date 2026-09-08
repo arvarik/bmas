@@ -212,6 +212,10 @@ async def admit_run(
         "asset_manifest_id": request.asset_manifest.manifest_id,
         "asset_manifest_digest": request.asset_manifest_digest,
         "policy_set_digest": request.policy_set_digest,
+        # The members travel with the digest, so a restarted host rebuilds
+        # the immutable run context from the journal alone, even after
+        # the deployment configuration changed.
+        "policy_set": request.policy_set.to_dict(),
         "seed_policy": request.seed_policy,
         "requested_seed": request.requested_seed,
         "qualification_ids": sorted(request.required_qualification_ids),

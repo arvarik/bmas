@@ -16,9 +16,11 @@ exists, so the orchestrator dispatches over the bearer execute route.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import database as db
 import journal_backup
@@ -34,6 +36,9 @@ from core.foundation_gates import WriterDisabledError, require_writer_gates
 from core.run_context import PolicySet
 from core.run_contracts import VersionSet
 from core.variants import RuntimeKey, require_runtime
+
+if TYPE_CHECKING:
+    from core.run_context import RunContext
 
 logger = logging.getLogger("bmas.daemon.interactive_admission")
 
@@ -338,6 +343,154 @@ async def admit_task_run(
         "admission": admitted,
         "new": True,
     }
+
+
+async def run_context_for(run_id: str, *, lease_ref: str) -> RunContext:
+    """Rebuild the fenced run context of one admitted run from its durable rows.
+
+    The ``runs`` row gives the identity, the ``runtime_admissions`` row
+    gives the immutable admission, the admission journal record gives
+    the policy set members, and the ``run_controls`` row gives the
+    task fence. The context freezes references only: the lease and the
+    run-control row stay live authorities that every mutation reads
+    again.
+    """
+    from core.run_context import PolicySet, create_run_context
+    from core.run_contracts import RuntimeAdmission
+
+    run_row = await db.get_run(run_id)
+    admission_row = await db.get_runtime_admission(run_id)
+    control = await db.get_run_control(run_id)
+    if run_row is None or admission_row is None or control is None:
+        raise run_admission.AdmissionPrerequisiteError(
+            f"The run {run_id} has no complete admission rows"
+        )
+    genesis = None
+    for record in await runtime_journal_records(run_id):
+        if record.operation_type == "admission_identity":
+            genesis = record
+            break
+    if genesis is None:
+        raise run_admission.AdmissionPrerequisiteError(
+            f"The run {run_id} has no admission record in the journal"
+        )
+    payload = genesis.payload
+    runtime_key = RuntimeKey(str(run_row["runtime_id"]), str(run_row["runtime_contract_version"]))
+    stored_members = payload.get("policy_set")
+    if isinstance(stored_members, dict):
+        policy_set = PolicySet(**{str(key): str(value) for key, value in stored_members.items()})
+    else:
+        # A run admitted before the members travelled with the digest
+        # rebuilds the set from the configuration in force. The digest
+        # check below fails closed when that configuration changed.
+        policy_set = policy_set_from_configuration()
+    policy_set_digest = str(admission_row.get("policy_set_digest") or payload.get("policy_set_digest") or "")
+    requested_seed = payload.get("requested_seed")
+    admission = RuntimeAdmission(
+        admission_id=str(admission_row["admission_id"]),
+        task_id=str(run_row["task_id"]),
+        run_id=run_id,
+        runtime_key=runtime_key,
+        version_set=VersionSet(**json.loads(str(admission_row["version_set"]))),
+        specification_digest=str(admission_row["specification_digest"]),
+        capability_document_digest=str(admission_row["capability_document_digest"]),
+        prompt_profile_digest=str(payload.get("prompt_profile_digest") or ""),
+        role_profile_digest=str(payload.get("role_profile_digest") or ""),
+        seed_policy=str(payload.get("seed_policy") or "recorded"),
+        requested_seed=requested_seed if isinstance(requested_seed, int) else None,
+        required_reader_ids=(CHECKPOINT_READER,),
+        interface_adapter_id=str(require_runtime(runtime_key).descriptor.id),
+    )
+    return create_run_context(
+        admission=admission,
+        policy_set=policy_set,
+        policy_set_digest=policy_set_digest,
+        asset_manifest_id=str(payload.get("asset_manifest_id") or f"manifest-{run_row['task_id']}"),
+        asset_manifest_digest=str(payload.get("asset_manifest_digest") or ""),
+        task_fence=str(control["task_fence"]),
+        lease_ref=lease_ref,
+        run_control_ref=run_id,
+    )
+
+
+async def runtime_journal_records(run_id: str) -> list[Any]:
+    """The journal chain of one run, in order."""
+    import runtime_journal
+
+    return await runtime_journal.read_journal(run_id=run_id)
+
+
+async def runtime_services_for(
+    context: RunContext,
+    *,
+    lease_owner: str,
+    lease_fence: str,
+    lease_ttl_seconds: float,
+    tenant_id: str = "tenant-default",
+    artifact_root: Path | None = None,
+) -> Any:
+    """Wire the fenced runtime services of one run for its lease holder.
+
+    The services bind the run's identity, the reason registry of its
+    runtime, the asset manifest of its task, and an artifact store for
+    the objects the runtime promotes. Every mutating service validates
+    the live run-control row for this owner and fence.
+    """
+    import budget_service
+    from core.asset_store import ArtifactStore, AssetCatalog
+    from core.human_controls import HumanControlService
+    from core.run_contracts import (
+        InvalidationService,
+        OutcomeLedger,
+        ReasonRegistry,
+        RunLedger,
+        RunRecord,
+        RunState,
+    )
+    from core.runtime_services import create_runtime_services
+
+    run_row = await db.get_run(context.run_id)
+    if run_row is None:
+        raise run_admission.AdmissionPrerequisiteError(f"Unknown run: {context.run_id}")
+    run_ledger = RunLedger()
+    run_ledger.restore_run(RunRecord(
+        run_id=context.run_id,
+        task_id=context.task_id,
+        tenant_id=str(run_row["tenant_id"]),
+        runtime_key=context.runtime_key,
+        state=RunState(str(run_row["state"])),
+        attempt=int(run_row["attempt"]),
+    ))
+    runtime = require_runtime(context.runtime_key)
+    registry_hook = getattr(runtime, "reason_registry", None)
+    reason_registry = registry_hook() if callable(registry_hook) else ReasonRegistry()
+    outcome_ledger = OutcomeLedger(run_ledger, reason_registry)
+    invalidations = InvalidationService(
+        run_ledger, outcome_ledger,
+        authorized_authority_ids=frozenset(),
+        policy_version="1",
+        known_targets=frozenset(),
+    )
+    controls = HumanControlService(
+        run_ledger=run_ledger,
+        authorized_actor_ids=frozenset(),
+        database_time=db.database_utc_now,
+    )
+    root = artifact_root or (Path(db.DB_PATH).parent / f"{context.runtime_key.runtime_id}-board")
+    return create_runtime_services(
+        run_id=context.run_id,
+        lease_owner=lease_owner,
+        lease_fence=lease_fence,
+        scheduler=True,
+        run_ledger=run_ledger,
+        outcome_ledger=outcome_ledger,
+        invalidations=invalidations,
+        assets=AssetCatalog(await asset_manifest_for(context.task_id)),
+        artifacts=ArtifactStore(root, tenant_id),
+        controls=controls,
+        lease_ttl_seconds=lease_ttl_seconds,
+        reservation_validator=budget_service.reservation_is_valid,
+    )
 
 
 async def reservation_for_run(run_id: str) -> str | None:

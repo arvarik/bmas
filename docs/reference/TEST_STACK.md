@@ -200,6 +200,31 @@ declared value of the native capability record. Each Classic work
 package that earns a native value updates the record, and the column
 proves the change on the stack.
 
+Since the journal-backed board of the native pair, the host builds one
+fenced run context and one runtime services instance from the `runs`,
+`runtime_admissions`, and `run_controls` rows of the admitted run and
+acquires the run lease beside the task lease. The native pair then
+commits every board mutation as one runtime-authored
+`proposal_decision` with the rows of `classic_board_projection` and
+`classic_board_tombstones` in the same transaction, stores its
+checkpoint as a verified snapshot of the journal state, and ends every
+run with exactly one runtime-authored `terminal_outcome` under the
+Classic reason table. The native column proves those facts on every
+task it ran: the policy set of the admission binds every record, a
+replay from cursor zero rebuilds the board projection digest, the
+stored checkpoint verifies under the live fence, and the run state
+follows the outcome class. The `daemon.classic-journal-projection`
+group proves the same contracts in process, including the four
+rejections of a stale fence, an expired lease, a deadline, and a
+cancellation. The operator abort route now also requests the
+cancellation on the run-control row, so the runtime's next mutation is
+rejected as cancelled and the run ends with the `cancelled` reason.
+
+The activation ledger case derives its value from the activation and
+effect transitions a runtime authored itself. The board and outcome
+records of the native pair leave that value at `compatibility_adapter`
+until the native activations work package.
+
 Three stack details make that run real. The stack points every role
 in the registry at its own agent process, so the classic activations
 reach the stack agent instead of the deployed port. The stack sets

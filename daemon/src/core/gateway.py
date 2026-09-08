@@ -162,45 +162,15 @@ class BoardGateway:
             for raw in proposed:
                 await self._assert_commit_allowed(task_id)
                 mutation_id = str(raw.get("_mutation_id", "")) or None
-                if mutation_id:
-                    previous = await self._find_mutation(task_id, mutation_id)
-                    if previous is not None:
-                        entry_id = previous.get("entry_id")
-                        if previous.get("event_type") == "entry_added" and entry_id:
-                            entry = await self._store.get_entry(task_id, entry_id)
-                            if entry is None:
-                                payload = previous.get("payload", {})
-                                if isinstance(payload, dict):
-                                    entry = entry_from_dict(payload)
-                            if entry is not None:
-                                committed.append(entry)
-                                await self._ensure_emitted(
-                                    task_id,
-                                    EVENT_BOARD_ENTRY,
-                                    entry_to_dict(entry),
-                                    mutation_id=mutation_id,
-                                )
-                        elif previous.get("event_type") == "entry_rejected":
-                            payload = previous.get("payload", {})
-                            if isinstance(payload, dict):
-                                await self._ensure_emitted(
-                                    task_id,
-                                    EVENT_ENTRY_REJECTED,
-                                    {
-                                        "entry": payload.get("entry", raw),
-                                        "actor": payload.get("actor", actor),
-                                        "reason": payload.get("reason", "rejected"),
-                                    },
-                                    mutation_id=mutation_id,
-                                )
-                        continue
+                if mutation_id and await self._replay_recorded_append(
+                    task_id, raw, actor, mutation_id, committed,
+                ):
+                    continue
                 try:
-                    entry = await self._normalize(
+                    entry = await self._prepare_entry(
                         raw, task_id, actor, turn_id, round_no, space,
+                        capabilities,
                     )
-                    self._validate_envelope(entry)
-                    await self._validate_refs(task_id, entry)
-                    self._authorize_post(capabilities, entry)
                     await self._commit(
                         task_id,
                         entry,
@@ -259,43 +229,9 @@ class BoardGateway:
                 entry_mutation_id = (
                     f"{mutation_id}:{entry_id}" if mutation_id else None
                 )
-                previous = (
-                    await self._find_mutation(task_id, entry_mutation_id)
-                    if entry_mutation_id
-                    else None
-                )
-                if entry_mutation_id and previous is not None:
-                    payload = previous.get("payload", {})
-                    if previous.get("event_type") == "entry_removed":
-                        removed.append(entry_id)
-                        await self._ensure_emitted(
-                            task_id,
-                            EVENT_ENTRY_REMOVED,
-                            {
-                                "entry_id": entry_id,
-                                "by": previous.get("actor", actor),
-                                "reason": (
-                                    payload.get("reason", reason)
-                                    if isinstance(payload, dict)
-                                    else reason
-                                ),
-                            },
-                            mutation_id=entry_mutation_id,
-                        )
-                    elif (
-                        previous.get("event_type") == "entry_rejected"
-                        and isinstance(payload, dict)
-                    ):
-                        await self._ensure_emitted(
-                            task_id,
-                            EVENT_ENTRY_REJECTED,
-                            {
-                                "entry": payload.get("entry", {}),
-                                "actor": payload.get("actor", actor),
-                                "reason": payload.get("reason", "rejected"),
-                            },
-                            mutation_id=entry_mutation_id,
-                        )
+                if entry_mutation_id and await self._replay_recorded_remove(
+                    task_id, entry_id, actor, reason, entry_mutation_id, removed,
+                ):
                     continue
                 entry = await self._store.get_entry(task_id, entry_id)
                 if entry is None:
@@ -362,26 +298,9 @@ class BoardGateway:
         """Change an entry's status (supersede, etc.)."""
         async with self._task_lock(task_id):
             await self._assert_commit_allowed(task_id)
-            previous = (
-                await self._find_mutation(task_id, mutation_id)
-                if mutation_id
-                else None
-            )
-            if mutation_id and previous is not None:
-                payload = previous.get("payload", {})
-                if isinstance(payload, dict):
-                    await self._ensure_emitted(
-                        task_id,
-                        EVENT_ENTRY_STATUS_CHANGED,
-                        {
-                            "entry_id": payload.get("entry_id", entry_id),
-                            "by": previous.get("actor", actor),
-                            "old_status": payload.get("old_status"),
-                            "status": payload.get("status", status),
-                        },
-                        mutation_id=mutation_id,
-                    )
-                await self._recompute_derived(task_id)
+            if mutation_id and await self._replay_recorded_status(
+                task_id, entry_id, status, actor, mutation_id,
+            ):
                 return
             entry = await self._store.get_entry(task_id, entry_id)
             if entry is None:
@@ -558,6 +477,150 @@ class BoardGateway:
         self._locks.pop(task_id, None)
 
     # ── Internal Methods ─────────────────────────────────────────────
+
+    async def _prepare_entry(
+        self,
+        raw: dict[str, Any],
+        task_id: str,
+        actor: str,
+        turn_id: str,
+        round_no: int,
+        space: str,
+        capabilities: list[str],
+    ) -> BoardEntry:
+        """Normalize, validate, and authorize one proposed entry.
+
+        Raises ``EntryRejected`` when a rule rejects the entry. The
+        returned entry is ready for its commit.
+        """
+        entry = await self._normalize(
+            raw, task_id, actor, turn_id, round_no, space,
+        )
+        self._validate_envelope(entry)
+        await self._validate_refs(task_id, entry)
+        self._authorize_post(capabilities, entry)
+        return entry
+
+    async def _replay_recorded_append(
+        self,
+        task_id: str,
+        raw: dict[str, Any],
+        actor: str,
+        mutation_id: str,
+        committed: list[BoardEntry],
+    ) -> bool:
+        """Replay one recorded append mutation without a second write.
+
+        Returns True when the store already recorded the mutation. A
+        recorded accepted entry joins ``committed`` and its event is
+        re-emitted when the emitter lost it.
+        """
+        previous = await self._find_mutation(task_id, mutation_id)
+        if previous is None:
+            return False
+        entry_id = previous.get("entry_id")
+        if previous.get("event_type") == "entry_added" and entry_id:
+            entry = await self._store.get_entry(task_id, entry_id)
+            if entry is None:
+                payload = previous.get("payload", {})
+                if isinstance(payload, dict):
+                    entry = entry_from_dict(payload)
+            if entry is not None:
+                committed.append(entry)
+                await self._ensure_emitted(
+                    task_id,
+                    EVENT_BOARD_ENTRY,
+                    entry_to_dict(entry),
+                    mutation_id=mutation_id,
+                )
+        elif previous.get("event_type") == "entry_rejected":
+            payload = previous.get("payload", {})
+            if isinstance(payload, dict):
+                await self._ensure_emitted(
+                    task_id,
+                    EVENT_ENTRY_REJECTED,
+                    {
+                        "entry": payload.get("entry", raw),
+                        "actor": payload.get("actor", actor),
+                        "reason": payload.get("reason", "rejected"),
+                    },
+                    mutation_id=mutation_id,
+                )
+        return True
+
+    async def _replay_recorded_remove(
+        self,
+        task_id: str,
+        entry_id: str,
+        actor: str,
+        reason: str,
+        entry_mutation_id: str,
+        removed: list[str],
+    ) -> bool:
+        """Replay one recorded removal without a second write."""
+        previous = await self._find_mutation(task_id, entry_mutation_id)
+        if previous is None:
+            return False
+        payload = previous.get("payload", {})
+        if previous.get("event_type") == "entry_removed":
+            removed.append(entry_id)
+            await self._ensure_emitted(
+                task_id,
+                EVENT_ENTRY_REMOVED,
+                {
+                    "entry_id": entry_id,
+                    "by": previous.get("actor", actor),
+                    "reason": (
+                        payload.get("reason", reason)
+                        if isinstance(payload, dict)
+                        else reason
+                    ),
+                },
+                mutation_id=entry_mutation_id,
+            )
+        elif (
+            previous.get("event_type") == "entry_rejected"
+            and isinstance(payload, dict)
+        ):
+            await self._ensure_emitted(
+                task_id,
+                EVENT_ENTRY_REJECTED,
+                {
+                    "entry": payload.get("entry", {}),
+                    "actor": payload.get("actor", actor),
+                    "reason": payload.get("reason", "rejected"),
+                },
+                mutation_id=entry_mutation_id,
+            )
+        return True
+
+    async def _replay_recorded_status(
+        self,
+        task_id: str,
+        entry_id: str,
+        status: str,
+        actor: str,
+        mutation_id: str,
+    ) -> bool:
+        """Replay one recorded status change without a second write."""
+        previous = await self._find_mutation(task_id, mutation_id)
+        if previous is None:
+            return False
+        payload = previous.get("payload", {})
+        if isinstance(payload, dict):
+            await self._ensure_emitted(
+                task_id,
+                EVENT_ENTRY_STATUS_CHANGED,
+                {
+                    "entry_id": payload.get("entry_id", entry_id),
+                    "by": previous.get("actor", actor),
+                    "old_status": payload.get("old_status"),
+                    "status": payload.get("status", status),
+                },
+                mutation_id=mutation_id,
+            )
+        await self._recompute_derived(task_id)
+        return True
 
     async def _assert_commit_allowed(self, task_id: str) -> None:
         if self._commit_guard is None:

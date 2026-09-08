@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -3433,6 +3433,73 @@ async def _migrate_add_classic_specifications(db: aiosqlite.Connection) -> None:
     )
 
 
+CLASSIC_BOARD_PROJECTION_DDL = """
+CREATE TABLE IF NOT EXISTS classic_board_projection (
+    run_id         TEXT NOT NULL,
+    entry_id       TEXT NOT NULL,
+    task_id        TEXT NOT NULL,
+    entry_type     TEXT NOT NULL,
+    author         TEXT NOT NULL,
+    activation_id  TEXT,
+    round          INTEGER NOT NULL,
+    space          TEXT NOT NULL,
+    title          TEXT,
+    body_digest    TEXT NOT NULL,
+    refs           TEXT NOT NULL,
+    sources        TEXT NOT NULL,
+    confidence     TEXT NOT NULL,
+    status         TEXT NOT NULL,
+    created_cursor INTEGER NOT NULL,
+    journal_cursor INTEGER NOT NULL,
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    PRIMARY KEY (run_id, entry_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_classic_board_projection_task
+ON classic_board_projection(task_id);
+
+CREATE TABLE IF NOT EXISTS classic_board_tombstones (
+    run_id         TEXT NOT NULL,
+    entry_id       TEXT NOT NULL,
+    task_id        TEXT NOT NULL,
+    actor          TEXT NOT NULL,
+    activation_id  TEXT,
+    reason         TEXT NOT NULL,
+    journal_cursor INTEGER NOT NULL,
+    removed_at     TEXT NOT NULL,
+    PRIMARY KEY (run_id, entry_id)
+);
+
+CREATE TRIGGER IF NOT EXISTS classic_board_tombstones_immutable_update
+BEFORE UPDATE ON classic_board_tombstones
+BEGIN
+    SELECT RAISE(ABORT, 'classic_board_tombstones rows are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS classic_board_tombstones_immutable_delete
+BEFORE DELETE ON classic_board_tombstones
+BEGIN
+    SELECT RAISE(ABORT, 'classic_board_tombstones rows are immutable');
+END;
+"""
+
+
+async def _migrate_add_classic_board_projection(db: aiosqlite.Connection) -> None:
+    """Add the journal-backed board projection of the Classic native pair.
+
+    The projection holds one row per board entry with the journal
+    cursor that last changed it and the artifact digest of its body.
+    The tombstones hold one immutable row per removed entry. Both
+    tables are projections of ``proposal_decision`` journal records,
+    so a replay from cursor zero rebuilds them.
+    """
+    await db.executescript(CLASSIC_BOARD_PROJECTION_DDL)
+    db.row_factory = aiosqlite.Row
+    await db.commit()
+    logger.info("Migration 29 applied: classic board projection")
+
+
 async def _migrate(db: aiosqlite.Connection, version: int) -> None:
     """Dispatch to the migration function for the given version."""
     migrations = {
@@ -3463,6 +3530,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         26: _migrate_add_lineage_supersession_anchor_study_storage,
         27: _migrate_add_agent_signing_keys,
         28: _migrate_add_classic_specifications,
+        29: _migrate_add_classic_board_projection,
     }
     fn = migrations.get(version)
     if fn is None:
@@ -6237,6 +6305,155 @@ async def get_classic_specification(run_id: str) -> dict | None:
     return dict(row) if row is not None else None
 
 
+async def get_run(run_id: str) -> dict | None:
+    """Return the durable run projection row of one run."""
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "SELECT * FROM runs WHERE run_id = ?", (run_id,),
+        )
+        row = await cursor.fetchone()
+    return dict(row) if row is not None else None
+
+
+async def get_runtime_admission(run_id: str) -> dict | None:
+    """Return the immutable admission row of one run."""
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "SELECT * FROM runtime_admissions WHERE run_id = ?", (run_id,),
+        )
+        row = await cursor.fetchone()
+    return dict(row) if row is not None else None
+
+
+# ── The Classic board projection ─────────────────────────────────────
+#
+# The native Classic pair stores its board as a projection of the
+# ``proposal_decision`` journal records. Every writer here runs inside
+# the journal transaction through the ``extra_writes`` callback, so a
+# projection row never exists without its journal record.
+
+CLASSIC_BOARD_PROJECTION_COLUMNS = (
+    "run_id", "entry_id", "task_id", "entry_type", "author", "activation_id",
+    "round", "space", "title", "body_digest", "refs", "sources", "confidence",
+    "status", "created_cursor", "journal_cursor", "created_at", "updated_at",
+)
+
+CLASSIC_BOARD_TOMBSTONE_COLUMNS = (
+    "run_id", "entry_id", "task_id", "actor", "activation_id", "reason",
+    "journal_cursor", "removed_at",
+)
+
+
+async def insert_classic_board_projection_rows(
+    connection: aiosqlite.Connection, rows: list[dict],
+) -> None:
+    """Insert projection rows for new board entries inside the caller's transaction."""
+    for row in rows:
+        await connection.execute(
+            "INSERT INTO classic_board_projection ("
+            "run_id, entry_id, task_id, entry_type, author, activation_id, "
+            "round, space, title, body_digest, refs, sources, confidence, "
+            "status, created_cursor, journal_cursor, created_at, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                row["run_id"], row["entry_id"], row["task_id"], row["entry_type"],
+                row["author"], row.get("activation_id"), int(row["round"]),
+                row["space"], row.get("title"), row["body_digest"],
+                json.dumps(list(row.get("refs") or []), sort_keys=True),
+                json.dumps(list(row.get("sources") or []), sort_keys=True),
+                str(row["confidence"]), row["status"], int(row["created_cursor"]),
+                int(row["journal_cursor"]), row["created_at"], row["updated_at"],
+            ),
+        )
+
+
+async def update_classic_board_projection_status(
+    connection: aiosqlite.Connection,
+    *,
+    run_id: str,
+    entry_id: str,
+    status: str,
+    journal_cursor: int,
+    updated_at: str,
+) -> None:
+    """Change the status of one projection row inside the caller's transaction."""
+    cursor = await connection.execute(
+        "UPDATE classic_board_projection SET status = ?, journal_cursor = ?, "
+        "updated_at = ? WHERE run_id = ? AND entry_id = ?",
+        (status, int(journal_cursor), updated_at, run_id, entry_id),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError(
+            f"The board projection of run {run_id} has no entry {entry_id}"
+        )
+
+
+async def insert_classic_board_tombstones(
+    connection: aiosqlite.Connection, rows: list[dict],
+) -> None:
+    """Insert tombstone rows for removed entries inside the caller's transaction."""
+    for row in rows:
+        await connection.execute(
+            "INSERT INTO classic_board_tombstones ("
+            "run_id, entry_id, task_id, actor, activation_id, reason, "
+            "journal_cursor, removed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                row["run_id"], row["entry_id"], row["task_id"], row["actor"],
+                row.get("activation_id"), row["reason"], int(row["journal_cursor"]),
+                row["removed_at"],
+            ),
+        )
+
+
+def _projection_row_from(record: Any) -> dict:
+    row = dict(record)
+    for field in ("refs", "sources"):
+        try:
+            row[field] = json.loads(row.get(field) or "[]")
+        except (json.JSONDecodeError, TypeError):
+            row[field] = []
+    return row
+
+
+async def get_classic_board_projection(run_id: str) -> list[dict]:
+    """Return the projection rows of one run in entry order."""
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "SELECT * FROM classic_board_projection WHERE run_id = ? "
+            "ORDER BY created_cursor, entry_id",
+            (run_id,),
+        )
+        rows = await cursor.fetchall()
+    return [_projection_row_from(row) for row in rows]
+
+
+async def get_classic_board_tombstones(run_id: str) -> list[dict]:
+    """Return the tombstone rows of one run in journal order."""
+    async with _connect() as connection:
+        cursor = await connection.execute(
+            "SELECT * FROM classic_board_tombstones WHERE run_id = ? "
+            "ORDER BY journal_cursor, entry_id",
+            (run_id,),
+        )
+        rows = await cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+async def read_classic_board_projection_tables(
+    connection: aiosqlite.Connection,
+) -> tuple[list[dict], list[dict]]:
+    """Read every projection and tombstone row on the caller's connection."""
+    cursor = await connection.execute(
+        "SELECT * FROM classic_board_projection ORDER BY run_id, created_cursor, entry_id",
+    )
+    entries = [_projection_row_from(row) for row in await cursor.fetchall()]
+    cursor = await connection.execute(
+        "SELECT * FROM classic_board_tombstones ORDER BY run_id, journal_cursor, entry_id",
+    )
+    tombstones = [dict(row) for row in await cursor.fetchall()]
+    return entries, tombstones
+
+
 async def get_run_control(run_id: str) -> dict | None:
     """Read the live run-control row."""
     async with _connect() as db:
@@ -6425,6 +6642,19 @@ async def check_run_authority(
         except BaseException:
             await connection.rollback()
             raise
+
+
+async def request_task_run_cancellation(task_id: str) -> int:
+    """Request the cancellation of every active run control of one task."""
+    async with _connect() as db:
+        cursor = await db.execute(
+            "UPDATE run_controls SET cancellation_state = 'requested', "
+            "control_version = control_version + 1 "
+            "WHERE task_id = ? AND cancellation_state = 'active'",
+            (task_id,),
+        )
+        await db.commit()
+        return int(cursor.rowcount)
 
 
 async def request_run_cancellation_control(run_id: str) -> bool:

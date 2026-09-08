@@ -316,6 +316,13 @@ async def abort_task(task_id: str, req: AbortRequest, request: Request):
             detail={"reason": req.reason, "error": "Task is not active"},
         )
         raise HTTPException(status_code=409, detail="The task is not active")
+    # A task under a fenced run control records the cancellation on
+    # its run-control row, so the runtime's next mutation is rejected
+    # with the cancellation reason and the run ends as cancelled.
+    try:
+        await db.request_task_run_cancellation(task_id)
+    except Exception as exc:
+        logger.warning("Run control cancellation failed for %s: %s", task_id, exc)
     try:
         await orch.bb.redis.set(
             f"bmas:public:abort:{task_id}",

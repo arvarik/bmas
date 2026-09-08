@@ -1835,6 +1835,47 @@ sqlite_tables:
       - { name: requested_effort_level, owner: daemon.classic-specification, derived: false }
       - { name: journal_cursor, owner: daemon.classic-specification, derived: false }
       - { name: created_at, owner: daemon.classic-specification, derived: false }
+  - table: classic_board_projection
+    authority: daemon.journal-authority
+    purpose: "The journal-backed board of Classic native runs: one row per entry, a projection of the accepted proposal_decision records. A replay from cursor zero rebuilds it."
+    writers:
+      - database
+    fields:
+      - { name: run_id, owner: daemon.journal-authority, derived: false }
+      - { name: entry_id, owner: daemon.journal-authority, derived: false }
+      - { name: task_id, owner: daemon.journal-authority, derived: false }
+      - { name: entry_type, owner: daemon.journal-authority, derived: false }
+      - { name: author, owner: daemon.journal-authority, derived: false }
+      - { name: activation_id, owner: daemon.journal-authority, derived: false }
+      - { name: round, owner: daemon.journal-authority, derived: false }
+      - { name: space, owner: daemon.journal-authority, derived: false }
+      - { name: title, owner: daemon.journal-authority, derived: false }
+      - name: body_digest
+        owner: daemon.journal-authority
+        derived: true
+        reconstruction: "Digest the promoted body artifact bytes under the artifact-content domain."
+      - { name: refs, owner: daemon.journal-authority, derived: false }
+      - { name: sources, owner: daemon.journal-authority, derived: false }
+      - { name: confidence, owner: daemon.journal-authority, derived: false }
+      - { name: status, owner: daemon.journal-authority, derived: false }
+      - { name: created_cursor, owner: daemon.journal-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
+      - { name: created_at, owner: daemon.journal-authority, derived: false }
+      - { name: updated_at, owner: daemon.journal-authority, derived: false }
+  - table: classic_board_tombstones
+    authority: daemon.journal-authority
+    purpose: "One immutable row per board entry a Classic native run removed or archived, with the journal cursor of the proposal_decision that removed it."
+    writers:
+      - database
+    fields:
+      - { name: run_id, owner: daemon.journal-authority, derived: false }
+      - { name: entry_id, owner: daemon.journal-authority, derived: false }
+      - { name: task_id, owner: daemon.journal-authority, derived: false }
+      - { name: actor, owner: daemon.journal-authority, derived: false }
+      - { name: activation_id, owner: daemon.journal-authority, derived: false }
+      - { name: reason, owner: daemon.journal-authority, derived: false }
+      - { name: journal_cursor, owner: daemon.journal-authority, derived: false }
+      - { name: removed_at, owner: daemon.journal-authority, derived: false }
 transient_migration_tables:
   - board_entries_v3
 redis_domains:

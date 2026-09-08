@@ -125,6 +125,12 @@ class Orchestrator:
         self._lease_lost: dict[str, asyncio.Event] = {}
         self._task_runtime_keys: dict[str, RuntimeKey] = {}
         self._active_gateways: dict[str, Any] = {}
+        # The run lease of every task that runs under a fenced run
+        # context: run id, lease owner, lease fence, and the lease TTL.
+        self._run_leases: dict[str, tuple[str, str, str, float]] = {}
+        # The run context of every task that runs under one, so a
+        # failure before or outside the runtime still ends its run.
+        self._run_contexts: dict[str, Any] = {}
         self._agent_circuits = EndpointCircuitBreaker(
             failure_threshold=CIRCUIT_BREAKER_FAILURE_THRESHOLD,
             recovery_timeout_s=CIRCUIT_BREAKER_RECOVERY_S,
@@ -253,6 +259,21 @@ class Orchestrator:
                     )
                 except Exception:
                     heartbeat_saved = False
+                run_lease = self._run_leases.get(task_id)
+                if heartbeat_saved and run_lease is not None:
+                    # The run lease of a fenced run renews with the task
+                    # lease, so the live run-control row keeps this
+                    # owner and fence while the task runs.
+                    run_id, owner, fence, ttl_seconds = run_lease
+                    try:
+                        run_renewed = await db.renew_run_lease(
+                            run_id, owner, fence, ttl_seconds,
+                        )
+                    except Exception:
+                        run_renewed = False
+                    if not run_renewed:
+                        logger.error("Run lease lost for %s", task_id)
+                        heartbeat_saved = False
                 if not heartbeat_saved:
                     event = self._lease_lost.get(task_id)
                     if event is not None:
@@ -693,8 +714,17 @@ class Orchestrator:
             # Admit the task into its Foundation run before the runtime
             # executes. With the writer gates off the task keeps the
             # legacy path and the agent dispatch uses the bearer route.
-            await self._admit_foundation_run(
+            identity = await self._admit_foundation_run(
                 task_id, runtime_key, effective_configuration, overrides,
+            )
+            # A runtime that consumes the fenced run context receives it
+            # with the runtime services, both built from the durable
+            # rows the admission wrote.
+            authority = await self._bind_run_authority(
+                task_id, variant_class, identity, lock_id,
+            )
+            run_context, runtime_services = (
+                authority if authority is not None else (None, None)
             )
 
             if resume:
@@ -733,6 +763,8 @@ class Orchestrator:
                         overrides=overrides,
                         resume=True,
                         effective_configuration=effective_configuration,
+                        run_context=run_context,
+                        runtime_services=runtime_services,
                     ),
                 )
 
@@ -787,12 +819,19 @@ class Orchestrator:
                     overrides=overrides,
                     resume=False,
                     effective_configuration=effective_configuration,
+                    run_context=run_context,
+                    runtime_services=runtime_services,
                 ),
             )
 
         except (LeaseLostError, db.LeaseFenceError) as exc:
             raise LeaseLostError(f"Task lease expired: {task_id}") from exc
-        except asyncio.CancelledError:
+        except LeaseBusyError:
+            # A held run lease stays busy until it expires; recovery
+            # retries the task, so the task never fails here.
+            raise
+        except asyncio.CancelledError as exc:
+            await self._end_run_on_failure(task_id, exc)
             if lease_claimed:
                 with contextlib.suppress(Exception):
                     await db.update_run_state(
@@ -807,6 +846,7 @@ class Orchestrator:
                     )
             raise
         except Exception as e:
+            await self._end_run_on_failure(task_id, e)
             # Record failure in SQLite before re-raising
             failed = await self._fail_task_with_cost(
                 task_id,
@@ -837,6 +877,7 @@ class Orchestrator:
                 renewal_task.cancel()
                 await asyncio.gather(renewal_task, return_exceptions=True)
             await self._set_phase("idle", 0, task_id=task_id)
+            await self._release_run_authority(task_id)
             with contextlib.suppress(Exception):
                 await self.bb.release_lock(f"orchestrator:{task_id}", lock_id)
             if lease_claimed:
@@ -979,15 +1020,105 @@ class Orchestrator:
         await self._complete_variant_task(request, outcome)
         return outcome.public_result
 
-    async def _checkpoint_variant(self, variant: Any, task_id: str) -> None:
-        """Save one variant checkpoint and record its durable boundary."""
+    async def _checkpoint_variant(
+        self, variant: Any, task_id: str, binding: Any = None,
+    ) -> None:
+        """Save one variant checkpoint and record its durable boundary.
+
+        The legacy pair keeps its metadata checkpoint. The native pair
+        adds a verified snapshot of its journal state, so a resume
+        verifies the checkpoint before it trusts one value.
+        """
         await variant.checkpoint(task_id)
+        if binding is not None:
+            control = await variant.store.get_meta(task_id)
+            checkpoint = await binding.checkpoint(control)
+            await variant.gateway.set_meta(
+                task_id,
+                variant_checkpoint={
+                    **checkpoint,
+                    "variant_id": "classic",
+                    "runtime_contract_version": (
+                        binding.context.runtime_key.runtime_contract_version
+                    ),
+                },
+            )
         saved = await db.mark_task_checkpoint(
             task_id,
             self._task_lock_ids.get(task_id),
         )
         if not saved:
             raise LeaseLostError(f"Task lease expired: {task_id}")
+
+    async def _restore_native_run(
+        self, binding: Any, gateway: Any, board_store: Any, task_id: str,
+    ) -> None:
+        """Bring a native run to its journal state before the engine starts.
+
+        A stored checkpoint verifies against its digests, the live
+        fence, and the journal replay. The hot board store then catches
+        up with the projection rows and the promoted bodies, and the
+        engine's control metadata comes from the verified snapshot.
+        Without a checkpoint the run replays its journal from cursor
+        zero, so a crash before the first checkpoint loses nothing.
+        """
+        from core.variants.classic.projection import (
+            board_mutation_ids,
+            restore_board_store,
+        )
+
+        binding.phase = "start"
+        checkpoint = await self.load_variant_checkpoint(task_id, "classic")
+        verified = None
+        if checkpoint is not None:
+            verified = await binding.verify_checkpoint(checkpoint)
+        # The journal may hold mutations after the snapshot cursor, so
+        # the board content state and the hot store follow the complete
+        # chain, while the control metadata comes from the snapshot.
+        await binding.load_board()
+        repaired = await restore_board_store(
+            board_store, task_id, binding.board, binding.artifacts,
+            mutation_ids=await board_mutation_ids(binding.run_id),
+        )
+        if verified is not None:
+            if verified.control:
+                await gateway.set_meta(task_id, **verified.control)
+            await self._safe_log(
+                "daemon",
+                "Verified the native checkpoint against the journal",
+                task_id=task_id,
+                fields={
+                    "event": "native_checkpoint_verified",
+                    "journal_cursor": verified.last_cursor,
+                    "board_digest": verified.board_digest,
+                    "repaired_entries": repaired,
+                },
+            )
+        elif repaired:
+            await self._safe_log(
+                "daemon",
+                f"Restored {repaired} board entries from the journal projection",
+                task_id=task_id,
+                fields={"event": "native_projection_restored", "repaired_entries": repaired},
+            )
+
+    async def _end_native_run(
+        self, binding: Any, result: dict[str, Any],
+    ) -> None:
+        """Write the terminal outcome of one finished native run."""
+        reason = binding.outcome_reason_for_result(result)
+        references = binding.promote_final_answer(str(result.get("answer") or ""))
+        await binding.ensure_terminal_outcome(
+            reason,
+            final_references=references,
+            detail={
+                "terminated_by": result.get("terminated_by"),
+                "answer_source": result.get("answer_source"),
+                "verification_status": result.get("verification_status"),
+                "rounds_completed": result.get("rounds_completed"),
+                "budget_spent_usd": result.get("budget_spent"),
+            },
+        )
 
     # ── Classic Variant Host Services ────────────────────────────────
 
@@ -997,6 +1128,48 @@ class Orchestrator:
         *,
         engine_class: type,
         step_result_class: type,
+        binding: Any = None,
+    ) -> VariantOutcome:
+        """Run the classic engine, and end a native run with its outcome.
+
+        The legacy pair runs the loop as before. The native pair runs
+        the same loop under its run binding, and every stop of the
+        loop ends the run with exactly one terminal outcome: a result
+        names its reason, a failure names its reason, and a
+        recoverable stop such as a lease loss writes nothing.
+        """
+        if binding is None:
+            return await self._run_classic_loop(
+                request, engine_class=engine_class,
+                step_result_class=step_result_class, binding=None,
+            )
+        try:
+            return await self._run_classic_loop(
+                request, engine_class=engine_class,
+                step_result_class=step_result_class, binding=binding,
+            )
+        except BaseException as exc:
+            reason = binding.outcome_reason_for_exception(exc)
+            if reason is not None:
+                try:
+                    await binding.ensure_terminal_outcome(
+                        reason,
+                        detail={"error": str(exc)[:500], "phase": binding.phase},
+                    )
+                except Exception:
+                    logger.warning(
+                        "The terminal outcome of task %s was not written",
+                        request.task_id, exc_info=True,
+                    )
+            raise
+
+    async def _run_classic_loop(
+        self,
+        request: VariantExecutionRequest,
+        *,
+        engine_class: type,
+        step_result_class: type,
+        binding: Any,
     ) -> VariantOutcome:
         """Run the paper's cyclic blackboard loop (doc 05).
 
@@ -1072,6 +1245,7 @@ class Orchestrator:
         gateway = self._classic_board_gateway(
             board_store, event_emitter, request.effective_configuration,
             commit_guard=self._commit_allowed,
+            binding=binding,
         )
         events = await board_store.get_events(task_id)
         if resume and not events:
@@ -1091,6 +1265,12 @@ class Orchestrator:
                             fields={"event": "legacy_board_import"},
                         )
                         events = await board_store.get_events(task_id)
+        if binding is not None:
+            # The journal is the authority of the native pair: verify
+            # the checkpoint and bring the hot store up to the
+            # projection before the engine reads either.
+            await self._restore_native_run(binding, gateway, board_store, task_id)
+            events = await board_store.get_events(task_id)
 
         persisted_meta = await board_store.get_meta(task_id)
         effective_configuration = request.effective_configuration or {}
@@ -1132,10 +1312,20 @@ class Orchestrator:
             model_pricing=effective_model_pricing,
         )
         self._active_gateways[task_id] = gateway
+        if binding is not None:
+            # The durable deadline is the hard backstop of the run. The
+            # engine stops itself at its duration limit and keeps a
+            # closing window for the forced decider and the grace
+            # review, so the backstop sits past that window.
+            await binding.set_deadline(
+                float(variant.max_duration_s) + 2.0 * AGENT_TURN_TIMEOUT_S,
+            )
 
         try:
             # ── Genesis ──────────────────────────────────────────────
             await self._set_phase("genesis", 0, task_id=task_id)
+            if binding is not None:
+                binding.phase = "genesis"
 
             # Get file attachments for context (doc 17 §4)
             attachments = []
@@ -1171,6 +1361,10 @@ class Orchestrator:
                 await gateway.refresh(task_id)
             else:
                 await variant.genesis(task)
+                if binding is not None:
+                    # The genesis board is the first verified snapshot,
+                    # so a crash before round one resumes past genesis.
+                    await self._checkpoint_variant(variant, task_id, binding)
 
             persisted_meta = await board_store.get_meta(task_id)
             if (
@@ -1188,6 +1382,9 @@ class Orchestrator:
                     "rounds_completed": int(persisted_meta.get("round", 0)),
                     "budget_spent": variant.budget_spent,
                 }
+                if binding is not None:
+                    binding.phase = "finalize"
+                    await self._end_native_run(binding, result)
                 return self._classic_outcome(
                     task_id, triage, result, variant.budget_spent,
                 )
@@ -1206,6 +1403,8 @@ class Orchestrator:
                 })
 
             # ── Round loop ───────────────────────────────────────────
+            if binding is not None:
+                binding.phase = "rounds"
             loop_meta = await board_store.get_meta(task_id)
             active_round = loop_meta.get("round_state")
             if (
@@ -1333,7 +1532,7 @@ class Orchestrator:
                 # Phase 5: Emit budget event after each round (doc 09 §5)
                 await variant.finish_round(task_id)
                 await variant.emit_budget_event(task_id)
-                await self._checkpoint_variant(variant, task_id)
+                await self._checkpoint_variant(variant, task_id, binding)
             else:
                 step_result = step_result_class(
                     terminal=True, reason="max_rounds"
@@ -1341,11 +1540,13 @@ class Orchestrator:
 
             # ── Finalize ─────────────────────────────────────────────
             await self._set_phase("finalize", 0, task_id=task_id)
+            if binding is not None:
+                binding.phase = "finalize"
             board = await board_store.get_snapshot(task_id)
             result = await variant.finalize(
                 task, board, step_result.reason or "unknown",
             )
-            await self._checkpoint_variant(variant, task_id)
+            await self._checkpoint_variant(variant, task_id, binding)
 
             # Persist the terminal snapshot + meta durably (no TTL) so the
             # completed board (incl. final phase/answer_source) is retained.
@@ -1359,6 +1560,8 @@ class Orchestrator:
                     final_meta,
                 )
 
+            if binding is not None:
+                await self._end_native_run(binding, result)
             return self._classic_outcome(
                 task_id, triage, result, variant.budget_spent,
             )
@@ -1595,21 +1798,40 @@ class Orchestrator:
         effective_configuration: dict[str, Any] | None,
         *,
         commit_guard: Any = None,
+        binding: Any = None,
     ) -> Any:
-        """Build the classic board gateway for one run's configuration."""
+        """Build the classic board gateway for one run's configuration.
+
+        A native run binding selects the native gateway, which commits
+        every board mutation through the run's unit of work before it
+        writes the hot store.
+        """
         from core.board_store import make_board_persist_hook
         from core.gateway import BoardGateway, make_salience_recompute_hook
 
         max_title_len, max_body_len, weights = self.classic_board_settings(
             effective_configuration,
         )
+        hooks = [
+            make_salience_recompute_hook(weights),
+            make_board_persist_hook(self.bb),
+        ]
+        if binding is not None:
+            from core.variants.classic.projection import NativeBoardGateway
+
+            return NativeBoardGateway(
+                board_store,
+                event_emitter,
+                committer=binding,
+                recompute_hooks=hooks,
+                commit_guard=commit_guard,
+                max_title_len=max_title_len,
+                max_body_len=max_body_len,
+            )
         return BoardGateway(
             board_store,
             event_emitter,
-            recompute_hooks=[
-                make_salience_recompute_hook(weights),
-                make_board_persist_hook(self.bb),
-            ],
+            recompute_hooks=hooks,
             commit_guard=commit_guard,
             max_title_len=max_title_len,
             max_body_len=max_body_len,
@@ -2112,6 +2334,84 @@ class Orchestrator:
             raise VariantConfigurationError(
                 f"The Foundation admission rejected task {task_id}: {exc}"
             ) from exc
+
+    @staticmethod
+    def _run_lease_ttl_seconds() -> float:
+        """The run lease TTL: it expires no later than the task lease."""
+        return max(5.0, LOCK_TTL_MS / 1000.0 - 1.0)
+
+    async def _bind_run_authority(
+        self,
+        task_id: str,
+        variant_class: Any,
+        identity: dict[str, Any] | None,
+        lock_id: str,
+    ) -> tuple[Any, Any] | None:
+        """Build the run context and the services of one fenced run.
+
+        A runtime that consumes a run context receives both, built
+        from the ``runs``, ``runtime_admissions``, and ``run_controls``
+        rows of its admitted run. The host acquires the run lease for
+        this task lease and renews it with the task lease. A held run
+        lease from another owner stays busy until it expires, exactly
+        like the task lease.
+        """
+        if identity is None or not getattr(variant_class, "consumes_run_context", False):
+            return None
+        import interactive_admission
+
+        run_id = str(identity["run_id"])
+        owner = "orchestrator"
+        ttl_seconds = self._run_lease_ttl_seconds()
+        acquired = await db.acquire_run_lease(run_id, owner, lock_id, ttl_seconds)
+        if not acquired:
+            raise LeaseBusyError(f"Run lease is busy: {run_id}")
+        self._run_leases[task_id] = (run_id, owner, lock_id, ttl_seconds)
+        try:
+            context = await interactive_admission.run_context_for(run_id, lease_ref=lock_id)
+            services = await interactive_admission.runtime_services_for(
+                context, lease_owner=owner, lease_fence=lock_id, lease_ttl_seconds=ttl_seconds,
+            )
+        except Exception as exc:
+            raise VariantConfigurationError(
+                f"The run context of task {task_id} cannot be built: {exc}"
+            ) from exc
+        self._run_contexts[task_id] = context
+        return context, services
+
+    async def _release_run_authority(self, task_id: str) -> None:
+        """Release the run lease of one task when this host holds it."""
+        run_lease = self._run_leases.pop(task_id, None)
+        self._run_contexts.pop(task_id, None)
+        if run_lease is None:
+            return
+        run_id, owner, fence, _ttl = run_lease
+        with contextlib.suppress(Exception):
+            await db.release_run_lease(run_id, owner, fence)
+
+    async def _end_run_on_failure(self, task_id: str, exc: BaseException) -> None:
+        """Write the terminal outcome of a fenced run that failed outside its runtime.
+
+        The runtime writes the outcome of every failure it observes. A
+        failure before the runtime starts, or a cancellation that lands
+        outside it, still ends the run with one registered reason. A
+        recoverable stop writes nothing.
+        """
+        context = self._run_contexts.get(task_id)
+        if context is None:
+            return
+        try:
+            from core.variants.classic.outcomes import commit_terminal_outcome, reason_for_exception
+
+            reason = reason_for_exception(exc, phase="start")
+            if reason is None:
+                return
+            await commit_terminal_outcome(
+                context=context, reason_code=reason,
+                detail={"error": str(exc)[:500], "phase": "start"},
+            )
+        except Exception:
+            logger.warning("The terminal outcome of task %s was not written", task_id, exc_info=True)
 
     async def _native_plan(
         self, task_id: str, candidate_urls: list[str],
