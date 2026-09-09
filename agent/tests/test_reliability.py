@@ -1496,4 +1496,4 @@ def test_runs_api_sends_the_reserved_output_ceiling(monkeypatch):
     assert status == api_server.TaskStatus.completed
     assert output == "partial" and usage["finish_reason"] == "length"
     submits = [call for call in client.posts if call["url"].endswith("/v1/runs")]
-    assert submits[0]["json"]["max_output_tokens"] == 7
+    assert submits[0]["json"]["max_tokens"] == 7

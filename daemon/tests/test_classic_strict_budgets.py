@@ -194,3 +194,50 @@ async def test_missing_resource_limits_reject_native_dispatch(native_run):
         await connection.commit()
     with pytest.raises(budget.BudgetError, match="all four resource limits"):
         await reserve_call(native_run["run_id"], "incomplete-budget", 1, {"model": "test-light"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("execution", ["sequential", "concurrent"])
+async def test_worker_budget_rejection_stops_the_group(execution):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from core.orchestrator import Orchestrator
+    from core.variants.classic.outcomes import reason_for_exception
+
+    orchestrator = object.__new__(Orchestrator)
+    orchestrator._dispatch_traditional_turn = AsyncMock(side_effect=budget.BudgetError("No activation fits"))
+    variant = SimpleNamespace(gateway=SimpleNamespace(set_meta=AsyncMock()), round_execution=execution,
+                              budget_spent=0.0, reserve_activation_budgets=lambda count: [0.1] * count)
+    with pytest.raises(budget.BudgetError) as rejected:
+        await orchestrator._dispatch_traditional_group(variant, {"task_id": "stopped"},
+                                                       [SimpleNamespace(actor="expert")], 1)
+    assert reason_for_exception(rejected.value, phase="run") == "budget_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_solution_extraction_never_hides_budget_exhaustion():
+    from types import SimpleNamespace
+
+    from core.variants.classic.termination import TerminationPolicy
+
+    async def answer(actor):
+        raise budget.BudgetError("No answer fits")
+
+    with pytest.raises(budget.BudgetError):
+        await TerminationPolicy.solution_extraction({},
+            roster=SimpleNamespace(all_actors=lambda: [("expert", None)]), strategy="token_similarity", answer=answer)
+
+
+@pytest.mark.asyncio
+async def test_response_charge_precedes_board_admission(native_run, monkeypatch):
+    from test_classic_native_activations import execute_proposal
+
+    raw = json.dumps({"schema_version": "classic-proposal/1", "role": "expert", "action": "contribute",
+                      "entries": [{"type": "finding", "body": "Observed finding"}]}).encode()
+    result = await execute_proposal(native_run, raw, monkeypatch)
+    assert result["native_execution"]["proposal"]
+    reservation = await budget.get_reservation("reservation-activation-proposal-1")
+    assert reservation["state"] == "consumed" and reservation["consumption_kind"] == "actual"
+    records = await journal.read_journal(run_id=native_run["run_id"])
+    assert any(record.operation_type == "budget_reconciliation" for record in records)

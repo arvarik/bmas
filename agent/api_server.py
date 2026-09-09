@@ -1481,7 +1481,7 @@ async def _run_via_api(
         "session_id": actor_session_id,
     }
     if max_completion_tokens is not None:
-        run_payload["max_output_tokens"] = max_completion_tokens
+        run_payload["max_tokens"] = max_completion_tokens
     outputs_dir: Optional[Path] = None
     if DAEMON_INGEST_URL:
         try:

@@ -1976,7 +1976,16 @@ async def validate_proposal_eligibility(
         ):
             raise ProposalEligibilityError("deadline")
         reservation_id = activation["reservation_id"]
-    if reservation_id is None or not await validator(str(reservation_id)):
+    valid = reservation_id is not None and await validator(str(reservation_id))
+    if not valid and reservation_id is not None and reservation_validator is None:
+        identity = await run_identity(run_id)
+        charge = await budget_service.get_reservation(str(reservation_id))
+        # A paid native response can commit its proposal. Its consumed
+        # reservation cannot authorize another provider transport.
+        valid = (identity["runtime_id"] == "classic" and identity["runtime_contract_version"] == "2"
+                 and charge["state"] == "consumed" and charge["run_id"] == run_id
+                 and charge["activation_id"] == activation_id)
+    if not valid:
         raise ProposalEligibilityError("budget")
 
 
@@ -2031,8 +2040,11 @@ async def commit_proposal_decision(
             "JOIN budget_reservations b ON b.reservation_id = ? "
             "WHERE c.run_id = ? AND c.task_fence = ? AND c.cancellation_state = 'active' "
             "AND c.deadline_expired = 0 AND (c.deadline_at IS NULL OR c.deadline_at > ?) "
-            "AND l.released = 0 AND l.expires_at > ? AND b.state = 'reserved'",
-            (row["lease_id"], row["reservation_id"], run_id, row["task_fence"], now, now),
+            "AND l.released = 0 AND l.expires_at > ? "
+            "AND (b.state = 'reserved' OR (b.state = 'consumed' AND ? "
+            "AND b.run_id = c.run_id AND b.activation_id = ?))",
+            (row["lease_id"], row["reservation_id"], run_id, row["task_fence"], now, now,
+             identity["runtime_id"] == "classic" and identity["runtime_contract_version"] == "2", activation_id),
         )
         if await cursor.fetchone() is None:
             raise ProposalEligibilityError("live_authority")

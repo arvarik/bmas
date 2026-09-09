@@ -519,3 +519,6 @@ An uncertain transport retains its reservation for recovery. Late authoritative 
 replaces the prior charge in journal replay.
 
 The Classic specification fixtures now include price provenance, strict pricing, and the zero additional in-flight allowance.
+Native responses reconcile before board admission. A consumed reservation can support
+its own verified proposal, but it cannot authorize another provider transport.
+The worker group and SolE propagate budget rejection to `budget_exhausted`.

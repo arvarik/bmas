@@ -784,6 +784,8 @@ class Orchestrator:
                     triage = await self.triage.classify(user_task, routing_override=effective_routing)
                 finally:
                     CURRENT_TASK.reset(effect_task)
+            except budget_service.BudgetError:
+                raise
             except Exception as e:
                 await self._safe_log("daemon",
                     f"WARN: Triage unavailable ({e}), defaulting to MEDIUM", task_id=task_id)
@@ -972,6 +974,8 @@ class Orchestrator:
             await variant.handle_conflict_resolution(
                 task, conflict_entry, self._dispatch_traditional_turn,
             )
+        except budget_service.BudgetError:
+            raise
         except Exception as exc:
             status = "failed"
             logger.error(f"Error during private conflict resolution: {exc}")
@@ -2276,6 +2280,8 @@ class Orchestrator:
                     phase=phase,
                     budget_limit_usd=budget,
                 )
+            except budget_service.BudgetError:
+                raise
             except Exception as exc:
                 if isinstance(exc, (LeaseLostError, db.LeaseFenceError)):
                     raise LeaseLostError(

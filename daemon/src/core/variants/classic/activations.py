@@ -300,6 +300,7 @@ async def seal_response(*, run_id: str, activation_id: str, attempt: int,
             run_id=run_id, activation_id=activation_id, attempt=attempt, target_state="proposal_recorded",
             ledger_updates={"proposal_digest": proposal.digest()},
         )
+        await reconcile_call(run_id=run_id, activation_id=activation_id, attempt=attempt)
     elif cancelled:
         await activations.transition_activation(run_id=run_id, activation_id=activation_id,
             attempt=attempt, target_state="cancelled")
