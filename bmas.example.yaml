@@ -46,8 +46,9 @@ models:
     pricing:
       # Official Gemini API paid tier, verified 2026-08:
       # https://ai.google.dev/gemini-api/docs/pricing ($1.50 / $9.00 per 1M)
-      input_cost_per_token: 1.5e-6
-      output_cost_per_token: 9.0e-6
+      # Quote prices so native admission preserves exact decimal amounts.
+      input_cost_per_token: "0.0000015"
+      output_cost_per_token: "0.000009"
 
 routing:
   simple: starter-model

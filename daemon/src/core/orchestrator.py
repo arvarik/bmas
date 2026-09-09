@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 
+import budget_service
 import database as db
 from config import (
     AGENT_ENDPOINT_MAX_CONCURRENCY,
@@ -783,6 +784,8 @@ class Orchestrator:
                     triage = await self.triage.classify(user_task, routing_override=effective_routing)
                 finally:
                     CURRENT_TASK.reset(effect_task)
+            except budget_service.BudgetError:
+                raise
             except Exception as e:
                 await self._safe_log("daemon",
                     f"WARN: Triage unavailable ({e}), defaulting to MEDIUM", task_id=task_id)
@@ -971,6 +974,8 @@ class Orchestrator:
             await variant.handle_conflict_resolution(
                 task, conflict_entry, self._dispatch_traditional_turn,
             )
+        except budget_service.BudgetError:
+            raise
         except Exception as exc:
             status = "failed"
             logger.error(f"Error during private conflict resolution: {exc}")
@@ -1145,30 +1150,37 @@ class Orchestrator:
         names its reason, a failure names its reason, and a
         recoverable stop such as a lease loss writes nothing.
         """
-        if binding is None:
-            return await self._run_classic_loop(
-                request, engine_class=engine_class,
-                step_result_class=step_result_class, binding=None,
-            )
+        from core.variants.classic.effects import CURRENT_TASK
+
+        effect_task = CURRENT_TASK.set(request.task_id)
         try:
-            return await self._run_classic_loop(
-                request, engine_class=engine_class,
-                step_result_class=step_result_class, binding=binding,
-            )
-        except BaseException as exc:
-            reason = binding.outcome_reason_for_exception(exc)
-            if reason is not None:
-                try:
-                    await binding.ensure_terminal_outcome(
-                        reason,
-                        detail={"error": str(exc)[:500], "phase": binding.phase},
-                    )
-                except Exception:
-                    logger.warning(
-                        "The terminal outcome of task %s was not written",
-                        request.task_id, exc_info=True,
-                    )
-            raise
+            if binding is None:
+                return await self._run_classic_loop(
+                    request, engine_class=engine_class,
+                    step_result_class=step_result_class, binding=None,
+                )
+            try:
+                return await self._run_classic_loop(
+                    request, engine_class=engine_class,
+                    step_result_class=step_result_class, binding=binding,
+                )
+            except BaseException as exc:
+                reason = binding.outcome_reason_for_exception(exc)
+                if reason is not None:
+                    try:
+                        await binding.ensure_terminal_outcome(
+                            reason,
+                            detail={"error": str(exc)[:500], "phase": binding.phase},
+                        )
+                    except Exception:
+                        logger.warning(
+                            "The terminal outcome of task %s was not written",
+                            request.task_id, exc_info=True,
+                        )
+                raise
+        finally:
+            CURRENT_TASK.reset(effect_task)
+
 
     async def _run_classic_loop(
         self,
@@ -2275,6 +2287,8 @@ class Orchestrator:
                     phase=phase,
                     budget_limit_usd=budget,
                 )
+            except budget_service.BudgetError:
+                raise
             except Exception as exc:
                 if isinstance(exc, (LeaseLostError, db.LeaseFenceError)):
                     raise LeaseLostError(
@@ -2497,6 +2511,9 @@ class Orchestrator:
         if payload.get("role") == "cleaner" and not (native_plan and native_plan.get("required") and native_plan.get("url") == url):
             return httpx.Response(200, json={"status": "failed", "result": "Cleaner requires the native pair"},
                                   request=httpx.Request("POST", f"{url}/execute"))
+        if native_plan and native_plan.get("required") and native_plan["url"] != url:
+            return httpx.Response(200, json={"status": "failed", "result": "The native endpoint requires a new qualified dispatch plan"},
+                                  request=httpx.Request("POST", f"{url}/bmas/activations"))
         if native_plan is None or native_plan["url"] != url:
             return await self.http.post(
                 f"{url}/execute", json=payload, headers=headers, timeout=timeout,
@@ -2557,6 +2574,8 @@ class Orchestrator:
             except activation_service.ActivationServiceError:
                 sealed = {"status": "failed", "result": str(exc)}
             return httpx.Response(200, json=sealed, request=request)
+        except budget_service.BudgetError:
+            raise
         except agent_dispatch.DispatchError as exc:
             if not native_plan.get("required"):
                 return httpx.Response(502, text=str(exc), request=request)
@@ -2565,7 +2584,6 @@ class Orchestrator:
             activation_service.ActivationServiceError,
             agent_protocol.AgentProtocolError,
             SigningError,
-            budget_service.BudgetError,
             effect_service.EffectServiceError,
         ) as exc:
             logger.warning(f"Native dispatch ledger error for {payload['task_id']}: {exc}")
@@ -2839,6 +2857,8 @@ class Orchestrator:
                     "error_code": "endpoint_overloaded",
                     "result": str(e),
                 }
+            except budget_service.BudgetError:
+                raise
             except Exception as e:
                 circuits.record_failure(url)
                 # A connect failure proves that the selected node did not

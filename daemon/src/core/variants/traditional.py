@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from budget_service import BudgetError
 from config_schema import DEFAULT_CONSENSUS_STRATEGY, resolve_consensus_strategy
 from core.capabilities import capabilities_for_role
 from core.model_parameters import message_content, truncated
@@ -1375,6 +1376,8 @@ class TraditionalVariant:
                     actor, cut["completion_tokens"], cut["reasoning_tokens"],
                 )
             return message_content(resp_json)
+        except BudgetError:
+            raise
         except Exception as e:
             raise RuntimeError(f"SolE call failed for {actor}: {e}") from e
 
@@ -1579,6 +1582,8 @@ class TraditionalVariant:
                                 space=space,
                             )
                             committed_entries.extend(applied)
+                except BudgetError:
+                    raise
                 except Exception as e:
                     logger.warning(
                         "Private turn failed for %s in conflict %s: %s",

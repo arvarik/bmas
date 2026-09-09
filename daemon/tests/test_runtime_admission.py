@@ -376,7 +376,16 @@ def test_a_submission_names_a_test_only_pair_only_on_a_test_deployment(submit_cl
     # preset class as the effort level.
     monkeypatch.setattr(config, "ADMIT_TEST_ONLY_RUNTIMES", True, raising=False)
     monkeypatch.setattr(config, "AGENT_ENDPOINTS", {"planner": "http://agent.test"}, raising=False)
-    native_body = {**body, "fidelity": "paper_aligned", "effort": "long_horizon"}
+    monkeypatch.setattr(config, "MODEL_PRICING", {
+        alias: {**price, "input_cost_per_token": str(price["input_cost_per_token"]),
+                "output_cost_per_token": str(price["output_cost_per_token"])}
+        for alias, price in config.MODEL_PRICING.items()
+    })
+    native_body = {**body, "fidelity": "paper_aligned", "effort": "long_horizon",
+                   "overrides": {"price_overrides": {"test-light": {
+                       "input_cost_per_token": "0.0000001", "output_cost_per_token": "0.0000004",
+                       "source": "operator-approved-test-quote",
+                   }}}}
     admitted = submit_client.post("/submit", json=native_body)
     assert admitted.status_code == 202, admitted.text
     queued = submit._task_queue.get_nowait()
@@ -384,6 +393,7 @@ def test_a_submission_names_a_test_only_pair_only_on_a_test_deployment(submit_cl
     assert (queued.variant_id, queued.runtime_contract_version) == ("classic", "2")
     assert _submitted_pair(queued.task_id) == ("classic", "2", "2")
     assert queued.effective_configuration["fidelity"] == "paper_aligned"
+    assert queued.effective_configuration["specification_input"]["task_overrides"]["price_overrides"]["test-light"]["source"] == "operator-approved-test-quote"
     assert queued.effective_configuration["effort"] == "long_horizon"
     assert queued.effective_configuration["specification_input"]["fidelity"] == "paper_aligned"
     # The legacy pair has no fidelity profile and keeps the shipped levels.

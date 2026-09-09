@@ -41,6 +41,7 @@ RELEASE_GATES: dict[str, list[str]] = {
     "foundation_shared_conformance": ["daemon.cross-runtime-conformance", "daemon.behavioral-conformance", "daemon.behavioral-conformance-stack", "daemon.classic-native-column", "daemon.foundation-release-gate"],
     # ── Classic conditions ───────────────────────────────────────
     "classic_legacy_frozen": ["daemon.tests", "daemon.foundation-release-gate", "daemon.behavioral-conformance-stack", "daemon.classic-policy-parity"],
+    "classic_strict_budgets": ["daemon.classic-strict-budgets", "daemon.classic-local-effects", "daemon.classic-native-column"],
     "classic_cleaner_atomicity": ["daemon.classic-cleaner-slice"],
     "classic_journal_replay": ["daemon.classic-journal-projection", "daemon.journal-replay"],
     "foundation_populated_migration": ["daemon.populated-migration"],

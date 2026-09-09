@@ -637,14 +637,26 @@
       "additionalProperties": false,
       "properties": {
         "input_cost_per_token": {
-          "minimum": 0,
-          "title": "Input Cost Per Token",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Input Cost Per Token"
         },
         "output_cost_per_token": {
-          "minimum": 0,
-          "title": "Output Cost Per Token",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Output Cost Per Token"
         },
         "source": {
           "anyOf": [

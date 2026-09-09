@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from budget_service import BudgetError
 from core.model_parameters import completion_parameters, profile_for_alias
 from core.variants.classic.consensus import ConsensusPolicy
 
@@ -311,6 +312,8 @@ class TerminationPolicy:
         for (actor, _), result in zip(roster.all_actors(), results, strict=False):
             if isinstance(result, str) and result.strip():
                 answers.append((actor, result.strip()))
+            elif isinstance(result, BudgetError):
+                raise result
             elif isinstance(result, Exception):
                 logger.warning("SolE answer failed for %s: %s", actor, result)
 

@@ -161,9 +161,13 @@ async def post_completion(http: httpx.AsyncClient, url: str, *, json: dict[str, 
                 usage = ({k: v for k, v in usage.items() if isinstance(v, int) and not isinstance(v, bool) and v >= 0}
                          if isinstance(usage, dict) else None)
             except ValueError:
+                body = None
                 usage = None
+            choices = body.get("choices", []) if isinstance(body, dict) else []
+            finish_reason = choices[0].get("finish_reason") if choices else None
             await _record_receipt(grant, sequence=2, raw=raw, usage=usage,
-                                  observation=None if response.is_success else f"HTTP {response.status_code}")
+                observation=jsonlib.dumps({"finish_reason": finish_reason,
+                    "truncated": finish_reason in ("length", "max_tokens"), "http_status": response.status_code}))
             return {"result": raw.decode("utf-8", errors="replace"), "status": "completed"}
         except BaseException as exc:
             if started:

@@ -1044,7 +1044,14 @@ def apply_record_to_state(
         totals = state["budgets"].setdefault(
             run_id, {"reserved": 0, "consumed": 0},
         )
-        totals["consumed"] += int(payload["consumed_usd_millionths"])
+        amount = int(payload["consumed_usd_millionths"])
+        if payload.get("cumulative"):
+            charges = totals.setdefault("reconciliations", {})
+            previous = int(charges.get(payload["reservation_id"], 0))
+            charges[payload["reservation_id"]] = amount
+            totals["consumed"] += amount - previous
+        else:
+            totals["consumed"] += amount
         _append_trace(state, record, "budget")
     elif record.operation_type == CHAIN_COMPACTION_OPERATION:
         state["runs"].setdefault(

@@ -373,6 +373,16 @@ async def create_effect_intent(
     async def extra(
         connection: aiosqlite.Connection, journal_cursor: int, now: str,
     ) -> None:
+        if kind == "provider" and identity["runtime_id"] == "classic" and identity["runtime_contract_version"] == "2":
+            cursor = await connection.execute(
+                "SELECT 1 FROM effect_attempts a JOIN effect_operations o "
+                "ON o.effect_operation_id = a.effect_operation_id "
+                "WHERE a.reservation_id = ? AND o.kind = 'provider'", (reservation_id,),
+            )
+            if await cursor.fetchone() is not None:
+                raise EffectServiceError("Every native provider attempt requires an exclusive reservation")
+            if not await _reservation_valid_in_connection(connection, reservation_id):
+                raise EffectServiceError("A native provider attempt requires a current reservation")
         attempt_number = 1
         if retry_of_effect_id is None:
             await connection.execute(
@@ -911,7 +921,7 @@ async def _reservation_valid_in_connection(
         (reservation_id,),
     )
     row = await cursor.fetchone()
-    return row is not None and str(row["state"]) in ("requested", "reserved")
+    return row is not None and str(row["state"]) == "reserved"
 
 
 async def validate_before_transport(
@@ -986,7 +996,11 @@ async def record_transport_start(
             "AND transport_started_at IS NULL AND EXISTS ("
             "SELECT 1 FROM run_controls c WHERE c.run_id = effect_dispatch_outbox.run_id "
             "AND c.cancellation_state = 'active' AND c.deadline_expired = 0 "
-            "AND (c.deadline_at IS NULL OR c.deadline_at > ?))",
+            "AND (c.deadline_at IS NULL OR c.deadline_at > ?)) "
+            "AND (dispatch_policy = 'observe_only' OR EXISTS ("
+            "SELECT 1 FROM effect_attempts a JOIN budget_reservations b "
+            "ON a.reservation_id = b.reservation_id "
+            "WHERE a.effect_id = effect_dispatch_outbox.effect_id AND b.state = 'reserved'))",
             (now, dispatch_ref, dispatcher, now),
         )
         await connection.commit()
@@ -1729,12 +1743,19 @@ async def record_late_usage(
 ) -> dict[str, Any]:
     """Reconcile late authoritative usage against the original reservation."""
     attempt = await get_attempt(effect_id)
-    return await budget_service.reconcile(
+    reservation = await budget_service.reconcile(
         str(attempt["reservation_id"]),
         reconciliation_key=f"effect-late-usage-{effect_id}",
         actual_resources=usage,
         database_time=database_time,
     )
+
+    identity = await run_identity(str(attempt["run_id"]))
+    if identity["runtime_id"] == "classic" and identity["runtime_contract_version"] == "2":
+        from core.variants.classic.activations import journal_reconciliation
+
+        await journal_reconciliation(str(attempt["run_id"]), reservation, f"late-{effect_id}")
+    return reservation
 
 
 # ── The nested-call boundary ─────────────────────────────────────────

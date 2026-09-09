@@ -185,6 +185,7 @@ class TaskRequest(BaseModel):
     timeout: Optional[int] = Field(
         None, description="Override default timeout (seconds)", ge=10, le=3600
     )
+    max_completion_tokens: Optional[int] = Field(None, gt=0, strict=True)
     # ── Phase 1 additions ──────────────────────────────────────────────
     turn_id: Optional[str] = Field(
         None, description="Stable turn identifier for trace correlation"
@@ -222,6 +223,8 @@ class TaskResponse(BaseModel):
     action: Optional[str] = None           # contribute | decline | clean | condense
     entries: Optional[list[dict]] = None   # proposed board entries (entries_v1)
     removals: Optional[list[dict]] = None
+    finish_reason: Optional[str] = None
+    truncated: bool = False
     usage: Optional[dict] = None           # {prompt_tokens, completion_tokens, total_tokens, model}
     trace_count: Optional[int] = None
     artifacts: Optional[list[dict]] = None
@@ -1324,6 +1327,7 @@ async def _run_via_litellm(
     model: str,
     request_id: str,
     timeout: int = TASK_TIMEOUT_SECONDS,
+    max_completion_tokens: Optional[int] = None,
 ) -> tuple[TaskStatus, str, Optional[dict], int, Optional[str]]:
     """Execute one tool-free starter activation through LiteLLM."""
     messages: list[dict[str, str]] = []
@@ -1356,6 +1360,8 @@ async def _run_via_litellm(
         effect_handle = None
         try:
             request_body = {"model": model, "messages": messages}
+            if max_completion_tokens is not None:
+                request_body["max_completion_tokens"] = max_completion_tokens
             proposal_role = (context or {}).get("classic_proposal_role")
             if proposal_role:
                 schema = ClassicProposalResponse.model_json_schema()
@@ -1379,11 +1385,16 @@ async def _run_via_litellm(
             body = response.json()
             result = str(body["choices"][0]["message"]["content"])
             usage = _normalize_usage(body.get("usage"), model)
+            finish_reason = body["choices"][0].get("finish_reason")
             if effect_handle is not None:
                 await effect_context.protocol.receipt(
                     effect_handle, stage=native.STAGE_RESPONSE_OBSERVED,
                     usage=usage, raw_response=result.encode("utf-8"),
+                    transport_observation=json.dumps({"finish_reason": finish_reason,
+                        "truncated": finish_reason in ("length", "max_tokens")}),
                 )
+            if usage is not None:
+                usage["finish_reason"] = finish_reason
             await emitter.emit(
                 translate(
                     "run.completed",
@@ -1443,6 +1454,7 @@ async def _run_via_api(
     profile: Optional[str] = None,
     session_id: Optional[str] = None,
     timeout: int = TASK_TIMEOUT_SECONDS,
+    max_completion_tokens: Optional[int] = None,
     activation_key: Optional[str] = None,
     activation_fingerprint: str = "",
     resume_run_id: Optional[str] = None,
@@ -1468,6 +1480,8 @@ async def _run_via_api(
         "model": model,
         "session_id": actor_session_id,
     }
+    if max_completion_tokens is not None:
+        run_payload["max_tokens"] = max_completion_tokens
     outputs_dir: Optional[Path] = None
     if DAEMON_INGEST_URL:
         try:
@@ -1531,6 +1545,7 @@ async def _run_via_api(
         final_usage: Optional[dict] = None
         status = TaskStatus.failed
         saw_terminal = False
+        finish_reason: Optional[str] = None
 
         def attach_run_id(trace: dict) -> dict:
             """Keep the live and archived trace run targets consistent."""
@@ -1548,7 +1563,7 @@ async def _run_via_api(
 
         async def consume_events(events: list[tuple[str, dict]]) -> None:
             """Translate events and update the run result."""
-            nonlocal trace_seq, final_output, final_usage, status, saw_terminal
+            nonlocal trace_seq, final_output, final_usage, status, saw_terminal, finish_reason
             for event_name, event_data in events:
                 trace_data = dict(event_data)
                 if run_id:
@@ -1567,6 +1582,7 @@ async def _run_via_api(
                     )
                 if event_name == "run.completed":
                     final_output = str(event_data.get("output", ""))
+                    finish_reason = event_data.get("finish_reason")
                     final_usage = _normalize_usage(event_data.get("usage"), model)
                     trace_data["usage"] = final_usage or {}
                     status = TaskStatus.completed
@@ -1643,6 +1659,9 @@ async def _run_via_api(
                             )
                             if resp.status_code != 429:
                                 break
+                            if effect_context is not None:
+                                raise HermesCapacityError(_hermes_retry_delay(resp, attempt),
+                                    _hermes_retry_after_header(resp, _hermes_retry_delay(resp, attempt)))
                             retry_delay = _hermes_retry_delay(resp, attempt)
                             if attempt + 1 >= HERMES_429_MAX_ATTEMPTS:
                                 raise HermesCapacityError(
@@ -1966,8 +1985,12 @@ async def _run_via_api(
                     hermes_effect, stage=native.STAGE_RESPONSE_OBSERVED,
                     usage=final_usage,
                     raw_response=(final_output or "").encode("utf-8") if saw_terminal else None,
-                    transport_observation=None if status == TaskStatus.completed else str(final_output)[:500],
+                    transport_observation=json.dumps({"finish_reason": finish_reason,
+                        "truncated": finish_reason in ("length", "max_tokens", "max_output_tokens"),
+                        "status": status.value}),
                 )
+        if final_usage is not None and finish_reason is not None:
+            final_usage["finish_reason"] = finish_reason
         return status, final_output, final_usage, emitter.trace_count, run_id
 
 
@@ -2887,6 +2910,7 @@ async def _execute_task_once(
             model=model,
             request_id=request_id,
             timeout=timeout,
+            max_completion_tokens=req.max_completion_tokens,
         )
     elif backend == "hermes-runs-api":
         status, result, usage, trace_count, run_id = await _run_via_api(
@@ -2901,6 +2925,7 @@ async def _execute_task_once(
             profile=profile,
             session_id=str(actor_session_id),
             timeout=timeout,
+            max_completion_tokens=req.max_completion_tokens,
             activation_key=activation_key,
             activation_fingerprint=activation_fingerprint,
             resume_run_id=resume_run_id,
@@ -2927,6 +2952,8 @@ async def _execute_task_once(
         ),
         entries=envelope_entries,
         removals=_result_removals(result),
+        finish_reason=(usage or {}).get("finish_reason"),
+        truncated=(usage or {}).get("finish_reason") in ("length", "max_tokens", "max_output_tokens"),
         usage=usage,
         trace_count=trace_count,
         artifacts=None,

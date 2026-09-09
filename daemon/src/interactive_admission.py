@@ -314,7 +314,14 @@ async def admit_task_run(
             run_admission.budget_service.LimitSpec(
                 "run", run_id, "provider_cost", cost_limit, currency="USD",
             ),
-        ),
+        ) + (tuple(
+            run_admission.budget_service.LimitSpec("run", run_id, resource, amount)
+            for resource, amount in (
+                ("input_tokens", compiled.spec.limits.max_input_tokens),
+                ("output_tokens", compiled.spec.limits.max_output_tokens),
+                ("model_calls", compiled.spec.limits.max_output_tokens),
+            )
+        ) if compiled is not None else ()),
         initial_reservation_resources={"provider_cost": cost_limit},
         # A legacy contract keeps its budget advisory: the reservation records
         # intent and the classic ledger stays the spend authority.

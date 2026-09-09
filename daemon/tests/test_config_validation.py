@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+from decimal import Decimal
 
 import yaml
 
@@ -316,7 +317,21 @@ class TestModelPricing:
         assert r.returncode == 0
         pricing = json.loads(r.stdout.strip())
         assert "starter-model" in pricing
-        assert pricing["starter-model"]["input_cost_per_token"] > 0
+        assert Decimal(str(pricing["starter-model"]["input_cost_per_token"])) > 0
+
+    def test_exact_pricing_preserves_decimal_text(self):
+        """Quoted prices retain their exact decimal representation."""
+        exact_price = "0.000000123456789123456789"
+        r = _run_config_probe(
+            yaml_override={"models": {"starter-model": {"pricing": {
+                "input_cost_per_token": exact_price,
+                "output_cost_per_token": "0.000002",
+            }}}},
+            probe_expr="import json; print(json.dumps(config.MODEL_PRICING))",
+        )
+        assert r.returncode == 0
+        pricing = json.loads(r.stdout.strip())
+        assert pricing["starter-model"]["input_cost_per_token"] == exact_price
 
     def test_model_without_pricing_is_informational(self):
         """Models without pricing load without an operator warning."""

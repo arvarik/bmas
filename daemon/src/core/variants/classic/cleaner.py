@@ -221,7 +221,7 @@ class CondensationPlan:
 
 
 def require_cleaner_dispatch(request: dict[str, Any]) -> None:
-    """Keep provider-backed cleaning closed until strict dispatch bounds ship."""
+    """Reject cleaner requests at the legacy dispatch boundary."""
     if request.get("role") == "cleaner" or (request.get("context") or {}).get("classic_proposal_role") == "cleaner":
         from budget_service import BudgetError
 

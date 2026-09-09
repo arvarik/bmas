@@ -379,8 +379,8 @@ class NativeRunBinding:
 
 def _price_text(value: Any) -> str:
     """The decimal text of one configured per-token price."""
-    if isinstance(value, float):
-        return repr(value)
+    if isinstance(value, (float, bool)):
+        raise VariantConfigurationError("Native prices require decimal strings, never binary floating point")
     return str(value)
 
 
@@ -410,6 +410,7 @@ async def deployment_snapshot(qualification_ids: tuple[str, ...] = ()) -> Deploy
             source=str(price.get("source", "bmas.yaml")),
         )
         for alias, price in (MODEL_PRICING or {}).items()
+        if "input_cost_per_token" in price and "output_cost_per_token" in price
     }
     board = ClassicVariantRuntime.board_settings()
     return DeploymentSnapshot(
@@ -452,6 +453,7 @@ def specification_input_from(
         level, _preset = resolve_effort_level(overrides.get("effort"))
         task_overrides = TaskOverrideSet(
             classic=dict(overrides.get("classic") or {}),
+            price_overrides=dict(overrides.get("price_overrides") or {}),
             routing=dict(overrides.get("routing") or {}),
             role_registry=copy.deepcopy(overrides.get("role_registry") or {}),
             seed=overrides.get("seed"),

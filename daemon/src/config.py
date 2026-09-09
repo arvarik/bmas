@@ -396,8 +396,8 @@ for _model_alias, _model_cfg in _models.items():
                 "pricing.input_cost_per_token and pricing.output_cost_per_token must be numbers.",
             )
         MODEL_PRICING[_model_alias] = {
-            "input_cost_per_token": _in_cost,
-            "output_cost_per_token": _out_cost,
+            "input_cost_per_token": _pricing.get("input_cost_per_token", _in_cost),
+            "output_cost_per_token": _pricing.get("output_cost_per_token", _out_cost),
             "source": str(_pricing.get("source", "bmas.yaml")),
         }
         _ok(f"  {_model_alias}: in=${_in_cost:.2e}/tok, out=${_out_cost:.2e}/tok")

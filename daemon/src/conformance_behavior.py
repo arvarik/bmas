@@ -1010,6 +1010,21 @@ async def _budget_reservations(env: BehaviorEnvironment) -> CaseResult:
     )
     over = await budget.reserve(f"{env.run_id}-reservation-b")
     verified = bool(within) and not over
+    if isinstance(env.executor, StackExecutor) and expected == "native":
+        async with db._connect() as connection:  # noqa: SLF001
+            rows = await connection.execute_fetchall(
+                "SELECT a.reservation_id, b.resources, b.reserved_amount_nanos, r.budget_mode "
+                "FROM effect_attempts a JOIN effect_operations o ON o.effect_operation_id = a.effect_operation_id "
+                "JOIN budget_reservations b ON b.reservation_id = a.reservation_id "
+                "JOIN run_budgets r ON r.budget_id = b.budget_id "
+                "JOIN tasks t ON t.id = o.task_id "
+                "WHERE o.kind = 'provider' AND t.runtime_contract_version = '2'",
+            )
+        verified = verified and bool(rows) and all(
+            row["budget_mode"] == "strict" and row["reserved_amount_nanos"] > 0
+            and set(json.loads(row["resources"])) >= {"provider_cost", "input_tokens", "output_tokens", "model_calls"}
+            for row in rows
+        ) and len({row["reservation_id"] for row in rows}) == len(rows)
     return CaseResult(
         "budget_reservations", verified, expected,
         _verified_value(env, "budget_reservation", verified),

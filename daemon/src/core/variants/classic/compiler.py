@@ -500,7 +500,8 @@ def resolve_prices(
             input_per_million=MoneyValue.from_money(_money(input_text)),
             output_per_million=MoneyValue.from_money(_money(output_text)),
         )
-    return SpecPrices(table_version=PRICE_TABLE_VERSION, source_amount_strings=sources, rates=rates)
+    return SpecPrices(table_version=PRICE_TABLE_VERSION, source_amount_strings=sources, rates=rates,
+                      provenance={alias: deployment.model_pricing[alias].source for alias in rates})
 
 
 def resolve_provider_capabilities(
@@ -653,6 +654,7 @@ def resolve_randomness(spec_input: ClassicSpecInput, values: dict[str, Any]) -> 
 
 def estimate(
     values: dict[str, Any], prices: SpecPrices, limits: SpecLimits, required_roles: int,
+    prices_complete: bool = True,
 ) -> ClassicSpecEstimate:
     sequential = values["coordination.round_execution"] == "sequential"
     in_flight = 1 if sequential else int(values["coordination.max_parallel_agents"])
@@ -672,7 +674,7 @@ def estimate(
     latency_minimum = min(limits.max_duration_seconds, ACTIVATION_LATENCY_FLOOR_SECONDS * activations)
     return ClassicSpecEstimate(
         max_in_flight_activations=in_flight,
-        cost_minimum=MoneyValue.from_money(cost_minimum),
+        cost_minimum=MoneyValue.from_money(cost_minimum) if prices.rates and prices_complete else None,
         cost_maximum=limits.max_cost,
         latency_minimum_seconds=latency_minimum,
         latency_maximum_seconds=limits.max_duration_seconds,
@@ -699,7 +701,9 @@ def compile_specification(spec_input: ClassicSpecInput) -> ClassicSpec:
             message=f"The shipped level {level!r} resolves to the preset {preset_id!r}.",
             requested=level, effective=preset_id,
         ))
-    deployment = spec_input.deployment
+    deployment = spec_input.deployment.model_copy(update={"model_pricing": {
+        **spec_input.deployment.model_pricing, **spec_input.task_overrides.price_overrides,
+    }})
     try:
         models = resolve_models(spec_input, values)
         refs = _referenced_refs(models)
@@ -708,6 +712,8 @@ def compile_specification(spec_input: ClassicSpecInput) -> ClassicSpec:
             max_cost=MoneyValue.from_money(_money(money_text(values["limits.max_cost"]))),
             **{key: value for key, value in _section(values, "limits").items() if key != "max_cost"},
         )
+        if not limits.strict_pricing:
+            raise ClassicSpecError("Native Classic requires strict pricing")
         routing = resolve_routing(spec_input)
         team = SpecTeam(
             experts_by_tier={tier: int(values[f"team.experts_by_tier.{tier}"]) for tier in TIERS},
@@ -757,7 +763,8 @@ def compile_specification(spec_input: ClassicSpecInput) -> ClassicSpec:
             ),
             resolution={path: FieldResolution(**state.records[path]) for path in sorted(state.records)},
             warnings=warnings,
-            estimate=estimate(values, prices, limits, len(REQUIRED_CLASSIC_ROLES)),
+            estimate=estimate(values, prices, limits, len(REQUIRED_CLASSIC_ROLES),
+                              all(ref.alias in prices.rates for ref in refs)),
         )
     except ValidationError as exc:
         first = exc.errors()[0]

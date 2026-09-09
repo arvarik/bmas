@@ -195,6 +195,7 @@ def reason_for_exception(exc: BaseException, *, phase: str) -> str | None:
     resumes the task after the repair. Every other failure ends the
     run with one registered reason.
     """
+    from budget_service import BudgetError
     from core.gateway import LeaseLostError
     from core.variants import VariantConfigurationError
     from core.variants.classic.projection import (
@@ -212,6 +213,8 @@ def reason_for_exception(exc: BaseException, *, phase: str) -> str | None:
         return "cancelled"
     if isinstance(exc, RuntimeError) and "abort" in str(exc).lower():
         return "cancelled"
+    if isinstance(exc, BudgetError):
+        return "budget_exhausted"
     if isinstance(exc, RunDeadlineError):
         return "deadline_exceeded"
     if isinstance(exc, (ClassicIntegrityError, journal.JournalIntegrityError, journal.SnapshotVerificationError)):

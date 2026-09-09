@@ -39,7 +39,7 @@ class MoneyValue(ControlledModel):
     """One exact amount: a currency code and integer nanos."""
 
     currency: str = Field(pattern=r"^[A-Z]{3}$")
-    amount_nanos: int
+    amount_nanos: int = Field(strict=True)
 
     @classmethod
     def from_money(cls, money: Money) -> MoneyValue:
@@ -71,7 +71,7 @@ class PriceSnapshot(ControlledModel):
 
     input_cost_per_token: str
     output_cost_per_token: str
-    source: str = "bmas.yaml"
+    source: str = Field(default="bmas.yaml", min_length=1)
 
 
 class BoardSettings(ControlledModel):
@@ -113,7 +113,28 @@ class TaskOverrideSet(ControlledModel):
     classic: dict[str, Any] = Field(default_factory=dict)
     routing: dict[str, str] = Field(default_factory=dict)
     role_registry: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    price_overrides: dict[str, PriceSnapshot] = Field(default_factory=dict)
     seed: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _exact_override_amounts(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            classic = value.get("classic")
+            for name, amount in (classic.items() if isinstance(classic, dict) else ()):
+                if name in ("budget_ceiling_usd", "limits.max_cost") and isinstance(amount, float):
+                    raise ValueError("Money overrides require decimal strings, never binary floating point")
+            prices = value.get("price_overrides")
+            for price in (prices.values() if isinstance(prices, dict) else ()):
+                if isinstance(price, dict):
+                    source = price.get("source")
+                elif isinstance(price, PriceSnapshot):
+                    source = price.source
+                else:
+                    continue
+                if not isinstance(source, str) or not source.strip() or source == "bmas.yaml":
+                    raise ValueError("An explicit price override requires its own provenance")
+        return value
 
 
 class ClassicSpecInput(ControlledModel):
@@ -329,6 +350,7 @@ class SpecPrices(ControlledModel):
     table_version: str
     source_amount_strings: dict[str, PriceSourceStrings]
     rates: dict[str, PriceRates]
+    provenance: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _rates_match_sources(self) -> SpecPrices:
@@ -491,14 +513,15 @@ class ClassicSpecWarning(ControlledModel):
 
 class ClassicSpecEstimate(ControlledModel):
     max_in_flight_activations: int = Field(ge=1)
-    cost_minimum: MoneyValue
+    maximum_in_flight_allowance: MoneyValue = Field(default_factory=lambda: MoneyValue(currency="USD", amount_nanos=0))
+    cost_minimum: MoneyValue | None
     cost_maximum: MoneyValue
     latency_minimum_seconds: int = Field(ge=0)
     latency_maximum_seconds: int = Field(ge=1)
 
     @model_validator(mode="after")
     def _ranges_ordered(self) -> ClassicSpecEstimate:
-        if self.cost_minimum.amount_nanos > self.cost_maximum.amount_nanos:
+        if self.cost_minimum is not None and self.cost_minimum.amount_nanos > self.cost_maximum.amount_nanos:
             raise ValueError("the cost range is inverted")
         if self.latency_minimum_seconds > self.latency_maximum_seconds:
             raise ValueError("the latency range is inverted")
