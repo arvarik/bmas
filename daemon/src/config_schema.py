@@ -1,5 +1,6 @@
 """Typed schema for bMAS YAML configuration files."""
 
+from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -57,9 +58,20 @@ class TriageConfig(StrictModel):
 
 
 class PricingConfig(StrictModel):
-    input_cost_per_token: float = Field(ge=0)
-    output_cost_per_token: float = Field(ge=0)
+    input_cost_per_token: float | str
+    output_cost_per_token: float | str
     source: str | None = None
+
+    @field_validator("input_cost_per_token", "output_cost_per_token")
+    @classmethod
+    def _nonnegative_price(cls, value: float | str) -> float | str:
+        try:
+            amount = Decimal(str(value))
+        except InvalidOperation as exc:
+            raise ValueError("A price requires a decimal amount") from exc
+        if not amount.is_finite() or amount < 0:
+            raise ValueError("A price must be finite and nonnegative")
+        return value
 
 
 class ModelConfig(StrictModel):

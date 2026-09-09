@@ -64,7 +64,11 @@
     },
     "latency_maximum_seconds": 3600,
     "latency_minimum_seconds": 15,
-    "max_in_flight_activations": 1
+    "max_in_flight_activations": 1,
+    "maximum_in_flight_allowance": {
+      "amount_nanos": 0,
+      "currency": "USD"
+    }
   },
   "fidelity": {
     "profile_id": "paper_aligned",
@@ -73,7 +77,7 @@
   "inputs": {
     "asset_manifest_digest": null,
     "deployment_snapshot_digest": "ff854841479cb83607e981b367bdf8c02272b685282e2eba31d683d5a3741334",
-    "task_overrides_digest": "2423054d487904030876d7bd1565b8bbe5b40d9387a6bbebff925ae54e42d8c7"
+    "task_overrides_digest": "434b61a31c8a1218a6719076443e5b4bc8bd5a03d403616df177e6d249e003df"
   },
   "limits": {
     "max_cost": {
@@ -83,7 +87,7 @@
     "max_duration_seconds": 3600,
     "max_input_tokens": 250000,
     "max_output_tokens": 50000,
-    "strict_pricing": false
+    "strict_pricing": true
   },
   "memory": {
     "actor_memory": "none",
@@ -229,6 +233,10 @@
     "verifier": null
   },
   "prices": {
+    "provenance": {
+      "model-fast": "bmas.yaml",
+      "model-strong": "bmas.yaml"
+    },
     "rates": {
       "model-fast": {
         "input_per_million": {
@@ -594,8 +602,8 @@
       "layer": "fidelity",
       "not_applied": [],
       "offered": {
-        "fidelity": false,
-        "schema_default": false
+        "fidelity": true,
+        "schema_default": true
       }
     },
     "memory.actor_memory": {

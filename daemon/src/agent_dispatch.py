@@ -159,7 +159,8 @@ async def dispatch_activation(
         raise DispatchError("The agent does not support the Classic proposal schema")
     from core.variants.classic.cleaner import require_cleaner_dispatch
 
-    require_cleaner_dispatch(request)
+    if not native_run:
+        require_cleaner_dispatch(request)
     registry = await protocol_keys.registry()
     store = protocol_keys.artifact_store()
     if reservation_id is None:
@@ -173,7 +174,9 @@ async def dispatch_activation(
             reservation_id = await interactive_admission.reservation_for_run(run_id)
     if native_run:
         import budget_service
+        from core.variants.classic.activations import validate_call_reservation
 
+        await validate_call_reservation(str(reservation_id), run_id, activation_id, request)
         reservation = await budget_service.get_reservation(str(reservation_id))
         if reservation["activation_id"] != activation_id or reservation["run_id"] != run_id:
             raise DispatchError("The native activation requires its own reservation")

@@ -484,7 +484,7 @@ Unreferenced staged artifacts never enter the active board.
 
 The native specification controls `cleaner.enabled`.
 The legacy pair rejects the native condensation contract and retains its frozen legacy maintenance behavior.
-Provider-backed cleaner dispatch fails closed until the strict reservation contract from the resource-control work package ships.
+Provider-backed cleaner dispatch requires the native pair and a current strict reservation.
 Both the orchestrator and direct activation dispatch enforce this boundary.
 
 Run the complete slice with:
@@ -494,3 +494,28 @@ cd daemon && ../.venv/bin/python -m pytest tests/test_classic_cleaner_slice.py -
 ```
 
 The complete manifest profile and `classic_cleaner_atomicity` release gate require this slice.
+
+### Strict Classic budgets
+
+The `daemon.classic-strict-budgets` group tests native reservations and receipt charges.
+The `classic_strict_budgets` gate also requires the local effect and native stack groups.
+Each native provider attempt owns one reservation for input tokens, output tokens,
+provider cost, and one model call. Concurrent reservations compete for all run limits.
+The native column checks the actual provider reservations and reports `native`.
+The legacy column keeps its advisory budget.
+
+The specification publishes `estimate.maximum_in_flight_allowance` as zero USD.
+This is the additional cost allowance above the run limit. Outstanding reservations
+already count against that limit. Unknown usage retains or consumes its full reservation.
+The input reservation uses UTF-8 request bytes plus 8,192 tokens for agent rendering
+and generated schema overhead. The daemon checks the final provider request against
+that reservation. The provider must enforce the transmitted output ceiling.
+A provider that exceeds its grant violates the contract. The ledger records the
+actual overrun and prevents further dispatch when the remaining budget cannot fit a call.
+
+Retries require a new reservation. Native Hermes submissions do not retry capacity
+responses inside the same grant. Cancellation before transport releases the reservation.
+An uncertain transport retains its reservation for recovery. Late authoritative usage
+replaces the prior charge in journal replay.
+
+The Classic specification fixtures now include price provenance, strict pricing, and the zero additional in-flight allowance.

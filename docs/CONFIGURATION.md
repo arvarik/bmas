@@ -413,3 +413,22 @@ The body and title limits also apply to the summary.
 The legacy pair never applies this native condensation contract.
 Provider-backed cleaner calls remain unavailable until the strict reservation contract ships.
 An enabled specification does not bypass that dispatch requirement.
+
+### Native Classic resource limits
+
+Native Classic reserves cost, input tokens, output tokens, and model calls before dispatch.
+The compiler supplies the run token limits. The model call limit equals the output token
+limit, since each admitted call requests at least one output token.
+Unknown prices reject dispatch. Quote configuration prices as decimal strings, for example
+`input_cost_per_token: "0.0000015"`. Native admission rejects binary floating-point prices.
+The legacy pair still accepts its existing numeric price configuration.
+Task budget overrides also require decimal strings. Effective money uses integer nanos.
+
+An explicit `task_overrides.price_overrides` entry names the model alias, both decimal
+per-token prices, and a nonempty `source` with the operator's quote or approval reference.
+The compiler stores that source in `prices.provenance`. The immutable specification
+binds the override to the run. Ordinary endpoint edits affect new runs only.
+
+Both agent backends receive the reserved output ceiling. Signed receipts record finish
+reasons and truncation. Missing usage consumes the complete reserved amount.
+The specification's additional maximum in-flight cost allowance is zero.

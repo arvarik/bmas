@@ -140,7 +140,6 @@ async def prepared(run, monkeypatch, value=None):
         await gateway.append(TASK_ID, "expert", ["finding_writer"],
             [{"type": "finding", "body": entry.body, "sources": entry.sources}], turn_id="seed")
     # The reference executor returns fixture bytes and never calls a provider.
-    monkeypatch.setattr("core.variants.classic.cleaner.require_cleaner_dispatch", lambda request: None)
     result = await execute_proposal(run, json.dumps(value).encode(), monkeypatch, role="cleaner")
     assert result["native_execution"]["proposal"] == value
     return gateway, store, emitter
@@ -319,7 +318,7 @@ async def test_provider_guard_rejects_before_any_reservation_write(native_run):
     from core.variants.classic.activations import reserve_call
 
     before = await journal.read_journal(run_id=native_run["run_id"])
-    with pytest.raises(budget_service.BudgetError, match="strict reservation"):
+    with pytest.raises(budget_service.UnknownPriceError, match="immutable price"):
         await reserve_call(native_run["run_id"], "cleaner-blocked", 1, {"role": "cleaner"})
     assert await journal.read_journal(run_id=native_run["run_id"]) == before
     async with db._connect() as connection:

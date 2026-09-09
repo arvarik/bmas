@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 
+import budget_service
 import database as db
 from config import (
     AGENT_ENDPOINT_MAX_CONCURRENCY,
@@ -2557,6 +2558,8 @@ class Orchestrator:
             except activation_service.ActivationServiceError:
                 sealed = {"status": "failed", "result": str(exc)}
             return httpx.Response(200, json=sealed, request=request)
+        except budget_service.BudgetError:
+            raise
         except agent_dispatch.DispatchError as exc:
             if not native_plan.get("required"):
                 return httpx.Response(502, text=str(exc), request=request)
@@ -2565,7 +2568,6 @@ class Orchestrator:
             activation_service.ActivationServiceError,
             agent_protocol.AgentProtocolError,
             SigningError,
-            budget_service.BudgetError,
             effect_service.EffectServiceError,
         ) as exc:
             logger.warning(f"Native dispatch ledger error for {payload['task_id']}: {exc}")
@@ -2839,6 +2841,8 @@ class Orchestrator:
                     "error_code": "endpoint_overloaded",
                     "result": str(e),
                 }
+            except budget_service.BudgetError:
+                raise
             except Exception as e:
                 circuits.record_failure(url)
                 # A connect failure proves that the selected node did not

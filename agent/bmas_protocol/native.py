@@ -539,6 +539,7 @@ class NativeProtocol:
             "parent_grant_id": grant["activation_grant_id"],
             "kind": kind,
             "request_digest": request_digest,
+            "request": plain_json(request),
             "child_idempotency_key": f"{grant['activation_grant_id']}:{kind}:{call}",
             "retry_safety": "conditional",
             "target": target,

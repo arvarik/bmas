@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from budget_service import BudgetError
 from core.model_parameters import (
     completion_parameters,
     message_content,
@@ -213,6 +214,8 @@ class ControlPolicy:
                 if selected:
                     return selected, rationale
                 logger.warning("CU returned empty selection (attempt %d)", attempt + 1)
+            except BudgetError:
+                raise
             except Exception as e:
                 logger.warning("CU call failed (attempt %d): %s", attempt + 1, e)
 

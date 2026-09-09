@@ -617,6 +617,20 @@ groups:
     artifacts:
       - "test-results/classic-cleaner-slice/**"
 
+  - id: daemon.classic-strict-budgets
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove strict resource reservations, exact money, concurrent limits,
+      output ceilings, partial output, and unknown usage charges.
+    argv: ["python3", "-m", "pytest", "tests/test_classic_strict_budgets.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 1200
+    tools: [python, pytest]
+    parser: pytest_summary
+    artifacts:
+      - "test-results/classic-strict-budgets/**"
+
   - id: daemon.classic-native-column
     state: active_required
     owner: daemon
@@ -1375,6 +1389,7 @@ profiles:
         - daemon.behavioral-conformance-stack
         - daemon.classic-native-column
         - daemon.classic-cleaner-slice
+        - daemon.classic-strict-budgets
         - daemon.classic-policy-parity
         - daemon.classic-spec-compiler
         - daemon.classic-spec-routes

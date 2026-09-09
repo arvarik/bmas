@@ -39,6 +39,7 @@ from core.variants import (
     require_runtime,
     resolve_runtime_key,
 )
+from core.variants.classic.spec import PriceSnapshot
 from routes.files import FileUploadError, store_task_file
 
 logger = logging.getLogger("bmas.daemon")
@@ -92,6 +93,7 @@ class TaskOverrides(BaseModel):
     # Runtime limit overrides for this one task. The runtime validates the
     # merged result at capture time (classic: validate_classic_settings).
     classic: dict[str, Any] | None = None
+    price_overrides: dict[str, PriceSnapshot] | None = None
     # The recorded seed of the run admission. A legacy runtime records
     # it and never applies it; a native runtime applies it.
     seed: int | None = Field(default=None, ge=0)
@@ -677,6 +679,10 @@ async def _admit_task(
                 task_overrides["role_registry"] = rr_dict
             if req.overrides.classic:
                 task_overrides["classic"] = dict(req.overrides.classic)
+            if req.overrides.price_overrides:
+                task_overrides["price_overrides"] = {
+                    alias: price.model_dump() for alias, price in req.overrides.price_overrides.items()
+                }
             if req.overrides.seed is not None:
                 task_overrides["seed"] = int(req.overrides.seed)
         if req.effort is not None:

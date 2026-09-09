@@ -54,7 +54,7 @@ async def native_run(tmp_path, monkeypatch):
         "decider": {"profile": "decider", "endpoints": ["http://agent.test"]},
     }, raising=False)
     monkeypatch.setattr(config, "MODEL_PRICING", {
-        "test-light": {"input_cost_per_token": 1e-07, "output_cost_per_token": 4e-07, "source": "test"},
+        "test-light": {"input_cost_per_token": "0.0000001", "output_cost_per_token": "0.0000004", "source": "test"},
     }, raising=False)
     monkeypatch.setattr(settings_store, "_store", None)
     admission.reset_for_tests()

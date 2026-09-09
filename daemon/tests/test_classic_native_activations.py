@@ -56,7 +56,7 @@ async def execute_proposal(run, raw, monkeypatch, *, returned_raw=None, duplicat
             daemon_url="http://daemon", node_key="node-key", http=daemon_http)
 
         async def execute(context):
-            effect = await agent.open_model_effect(context, model="test-light", request={"messages": []})
+            effect = await agent.open_model_effect(context, model="test-light", request={"model": "test-light", "messages": [], "max_completion_tokens": 4096})
             await agent.receipt(effect, stage=native.STAGE_RESPONSE_OBSERVED, raw_response=raw,
                                 usage={"prompt_tokens": 10, "completion_tokens": 20})
             return {"result": (returned_raw or raw).decode(), "entries": [{"body": "forged agent entries"}]}

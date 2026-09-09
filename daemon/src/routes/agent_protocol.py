@@ -58,6 +58,7 @@ class EffectGrantRequest(BaseModel):
     parent_grant_id: str
     kind: str = "provider"
     request_digest: str = Field(..., min_length=64, max_length=64)
+    request: dict[str, Any] | None = None
     child_idempotency_key: str
     retry_safety: str = "conditional"
     target: str
@@ -68,7 +69,7 @@ class EffectGrantRequest(BaseModel):
     capability_digest: str = Field(..., min_length=64, max_length=64)
     task_fence: str | None = None
     reservation_id: str | None = None
-    max_authorized_amount_nanos: int | None = None
+    max_authorized_amount_nanos: int | None = Field(default=None, strict=True)
 
 
 class RunAdmissionRequest(BaseModel):
@@ -145,6 +146,18 @@ async def request_effect_grant(body: EffectGrantRequest) -> dict[str, Any]:
     reservation_id = body.reservation_id or str(activation.get("reservation_id") or "")
     if not reservation_id:
         raise HTTPException(status_code=422, detail="The parent activation carries no budget reservation")
+    identity = await activations.run_identity(body.run_id)
+    if identity["runtime_id"] == "classic" and identity["runtime_contract_version"] == "2" and body.kind == "provider":
+        from core.digest_profile import digest_hex, plain_json
+        from core.variants.classic.activations import validate_call_reservation
+
+        if (body.request is None or body.model != body.request.get("model")
+                or digest_hex("agent-request", plain_json(body.request)) != body.request_digest):
+            raise HTTPException(422, "The native provider grant requires its exact request")
+        try:
+            await validate_call_reservation(reservation_id, body.run_id, str(activation["activation_id"]), body.request)
+        except budget.BudgetError as exc:
+            raise HTTPException(422, str(exc)) from exc
     amount = body.max_authorized_amount_nanos
     if amount is None:
         amount = await _reservation_remaining_nanos(reservation_id)

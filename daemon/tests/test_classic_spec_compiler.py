@@ -330,7 +330,7 @@ def test_money_never_parses_from_a_float_and_the_projection_feeds_the_engine():
     assert compiler.money_text("2.00") == "2"
     with pytest.raises(compiler.ClassicSpecError):
         compiler.money_text(0)
-    spec = compile_pair("production_safe", "exhaustive", classic={"budget_ceiling_usd": 0.1})
+    spec = compile_pair("production_safe", "exhaustive", classic={"budget_ceiling_usd": "0.1"})
     assert spec.limits.max_cost.amount_nanos == 100_000_000
     settings = compiler.legacy_settings_from_spec(spec)
     assert settings["max_rounds"] == 32
@@ -359,7 +359,7 @@ async def native_db(tmp_path, monkeypatch):
         "decider": {"profile": "decider", "endpoints": ["http://agent.test"]},
     }, raising=False)
     monkeypatch.setattr(config, "MODEL_PRICING", {
-        "test-light": {"input_cost_per_token": 1e-07, "output_cost_per_token": 4e-07, "source": "test"},
+        "test-light": {"input_cost_per_token": "0.0000001", "output_cost_per_token": "0.0000004", "source": "test"},
     }, raising=False)
     monkeypatch.setattr(settings_store, "_store", None)
     admission.reset_for_tests()

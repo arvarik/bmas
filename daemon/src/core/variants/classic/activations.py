@@ -4,7 +4,6 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-from decimal import ROUND_CEILING, Decimal
 from typing import Any
 
 import activation_service as activations
@@ -15,6 +14,7 @@ import effect_service as effects
 import protocol_keys
 import runtime_journal as journal
 from core.digest_profile import canonicalize, plain_json
+from core.money import Money
 from core.signing import SigningError
 from core.variants.classic.compiler import load_specification, specification_store
 from core.variants.classic.proposals import parse_proposal
@@ -23,12 +23,29 @@ from execution_envelope import ModelProposalError, VerifiedReceiptChain, build_e
 
 async def reserve_call(run_id: str, activation_id: str, attempt: int, request: dict[str, Any]) -> str:
     """Reserve the call's bounded cost, tokens, and execution slot."""
-    from core.variants.classic.cleaner import require_cleaner_dispatch
-
-    require_cleaner_dispatch(request)
     admission = await db.get_runtime_admission(run_id)
     if admission is None:
         raise budget.BudgetError("The call requires an admitted run")
+    specification = await db.get_classic_specification(run_id)
+    if specification is None:
+        raise budget.BudgetError("The native activation requires its immutable specification")
+    spec = load_specification(specification_store(), str(specification["artifact_digest"]))
+    if (request.get("role") == "cleaner" or (request.get("context") or {}).get("classic_proposal_role") == "cleaner") and not spec.cleaner.enabled:
+        raise budget.BudgetError("The immutable specification disables the cleaner")
+    price = spec.prices.rates.get(str(request.get("model")))
+    if price is None:
+        raise budget.UnknownPriceError(f"No immutable price is registered for {request.get('model')!r}")
+    # UTF-8 bytes bound text tokenization. Reserve rendering and schema overhead.
+    input_tokens = max(1, len(canonicalize(plain_json(request)).encode("utf-8")) + 8192)
+    ceiling = request.get("max_completion_tokens", request.get("max_tokens", 4096))
+    if isinstance(ceiling, bool) or not isinstance(ceiling, int) or ceiling <= 0:
+        raise budget.BudgetError("The output token ceiling must be a positive integer")
+    output_tokens = min(ceiling, spec.limits.max_output_tokens)
+    request.pop("max_tokens", None)
+    request["max_completion_tokens"] = output_tokens
+    cost = price.input_per_million.to_money().scale_ratio(input_tokens, 1_000_000).add(
+        price.output_per_million.to_money().scale_ratio(output_tokens, 1_000_000)
+    ).amount_nanos
     initial = str(admission["initial_reservation_id"])
     initial_row = await budget.get_reservation(initial)
     if initial_row["state"] == "reserved":
@@ -38,27 +55,10 @@ async def reserve_call(run_id: str, activation_id: str, attempt: int, request: d
             # Independent activations can release the admission hold together.
             if (await budget.get_reservation(initial))["state"] != "released":
                 raise
-    specification = await db.get_classic_specification(run_id)
-    if specification is None:
-        raise budget.BudgetError("The native activation requires its immutable specification")
-    spec = load_specification(specification_store(), str(specification["artifact_digest"]))
-    price = spec.prices.rates.get(str(request.get("model")))
-    input_tokens = max(1, len(canonicalize(plain_json(request))) // 3)
-    output_tokens = int(request.get("max_completion_tokens") or request.get("max_tokens") or 4096)
-    if price:
-        amount = (Decimal(price.input_per_million.amount_nanos) * input_tokens
-                  + Decimal(price.output_per_million.amount_nanos) * output_tokens) / 1_000_000
-        cost = int(amount.to_integral_value(rounding=ROUND_CEILING))
-    else:
-        # An unknown price reserves all remaining cost authority. Missing
-        # usage later consumes that reservation instead of inventing a price.
-        limits = await budget.get_limits(str(admission["run_budget_id"]))
-        cost = max(1, min(int(row["limit_amount"]) - int(row["reserved_amount"]) - int(row["consumed_amount"])
-                          for row in limits if row["resource"] == "provider_cost"))
     reservation_id = f"reservation-{activation_id}-{attempt}"
     await budget.request_reservation(
         reservation_id=reservation_id, budget_id=str(admission["run_budget_id"]),
-        activation_id=activation_id,
+        activation_id=activation_id, provider=str(request.get("model")),
         resources={"provider_cost": cost, "input_tokens": input_tokens,
                    "output_tokens": output_tokens, "model_calls": 1},
     )
@@ -67,7 +67,40 @@ async def reserve_call(run_id: str, activation_id: str, attempt: int, request: d
     return reservation_id
 
 
-async def reconcile_call(*, run_id: str, activation_id: str, attempt: int) -> None:
+async def validate_call_reservation(reservation_id: str, run_id: str, activation_id: str,
+                                    request: dict[str, Any]) -> None:
+    """Reject a missing, stale, foreign, or insufficient dispatch reservation."""
+    reservation = await budget.get_reservation(reservation_id)
+    resources = reservation["resources"]
+    ceiling = request.get("max_completion_tokens", request.get("max_output_tokens", request.get("max_tokens")))
+    if (reservation["run_id"] != run_id or reservation["activation_id"] != activation_id
+            or reservation["state"] != "reserved" or reservation["provider"] != request.get("model")
+            or isinstance(ceiling, bool) or not isinstance(ceiling, int) or ceiling <= 0
+            or ceiling > resources.get("output_tokens", 0)
+            or resources.get("model_calls") != 1
+            or len(canonicalize(plain_json(request)).encode("utf-8")) > resources.get("input_tokens", 0)):
+        raise budget.BudgetError("The native call requires its current bounded reservation")
+    specification = await db.get_classic_specification(run_id)
+    if specification is None:
+        raise budget.BudgetError("The native reservation requires its immutable prices")
+    spec = load_specification(specification_store(), str(specification["artifact_digest"]))
+    price = spec.prices.rates.get(str(request.get("model")))
+    if price is None:
+        raise budget.UnknownPriceError("The native reservation requires a known price")
+    required_cost = price.input_per_million.to_money().scale_ratio(resources["input_tokens"], 1_000_000).add(
+        price.output_per_million.to_money().scale_ratio(resources["output_tokens"], 1_000_000)
+    )
+    if not required_cost.fits_within(Money("USD", resources.get("provider_cost", 0))):
+        raise budget.BudgetError("The native reservation does not cover its token ceilings")
+    async with db._connect() as connection:  # noqa: SLF001
+        rows = await connection.execute_fetchall(
+            "SELECT budget_mode FROM run_budgets WHERE budget_id = ?", (reservation["budget_id"],)
+        )
+    if not rows or rows[0]["budget_mode"] != "strict":
+        raise budget.BudgetError("The native call requires a strict budget")
+
+
+async def reconcile_call(*, run_id: str, activation_id: str, attempt: int, known_usage: bool = True) -> None:
     """Reconcile verified usage with the immutable prices and journal the charge."""
     activation = await activations.get_activation(activation_id, attempt)
     specification = await db.get_classic_specification(run_id)
@@ -82,8 +115,8 @@ async def reconcile_call(*, run_id: str, activation_id: str, attempt: int) -> No
             (activation_id, attempt),
         )
     actual = {"provider_cost": 0, "input_tokens": 0, "output_tokens": 0, "model_calls": len(rows)}
-    complete_usage = bool(rows)
-    for row in rows:
+    complete_usage = bool(rows) and known_usage
+    for row in rows if known_usage else []:
         usage = json.loads(row["usage"]) if row["usage"] else {}
         price = spec.prices.rates.get(str(row["model"]))
         prompt, completion = usage.get("prompt_tokens"), usage.get("completion_tokens")
@@ -92,23 +125,30 @@ async def reconcile_call(*, run_id: str, activation_id: str, attempt: int) -> No
             continue
         actual["input_tokens"] += prompt
         actual["output_tokens"] += completion
-        amount = (Decimal(price.input_per_million.amount_nanos) * prompt
-                  + Decimal(price.output_per_million.amount_nanos) * completion) / 1_000_000
-        actual["provider_cost"] += int(amount.to_integral_value(rounding=ROUND_CEILING))
+        charge = price.input_per_million.to_money().scale_ratio(prompt, 1_000_000).add(
+            price.output_per_million.to_money().scale_ratio(completion, 1_000_000)
+        )
+        actual["provider_cost"] = Money("USD", actual["provider_cost"]).add(charge).amount_nanos
+    usage_digest = hashlib.sha256(canonicalize(actual if complete_usage else {"usage": "unknown"}).encode()).hexdigest()
     reservation = await budget.reconcile(str(activation["reservation_id"]),
-        reconciliation_key=f"activation-{activation_id}-{attempt}",
+        reconciliation_key=f"activation-{activation_id}-{attempt}-{usage_digest}",
         actual_resources=actual if complete_usage else None, pricing_version=spec.prices.table_version)
+    await journal_reconciliation(run_id, reservation, usage_digest)
+
+
+async def journal_reconciliation(run_id: str, reservation: dict[str, Any], usage_digest: str) -> None:
+    """Record the current charge so replay replaces an earlier estimate."""
     identity = await activations.run_identity(run_id)
     await journal.commit_operation(journal.JournalOperation(
-        operation_type="budget_reconciliation", task_id=str(activation["task_id"]), run_id=run_id,
+        operation_type="budget_reconciliation", task_id=identity["task_id"], run_id=run_id,
         runtime_id=identity["runtime_id"], runtime_contract_version=identity["runtime_contract_version"],
-        payload={"reservation_id": activation["reservation_id"],
+        payload={"reservation_id": reservation["reservation_id"],
                  "consumed_usd_millionths": (int(reservation["consumed_amount_nanos"]) + 999) // 1000,
                  "consumed_amount_nanos": int(reservation["consumed_amount_nanos"]),
-                 "consumption_kind": reservation["consumption_kind"],
+                 "consumption_kind": reservation["consumption_kind"], "cumulative": True,
                  "policy_set_digest": identity["policy_set_digest"],
                  "specification_digest": identity["specification_digest"]},
-        authority_type="runtime", idempotency_token=f"call-budget-{activation_id}-{attempt}",
+        authority_type="runtime", idempotency_token=f"call-budget-{reservation['reservation_id']}-{usage_digest}",
     ))
 
 
@@ -259,6 +299,8 @@ async def seal_response(*, run_id: str, activation_id: str, attempt: int,
             run_id=run_id, activation_id=activation_id, attempt=attempt, target_state="abandoned",
         )
         await reconcile_call(run_id=run_id, activation_id=activation_id, attempt=attempt)
+    else:
+        await reconcile_call(run_id=run_id, activation_id=activation_id, attempt=attempt, known_usage=False)
     return {**result, "status": "completed" if complete and not failure else "failed",
             "native_execution": {"attempt": attempt, "envelope": envelope.to_dict(),
                                  "envelope_digest": envelope.digest(),

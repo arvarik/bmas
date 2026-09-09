@@ -169,7 +169,7 @@ async def test_the_classic_native_column_passes_with_the_real_runtime(monkeypatc
     assert observed["seed_state"].observed_value == "recorded_only"
     assert observed["cancellation_deadlines"].observed_value == "native"
     assert observed["evidence_decisions"].observed_value == "legacy"
-    assert observed["budget_reservations"].observed_value == "advisory_legacy"
+    assert observed["budget_reservations"].observed_value == "native"
     # The fence validation is native: the resumed run and the complete
     # run both authored fenced records, and the restart resumed the
     # task from its verified snapshot under the same fence.

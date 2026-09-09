@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from budget_service import BudgetError
 from core.model_parameters import (
     completion_parameters,
     message_content,
@@ -223,6 +224,8 @@ class RosterPolicy:
         try:
             response = await complete(body)
             raw_experts = self.parse_expert_response(response, n)
+        except BudgetError:
+            raise
         except Exception as e:
             logger.warning("AG call failed (%s), using default experts", e)
             raw_experts = self.default_experts(n)
