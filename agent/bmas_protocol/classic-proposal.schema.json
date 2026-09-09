@@ -43,6 +43,7 @@
                 "enum": [
                   "artifact",
                   "attachment",
+                  "condensed_finding",
                   "conflict",
                   "critique",
                   "directive",
@@ -155,6 +156,7 @@
                 "enum": [
                   "artifact",
                   "attachment",
+                  "condensed_finding",
                   "conflict",
                   "critique",
                   "directive",
@@ -267,6 +269,7 @@
                 "enum": [
                   "artifact",
                   "attachment",
+                  "condensed_finding",
                   "conflict",
                   "critique",
                   "directive",
@@ -379,6 +382,7 @@
                 "enum": [
                   "artifact",
                   "attachment",
+                  "condensed_finding",
                   "conflict",
                   "critique",
                   "directive",
@@ -456,11 +460,69 @@
           "const": "condense"
         },
         "entries": {
-          "maxItems": 0,
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "confidence": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "refs": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "sources": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "const": "condensed_finding"
+              }
+            },
+            "required": [
+              "type",
+              "body",
+              "refs",
+              "sources"
+            ],
+            "type": "object"
+          },
+          "maxItems": 1,
+          "minItems": 1,
           "type": "array"
         },
         "removals": {
-          "maxItems": 0,
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "entry_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "reason": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "entry_id",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
           "type": "array"
         },
         "role": {
@@ -474,7 +536,8 @@
         "schema_version",
         "role",
         "action",
-        "entries"
+        "entries",
+        "removals"
       ],
       "type": "object"
     },
@@ -543,6 +606,7 @@
                 "enum": [
                   "artifact",
                   "attachment",
+                  "condensed_finding",
                   "conflict",
                   "critique",
                   "directive",
@@ -655,6 +719,7 @@
                 "enum": [
                   "artifact",
                   "attachment",
+                  "condensed_finding",
                   "conflict",
                   "critique",
                   "directive",

@@ -965,6 +965,15 @@ def apply_record_to_state(
         if accepted:
             runtime_state = state["runtime_state"].setdefault(run_id, {})
             runtime_state.update(payload["projection_changes"])
+            if payload.get("mutation", {}).get("kind") == "condensation":
+                runtime_state.setdefault("condensations", {})[payload["activation_id"]] = {
+                    "summary": payload["board"]["entries"][0]["entry_id"],
+                    "removals": payload["board"]["tombstones"],
+                    "checkpoint_digest": payload["checkpoint_digest"],
+                    "budget_reference": payload["budget_reference"],
+                    "trace_event": payload["trace_event"],
+                    "journal_cursor": record.journal_cursor,
+                }
             state["checkpoints"][run_id] = payload["checkpoint_digest"]
             budget = payload["budget"]
             totals = state["budgets"].setdefault(

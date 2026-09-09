@@ -1080,11 +1080,20 @@ class TraditionalVariant:
         """Parse agent response into proposed board entries."""
         results = []
         action_payload = raw
+        if isinstance(raw, str):
+            text = raw.strip()
+            if text.startswith("```") and text.endswith("```"):
+                text = "\n".join(text.splitlines()[1:-1])
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
+                action_payload = json.loads(text)
         if isinstance(raw, dict) and isinstance(raw.get("result"), str):
             with contextlib.suppress(json.JSONDecodeError, TypeError):
                 decoded = json.loads(raw["result"])
                 if isinstance(decoded, dict):
                     action_payload = decoded
+        # The legacy pair never applies the native condensation contract.
+        if isinstance(action_payload, dict) and action_payload.get("action") == "condense":
+            return []
         if (
             actor == "critic"
             and isinstance(action_payload, dict)

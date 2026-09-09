@@ -464,3 +464,15 @@ Respond with ONLY the answer — no preamble, no explanation, no formatting.
 If the answer is a single value (number, name, choice), give just that value.
 If it requires explanation, be concise (max 200 words).
 """
+
+# The native proposal contract extends the frozen legacy cleaner prompt.
+NATIVE_CLEANER_INSTRUCTIONS = """
+Native condensation rules:
+Return one condensed_finding and the exact removal set in one condense proposal.
+Keep every source entry identifier and claim link in the summary refs.
+Keep every original evidence source in the summary sources.
+Do not remove protected entries or entries that retained entries reference.
+The summary refs may preserve the historical provenance of an earlier condensation.
+If no complete safe condensation fits the board limits, return the skip action.
+The daemon accepts all summary and removal changes together or rejects all of them.
+"""
