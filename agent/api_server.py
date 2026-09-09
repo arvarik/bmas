@@ -219,8 +219,9 @@ class TaskResponse(BaseModel):
     # ── Phase 1 additions (all Optional for backward compat) ───────────
     turn_id: Optional[str] = None
     run_id: Optional[str] = None
-    action: Optional[str] = None           # contribute | decline | clean
+    action: Optional[str] = None           # contribute | decline | clean | condense
     entries: Optional[list[dict]] = None   # proposed board entries (entries_v1)
+    removals: Optional[list[dict]] = None
     usage: Optional[dict] = None           # {prompt_tokens, completion_tokens, total_tokens, model}
     trace_count: Optional[int] = None
     artifacts: Optional[list[dict]] = None
@@ -289,6 +290,22 @@ def _result_envelope(result: str) -> tuple[str | None, list[dict] | None]:
         else None
     )
     return resolved_action, resolved_entries
+
+
+def _result_removals(result: str) -> list[dict] | None:
+    """Preserve the complete removal collection from a cleaner response."""
+    text = result.strip()
+    if text.startswith("```") and text.endswith("```"):
+        text = "\n".join(text.splitlines()[1:-1])
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if isinstance(parsed, dict) and parsed.get("action") == "condense":
+        removals = parsed.get("removals")
+        if isinstance(removals, list) and all(isinstance(item, dict) for item in removals):
+            return removals
+    return None
 
 
 # ── SSE Parser ─────────────────────────────────────────────────────────────
@@ -2909,6 +2926,7 @@ async def _execute_task_once(
             else None
         ),
         entries=envelope_entries,
+        removals=_result_removals(result),
         usage=usage,
         trace_count=trace_count,
         artifacts=None,

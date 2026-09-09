@@ -23,6 +23,7 @@ import re
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 _NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
 
@@ -77,6 +78,9 @@ def structured_answer(prompt: str, request: dict) -> str:
     actions = {"planner": ("plan", "plan"), "expert": ("contribute", "finding"),
                "critic": ("critique", "critique"), "verifier": ("critique", "critique"),
                "conflict_resolver": ("resolve_conflict", "rebuttal"), "decider": ("decide", "solution")}
+    if role == "cleaner":
+        fixture = Path(__file__).resolve().parents[1] / "conformance/proposal_fixtures/cleaner.json"
+        return json.dumps(json.loads(fixture.read_text())["proposal"])
     if role in actions:
         action, entry_type = actions[role]
         return json.dumps({"schema_version": "classic-proposal/1", "role": role, "action": action,

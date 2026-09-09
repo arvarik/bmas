@@ -39,6 +39,7 @@ from core.asset_store import (
     RetentionClass,
 )
 from core.digest_profile import digest_bytes
+from core.failpoints import failpoint
 from core.variants import RuntimeKey
 
 if TYPE_CHECKING:
@@ -1995,6 +1996,7 @@ async def commit_proposal_decision(
     reservation_validator: ReservationValidator | None = None,
     task_fence: str | None = None,
     database_time: str | None = None,
+    expected_projection_version: int | None = None,
     decision_payload: dict[str, Any] | None = None,
     projection_writer: Callable[[aiosqlite.Connection, int, str], Awaitable[None]] | None = None,
 ) -> journal.JournalRecord:
@@ -2038,6 +2040,9 @@ async def commit_proposal_decision(
                 or row["execution_envelope_digest"] != execution_envelope_digest):
             raise ProposalEligibilityError("envelope_binding")
         validate_activation_transition(str(row["state"]), "committed")
+        cleaner = (decision_payload or {}).get("mutation", {}).get("kind") == "condensation"
+        if cleaner:
+            failpoint("cleaner.before_activation_write")
         await connection.execute(
             "UPDATE activations SET state = 'committed', "
             "execution_envelope_digest = ?, state_changed_at = ?, "
@@ -2050,9 +2055,15 @@ async def commit_proposal_decision(
                 attempt,
             ),
         )
+        if cleaner:
+            failpoint("cleaner.after_activation_write")
         if projection_writer is not None:
             await projection_writer(connection, journal_cursor, now)
+        if cleaner:
+            failpoint("cleaner.before_lease_write")
         await connection.execute("UPDATE activation_leases SET released = 1 WHERE lease_id = ?", (row["lease_id"],))
+        if cleaner:
+            failpoint("cleaner.after_lease_write")
 
     return await journal.commit_operation(
         journal.JournalOperation(
@@ -2074,12 +2085,13 @@ async def commit_proposal_decision(
                 "activation_state": "committed",
                 "activation_attempt": attempt,
                 "budget": dict(budget or {"reserved": 0, "consumed": 0}),
-                "trace_event": "proposal.decision",
+                "trace_event": (decision_payload or {}).get("trace_event", "proposal.decision"),
                 "effect_id": effect_id,
             },
             idempotency_token=(
                 f"proposal-decision-{activation_id}-{attempt}"
             ),
+            expected_projection_version=expected_projection_version,
             task_fence=task_fence,
             tenant_id=identity["tenant_id"],
             authority_type="runtime" if identity["runtime_id"] == "classic" and identity["runtime_contract_version"] == "2" else "host",

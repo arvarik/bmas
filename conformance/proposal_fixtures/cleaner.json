@@ -1,0 +1,31 @@
+{
+  "reason": "The atomic cleaner fixture preserves two source findings and their evidence through the real agent parser.",
+  "proposal": {
+    "schema_version": "classic-proposal/1",
+    "role": "cleaner",
+    "action": "condense",
+    "entries": [
+      {
+        "type": "condensed_finding",
+        "body": "Both source findings support the same observation.",
+        "refs": [
+          "e-1",
+          "e-2"
+        ],
+        "sources": [
+          "https://example.org/evidence"
+        ]
+      }
+    ],
+    "removals": [
+      {
+        "entry_id": "e-1",
+        "reason": "Preserved in the summary"
+      },
+      {
+        "entry_id": "e-2",
+        "reason": "Preserved in the summary"
+      }
+    ]
+  }
+}

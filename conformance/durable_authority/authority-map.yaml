@@ -1837,7 +1837,7 @@ sqlite_tables:
       - { name: created_at, owner: daemon.classic-specification, derived: false }
   - table: classic_board_projection
     authority: daemon.journal-authority
-    purpose: "The journal-backed board of Classic native runs: one row per entry, a projection of the accepted proposal_decision records. A replay from cursor zero rebuilds it."
+    purpose: "The journal-backed board of Classic native runs: one row per entry, a projection of accepted proposal_decision records. An atomic condensation inserts its summary with every source tombstone. A replay from cursor zero rebuilds it."
     writers:
       - database
     fields:
@@ -1864,7 +1864,7 @@ sqlite_tables:
       - { name: updated_at, owner: daemon.journal-authority, derived: false }
   - table: classic_board_tombstones
     authority: daemon.journal-authority
-    purpose: "One immutable row per board entry a Classic native run removed or archived, with the journal cursor of the proposal_decision that removed it."
+    purpose: "One immutable row per board entry a Classic native run removed or archived, with the journal cursor of the proposal_decision that removed it. A condensation uses the same transaction and cursor for its summary and every tombstone."
     writers:
       - database
     fields:

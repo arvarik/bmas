@@ -157,6 +157,9 @@ async def dispatch_activation(
     if (native_run and (request.get("context") or {}).get("classic_proposal_role")
             and "classic-proposal/1" not in document.supported_proposal_schemas):
         raise DispatchError("The agent does not support the Classic proposal schema")
+    from core.variants.classic.cleaner import require_cleaner_dispatch
+
+    require_cleaner_dispatch(request)
     registry = await protocol_keys.registry()
     store = protocol_keys.artifact_store()
     if reservation_id is None:

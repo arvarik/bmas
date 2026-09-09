@@ -23,6 +23,9 @@ from execution_envelope import ModelProposalError, VerifiedReceiptChain, build_e
 
 async def reserve_call(run_id: str, activation_id: str, attempt: int, request: dict[str, Any]) -> str:
     """Reserve the call's bounded cost, tokens, and execution slot."""
+    from core.variants.classic.cleaner import require_cleaner_dispatch
+
+    require_cleaner_dispatch(request)
     admission = await db.get_runtime_admission(run_id)
     if admission is None:
         raise budget.BudgetError("The call requires an admitted run")

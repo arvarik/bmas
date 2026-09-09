@@ -76,12 +76,12 @@ class TestEntryTypes:
     }
 
     def test_all_spec_types_registered(self):
-        """All 11 entry types (doc 04 §1 plus the task ledger) are registered."""
-        assert self.SPEC_TYPES | {"ledger"} == ENTRY_TYPES
+        """All entry types, including the task ledger and condensed finding, are registered."""
+        assert self.SPEC_TYPES | {"ledger", "condensed_finding"} == ENTRY_TYPES
 
     def test_entry_count(self):
-        """Exactly 11 entry types (the spec table plus the task ledger)."""
-        assert len(ENTRY_TYPES) == 11
+        """The vocabulary includes the ledger and the condensed finding."""
+        assert len(ENTRY_TYPES) == 12
 
     def test_constants_match_set(self):
         """Each constant matches its string in the frozenset."""

@@ -8,8 +8,11 @@ weights from its arguments and touches no storage.
 """
 from __future__ import annotations
 
+import copy
+from dataclasses import dataclass
 from typing import Any
 
+from core.capabilities import authorize_post, authorize_remove
 from core.entry import BoardEntry, entry_to_dict
 
 # The rounds a plan or a critique stays protected from condensation.
@@ -122,3 +125,104 @@ class CleanerPolicy:
         ]
         subset = [*protected_context, *candidates]
         return {"mode": "condense", "entries": [entry_to_dict(e) for e in subset]}
+
+
+class CondensationError(ValueError):
+    """The complete cleaner proposal fails a board invariant."""
+
+
+@dataclass(frozen=True)
+class CondensationPlan:
+    """One summary and the exact requested removal collection."""
+
+    summary: dict[str, Any]
+    removals: tuple[dict[str, str], ...]
+
+    @classmethod
+    def from_proposal(cls, proposal: dict[str, Any]) -> CondensationPlan:
+        """Read a schema-validated proposal without discarding any member."""
+        entries = proposal.get("entries")
+        removals = proposal.get("removals")
+        if proposal.get("action") != "condense" or proposal.get("role") != "cleaner":
+            raise CondensationError("The cleaner requires a condense proposal")
+        if not isinstance(entries, list) or len(entries) != 1:
+            raise CondensationError("Condensation requires exactly one summary")
+        if not isinstance(removals, list) or not removals:
+            raise CondensationError("Condensation requires explicit removals")
+        if any(not isinstance(item, dict) or set(item) != {"entry_id", "reason"}
+               or not all(isinstance(value, str) and value.strip() for value in item.values())
+               for item in removals):
+            raise CondensationError("Every removal requires an entry identifier and a reason")
+        return cls(copy.deepcopy(entries[0]), tuple(copy.deepcopy(removals)))
+
+    def validate(self, snapshot: dict[str, BoardEntry], *, capabilities: list[str],
+                 max_body: int, max_title: int, max_entries: int, max_tokens: int,
+                 recent_rounds: int, claim_ids: set[str], evidence_ids: set[str],
+                 tombstone_ids: set[str] | None = None, space: str = "public") -> None:
+        """Validate the complete proposed projection before any write."""
+        summary = self.summary
+        if summary.get("type") != "condensed_finding":
+            raise CondensationError("The summary type must be condensed_finding")
+        authorize_post(capabilities, "condensed_finding")
+        body = summary.get("body")
+        if not isinstance(body, str) or not body.strip() or len(body) > max_body:
+            raise CondensationError("The summary body is empty or exceeds the board limit")
+        title = summary.get("title", "")
+        if not isinstance(title, str) or len(title) > max_title:
+            raise CondensationError("The summary title exceeds the board limit")
+        refs, sources = summary.get("refs"), summary.get("sources")
+        if any(not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values)
+               or len(set(values)) != len(values) for values in (refs, sources)):
+            raise CondensationError("Summary references and sources must be explicit unique string lists")
+        assert isinstance(refs, list) and isinstance(sources, list)
+        removal_ids = {item["entry_id"] for item in self.removals}
+        if len(removal_ids) != len(self.removals):
+            raise CondensationError("A removal target occurs more than once")
+        active = {key: entry for key, entry in snapshot.items() if entry.status == "open"}
+        latest = max((entry.round for entry in active.values()), default=0)
+        required_refs: set[str] = set(removal_ids)
+        required_sources: set[str] = set()
+        provenance: set[str] = set()
+        for entry_id in removal_ids:
+            entry = snapshot.get(entry_id)
+            if entry is None:
+                raise CondensationError(f"Unknown removal target: {entry_id}")
+            if (entry.status != "open" or entry.space != space or entry.type in ALWAYS_PROTECTED_TYPES
+                    or (recent_rounds > 0 and entry.type in RECENTLY_PROTECTED_TYPES
+                        and entry.round >= latest - recent_rounds)):
+                raise CondensationError(f"Protected removal target: {entry_id}")
+            authorize_remove(capabilities, entry.type)
+            required_refs.update(entry.refs)
+            required_sources.update(entry.sources)
+            if entry.type == "condensed_finding":
+                provenance.update(set(entry.refs).intersection(tombstone_ids or set()))
+        if not required_refs.issubset(refs):
+            raise CondensationError("The summary drops a required claim or entry link")
+        if not required_sources.issubset(sources):
+            raise CondensationError("The summary drops a required evidence link")
+        for ref in refs:
+            if ref not in snapshot and ref not in claim_ids:
+                raise CondensationError(f"Unknown claim or entry link: {ref}")
+            if ref in snapshot and ref not in removal_ids | provenance and snapshot[ref].status != "open":
+                raise CondensationError(f"Inactive summary dependency: {ref}")
+        # Existing source citations preserve their original meaning. New evidence
+        # references must resolve to a durable decision in this run.
+        if any(source not in required_sources and source not in evidence_ids for source in sources):
+            raise CondensationError("The summary adds an unresolvable evidence link")
+        for entry_id, entry in active.items():
+            if entry_id not in removal_ids and removal_ids.intersection(entry.refs):
+                raise CondensationError(f"Retained entry loses a required dependency: {entry_id}")
+        retained = [entry for key, entry in active.items() if key not in removal_ids]
+        if len(retained) + 1 > max_entries:
+            raise CondensationError("The complete condensation exceeds the board entry limit")
+        tokens = sum((len(entry.body) + 3) // 4 for entry in retained) + (len(body) + 3) // 4
+        if tokens > max_tokens:
+            raise CondensationError("The complete condensation exceeds the board token limit")
+
+
+def require_cleaner_dispatch(request: dict[str, Any]) -> None:
+    """Keep provider-backed cleaning closed until strict dispatch bounds ship."""
+    if request.get("role") == "cleaner" or (request.get("context") or {}).get("classic_proposal_role") == "cleaner":
+        from budget_service import BudgetError
+
+        raise BudgetError("Provider-backed cleaner dispatch requires the strict reservation contract")

@@ -1439,7 +1439,22 @@
     {
       "payload": {
         "action": "condense",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "classic-proposal/1"
       },
@@ -1448,7 +1463,22 @@
     {
       "payload": {
         "action": "condense",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "unknown"
       },
@@ -1457,7 +1487,22 @@
     {
       "payload": {
         "action": "condense",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "unknown",
         "schema_version": "classic-proposal/1"
       },
@@ -1466,7 +1511,22 @@
     {
       "payload": {
         "action": "unknown",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "classic-proposal/1"
       },
@@ -1475,7 +1535,22 @@
     {
       "payload": {
         "action": "condense",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "classic-proposal/1",
         "status": "untrusted"
@@ -1485,7 +1560,22 @@
     {
       "payload": {
         "action": "condense",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "classic-proposal/1",
         "usage": "untrusted"
@@ -1495,8 +1585,23 @@
     {
       "payload": {
         "action": "condense",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
         "provider": "untrusted",
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "classic-proposal/1"
       },
@@ -1505,8 +1610,23 @@
     {
       "payload": {
         "action": "condense",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
         "provider_run_id": "untrusted",
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "classic-proposal/1"
       },
@@ -1516,7 +1636,22 @@
       "payload": {
         "action": "condense",
         "activation_id": "untrusted",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "classic-proposal/1"
       },
@@ -1526,7 +1661,22 @@
       "payload": {
         "action": "condense",
         "activation_attempt": "untrusted",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "classic-proposal/1"
       },
@@ -1535,7 +1685,22 @@
     {
       "payload": {
         "action": "condense",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "classic-proposal/1",
         "task_id": "untrusted"
@@ -1545,7 +1710,22 @@
     {
       "payload": {
         "action": "condense",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "run_id": "untrusted",
         "schema_version": "classic-proposal/1"
@@ -1556,7 +1736,22 @@
       "payload": {
         "action": "condense",
         "effect_id": "untrusted",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "classic-proposal/1"
       },
@@ -1565,8 +1760,23 @@
     {
       "payload": {
         "action": "condense",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
         "proposal_ref": "untrusted",
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "classic-proposal/1"
       },
@@ -1575,8 +1785,23 @@
     {
       "payload": {
         "action": "condense",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
         "parse_failure_ref": "untrusted",
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "classic-proposal/1"
       },
@@ -1585,8 +1810,23 @@
     {
       "payload": {
         "action": "condense",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
         "execution_status": "untrusted",
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "classic-proposal/1"
       },
@@ -1595,7 +1835,22 @@
     {
       "payload": {
         "action": "condense",
-        "entries": [],
+        "entries": [
+          {
+            "body": "Summary",
+            "refs": [
+              "e-source"
+            ],
+            "sources": [],
+            "type": "condensed_finding"
+          }
+        ],
+        "removals": [
+          {
+            "entry_id": "e-source",
+            "reason": "Summarized"
+          }
+        ],
         "role": "cleaner",
         "schema_version": "classic-proposal/1",
         "unexpected": "untrusted"

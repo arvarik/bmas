@@ -401,3 +401,15 @@ Ordinary endpoint edits affect new runs only.
 An admitted run keeps its endpoint sets and effective values.
 A refreshed preview can change after a deployment edit, and it does not reserve that deployment for admission.
 Public admission remains unavailable while the native pair has test-only availability.
+
+### Native cleaner availability
+
+The native Classic specification includes `cleaner.enabled`.
+An enabled cleaner accepts one atomic condensation proposal with one summary and an explicit removal set.
+It preserves claim and evidence links and rejects removals that break retained dependencies.
+The effective entry and token thresholds bound the resulting active board.
+The body and title limits also apply to the summary.
+
+The legacy pair never applies this native condensation contract.
+Provider-backed cleaner calls remain unavailable until the strict reservation contract ships.
+An enabled specification does not bypass that dispatch requirement.

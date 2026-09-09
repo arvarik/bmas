@@ -37,6 +37,7 @@ from core.board_store import make_event
 from core.capabilities import AuthorizationError, authorize_remove
 from core.digest_profile import digest_bytes, digest_hex, plain_json
 from core.entry import BoardEntry, entry_to_dict
+from core.failpoints import failpoint
 from core.gateway import BoardGateway, EntryRejected
 from core.protocol import (
     EVENT_BOARD_ENTRY,
@@ -106,9 +107,11 @@ def body_digest(body: str) -> str:
     return digest_bytes(ARTIFACT_CONTENT_DIGEST_DOMAIN, body.encode("utf-8"))
 
 
-def promote_text(store: ArtifactStore, text: str, *, referenced_by: str) -> str:
+def promote_text(store: ArtifactStore, text: str, *, referenced_by: str, cleaner: bool = False) -> str:
     """Promote one text as an immutable artifact and return its digest."""
     payload = text.encode("utf-8")
+    if cleaner:
+        failpoint("cleaner.before_artifact_stage")
     staged = store.stage(
         payload,
         declared_digest=digest_bytes(ARTIFACT_CONTENT_DIGEST_DOMAIN, payload),
@@ -119,8 +122,16 @@ def promote_text(store: ArtifactStore, text: str, *, referenced_by: str) -> str:
         access_policy=BOARD_ACCESS_POLICY,
         retention_class=RetentionClass.REPLAY_REQUIRED,
     )
+    if cleaner:
+        failpoint("cleaner.after_artifact_stage")
+        failpoint("cleaner.before_artifact_promotion")
     digest = store.promote(staged)
+    if cleaner:
+        failpoint("cleaner.after_artifact_promotion")
+        failpoint("cleaner.before_artifact_reference")
     store.commit_reference(digest, referenced_by=referenced_by)
+    if cleaner:
+        failpoint("cleaner.after_artifact_reference")
     return digest
 
 
@@ -271,6 +282,12 @@ class BoardMutationCommitter(Protocol):
         """Commit one mutation as one proposal decision."""
         ...
 
+    artifacts: Any
+
+    async def load_board(self) -> None:
+        """Reload the durable board projection."""
+        ...
+
     def board_state(self) -> dict[str, Any]:
         """The current board projection the committer tracks."""
         ...
@@ -336,6 +353,94 @@ class NativeBoardGateway(BoardGateway):
         return self._committer
 
     # ── Content mutations ────────────────────────────────────────────
+
+    async def apply_condensation(self, *, task_id: str, actor: str, capabilities: list[str],
+                                 proposal: dict[str, Any], turn_id: str, attempt: int,
+                                 round_no: int, space: str = "public") -> list[BoardEntry]:
+        """Validate and commit one complete cleaner decision under the board lock."""
+        import activation_service
+        from core.variants.classic.activations import reconcile_call
+        from core.variants.classic.cleaner import CondensationError, CondensationPlan
+        from core.variants.classic.compiler import load_specification, specification_store
+        from execution_envelope import ModelProposal
+
+        async with self._task_lock(task_id):
+            await self._assert_commit_allowed(task_id)
+            activation = await activation_service.get_activation(turn_id, attempt)
+            run_id = str(activation["run_id"])
+            if activation["task_id"] != task_id:
+                raise CondensationError("The cleaner activation belongs to another task")
+            content = ModelProposal(schema_version="classic-proposal/1", content=plain_json(proposal))
+            if content.digest() != activation["proposal_digest"]:
+                raise CondensationError("The proposal differs from the verified cleaner response")
+            stored = await db.get_classic_specification(run_id)
+            if stored is None:
+                raise CondensationError("The cleaner requires the native specification")
+            spec = load_specification(specification_store(), str(stored["artifact_digest"]))
+            binding = self._committer
+            async with db._connect() as connection:  # noqa: SLF001
+                versions = await connection.execute_fetchall("SELECT projection_version FROM runs WHERE run_id = ?", (run_id,))
+            # Reload the authority after a crash or another gateway's write.
+            await binding.load_board()
+            if activation["state"] == "committed":
+                await restore_board_store(self._store, task_id, binding.board_state(), binding.artifacts)
+                await reconcile_call(run_id=run_id, activation_id=turn_id, attempt=attempt)
+                return []
+            snapshot = {}
+            for key, row in binding.board_state()["entries"].items():
+                snapshot[key] = BoardEntry(id=key, task_id=task_id, type=row["entry_type"],
+                    author=row["author"], body=read_text(binding.artifacts, row["body_digest"]),
+                    refs=list(row["refs"]), sources=list(row["sources"]), status=row["status"],
+                    round=int(row["round"]), space=str(row["space"]))
+            async with db._connect() as connection:  # noqa: SLF001
+                claims = await connection.execute_fetchall("SELECT claim_id FROM claim_index WHERE run_id = ?", (run_id,))
+                evidence = await connection.execute_fetchall(
+                    "SELECT decision_id FROM evidence_decisions WHERE run_id = ?", (run_id,))
+            rejection = None
+            entry = None
+            plan = None
+            try:
+                if not spec.cleaner.enabled:
+                    raise CondensationError("The immutable specification disables the cleaner")
+                plan = CondensationPlan.from_proposal(content.content)
+                plan.validate(snapshot, capabilities=capabilities,
+                    max_body=spec.board.max_entry_body_characters, max_title=spec.board.max_title_characters,
+                    max_entries=spec.cleaner.entry_threshold, max_tokens=spec.cleaner.token_threshold,
+                    recent_rounds=spec.cleaner.retain_recent_rounds,
+                    claim_ids={str(row["claim_id"]) for row in claims},
+                    evidence_ids={str(row["decision_id"]) for row in evidence},
+                    tombstone_ids=set(binding.board_state()["tombstones"]), space=space)
+                raw = plan.summary
+                entry = BoardEntry(id=f"condensed-{turn_id}-{attempt}", task_id=task_id,
+                    type="condensed_finding", author=actor, body=raw["body"], title=raw.get("title"),
+                    refs=list(raw["refs"]), sources=list(raw["sources"]),
+                    confidence=float(raw.get("confidence", 0.5)), round=round_no, space=space,
+                    created_by_turn=turn_id)
+            except (CondensationError, AuthorizationError) as exc:
+                rejection = str(exc)
+            section = None if entry is None or plan is None else _section("condensation",
+                actor=actor, activation_id=turn_id, round_no=round_no,
+                mutation_id=f"condensation-{turn_id}-{attempt}", entries=[entry_projection(entry)],
+                tombstones=[{**item, "status": "removed"} for item in plan.removals])
+            record = await binding.commit(BoardMutation(kind="condensation",
+                decision="rejected" if rejection else "accepted", task_id=task_id, actor=actor,
+                activation_id=turn_id, round=round_no, token=f"proposal-decision-{turn_id}-{attempt}",
+                proposal={"activation_attempt": attempt,
+                          "expected_projection_version": int(versions[0]["projection_version"])},
+                reason=rejection, section=section, bodies={entry.id: entry.body} if entry else {}))
+            await restore_board_store(self._store, task_id, binding.board_state(), binding.artifacts)
+            if rejection:
+                await self._emit(task_id, "entry_rejected", {"actor": actor, "reason": rejection,
+                    "activation_id": turn_id, "event": "cleaner.activation_failed"})
+            elif entry is not None and plan is not None:
+                entry.created_at = record.recorded_at
+                entry.updated_at = record.recorded_at
+                await self._emit(task_id, EVENT_BOARD_ENTRY, {**entry_to_dict(entry), "journal_cursor": record.journal_cursor})
+                for removal in plan.removals:
+                    await self._emit(task_id, EVENT_ENTRY_REMOVED, {**removal, "by": actor,
+                        "journal_cursor": record.journal_cursor})
+            await reconcile_call(run_id=run_id, activation_id=turn_id, attempt=attempt)
+            return [entry] if entry is not None else []
 
     async def apply_proposal(self, *, task_id: str, actor: str, capabilities: list[str],
                              proposed: list[dict[str, Any]], turn_id: str, attempt: int,

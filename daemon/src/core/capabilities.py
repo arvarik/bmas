@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from core.protocol import (
     ENTRY_TYPE_ARTIFACT,
     ENTRY_TYPE_ATTACHMENT,
+    ENTRY_TYPE_CONDENSED_FINDING,
     ENTRY_TYPE_CONFLICT,
     ENTRY_TYPE_CRITIQUE,
     ENTRY_TYPE_DIRECTIVE,
@@ -60,11 +61,11 @@ CAPABILITY_PROFILES: dict[str, CapabilityProfile] = {
         may_never=frozenset({ENTRY_TYPE_SOLUTION}),
     ),
     "board_maintenance": CapabilityProfile(
-        may_post=frozenset({ENTRY_TYPE_FINDING}),  # can post condensed findings
+        may_post=frozenset({ENTRY_TYPE_FINDING, ENTRY_TYPE_CONDENSED_FINDING}),
         may_remove=frozenset(  # can remove any non-objective/non-solution
             {ENTRY_TYPE_PLAN, ENTRY_TYPE_FINDING, ENTRY_TYPE_CRITIQUE,
              ENTRY_TYPE_REBUTTAL, ENTRY_TYPE_CONFLICT, ENTRY_TYPE_DIRECTIVE,
-             ENTRY_TYPE_ATTACHMENT, ENTRY_TYPE_ARTIFACT}
+             ENTRY_TYPE_ATTACHMENT, ENTRY_TYPE_ARTIFACT, ENTRY_TYPE_CONDENSED_FINDING}
         ),
         may_never=frozenset(),
     ),

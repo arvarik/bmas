@@ -27,6 +27,8 @@ ENTRY_TYPE_SOLUTION = "solution"        # Decider — proposed/final answer
 ENTRY_TYPE_ARTIFACT = "artifact"        # Daemon — a file the swarm produced
 ENTRY_TYPE_LEDGER = "ledger"            # Planner — the durable task ledger (facts, open questions, plan status)
 
+ENTRY_TYPE_CONDENSED_FINDING = "condensed_finding"
+
 ENTRY_TYPES: frozenset[str] = frozenset({
     ENTRY_TYPE_OBJECTIVE,
     ENTRY_TYPE_ATTACHMENT,
@@ -39,6 +41,7 @@ ENTRY_TYPES: frozenset[str] = frozenset({
     ENTRY_TYPE_SOLUTION,
     ENTRY_TYPE_ARTIFACT,
     ENTRY_TYPE_LEDGER,
+    ENTRY_TYPE_CONDENSED_FINDING,
 })
 
 # ── Board Entry Statuses (doc 04 §1) ─────────────────────────────────

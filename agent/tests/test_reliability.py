@@ -1455,3 +1455,31 @@ def test_generated_classic_response_model(case):
     else:
         with pytest.raises(ValidationError):
             ClassicProposalResponse.model_validate(case["payload"])
+
+
+@pytest.mark.parametrize("fenced", [False, True])
+def test_cleaner_envelope_preserves_exact_removals_and_summary(fenced):
+    from pathlib import Path
+    from bmas_protocol.proposals import ClassicProposalResponse
+
+    fixture = Path(__file__).resolve().parents[2] / "conformance/proposal_fixtures/cleaner.json"
+    value = json.loads(fixture.read_text())["proposal"]
+    assert ClassicProposalResponse.model_validate(value).root == value
+    raw = json.dumps(value)
+    if fenced:
+        raw = "```json\n" + raw + "\n```"
+    action, entries = api_server._result_envelope(raw)
+    assert action == "condense"
+    assert entries == value["entries"]
+    assert api_server._result_removals(raw) == value["removals"]
+
+
+def test_cleaner_generated_response_requires_removals_and_one_summary():
+    from pathlib import Path
+    from bmas_protocol.proposals import ClassicProposalResponse
+
+    fixture = Path(__file__).resolve().parents[2] / "conformance/proposal_fixtures/cleaner.json"
+    value = json.loads(fixture.read_text())["proposal"]
+    del value["removals"]
+    with pytest.raises(ValueError):
+        ClassicProposalResponse.model_validate(value)

@@ -601,6 +601,22 @@ groups:
     artifacts:
       - "test-results/behavioral-conformance-stack/**"
 
+  - id: daemon.classic-cleaner-slice
+    state: active_required
+    owner: daemon
+    purpose: >-
+      Prove complete cleaner proposals, dependency validation, atomic summary
+      and tombstone writes, abrupt process crashes at every durable boundary,
+      replay equality, legacy isolation, and the real agent parser fixture.
+      Provider-backed dispatch remains behind the strict reservation contract.
+    argv: ["python3", "-m", "pytest", "tests/test_classic_cleaner_slice.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 1200
+    tools: [python, pytest, redis-server]
+    parser: pytest_summary
+    artifacts:
+      - "test-results/classic-cleaner-slice/**"
+
   - id: daemon.classic-native-column
     state: active_required
     owner: daemon
@@ -1358,6 +1374,7 @@ profiles:
         - daemon.behavioral-conformance
         - daemon.behavioral-conformance-stack
         - daemon.classic-native-column
+        - daemon.classic-cleaner-slice
         - daemon.classic-policy-parity
         - daemon.classic-spec-compiler
         - daemon.classic-spec-routes

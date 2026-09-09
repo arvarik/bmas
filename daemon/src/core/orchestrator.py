@@ -1297,6 +1297,14 @@ class Orchestrator:
             else MODEL_PRICING
         )
 
+        if binding is not None:
+            from core.variants.classic.compiler import load_specification, specification_store
+
+            specification = await db.get_classic_specification(binding.run_id)
+            if specification is not None:
+                spec = load_specification(specification_store(), str(specification["artifact_digest"]))
+                effective_registry["cleaner"] = {**effective_registry.get("cleaner", {}),
+                                                  "enabled": spec.cleaner.enabled}
         variant = engine_class(
             gateway=gateway,
             board_store=board_store,
@@ -2131,11 +2139,18 @@ class Orchestrator:
             for item in proposed:
                 if "confidence" in item:
                     item["confidence"] = float(item["confidence"])
-            committed_entries = await variant.gateway.apply_proposal(
-                task_id=task_id, actor=activation.actor, capabilities=capabilities_for_role(activation.role),
-                proposed=proposed, turn_id=turn_id, attempt=int(native_execution["attempt"]),
-                round_no=round_no, space=space,
-            )
+            if native_proposal.get("action") == "condense":
+                committed_entries = await variant.gateway.apply_condensation(
+                    task_id=task_id, actor=activation.actor, capabilities=capabilities_for_role(activation.role),
+                    proposal=native_proposal, turn_id=turn_id, attempt=int(native_execution["attempt"]),
+                    round_no=round_no, space=space,
+                )
+            else:
+                committed_entries = await variant.gateway.apply_proposal(
+                    task_id=task_id, actor=activation.actor, capabilities=capabilities_for_role(activation.role),
+                    proposed=proposed, turn_id=turn_id, attempt=int(native_execution["attempt"]),
+                    round_no=round_no, space=space,
+                )
         if entries:
             for mutation_index, entry in enumerate(entries):
                 mutation = {
@@ -2479,6 +2494,9 @@ class Orchestrator:
         failed turn without touching the endpoint circuit.
         """
         timeout = float(payload["timeout"]) + 15.0
+        if payload.get("role") == "cleaner" and not (native_plan and native_plan.get("required") and native_plan.get("url") == url):
+            return httpx.Response(200, json={"status": "failed", "result": "Cleaner requires the native pair"},
+                                  request=httpx.Request("POST", f"{url}/execute"))
         if native_plan is None or native_plan["url"] != url:
             return await self.http.post(
                 f"{url}/execute", json=payload, headers=headers, timeout=timeout,

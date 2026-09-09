@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import database as db
 import runtime_journal as journal
+from core.failpoints import failpoint
 from core.foundation_gates import WriterDisabledError, require_writer_gates
 from core.gateway import LeaseLostError
 from core.runtime_services import AuthorityError
@@ -162,7 +163,8 @@ class NativeRunBinding:
         section = mutation.section if accepted else None
         if accepted and section is not None:
             for entry_id, body in mutation.bodies.items():
-                promote_text(self.artifacts, body, referenced_by=f"{self.run_id}:{entry_id}")
+                promote_text(self.artifacts, body, referenced_by=f"{self.run_id}:{entry_id}",
+                             cleaner=mutation.kind == "condensation")
             next_board = content_state_after(self.board, section, task_id=self.task_id)
         else:
             next_board = self.board
@@ -212,11 +214,13 @@ class NativeRunBinding:
             task_fence=self.task_fence,
         )
         try:
-            if mutation.kind == "model_proposal":
+            if mutation.kind in ("model_proposal", "condensation"):
                 import activation_service
 
                 activation = await activation_service.get_activation(str(mutation.activation_id),
                     int(mutation.proposal["activation_attempt"]))
+                if mutation.kind == "condensation":
+                    payload["budget_reference"] = str(activation["reservation_id"])
                 record = await activation_service.commit_proposal_decision(
                     run_id=self.run_id, activation_id=str(mutation.activation_id),
                     attempt=int(activation["attempt"]), decision=mutation.decision,
@@ -227,6 +231,7 @@ class NativeRunBinding:
                     decision_payload=payload,
                     projection_writer=self._projection_writer(section) if accepted else None,
                     task_fence=self.task_fence,
+                    expected_projection_version=mutation.proposal.get("expected_projection_version"),
                 )
             else:
                 record = await journal.commit_operation(
@@ -258,7 +263,12 @@ class NativeRunBinding:
                 }
                 for entry in section.get("entries") or []
             ]
+            cleaner = section.get("kind") == "condensation"
+            if cleaner:
+                failpoint("cleaner.before_summary_write")
             await db.insert_classic_board_projection_rows(connection, rows)
+            if cleaner:
+                failpoint("cleaner.after_summary_write")
             for change in section.get("status_changes") or []:
                 await db.update_classic_board_projection_status(
                     connection, run_id=run_id, entry_id=str(change["entry_id"]),
@@ -266,18 +276,27 @@ class NativeRunBinding:
                 )
             tombstones = []
             for tombstone in section.get("tombstones") or []:
+                if cleaner:
+                    failpoint("cleaner.before_removed_status_write")
                 await db.update_classic_board_projection_status(
                     connection, run_id=run_id, entry_id=str(tombstone["entry_id"]),
                     status=str(tombstone.get("status") or "removed"),
                     journal_cursor=journal_cursor, updated_at=now,
                 )
+                if cleaner:
+                    failpoint("cleaner.after_removed_status_write")
                 tombstones.append({
                     "run_id": run_id, "entry_id": str(tombstone["entry_id"]), "task_id": task_id,
                     "actor": actor, "activation_id": activation_id,
                     "reason": str(tombstone.get("reason") or ""),
                     "journal_cursor": journal_cursor, "removed_at": now,
                 })
-            await db.insert_classic_board_tombstones(connection, tombstones)
+            for tombstone in tombstones:
+                if cleaner:
+                    failpoint("cleaner.before_tombstone_write")
+                await db.insert_classic_board_tombstones(connection, [tombstone])
+                if cleaner:
+                    failpoint("cleaner.after_tombstone_write")
 
         return write
 

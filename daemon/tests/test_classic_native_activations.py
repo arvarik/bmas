@@ -44,7 +44,7 @@ def test_parser_rejects_ambiguous_or_multiple_proposals(raw):
         parse_proposal(raw, role="expert")
 
 
-async def execute_proposal(run, raw, monkeypatch, *, returned_raw=None, duplicate_delivery=False, dispatch_route=False):
+async def execute_proposal(run, raw, monkeypatch, *, returned_raw=None, duplicate_delivery=False, dispatch_route=False, role="expert"):
     protocol_keys.reset_for_tests()
     monkeypatch.setattr(edge_access, "operator_key", lambda: "operator-key")
     monkeypatch.setattr(edge_access, "node_key", lambda: "node-key")
@@ -77,7 +77,7 @@ async def execute_proposal(run, raw, monkeypatch, *, returned_raw=None, duplicat
                 body = await agent.activate(delivery["grant"], delivery["grant_digest"], execute)
             return httpx.Response(200, json=body)
 
-        request = {"model": "test-light", "context": {"board": []}}
+        request = {"model": "test-light", "context": {"board": []}, "role": role}
         reservation = None if dispatch_route else await reserve_call(run["run_id"], "activation-proposal", 1, request)
         async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
             if dispatch_route:
@@ -92,7 +92,7 @@ async def execute_proposal(run, raw, monkeypatch, *, returned_raw=None, duplicat
                 task_fence=run["context"].task_fence, reservation_id=reservation,
                 document=agent_dispatch.document_from_dict(agent.document))
         return await seal_response(run_id=run["run_id"], activation_id="activation-proposal", attempt=1,
-                                   result=outcome["result"], role="expert")
+                                   result=outcome["result"], role=role)
 
 
 @pytest.mark.asyncio

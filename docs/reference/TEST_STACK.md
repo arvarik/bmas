@@ -449,3 +449,48 @@ The tests keep native admission disabled.
 
 `mission-control/e2e/full-stack/classic-editor.spec.ts` verifies both forms through the deployed proxy and daemon.
 The editor journey runs independently from the evaluation journey.
+
+## Atomic Classic cleaner
+
+`daemon.classic-cleaner-slice` tests the complete native cleaner transaction.
+It uses `conformance/proposal_fixtures/cleaner.json` as the shared agent and daemon fixture.
+The real stack agent calls the fake provider and returns the exact summary and removals.
+The test reference executor then supplies those observed bytes through signed receipts to the daemon parser and gateway.
+This fixture does not enable production cleaner dispatch.
+
+The proposal requires one `condensed_finding`, explicit source links, and a nonempty removal list.
+The gateway validates all targets, protected entries, claim links, evidence links, retained dependencies, and board limits.
+It records one rejected activation decision when semantic validation fails.
+No board row changes on rejection.
+
+One `commit_operation` writes the summary, tombstones, checkpoint digest, trace, reservation reference, activation state, and outbox obligation.
+A journal replay restores the complete board and the condensation references.
+The summary references the tombstoned source entries as historical provenance.
+Retained active entries cannot depend on those tombstoned entries.
+The transaction checks the projection version to reject a concurrent board or evidence change.
+
+The crash matrix exits the child process without cleanup at each boundary:
+
+- Artifact stage, promotion, and reference registration.
+- Journal insert, run projection, outbox, resource writes, and commit.
+- Activation state, summary insert, each removed status, each tombstone, and lease release.
+
+Each boundary has a before and an after failpoint through `core/failpoints.py`.
+The matrix tests both removal rows separately.
+Before commit, a crash leaves the old authoritative projection.
+After commit, a crash leaves the complete new authoritative projection.
+A retry restores the compatibility cache from the journal and reconciles the reservation.
+Unreferenced staged artifacts never enter the active board.
+
+The native specification controls `cleaner.enabled`.
+The legacy pair rejects the native condensation contract and retains its frozen legacy maintenance behavior.
+Provider-backed cleaner dispatch fails closed until the strict reservation contract from the resource-control work package ships.
+Both the orchestrator and direct activation dispatch enforce this boundary.
+
+Run the complete slice with:
+
+```sh
+cd daemon && ../.venv/bin/python -m pytest tests/test_classic_cleaner_slice.py -q
+```
+
+The complete manifest profile and `classic_cleaner_atomicity` release gate require this slice.
