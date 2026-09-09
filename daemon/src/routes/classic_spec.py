@@ -15,6 +15,7 @@ from core.variants.classic.compiler import (
     ClassicSpecError,
     compile_specification,
     legacy_settings_to_fields,
+    money_text,
     specification_digest,
 )
 from core.variants.classic.editor import CompileRequest, field_schemas, published_schema
@@ -96,18 +97,21 @@ async def compile_preview(request: Request) -> dict[str, Any]:
         field = next((path for path in SCHEMA_DEFAULTS if path in str(exc)), "advanced")
         reject([{"field": field, "message": str(exc)}])
     effective = spec.model_dump(mode="json")
-    differences = {}
+    differences: dict[str, list[dict[str, Any]]] = {}
     for layer, profile in (
         ("fidelity", FIDELITY_PROFILES[spec.fidelity.profile_id]),
         ("effort", EFFORT_PROFILES[spec.effort.profile_id]),
     ):
-        differences[layer] = [
-            {"field": path, "profile": value,
-             "effective": spec.resolution[path].offered[spec.resolution[path].layer],
-             "source": spec.resolution[path].layer}
-            for path, value in profile.values.items()
-            if value != spec.resolution[path].offered[spec.resolution[path].layer]
-        ]
+        differences[layer] = []
+        for path, value in profile.values.items():
+            record = spec.resolution[path]
+            effective_value = record.offered[record.layer]
+            differs = money_text(value) != money_text(effective_value) if path == "limits.max_cost" else value != effective_value
+            if differs:
+                differences[layer].append({
+                    "field": path, "profile": value, "effective": effective_value, "source": record.layer,
+                })
+
     return {
         "specification_digest": specification_digest(spec), "specification": effective,
         "differences": differences,

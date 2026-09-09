@@ -132,3 +132,11 @@ async def test_each_published_cap_reports_its_adjustment(client, field):
     assert adjustment["requested"] == requested
     assert Decimal(str(adjustment["effective"])) == Decimal(str(maximum))
     assert adjustment["rule"] == "maximum"
+
+
+async def test_profile_differences_compare_money_values_instead_of_decimal_format(client):
+    response = await client.post("/classic/spec/compile", json={
+        "effort": "balanced", "task_overrides": {"classic": {"limits.max_cost": "0.500"}},
+    })
+    assert response.status_code == 200, response.text
+    assert "limits.max_cost" not in {item["field"] for item in response.json()["differences"]["effort"]}
