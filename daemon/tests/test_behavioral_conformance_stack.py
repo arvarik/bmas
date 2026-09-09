@@ -167,7 +167,7 @@ async def test_the_classic_native_column_passes_with_the_real_runtime(monkeypatc
     assert observed["ui_fallback"].observed_value == "native"
     assert observed["goals"].observed_value == "native"
     assert observed["seed_state"].observed_value == "recorded_only"
-    assert observed["cancellation_deadlines"].observed_value == "legacy"
+    assert observed["cancellation_deadlines"].observed_value == "native"
     assert observed["evidence_decisions"].observed_value == "legacy"
     assert observed["budget_reservations"].observed_value == "advisory_legacy"
     # The fence validation is native: the resumed run and the complete
@@ -176,18 +176,18 @@ async def test_the_classic_native_column_passes_with_the_real_runtime(monkeypatc
     assert observed["lease_fencing_restart_replay"].observed_value == "native"
     assert "resumed_answer" in observed["lease_fencing_restart_replay"].detail
     assert "resumed_runtime_rows=0" not in observed["lease_fencing_restart_replay"].detail
-    assert observed["agent_protocol_negotiation"].observed_value == "compatibility_adapter"
-    assert observed["trace_envelope"].observed_value == "compatibility_adapter"
+    assert observed["agent_protocol_negotiation"].observed_value == "native"
+    assert observed["trace_envelope"].observed_value == "native"
     # The host still dispatched the signed grants for the native pair,
     # while the runtime authored its board and its outcome itself.
-    assert observed["activation_effect_ledgers"].observed_value == "compatibility_adapter"
+    assert observed["activation_effect_ledgers"].observed_value == "native"
     assert "host_dispatched_grants=" in observed["activation_effect_ledgers"].detail
-    assert "runtime_ledger_rows=0" in observed["activation_effect_ledgers"].detail
+    assert "runtime_ledger_rows=0" not in observed["activation_effect_ledgers"].detail
     assert "runtime_authored_rows=0" not in observed["activation_effect_ledgers"].detail
 
 
 async def _assert_native_runs_are_journal_backed(task_ids) -> None:
-    """Prove the 5A values on every task the native column ran."""
+    """Prove the native board and activation chains on the real task rows."""
     import runtime_journal as journal
     from core.run_context import PolicySet
     from core.variants.classic import outcomes, projection
@@ -228,6 +228,26 @@ async def _assert_native_runs_are_journal_backed(task_ids) -> None:
         if str(task["status"]) == "completed":
             assert reason == "completed", real_id
             assert decisions, real_id
+            async with db._connect() as connection:  # noqa: SLF001
+                activations = await connection.execute_fetchall(
+                    "SELECT a.*, g.grant_id AS activation_grant_id, k.acknowledgement_id FROM activations a "
+                    "LEFT JOIN activation_grants g ON g.activation_id = a.activation_id AND g.attempt = a.attempt "
+                    "LEFT JOIN activation_acknowledgements k ON k.activation_grant_id = g.grant_id "
+                    "AND k.decision = 'accepted' AND k.late_observation = 0 "
+                    "WHERE a.run_id = ?", (run_id,),
+                )
+                effects = await connection.execute_fetchall(
+                    "SELECT a.effect_id, a.raw_response_artifact_digest, COUNT(r.receipt_id) AS receipts "
+                    "FROM effect_attempts a LEFT JOIN attempt_receipts r ON r.effect_id = a.effect_id "
+                    "WHERE a.run_id = ? GROUP BY a.effect_id", (run_id,),
+                )
+            assert activations and effects, real_id
+            assert len({row["reservation_id"] for row in activations}) == len(activations), real_id
+            for activation in activations:
+                for field in ("lease_id", "request_digest", "context_view_digest", "activation_grant_id",
+                              "acknowledgement_id", "execution_envelope_digest", "raw_result_artifact_digest"):
+                    assert activation[field], (real_id, activation["activation_id"], field)
+            assert all(row["receipts"] == 2 and row["raw_response_artifact_digest"] for row in effects), real_id
         # A replay from cursor zero rebuilds the board projection digest
         # of the last accepted decision and equals the live rows.
         accepted = [record for record in decisions if record.payload["decision"] == "accepted"]
@@ -249,4 +269,3 @@ async def _assert_native_runs_are_journal_backed(task_ids) -> None:
             checked += 1
     assert checked, "no native task stored a verified checkpoint"
     await journal.verify_durable_projections()
-

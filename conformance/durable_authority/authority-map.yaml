@@ -966,7 +966,7 @@ sqlite_tables:
       - { name: released, owner: daemon.activation-authority, derived: false }
   - table: activations
     authority: daemon.activation-authority
-    purpose: "One durable ledger row per activation attempt."
+    purpose: "One durable ledger row per activation attempt, including native daemon model calls."
     writers:
       - activation_service
     fields:
@@ -1002,7 +1002,7 @@ sqlite_tables:
       - { name: journal_cursor, owner: daemon.activation-authority, derived: false }
   - table: attempt_receipts
     authority: daemon.effect-authority
-    purpose: "Signed agent attempt receipts with monotonic sequence."
+    purpose: "Signed remote-agent and local-adapter attempt receipts with monotonic sequence."
     writers:
       - effect_service
     fields:
@@ -1102,7 +1102,7 @@ sqlite_tables:
       - { name: created_at, owner: daemon.effect-authority, derived: false }
   - table: effect_operations
     authority: daemon.effect-authority
-    purpose: "One logical external action with its idempotency scope."
+    purpose: "One logical external action, including legacy model observations, with its idempotency scope."
     writers:
       - effect_service
     fields:

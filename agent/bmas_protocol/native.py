@@ -14,6 +14,7 @@ receipts, so the daemon observes each provider call.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -121,7 +122,7 @@ def capability_document(agent_id: str, key_id: str) -> dict[str, Any]:
         "supported_activation_schemas": ["1"],
         "supported_dispatch_schemas": ["1"],
         "supported_acknowledgement_schemas": ["1"],
-        "supported_proposal_schemas": ["1"],
+        "supported_proposal_schemas": ["1", "classic-proposal/1"],
         "supported_envelope_schemas": ["1"],
         "nested_model_receipts": True,
         # The starter execution path calls no tool. A tool call, when a
@@ -311,6 +312,7 @@ class NativeProtocol:
         self._daemon_keys: dict[str, bytes] = self._load_daemon_key_cache()
         self._registered = False
         self._lock = asyncio.Lock()
+        self._execution_locks: dict[str, asyncio.Lock] = {}
 
     # ── Keys ─────────────────────────────────────────────────────────
 
@@ -415,6 +417,16 @@ class NativeProtocol:
         }
 
     async def activate(
+        self, grant: dict[str, Any], grant_digest: str,
+        execute: Callable[[EffectContext], Awaitable[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        """Serialize duplicate delivery of one grant without blocking other grants."""
+        grant_id = str(grant.get("activation_grant_id", ""))
+        lock = self._execution_locks.setdefault(grant_id, asyncio.Lock())
+        async with lock:
+            return await self._activate_once(grant, grant_digest, execute)
+
+    async def _activate_once(
         self,
         grant: dict[str, Any],
         grant_digest: str,
@@ -444,6 +456,8 @@ class NativeProtocol:
                 }
                 self.store.save(grant_id, record)
         acknowledgement = record["acknowledgement"]
+        if record["grant"] != grant or record["grant_digest"] != grant_digest:
+            raise GrantRejectedError("grant_conflict", "The stored grant differs from this delivery")
         if record.get("result") is not None:
             return {"acknowledgement": acknowledgement, "result": record["result"], "replayed": True}
         outcome = await self.client.post_acknowledgement(canonical_bytes(acknowledgement))
@@ -451,6 +465,10 @@ class NativeProtocol:
         if record["decision"] != "accepted" or status not in ("accepted", "duplicate"):
             return {"acknowledgement": acknowledgement, "result": None, "replayed": False, "daemon_outcome": outcome}
         context = EffectContext(protocol=self, grant=grant)
+        if record.get("execution_started_at"):
+            raise NativeProtocolError("The earlier execution outcome is unknown and requires recovery")
+        record["execution_started_at"] = utc_now()
+        self.store.save(grant_id, record)
         result = await execute(context)
         record["result"] = result
         record["completed_at"] = utc_now()
@@ -619,4 +637,8 @@ class NativeProtocol:
             "key_id": self.keys.key_id,
         }
         signed = self.sign(fields, ATTEMPT_RECEIPT_DOMAIN)
+        if raw_response is not None:
+            return await self.client.post_receipt(canonical_bytes({
+                "receipt": signed, "raw_response_base64": base64.b64encode(raw_response).decode("ascii"),
+            }))
         return await self.client.post_receipt(canonical_bytes(signed))

@@ -71,15 +71,14 @@ def test_the_classic_native_record_declares_the_ladder_start(directory):
         "recovery_reader_retained",
     ):
         assert record.capabilities[capability] == "native", capability
-    # The host adapter still serves the ledgers, the outbox, the
-    # protocol, the acknowledgement, the receipts, and the envelope.
+    # Native dispatch owns the activation and effect receipt chain.
     for capability in (
         "durable_activation_ledger", "activation_dispatch_outbox", "agent_protocol",
         "signed_activation_acknowledgement", "nested_receipts", "trusted_envelope_creator",
-        "benchmark_scoring",
+        "cancellation_signal",
     ):
-        assert record.capabilities[capability] == "compatibility_adapter", capability
-    assert record.capabilities["cancellation_signal"] == "legacy"
+        assert record.capabilities[capability] == "native", capability
+    assert record.capabilities["benchmark_scoring"] == "compatibility_adapter"
     assert record.capabilities["typed_evidence_index"] == "legacy"
     assert record.capabilities["budget_reservation"] == "advisory_legacy"
     assert record.capabilities["applied_seed_evidence"] == "recorded_only"
@@ -88,12 +87,11 @@ def test_the_classic_native_record_declares_the_ladder_start(directory):
         assert record.capabilities[capability] == legacy.capabilities[capability] == "compatibility_projection"
     assert legacy.capabilities["immutable_policy_set"] == "compatibility_record"
     assert legacy.capabilities["common_event_envelope"] == "compatibility_projection"
-    # The pair speaks the legacy agent contract through the host adapter.
-    assert record.agent_protocol_version == "1"
-    assert record.agent_receipt_version is None
-    assert record.effect_schema_version is None
-    assert not record.nested_effect_receipts
-    assert record.schema_versions == legacy.schema_versions
+    assert record.agent_protocol_version == "2"
+    assert record.agent_receipt_version == "1"
+    assert record.effect_schema_version == "1"
+    assert record.nested_effect_receipts
+    assert set(record.schema_versions) >= set(legacy.schema_versions)
     assert record.ui_adapter == "classic_native"
 
 
@@ -257,4 +255,3 @@ def test_reference_scoring_evidence_replays_deterministically():
     assert first["result_bytes"] == second["result_bytes"]
     # The scorer returns a versioned result document.
     assert b'"contract_version":"1.0.0"' in first["result_bytes"]
-

@@ -9,6 +9,9 @@ to a qualified agent and reads the durable activation state.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import json
 from typing import Any
 
@@ -19,6 +22,7 @@ from pydantic import BaseModel, Field
 import activation_service as activations
 import agent_dispatch
 import agent_protocol as protocol
+import budget_service as budget
 import database as db
 import edge_access
 import effect_service as effects
@@ -227,9 +231,21 @@ async def post_receipt(request: Request) -> dict[str, Any]:
     text = await _raw_body(request)
     registry = await protocol_keys.registry()
     try:
+        decoded = json.loads(text)
+        raw = None
+        if "receipt" in decoded:
+            raw = base64.b64decode(decoded["raw_response_base64"], validate=True)
+            text = protocol.canonicalize(decoded["receipt"])
         receipt = protocol.parse_attempt_receipt(text)
-        stored = await effects.record_attempt_receipt(receipt=receipt, key_registry=registry)
-    except (protocol.AgentProtocolError, SigningError, effects.EffectServiceError) as exc:
+        if raw is not None and hashlib.sha256(raw).hexdigest() != receipt.raw_response_digest:
+            raise protocol.ReceiptError("The raw response differs from its signed receipt")
+        stored = await effects.record_attempt_receipt(receipt=receipt, key_registry=registry, authorize_transport=True)
+        if raw is not None and receipt.stage == "response_observed":
+            attempt = await effects.get_attempt(receipt.effect_id)
+            await effects.observe_response(run_id=str(attempt["run_id"]), effect_id=receipt.effect_id,
+                raw_response=raw, artifact_store=protocol_keys.artifact_store(), outcome="response_received")
+    except (protocol.AgentProtocolError, SigningError, effects.EffectServiceError,
+            ValueError, KeyError, TypeError, binascii.Error) as exc:
         raise HTTPException(status_code=422, detail=f"{type(exc).__name__}: {exc}") from exc
     return _plain(stored)
 
@@ -363,15 +379,27 @@ async def dispatch(body: DispatchRequest, request: Request) -> dict[str, Any]:
     http: httpx.AsyncClient | None = getattr(request.app.state, "health_client", None)
     client = http or httpx.AsyncClient(timeout=body.timeout_s + 15.0)
     try:
-        return await agent_dispatch.dispatch_activation(
+        from core.variants.classic.activations import seal_response
+        from core.variants.classic.proposals import proposal_request
+
+        identity = await activations.run_identity(body.run_id)
+        native_run = identity["runtime_id"] == "classic" and identity["runtime_contract_version"] == "2"
+        activation_id = agent_dispatch.new_activation_id(body.activation_id)
+        payload = proposal_request(body.request, activation_id=activation_id, attempt=body.attempt) if native_run else body.request
+        outcome = await agent_dispatch.dispatch_activation(
             client, agent_url=body.agent_url, run_id=body.run_id, task_id=body.task_id,
-            activation_id=agent_dispatch.new_activation_id(body.activation_id),
-            request=body.request, task_fence=str(control["task_fence"]), attempt=body.attempt,
+            activation_id=activation_id,
+            request=payload, task_fence=str(control["task_fence"]), attempt=body.attempt,
             reservation_id=body.reservation_id, timeout_s=body.timeout_s,
         )
+        if native_run:
+            outcome["result"] = await seal_response(run_id=body.run_id, activation_id=activation_id,
+                attempt=body.attempt, result=dict(outcome.get("result") or {}), role=str(payload.get("role") or "expert"))
+        return outcome
     except agent_dispatch.DispatchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except (activations.ActivationServiceError, protocol.AgentProtocolError, SigningError) as exc:
+    except (activations.ActivationServiceError, protocol.AgentProtocolError, SigningError,
+            budget.BudgetError, effects.EffectServiceError) as exc:
         raise HTTPException(status_code=422, detail=f"{type(exc).__name__}: {exc}") from exc
     finally:
         if http is None:

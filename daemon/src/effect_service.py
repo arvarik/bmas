@@ -243,6 +243,12 @@ async def _journal_effect_transition(
     ) -> None:
         row = await _load_attempt(connection, effect_id)
         validate_effect_transition(str(row["state"]), target_state)
+        if target_state == "approved" or (target_state == "dispatch_queued" and row["state"] == "approved"):
+            control = await (await connection.execute(
+                "SELECT cancellation_state FROM run_controls WHERE run_id = ?", (run_id,),
+            )).fetchone()
+            if control is not None and str(control["cancellation_state"]) != "active":
+                raise EffectDispatchError("cancellation")
         if guard is not None:
             await guard(connection, row, now)
         await connection.execute(
@@ -256,6 +262,8 @@ async def _journal_effect_transition(
     attempt = await get_attempt(effect_id)
     operation = await get_operation(str(attempt["effect_operation_id"]))
     payload = {
+        "policy_set_digest": identity["policy_set_digest"],
+        "specification_digest": identity["specification_digest"],
         "effect_id": effect_id,
         "effect_state": target_state,
         "effect_attempt_number": int(attempt["effect_attempt_number"]),
@@ -274,6 +282,7 @@ async def _journal_effect_transition(
             or f"effect-{effect_id}-{target_state}-{uuid.uuid4()}",
             task_fence=task_fence,
             tenant_id=identity["tenant_id"],
+            authority_type="runtime" if identity["runtime_id"] == "classic" and identity["runtime_contract_version"] == "2" else "host",
         ),
         database_time=database_time,
         extra_writes=extra,
@@ -281,6 +290,12 @@ async def _journal_effect_transition(
 
 
 # ── Intent, approval, and dispatch queuing ───────────────────────────
+
+
+async def _require_legacy_observation(run_id: str) -> None:
+    identity = await run_identity(run_id)
+    if identity["runtime_contract_version"] != "1":
+        raise EffectServiceError("Observe-only effects require a legacy runtime contract")
 
 
 async def create_effect_intent(
@@ -427,6 +442,8 @@ async def create_effect_intent(
             runtime_id=identity["runtime_id"],
             runtime_contract_version=identity["runtime_contract_version"],
             payload={
+                "policy_set_digest": identity["policy_set_digest"],
+                "specification_digest": identity["specification_digest"],
                 "effect_id": effect_id,
                 "effect_state": "intent",
                 "effect_operation_id": operation_id,
@@ -435,6 +452,7 @@ async def create_effect_intent(
             idempotency_token=f"effect-intent-{effect_id}",
             task_fence=task_fence,
             tenant_id=identity["tenant_id"],
+            authority_type="runtime" if identity["runtime_id"] == "classic" and identity["runtime_contract_version"] == "2" else "host",
         ),
         database_time=database_time,
         extra_writes=extra,
@@ -457,11 +475,14 @@ async def approve_effect(
     reservation_validator: Callable[[str], Awaitable[bool]] | None = None,
     task_fence: str | None = None,
     database_time: str | None = None,
+    observe_only: bool = False,
 ) -> journal.JournalRecord:
     """Approve one intent after the policy and budget checks pass."""
     attempt = await get_attempt(effect_id)
     validator = reservation_validator or budget_service.reservation_is_valid
-    if not await validator(str(attempt["reservation_id"])):
+    if observe_only:
+        await _require_legacy_observation(run_id)
+    if not observe_only and not await validator(str(attempt["reservation_id"])):
         raise EffectServiceError(
             "Approval requires one valid budget reservation"
         )
@@ -648,6 +669,7 @@ async def claim_effect_dispatch(
     reservation_validator: Callable[[str], Awaitable[bool]] | None = None,
     task_fence: str | None = None,
     database_time: str | None = None,
+    observe_only: bool = False,
 ) -> dict[str, Any]:
     """Claim one queued effect dispatch and store its signed grant.
 
@@ -661,6 +683,8 @@ async def claim_effect_dispatch(
     attempt = await get_attempt(effect_id)
     operation_row = await get_operation(str(attempt["effect_operation_id"]))
     activation = await get_activation_for_operation(operation_row)
+    if observe_only:
+        await _require_legacy_observation(run_id)
 
     async with db._connect() as connection:  # noqa: SLF001
         now = await db._control_now(connection, database_time)  # noqa: SLF001
@@ -720,6 +744,8 @@ async def claim_effect_dispatch(
         )
         if str(dispatch["dispatch_state"]) != "queued":
             raise EffectDispatchError("dispatch_row")
+        if (str(dispatch["dispatch_policy"]) == "observe_only") != observe_only:
+            raise EffectDispatchError("dispatch_policy")
         if expected_target is not None and (
             dispatch["target"] != expected_target
         ):
@@ -744,7 +770,7 @@ async def claim_effect_dispatch(
             str(operation_row["activation_id"]),
             int(operation_row["activation_attempt"]),
         )
-        if str(live_activation["state"]) != "dispatched":
+        if not observe_only and str(live_activation["state"]) != "dispatched":
             raise EffectDispatchError("activation_state")
         if str(control["task_fence"]) != str(
             live_activation["task_fence"] or "",
@@ -759,7 +785,7 @@ async def claim_effect_dispatch(
             str(lease["expires_at"]) <= now_txn
         ):
             raise EffectDispatchError("activation_fence")
-        if not await _reservation_valid_in_connection(
+        if not observe_only and not await _reservation_valid_in_connection(
             connection, str(row["reservation_id"]),
         ):
             raise EffectDispatchError("reservation")
@@ -936,7 +962,7 @@ async def validate_before_transport(
         )
         if str(control["task_fence"]) != str(activation["task_fence"] or ""):
             raise EffectDispatchError("task_fence")
-        if not await _reservation_valid_in_connection(
+        if str(dispatch["dispatch_policy"]) != "observe_only" and not await _reservation_valid_in_connection(
             connection, str(attempt["reservation_id"]),
         ):
             raise EffectDispatchError("reservation")
@@ -949,6 +975,7 @@ async def record_transport_start(
     database_time: str | None = None,
 ) -> bool:
     """Persist the durable transport-start marker for one dispatch."""
+    await validate_before_transport(dispatch_ref=dispatch_ref, dispatcher=dispatcher, database_time=database_time)
     failpoint("effect.before_transport_start_marker")
     async with db._connect() as connection:  # noqa: SLF001
         now = await db._control_now(connection, database_time)  # noqa: SLF001
@@ -956,8 +983,11 @@ async def record_transport_start(
             "UPDATE effect_dispatch_outbox SET transport_started_at = ? "
             "WHERE dispatch_ref = ? AND claim_owner = ? "
             "AND dispatch_state = 'claimed' "
-            "AND transport_started_at IS NULL",
-            (now, dispatch_ref, dispatcher),
+            "AND transport_started_at IS NULL AND EXISTS ("
+            "SELECT 1 FROM run_controls c WHERE c.run_id = effect_dispatch_outbox.run_id "
+            "AND c.cancellation_state = 'active' AND c.deadline_expired = 0 "
+            "AND (c.deadline_at IS NULL OR c.deadline_at > ?))",
+            (now, dispatch_ref, dispatcher, now),
         )
         await connection.commit()
         started = cursor.rowcount == 1
@@ -1071,6 +1101,7 @@ async def record_attempt_receipt(
     key_registry: KeyRegistry,
     tenant_id: str = "tenant-default",
     database_time: str | None = None,
+    authorize_transport: bool = False,
 ) -> dict[str, Any]:
     """Verify and store one signed attempt receipt.
 
@@ -1101,6 +1132,10 @@ async def record_attempt_receipt(
             str(attempt["request_digest"]),
         ),
         ("provider", receipt.provider, grant_row["provider"]),
+        ("model", receipt.model, grant_row["model"]),
+        ("tool", receipt.tool, grant_row["tool"]),
+        ("operation", receipt.operation, grant_row["operation"]),
+        ("protocol", receipt.protocol_version, grant_row["protocol_version"]),
         ("agent", receipt.agent_id, str(grant_row["agent_id"])),
         (
             "activation",
@@ -1116,6 +1151,9 @@ async def record_attempt_receipt(
     for name, observed, expected in bindings:
         if observed != expected:
             raise ReceiptError(f"The receipt binds a different {name}")
+
+    if authorize_transport and receipt.stage == "transport_starting":
+        await validate_before_transport(dispatch_ref=receipt.dispatch_ref, dispatcher=str(grant_row["dispatcher"]))
 
     async with db._connect() as connection:  # noqa: SLF001
         now = await db._control_now(connection, database_time)  # noqa: SLF001
@@ -1193,6 +1231,14 @@ async def record_attempt_receipt(
                 ),
             )
             if receipt.stage == "transport_starting":
+                if authorize_transport:
+                    live = await connection.execute(
+                        "SELECT 1 FROM run_controls WHERE run_id = ? AND cancellation_state = 'active' "
+                        "AND deadline_expired = 0 AND (deadline_at IS NULL OR deadline_at > ?)",
+                        (attempt["run_id"], now),
+                    )
+                    if await live.fetchone() is None:
+                        raise EffectDispatchError("cancellation_or_deadline")
                 await connection.execute(
                     "UPDATE effect_dispatch_outbox SET "
                     "transport_started_at = COALESCE("

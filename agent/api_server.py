@@ -50,7 +50,7 @@ if EXECUTION_BACKEND not in {"auto", "litellm", "hermes"}:
 
 # ── Phase 1: Runs API configuration ───────────────────────────────────────
 # Set HERMES_GATEWAY_URL to enable the Runs API path.
-# If unset, falls back to hermes -z subprocess (doc 06 §8).
+# The Runs API is the only Hermes execution path.
 HERMES_GATEWAY_URL = os.getenv("HERMES_GATEWAY_URL")  # e.g. http://localhost:8642
 HERMES_GATEWAY_KEY = os.getenv("HERMES_GATEWAY_KEY", os.getenv("API_SERVER_KEY", ""))
 DAEMON_INGEST_URL = os.getenv("DAEMON_INGEST_URL")    # e.g. http://192.168.4.240:9000
@@ -58,6 +58,7 @@ BMAS_NODE_KEY = os.getenv("BMAS_NODE_KEY", "")
 BMAS_EXECUTE_KEY = os.getenv("BMAS_EXECUTE_KEY", "")
 
 from bmas_protocol import native
+from bmas_protocol.proposals import ClassicProposalResponse
 
 # ── Task output workspace (artifacts) ─────────────────────────────────────
 # The Hermes Runs API has no per-run working directory. The adapter gives
@@ -259,8 +260,6 @@ def _selected_execution_backend() -> str:
         return "litellm"
     if HERMES_GATEWAY_URL:
         return "hermes-runs-api"
-    if Path(HERMES_BIN).exists():
-        return "hermes-cli"
     return "unavailable"
 
 
@@ -1140,51 +1139,17 @@ class LogEmitter:
             logger.warning(f"Log ingest failed: {e}")
 
 
-async def _post_logs_oneshot(
-    task_id: str, role: str, turn_id: str, request_id: str, records: list[tuple],
-) -> None:
-    """Post a batch of (message, level, fields) log records with a fresh client.
-
-    Used by the subprocess fallback path where no long-lived client exists.
-    Best-effort — never raises.
-    """
-    if not (DAEMON_INGEST_URL and BMAS_NODE_KEY) or not records:
-        return
-    payload = [
-        _bound_log_record({
-            "agent_role": role,
-            "level": level,
-            "message": message,
-            "node": NODE_ID,
-            "turn_id": turn_id,
-            "request_id": request_id,
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "fields": {"node": NODE_ID, "turn_id": turn_id, **(fields or {})},
-        })
-        for (message, level, fields) in records
-    ]
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(
-                f"{DAEMON_INGEST_URL}/ingest/logs/{task_id}",
-                json=payload,
-                headers={"Authorization": f"Bearer {BMAS_NODE_KEY}"},
-            )
-    except Exception as e:
-        logger.warning(f"One-shot log ingest failed: {e}")
-
-
 # ── Lifecycle ──────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Verify Hermes binary exists on startup; check Runs API availability."""
+    """Check the configured model backend and Runs API availability."""
     has_runs_api = bool(HERMES_GATEWAY_URL)
     backend = _selected_execution_backend()
 
     if backend == "unavailable":
         logger.error(
-            f"Neither Hermes binary ({HERMES_BIN}) nor HERMES_GATEWAY_URL is available"
+            "HERMES_GATEWAY_URL is required for the Hermes execution backend"
         )
         raise RuntimeError("No execution backend configured")
 
@@ -1374,6 +1339,14 @@ async def _run_via_litellm(
         effect_handle = None
         try:
             request_body = {"model": model, "messages": messages}
+            proposal_role = (context or {}).get("classic_proposal_role")
+            if proposal_role:
+                schema = ClassicProposalResponse.model_json_schema()
+                schema = {**schema, "oneOf": [item for item in schema["oneOf"]
+                    if item["properties"]["role"]["const"] == proposal_role]}
+                request_body["response_format"] = {"type": "json_schema", "json_schema": {
+                    "name": "classic_proposal", "schema": schema, "strict": True,
+                }}
             if effect_context is not None:
                 # A native activation runs every model call under one
                 # daemon-issued effect grant and reports signed receipts.
@@ -1392,7 +1365,7 @@ async def _run_via_litellm(
             if effect_handle is not None:
                 await effect_context.protocol.receipt(
                     effect_handle, stage=native.STAGE_RESPONSE_OBSERVED,
-                    usage=usage, raw_response=response.content,
+                    usage=usage, raw_response=result.encode("utf-8"),
                 )
             await emitter.emit(
                 translate(
@@ -1463,6 +1436,7 @@ async def _run_via_api(
         (status, result_text, usage_dict, trace_count, run_id)
     """
     # Build the run input
+    deadline = asyncio.get_running_loop().time() + timeout
     input_text = description
     prompt_context = _context_for_prompt(context)
     if prompt_context:
@@ -1486,6 +1460,15 @@ async def _run_via_api(
     instructions = (role_prompt or "").rstrip()
     if outputs_dir is not None:
         instructions = f"{instructions}\n\n{_output_instructions(outputs_dir)}".strip()
+        attachments = (context or {}).get("attachments") or []
+        if attachments:
+            try:
+                await asyncio.wait_for(_stage_attachments(task_id=task_id, attachments=attachments,
+                    workspace=outputs_dir.parent, request_id=request_id),
+                    timeout=max(0.0, deadline - asyncio.get_running_loop().time()))
+            except TimeoutError:
+                return TaskStatus.timeout, "Attachment staging timed out", None, 0, None
+            instructions += f"\nRead the uploaded files from: {outputs_dir.parent / 'inputs'}\n"
     if instructions:
         run_payload["instructions"] = instructions
 
@@ -1501,7 +1484,6 @@ async def _run_via_api(
         write=10.0,
         pool=10.0,
     )
-    deadline = asyncio.get_running_loop().time() + timeout
     async with httpx.AsyncClient(timeout=client_timeout) as client:
         headers = {}
         if HERMES_GATEWAY_KEY:
@@ -1966,7 +1948,7 @@ async def _run_via_api(
                 await effect_context.protocol.receipt(
                     hermes_effect, stage=native.STAGE_RESPONSE_OBSERVED,
                     usage=final_usage,
-                    raw_response=(final_output or "").encode("utf-8"),
+                    raw_response=(final_output or "").encode("utf-8") if saw_terminal else None,
                     transport_observation=None if status == TaskStatus.completed else str(final_output)[:500],
                 )
         return status, final_output, final_usage, emitter.trace_count, run_id
@@ -2003,317 +1985,6 @@ async def _stop_remote_run(
     return False
 
 
-# ── Core Execution: hermes -z Fallback (doc 06 §8) ────────────────────────
-
-async def _emit_cli_traces(
-    task_id: str,
-    turn_id: str,
-    role: str,
-    description: str,
-    status: TaskStatus,
-    output: str,
-    round_no: int,
-) -> int:
-    """Queue coarse CLI traces through the same durable trace path."""
-    if not (DAEMON_INGEST_URL and BMAS_NODE_KEY and task_id and turn_id):
-        return 0
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        emitter = TraceEmitter(client, task_id, turn_id)
-        traces = [{
-            "trace_id": f"trace-{turn_id}",
-            "task_id": task_id,
-            "turn_id": turn_id,
-            "seq": 0,
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "role": role,
-            "node": NODE_ID,
-            "type": "turn_start",
-            "data": {
-                "objective": description[:200],
-                "phase": "execute",
-                "round": round_no,
-            },
-            "tokens": {"in": 0, "out": 0},
-            "cost_usd": 0.0,
-        }]
-        if status == TaskStatus.completed:
-            traces.extend([
-                {
-                    "trace_id": f"trace-{turn_id}",
-                    "task_id": task_id,
-                    "turn_id": turn_id,
-                    "seq": 1,
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "role": role,
-                    "node": NODE_ID,
-                    "type": "reasoning",
-                    "data": {"text": output},
-                    "tokens": {"in": 0, "out": 0},
-                    "cost_usd": 0.0,
-                },
-                {
-                    "trace_id": f"trace-{turn_id}",
-                    "task_id": task_id,
-                    "turn_id": turn_id,
-                    "seq": 2,
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "role": role,
-                    "node": NODE_ID,
-                    "type": "final",
-                    "data": {"summary": output, "usage": None},
-                    "tokens": {"in": 0, "out": 0},
-                    "cost_usd": 0.0,
-                },
-            ])
-        else:
-            traces.append({
-                "trace_id": f"trace-{turn_id}",
-                "task_id": task_id,
-                "turn_id": turn_id,
-                "seq": 1,
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "role": role,
-                "node": NODE_ID,
-                "type": "error",
-                "data": {"message": output, "status": status.value},
-                "tokens": {"in": 0, "out": 0},
-                "cost_usd": 0.0,
-            })
-        for trace in traces:
-            await emitter.emit(trace)
-        await emitter.flush_all(delivery_timeout=0)
-        return emitter.trace_count
-
-
-async def _run_hermes_inner(
-    description: str,
-    role_prompt: Optional[str],
-    context: Optional[dict],
-    timeout: int,
-    request_id: str,
-    task_id: str = "",
-    turn_id: str = "",
-    role: str = "agent",
-    profile: Optional[str] = None,
-    model: str = LITELLM_MODEL,
-) -> tuple[TaskStatus, str, Optional[dict], int, Optional[str]]:
-    """Execute a task via `hermes -z` in a temporary workspace directory.
-
-    Legacy fallback path (doc 06 §8). Emits a single synthetic trace
-    (turn_start → final with the full stdout as one reasoning block,
-    usage unknown).
-
-    Returns:
-        (status, result_text, usage_dict, trace_count, run_id)
-    """
-    workspace = Path(tempfile.mkdtemp(prefix=f"bmas-{request_id}-"))
-
-    try:
-        # Write persona as AGENTS.md (Hermes auto-discovers this file)
-        if role_prompt:
-            agents_content = role_prompt
-            if context:
-                # Exclude attachments from AGENTS.md context (they're staged as files)
-                ctx_for_md = {k: v for k, v in context.items() if k != "attachments"}
-                if ctx_for_md:
-                    agents_content += (
-                        f"\n\n## Blackboard Context\n"
-                        f"```json\n{json.dumps(ctx_for_md, indent=2)}\n```"
-                    )
-            (workspace / "AGENTS.md").write_text(agents_content)
-
-        # Stage uploaded file attachments into workspace (doc 17 §5)
-        attachments = (context or {}).get("attachments", []) if context else []
-        if attachments and DAEMON_INGEST_URL:
-            await _stage_attachments(
-                task_id=task_id or request_id,
-                attachments=attachments,
-                workspace=workspace,
-                request_id=request_id,
-            )
-
-        # Build the hermes command
-        # Phase 3a: prepend --profile <role> for role-scoped SOUL/toolset
-        # isolation (doc 12 §2.5). When profile is None, uses the default
-        # Hermes profile (backward compatible).
-        cmd = [
-            HERMES_BIN,
-            *(["-p", profile] if profile else []),
-            "-z", description,
-            "--model", model,
-        ]
-
-        logger.info(
-            f"[{request_id}] Executing hermes -z (fallback) | "
-            f"model={model} profile={profile or 'default'} "
-            f"timeout={timeout}s workspace={workspace}"
-        )
-
-        effect_context = native.current_effect_context()
-        cli_effect: native.EffectHandle | None = None
-        if effect_context is not None:
-            cli_effect = await effect_context.protocol.open_provider_effect(
-                effect_context, provider="hermes", target="hermes-cli",
-                operation="run", model=model,
-                request={"argv": [str(part) for part in cmd], "description": description},
-            )
-
-        # Run as async subprocess with timeout
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(workspace),
-            env={
-                **os.environ,
-                "HOME": os.environ.get("HOME", "/root"),
-                "PATH": f"/usr/local/bin:{os.environ.get('PATH', '')}",
-            },
-        )
-
-        await _post_logs_oneshot(task_id, role, turn_id, request_id, [
-            (f"Executing (fallback) | model={model} "
-             f"profile={profile or 'default'} timeout={timeout}s",
-             "info", {"event": "run_submit", "model": model,
-                      "profile": profile or "default",
-                      "objective": description[:500], "mode": "hermes-z"}),
-        ])
-
-        try:
-            stdout, stderr = await proc.communicate()
-        except asyncio.CancelledError:
-            proc.kill()
-            await proc.wait()
-            logger.warning(f"[{request_id}] Task cancelled by the daemon")
-            raise
-
-        output = stdout.decode("utf-8", errors="replace").strip()
-        errors = stderr.decode("utf-8", errors="replace").strip()
-
-        if proc.returncode != 0:
-            logger.error(
-                f"[{request_id}] hermes exited with code {proc.returncode} | "
-                f"stderr={errors[:500]}"
-            )
-            await _post_logs_oneshot(task_id, role, turn_id, request_id, [
-                (f"Run failed | exit code {proc.returncode}", "error",
-                 {"event": "run_error", "exit_code": proc.returncode, "stderr": errors}),
-            ])
-            error_output = errors or f"Exit code {proc.returncode}"
-            trace_count = await _emit_cli_traces(
-                task_id,
-                turn_id,
-                role,
-                description,
-                TaskStatus.failed,
-                error_output,
-                int((context or {}).get("round", 1) or 1),
-            )
-            if cli_effect is not None:
-                with contextlib.suppress(Exception):
-                    await effect_context.protocol.receipt(
-                        cli_effect, stage=native.STAGE_RESPONSE_OBSERVED,
-                        transport_observation=f"exit_code_{proc.returncode}",
-                    )
-            return TaskStatus.failed, error_output, None, trace_count, None
-
-        # Emit synthetic traces (doc 06 §8: coarse trace rather than nothing)
-        trace_count = await _emit_cli_traces(
-            task_id,
-            turn_id,
-            role,
-            description,
-            TaskStatus.completed,
-            output,
-            int((context or {}).get("round", 1) or 1),
-        )
-
-        logger.info(f"[{request_id}] Task completed (fallback) | output_len={len(output)}")
-        await _post_logs_oneshot(task_id, role, turn_id, request_id, [
-            (f"Run completed | {len(output)} chars", "info",
-             {"event": "run_completed", "status": "completed",
-              "output": output, "output_chars": len(output)}),
-        ])
-
-        # Sync any files hermes created in outputs/ back to daemon (doc 17 §6)
-        outputs_dir = workspace / "outputs"
-        if outputs_dir.is_dir() and DAEMON_INGEST_URL:
-            await _sync_artifacts(
-                task_id=task_id or request_id,
-                turn_id=turn_id or request_id,
-                author=role,
-                outputs_dir=outputs_dir,
-                request_id=request_id,
-            )
-
-        # usage is null under the legacy path (doc 06 §3.1 note)
-        if cli_effect is not None:
-            with contextlib.suppress(Exception):
-                await effect_context.protocol.receipt(
-                    cli_effect, stage=native.STAGE_RESPONSE_OBSERVED,
-                    raw_response=output.encode("utf-8"),
-                )
-        return TaskStatus.completed, output, None, trace_count, None
-
-    finally:
-        # Always clean up the temporary workspace
-        shutil.rmtree(workspace, ignore_errors=True)
-
-
-async def _run_hermes(
-    description: str,
-    role_prompt: Optional[str],
-    context: Optional[dict],
-    timeout: int,
-    request_id: str,
-    task_id: str = "",
-    turn_id: str = "",
-    role: str = "agent",
-    profile: Optional[str] = None,
-    model: str = LITELLM_MODEL,
-) -> tuple[TaskStatus, str, Optional[dict], int, Optional[str]]:
-    """Run the complete CLI operation under one request deadline."""
-    try:
-        async with asyncio.timeout(timeout):
-            return await _run_hermes_inner(
-                description,
-                role_prompt,
-                context,
-                timeout,
-                request_id,
-                task_id,
-                turn_id,
-                role,
-                profile,
-                model,
-            )
-    except TimeoutError:
-        output = f"Task timed out after {timeout}s"
-        trace_count = await _emit_cli_traces(
-            task_id,
-            turn_id,
-            role,
-            description,
-            TaskStatus.timeout,
-            output,
-            int((context or {}).get("round", 1) or 1),
-        )
-        return TaskStatus.timeout, output, None, trace_count, None
-    except asyncio.CancelledError:
-        await asyncio.shield(_emit_cli_traces(
-            task_id,
-            turn_id,
-            role,
-            description,
-            TaskStatus.failed,
-            "Task cancelled by the daemon",
-            int((context or {}).get("round", 1) or 1),
-        ))
-        raise
-
-
-# ── File Staging & Artifact Sync (doc 17 §5-6) ───────────────────────────
-
 async def _stage_attachments(
     task_id: str,
     attachments: list[dict],
@@ -2339,6 +2010,11 @@ async def _stage_attachments(
             name = att.get("name", "file")
             if not fid:
                 continue
+            if not isinstance(name, str) or Path(name).name != name or name in (".", ".."):
+                raise ValueError("An attachment name must name one file")
+            destination = inputs_dir / name
+            if destination.is_symlink():
+                raise ValueError("An attachment cannot replace a symbolic link")
 
             try:
                 resp = await client.get(
@@ -2346,7 +2022,10 @@ async def _stage_attachments(
                     headers=headers,
                 )
                 if resp.status_code == 200:
-                    (inputs_dir / name).write_bytes(resp.content)
+                    expected = att.get("sha256")
+                    if expected and hashlib.sha256(resp.content).hexdigest() != expected:
+                        raise ValueError("The attachment digest differs from its manifest")
+                    destination.write_bytes(resp.content)
                     logger.info(f"[{request_id}] Staged file: {name} ({len(resp.content)} bytes)")
 
                     text_preview = att.get("text_preview", "")
@@ -3209,24 +2888,6 @@ async def _execute_task_once(
             activation_fingerprint=activation_fingerprint,
             resume_run_id=resume_run_id,
         )
-    elif backend == "hermes-cli":
-        if resume_run_id:
-            raise HTTPException(
-                409,
-                "The CLI execution path cannot reconcile a recorded Hermes run",
-            )
-        status, result, usage, trace_count, run_id = await _run_hermes(
-            description=req.description,
-            role_prompt=req.role_prompt,
-            context=req.context,
-            timeout=timeout,
-            request_id=request_id,
-            model=model,
-            task_id=req.task_id,
-            turn_id=turn_id,
-            role=role,
-            profile=profile,
-        )
     else:
         raise HTTPException(503, "No execution backend is available")
 
@@ -3376,8 +3037,6 @@ async def _collect_health_snapshot() -> dict:
         execution_ok = litellm_ok
     elif backend == "hermes-runs-api":
         execution_ok = runs_api_ready
-    elif backend == "hermes-cli":
-        execution_ok = hermes_ok
     else:
         execution_ok = False
     ready = execution_ok and litellm_ok
@@ -3599,6 +3258,10 @@ async def native_activation(body: NativeActivationRequest, request: Request):
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])
     grant = body.grant
     payload = dict(body.request)
+    if native.digest_hex(native.REQUEST_DIGEST_DOMAIN, native.plain_json(payload)) != grant.get("request_digest"):
+        raise HTTPException(status_code=422, detail="The request differs from its activation grant")
+    if native.digest_hex("agent-context", native.plain_json(payload.get("context") or {})) != grant.get("context_view_digest"):
+        raise HTTPException(status_code=422, detail="The context differs from its activation grant")
     payload["task_id"] = str(grant.get("task_id", payload.get("task_id", "")))
     payload["activation_id"] = str(grant.get("activation_id", payload.get("activation_id", "")))
     try:
@@ -3611,6 +3274,9 @@ async def native_activation(body: NativeActivationRequest, request: Request):
 
     async def execute(context: native.EffectContext) -> dict:
         token = native.EFFECT_CONTEXT.set(context)
+        current = asyncio.current_task()
+        if current is not None:
+            _activation_inflight[key] = current
         try:
             response = await _execute_task_once(
                 req, request_id, turn_id,
@@ -3618,6 +3284,8 @@ async def native_activation(body: NativeActivationRequest, request: Request):
             )
         finally:
             native.EFFECT_CONTEXT.reset(token)
+            if _activation_inflight.get(key) is current:
+                _activation_inflight.pop(key, None)
         return response.model_dump(mode="json")
 
     try:
@@ -3634,7 +3302,7 @@ async def execute_task(req: TaskRequest, request: Request):
     Execute a task with optional persona injection.
 
     The starter path calls LiteLLM directly without tools.
-    Production nodes use the Hermes Runs API or Hermes CLI.
+    Production nodes use the Hermes Runs API.
     """
     _authorize_execute(request)
     request_id = getattr(request.state, "request_id", str(uuid.uuid4())[:8])

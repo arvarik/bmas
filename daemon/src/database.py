@@ -6654,7 +6654,13 @@ async def request_task_run_cancellation(task_id: str) -> int:
             (task_id,),
         )
         await db.commit()
-        return int(cursor.rowcount)
+        count = int(cursor.rowcount)
+        runs = await db.execute_fetchall("SELECT run_id FROM run_controls WHERE task_id = ?", (task_id,))
+    from activation_service import cancel_run_work
+
+    for run in runs:
+        await cancel_run_work(str(run["run_id"]))
+    return count
 
 
 async def request_run_cancellation_control(run_id: str) -> bool:
@@ -6667,7 +6673,11 @@ async def request_run_cancellation_control(run_id: str) -> bool:
             (run_id,),
         )
         await db.commit()
-        return cursor.rowcount == 1
+        changed = cursor.rowcount == 1
+    from activation_service import cancel_run_work
+
+    await cancel_run_work(run_id)
+    return changed
 
 
 async def acknowledge_run_cancellation_control(

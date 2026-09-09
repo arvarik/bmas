@@ -259,6 +259,9 @@ def _classic_native_starting_capabilities() -> dict[str, str]:
     values["task_fence_validation"] = "native"
     values["common_event_envelope"] = "native"
     values["recovery_reader_retained"] = "native"
+    for name in ("durable_activation_ledger", "activation_dispatch_outbox", "agent_protocol",
+                 "signed_activation_acknowledgement", "nested_receipts", "trusted_envelope_creator", "cancellation_signal"):
+        values[name] = "native"
     # Mission Control has no native Classic adapter yet, so the pair
     # renders through the generic fallback panels.
     values["ui_adapter"] = "unavailable"
@@ -386,18 +389,18 @@ def build_records() -> dict[RuntimeKey, RuntimeCapabilityRecord]:
         canonical_label="Classic v2",
         historical_label="Classic v1",
         availability="test_only",
-        schema_versions=_legacy_schema_versions(),
+        schema_versions={**_legacy_schema_versions(), "agent_protocol_version": "2"},
         capabilities=_classic_native_starting_capabilities(),
-        agent_protocol_version="1",
-        agent_receipt_version=None,
-        effect_schema_version=None,
+        agent_protocol_version="2",
+        agent_receipt_version="1",
+        effect_schema_version="1",
         supports_seed_state=True,
         supports_assets=True,
         supports_cancellation=True,
         supports_recovery=True,
         supports_evidence=True,
         supports_budget=True,
-        nested_effect_receipts=False,
+        nested_effect_receipts=True,
         provider_qualification="compatibility",
         benchmark_qualification="compatibility",
         ui_adapter="classic_native",

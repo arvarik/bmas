@@ -65,6 +65,27 @@ def deterministic_answer(prompt: str) -> str:
     return f"Deterministic reply {digest}."
 
 
+def structured_answer(prompt: str, request: dict) -> str:
+    """Emit the requested native role contract for the real parser journey."""
+    answer = deterministic_answer(prompt)
+    schema = (request.get("response_format") or {}).get("json_schema") or {}
+    variants = (schema.get("schema") or {}).get("oneOf") or []
+    role = variants[0]["properties"]["role"]["const"] if variants else None
+    if role is None:
+        match = re.search(r'"classic_proposal_role"\s*:\s*"([a-z_]+)"', prompt)
+        role = match.group(1) if match else None
+    actions = {"planner": ("plan", "plan"), "expert": ("contribute", "finding"),
+               "critic": ("critique", "critique"), "verifier": ("critique", "critique"),
+               "conflict_resolver": ("resolve_conflict", "rebuttal"), "decider": ("decide", "solution")}
+    if role in actions:
+        action, entry_type = actions[role]
+        return json.dumps({"schema_version": "classic-proposal/1", "role": role, "action": action,
+                           "entries": [{"type": entry_type, "body": answer, "title": "Answer"}]})
+    if role:
+        return json.dumps({"schema_version": "classic-proposal/1", "role": role, "action": "skip"})
+    return answer
+
+
 # The fake gateway also speaks the Hermes runs contract the agent
 # service probes: capabilities, detailed health, run submission, run
 # status, one server-sent event stream, and run stop. Every run
@@ -185,7 +206,7 @@ class Handler(BaseHTTPRequestHandler):
             prompt = _run_prompt(request)
             digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
             run_id = f"run-{digest[:16]}"
-            output = deterministic_answer(prompt)
+            output = structured_answer(prompt, request)
             usage = {"prompt_tokens": max(1, len(prompt.split())),
                      "completion_tokens": max(1, len(output.split()))}
             usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
@@ -211,7 +232,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         messages = request.get("messages") or []
         prompt = "\n".join(str(m.get("content") or "") for m in messages)
-        content = deterministic_answer(prompt)
+        content = structured_answer(prompt, request)
         prompt_tokens = max(1, len(prompt.split()))
         completion_tokens = max(1, len(content.split()))
         digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()

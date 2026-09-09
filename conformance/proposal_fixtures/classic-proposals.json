@@ -1,0 +1,2789 @@
+{
+  "cases": [
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [],
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [],
+        "role": "expert",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [],
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "entries": [],
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [
+          {
+            "body": "One observation",
+            "confidence": 1,
+            "type": "finding"
+          }
+        ],
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [
+          {
+            "body": "One observation",
+            "status": "completed",
+            "type": "finding"
+          }
+        ],
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [
+          {
+            "body": "",
+            "type": "finding"
+          }
+        ],
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [],
+        "role": "expert",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [],
+        "role": "expert",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [],
+        "provider": "untrusted",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [],
+        "provider_run_id": "untrusted",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "activation_id": "untrusted",
+        "entries": [],
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "activation_attempt": "untrusted",
+        "entries": [],
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [],
+        "role": "expert",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [],
+        "role": "expert",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "effect_id": "untrusted",
+        "entries": [],
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [],
+        "proposal_ref": "untrusted",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [],
+        "parse_failure_ref": "untrusted",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [],
+        "execution_status": "untrusted",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "contribute",
+        "entries": [],
+        "role": "expert",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "expert",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "expert",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "expert",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider": "untrusted",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider_run_id": "untrusted",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_id": "untrusted",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_attempt": "untrusted",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "expert",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "expert",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "effect_id": "untrusted",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "proposal_ref": "untrusted",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "parse_failure_ref": "untrusted",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "execution_status": "untrusted",
+        "role": "expert",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "expert",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "critic",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "entries": [],
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [
+          {
+            "body": "One observation",
+            "confidence": 1,
+            "type": "finding"
+          }
+        ],
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [
+          {
+            "body": "One observation",
+            "status": "completed",
+            "type": "finding"
+          }
+        ],
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [
+          {
+            "body": "",
+            "type": "finding"
+          }
+        ],
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "critic",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "critic",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "provider": "untrusted",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "provider_run_id": "untrusted",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "activation_id": "untrusted",
+        "entries": [],
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "activation_attempt": "untrusted",
+        "entries": [],
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "critic",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "critic",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "effect_id": "untrusted",
+        "entries": [],
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "proposal_ref": "untrusted",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "parse_failure_ref": "untrusted",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "execution_status": "untrusted",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "critic",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "critic",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "critic",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "critic",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider": "untrusted",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider_run_id": "untrusted",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_id": "untrusted",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_attempt": "untrusted",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "critic",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "critic",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "effect_id": "untrusted",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "proposal_ref": "untrusted",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "parse_failure_ref": "untrusted",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "execution_status": "untrusted",
+        "role": "critic",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "critic",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [],
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [],
+        "role": "planner",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [],
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "entries": [],
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [
+          {
+            "body": "One observation",
+            "confidence": 1,
+            "type": "finding"
+          }
+        ],
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [
+          {
+            "body": "One observation",
+            "status": "completed",
+            "type": "finding"
+          }
+        ],
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [
+          {
+            "body": "",
+            "type": "finding"
+          }
+        ],
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [],
+        "role": "planner",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [],
+        "role": "planner",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [],
+        "provider": "untrusted",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [],
+        "provider_run_id": "untrusted",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "activation_id": "untrusted",
+        "entries": [],
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "activation_attempt": "untrusted",
+        "entries": [],
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [],
+        "role": "planner",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [],
+        "role": "planner",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "effect_id": "untrusted",
+        "entries": [],
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [],
+        "proposal_ref": "untrusted",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [],
+        "parse_failure_ref": "untrusted",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [],
+        "execution_status": "untrusted",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "plan",
+        "entries": [],
+        "role": "planner",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "planner",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "planner",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "planner",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider": "untrusted",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider_run_id": "untrusted",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_id": "untrusted",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_attempt": "untrusted",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "planner",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "planner",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "effect_id": "untrusted",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "proposal_ref": "untrusted",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "parse_failure_ref": "untrusted",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "execution_status": "untrusted",
+        "role": "planner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "planner",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [],
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [],
+        "role": "conflict_resolver",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [],
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "entries": [],
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [
+          {
+            "body": "One observation",
+            "confidence": 1,
+            "type": "finding"
+          }
+        ],
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [
+          {
+            "body": "One observation",
+            "status": "completed",
+            "type": "finding"
+          }
+        ],
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [
+          {
+            "body": "",
+            "type": "finding"
+          }
+        ],
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [],
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [],
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [],
+        "provider": "untrusted",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [],
+        "provider_run_id": "untrusted",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "activation_id": "untrusted",
+        "entries": [],
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "activation_attempt": "untrusted",
+        "entries": [],
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [],
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [],
+        "role": "conflict_resolver",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "effect_id": "untrusted",
+        "entries": [],
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [],
+        "proposal_ref": "untrusted",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [],
+        "parse_failure_ref": "untrusted",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [],
+        "execution_status": "untrusted",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "resolve_conflict",
+        "entries": [],
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "conflict_resolver",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider": "untrusted",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider_run_id": "untrusted",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_id": "untrusted",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_attempt": "untrusted",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "conflict_resolver",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "effect_id": "untrusted",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "proposal_ref": "untrusted",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "parse_failure_ref": "untrusted",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "execution_status": "untrusted",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "conflict_resolver",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "entries": [],
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "entries": [],
+        "role": "cleaner",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "entries": [],
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "entries": [],
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "entries": [],
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "entries": [],
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "entries": [],
+        "provider": "untrusted",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "entries": [],
+        "provider_run_id": "untrusted",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "activation_id": "untrusted",
+        "entries": [],
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "activation_attempt": "untrusted",
+        "entries": [],
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "entries": [],
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "entries": [],
+        "role": "cleaner",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "effect_id": "untrusted",
+        "entries": [],
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "entries": [],
+        "proposal_ref": "untrusted",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "entries": [],
+        "parse_failure_ref": "untrusted",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "entries": [],
+        "execution_status": "untrusted",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "condense",
+        "entries": [],
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "cleaner",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider": "untrusted",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider_run_id": "untrusted",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_id": "untrusted",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_attempt": "untrusted",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "cleaner",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "effect_id": "untrusted",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "proposal_ref": "untrusted",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "parse_failure_ref": "untrusted",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "execution_status": "untrusted",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "cleaner",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [],
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [],
+        "role": "decider",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [],
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "entries": [],
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [
+          {
+            "body": "One observation",
+            "confidence": 1,
+            "type": "finding"
+          }
+        ],
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [
+          {
+            "body": "One observation",
+            "status": "completed",
+            "type": "finding"
+          }
+        ],
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [
+          {
+            "body": "",
+            "type": "finding"
+          }
+        ],
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [],
+        "role": "decider",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [],
+        "role": "decider",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [],
+        "provider": "untrusted",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [],
+        "provider_run_id": "untrusted",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "activation_id": "untrusted",
+        "entries": [],
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "activation_attempt": "untrusted",
+        "entries": [],
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [],
+        "role": "decider",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [],
+        "role": "decider",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "effect_id": "untrusted",
+        "entries": [],
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [],
+        "proposal_ref": "untrusted",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [],
+        "parse_failure_ref": "untrusted",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [],
+        "execution_status": "untrusted",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "decide",
+        "entries": [],
+        "role": "decider",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "decider",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "decider",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "decider",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider": "untrusted",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider_run_id": "untrusted",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_id": "untrusted",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_attempt": "untrusted",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "decider",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "decider",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "effect_id": "untrusted",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "proposal_ref": "untrusted",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "parse_failure_ref": "untrusted",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "execution_status": "untrusted",
+        "role": "decider",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "decider",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "verifier",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "entries": [],
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [
+          {
+            "body": "One observation",
+            "confidence": 1,
+            "type": "finding"
+          }
+        ],
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [
+          {
+            "body": "One observation",
+            "status": "completed",
+            "type": "finding"
+          }
+        ],
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [
+          {
+            "body": "",
+            "type": "finding"
+          }
+        ],
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "verifier",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "verifier",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "provider": "untrusted",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "provider_run_id": "untrusted",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "activation_id": "untrusted",
+        "entries": [],
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "activation_attempt": "untrusted",
+        "entries": [],
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "verifier",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "verifier",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "effect_id": "untrusted",
+        "entries": [],
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "proposal_ref": "untrusted",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "parse_failure_ref": "untrusted",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "execution_status": "untrusted",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "critique",
+        "entries": [],
+        "role": "verifier",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "verifier",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider": "untrusted",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider_run_id": "untrusted",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_id": "untrusted",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_attempt": "untrusted",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "verifier",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "effect_id": "untrusted",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "proposal_ref": "untrusted",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "parse_failure_ref": "untrusted",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "execution_status": "untrusted",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "verifier",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "candidate_ref": "candidate-example",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "candidate_ref": "candidate-example",
+        "role": "judge",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "candidate_ref": "candidate-example",
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "candidate_ref": "candidate-example",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "candidate_ref": "candidate-example",
+        "role": "judge",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "candidate_ref": "candidate-example",
+        "role": "judge",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "candidate_ref": "candidate-example",
+        "provider": "untrusted",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "candidate_ref": "candidate-example",
+        "provider_run_id": "untrusted",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "activation_id": "untrusted",
+        "candidate_ref": "candidate-example",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "activation_attempt": "untrusted",
+        "candidate_ref": "candidate-example",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "candidate_ref": "candidate-example",
+        "role": "judge",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "candidate_ref": "candidate-example",
+        "role": "judge",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "candidate_ref": "candidate-example",
+        "effect_id": "untrusted",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "candidate_ref": "candidate-example",
+        "proposal_ref": "untrusted",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "candidate_ref": "candidate-example",
+        "parse_failure_ref": "untrusted",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "candidate_ref": "candidate-example",
+        "execution_status": "untrusted",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "vote",
+        "candidate_ref": "candidate-example",
+        "role": "judge",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": true
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "judge",
+        "schema_version": "unknown"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "unknown",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "unknown",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "judge",
+        "schema_version": "classic-proposal/1",
+        "status": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "judge",
+        "schema_version": "classic-proposal/1",
+        "usage": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider": "untrusted",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "provider_run_id": "untrusted",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_id": "untrusted",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "activation_attempt": "untrusted",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "judge",
+        "schema_version": "classic-proposal/1",
+        "task_id": "untrusted"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "judge",
+        "run_id": "untrusted",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "effect_id": "untrusted",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "proposal_ref": "untrusted",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "parse_failure_ref": "untrusted",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "execution_status": "untrusted",
+        "role": "judge",
+        "schema_version": "classic-proposal/1"
+      },
+      "valid": false
+    },
+    {
+      "payload": {
+        "action": "skip",
+        "role": "judge",
+        "schema_version": "classic-proposal/1",
+        "unexpected": "untrusted"
+      },
+      "valid": false
+    }
+  ],
+  "reason": "The Classic registry defines the generated parser cases."
+}

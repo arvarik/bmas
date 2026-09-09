@@ -425,7 +425,7 @@ async def test_the_native_admission_stores_one_immutable_specification_and_binds
         limit = await (await connection.execute(
             "SELECT limit_amount FROM budget_limits WHERE budget_id = ?", (admitted["budget_id"],),
         )).fetchone()
-        assert int(limit[0]) == 250_000
+        assert int(limit[0]) == 250_000_000
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             await connection.execute("UPDATE classic_specifications SET effort_profile_id = 'balanced' WHERE run_id = ?", (admitted["run_id"],))
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):

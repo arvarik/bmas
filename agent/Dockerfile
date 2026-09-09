@@ -6,6 +6,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --disable-pip-version-check --root-user-action=ignore -r requirements.txt
 
 COPY api_server.py .
+COPY bmas_protocol/ ./bmas_protocol/
 
 RUN addgroup --system --gid 1001 bmas \
     && adduser --system --uid 1001 --ingroup bmas bmas \

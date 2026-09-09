@@ -1,0 +1,780 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "contribute"
+        },
+        "claims": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "entries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "confidence": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "refs": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "sources": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "artifact",
+                  "attachment",
+                  "conflict",
+                  "critique",
+                  "directive",
+                  "finding",
+                  "ledger",
+                  "objective",
+                  "plan",
+                  "rebuttal",
+                  "solution"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "body"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "evidence": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "goal_updates": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "role": {
+          "const": "expert"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        },
+        "tool_intents": {
+          "maxItems": 0,
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action",
+        "entries"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "skip"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "role": {
+          "const": "expert"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "critique"
+        },
+        "claims": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "entries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "confidence": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "refs": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "sources": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "artifact",
+                  "attachment",
+                  "conflict",
+                  "critique",
+                  "directive",
+                  "finding",
+                  "ledger",
+                  "objective",
+                  "plan",
+                  "rebuttal",
+                  "solution"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "body"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "evidence": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "goal_updates": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "role": {
+          "const": "critic"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        },
+        "tool_intents": {
+          "maxItems": 0,
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action",
+        "entries"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "skip"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "role": {
+          "const": "critic"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "plan"
+        },
+        "claims": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "entries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "confidence": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "refs": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "sources": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "artifact",
+                  "attachment",
+                  "conflict",
+                  "critique",
+                  "directive",
+                  "finding",
+                  "ledger",
+                  "objective",
+                  "plan",
+                  "rebuttal",
+                  "solution"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "body"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "evidence": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "goal_updates": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "role": {
+          "const": "planner"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        },
+        "tool_intents": {
+          "maxItems": 0,
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action",
+        "entries"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "skip"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "role": {
+          "const": "planner"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "resolve_conflict"
+        },
+        "claims": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "entries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "confidence": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "refs": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "sources": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "artifact",
+                  "attachment",
+                  "conflict",
+                  "critique",
+                  "directive",
+                  "finding",
+                  "ledger",
+                  "objective",
+                  "plan",
+                  "rebuttal",
+                  "solution"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "body"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "evidence": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "goal_updates": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "role": {
+          "const": "conflict_resolver"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        },
+        "tool_intents": {
+          "maxItems": 0,
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action",
+        "entries"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "skip"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "role": {
+          "const": "conflict_resolver"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "condense"
+        },
+        "entries": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "removals": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "role": {
+          "const": "cleaner"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action",
+        "entries"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "skip"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "role": {
+          "const": "cleaner"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "decide"
+        },
+        "claims": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "entries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "confidence": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "refs": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "sources": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "artifact",
+                  "attachment",
+                  "conflict",
+                  "critique",
+                  "directive",
+                  "finding",
+                  "ledger",
+                  "objective",
+                  "plan",
+                  "rebuttal",
+                  "solution"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "body"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "evidence": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "goal_updates": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "role": {
+          "const": "decider"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        },
+        "tool_intents": {
+          "maxItems": 0,
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action",
+        "entries"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "skip"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "role": {
+          "const": "decider"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "critique"
+        },
+        "claims": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "entries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "confidence": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "refs": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "sources": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "artifact",
+                  "attachment",
+                  "conflict",
+                  "critique",
+                  "directive",
+                  "finding",
+                  "ledger",
+                  "objective",
+                  "plan",
+                  "rebuttal",
+                  "solution"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "body"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "evidence": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "goal_updates": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "role": {
+          "const": "verifier"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        },
+        "tool_intents": {
+          "maxItems": 0,
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action",
+        "entries"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "skip"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "role": {
+          "const": "verifier"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "vote"
+        },
+        "candidate_ref": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "role": {
+          "const": "judge"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action",
+        "candidate_ref"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "skip"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "role": {
+          "const": "judge"
+        },
+        "schema_version": {
+          "const": "classic-proposal/1"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "action"
+      ],
+      "type": "object"
+    }
+  ]
+}

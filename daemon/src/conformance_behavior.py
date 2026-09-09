@@ -761,7 +761,23 @@ async def _cancellation_deadlines(env: BehaviorEnvironment) -> CaseResult:
         observed = "native" if control_verified and stopped else "unavailable"
     elif env.executor.can_abort:
         stopped = interrupted.aborted and interrupted.checkpoint is not None
-        observed = "legacy" if control_verified and stopped else "unavailable"
+        async with db._connect() as connection:  # noqa: SLF001
+            controls = await connection.execute_fetchall(
+                "SELECT cancellation_state FROM run_controls WHERE task_id = ?", (interrupted.task_id,),
+            )
+            queued = await connection.execute_fetchall(
+                "SELECT grant_id FROM activation_dispatch_outbox WHERE run_id IN "
+                "(SELECT run_id FROM run_controls WHERE task_id = ?) AND dispatch_state = 'queued'",
+                (interrupted.task_id,),
+            )
+            approved = await connection.execute_fetchall(
+                "SELECT effect_id FROM effect_attempts WHERE task_id = ? AND state IN ('approved', 'dispatch_queued')",
+                (interrupted.task_id,),
+            )
+        native_stop = (interrupted.native_rows > 0 and bool(controls)
+                       and all(row["cancellation_state"] != "active" for row in controls)
+                       and not queued and not approved)
+        observed = ("native" if native_stop else "legacy") if control_verified and stopped else "unavailable"
     else:
         observed = "legacy" if control_verified and not interrupted.aborted else "unavailable"
     return CaseResult(

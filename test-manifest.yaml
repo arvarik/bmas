@@ -650,6 +650,26 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.classic-native-activations
+    state: active_required
+    owner: daemon
+    purpose: Prove native activation contracts and local model effect receipts.
+    argv: ["python3", "-m", "pytest", "tests/test_classic_native_activations.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
+  - id: daemon.classic-local-effects
+    state: active_required
+    owner: daemon
+    purpose: Prove native activation contracts and local model effect receipts.
+    argv: ["python3", "-m", "pytest", "tests/test_classic_local_effects.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
   - id: daemon.classic-journal-projection
     state: active_required
     owner: daemon
@@ -1330,6 +1350,8 @@ profiles:
         - daemon.classic-native-column
         - daemon.classic-policy-parity
         - daemon.classic-spec-compiler
+        - daemon.classic-native-activations
+        - daemon.classic-local-effects
         - daemon.classic-journal-projection
         - daemon.populated-migration
         - daemon.release-gates
