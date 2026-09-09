@@ -432,3 +432,5 @@ binds the override to the run. Ordinary endpoint edits affect new runs only.
 Both agent backends receive the reserved output ceiling. Signed receipts record finish
 reasons and truncation. Missing usage consumes the complete reserved amount.
 The specification's additional maximum in-flight cost allowance is zero.
+Older native specifications remain readable. A run without all four aggregate resource
+limits cannot dispatch new calls. Submit a new run to create the complete budget.

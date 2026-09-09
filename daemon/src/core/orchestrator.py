@@ -2498,6 +2498,9 @@ class Orchestrator:
         if payload.get("role") == "cleaner" and not (native_plan and native_plan.get("required") and native_plan.get("url") == url):
             return httpx.Response(200, json={"status": "failed", "result": "Cleaner requires the native pair"},
                                   request=httpx.Request("POST", f"{url}/execute"))
+        if native_plan and native_plan.get("required") and native_plan["url"] != url:
+            return httpx.Response(200, json={"status": "failed", "result": "The native endpoint requires a new qualified dispatch plan"},
+                                  request=httpx.Request("POST", f"{url}/bmas/activations"))
         if native_plan is None or native_plan["url"] != url:
             return await self.http.post(
                 f"{url}/execute", json=payload, headers=headers, timeout=timeout,

@@ -46,6 +46,7 @@ async def reserve_call(run_id: str, activation_id: str, attempt: int, request: d
     cost = price.input_per_million.to_money().scale_ratio(input_tokens, 1_000_000).add(
         price.output_per_million.to_money().scale_ratio(output_tokens, 1_000_000)
     ).amount_nanos
+    await require_resource_limits(str(admission["run_budget_id"]), run_id)
     initial = str(admission["initial_reservation_id"])
     initial_row = await budget.get_reservation(initial)
     if initial_row["state"] == "reserved":
@@ -67,10 +68,19 @@ async def reserve_call(run_id: str, activation_id: str, attempt: int, request: d
     return reservation_id
 
 
+async def require_resource_limits(budget_id: str, run_id: str) -> None:
+    """Reject older or incomplete budgets before they authorize native work."""
+    limits = await budget.get_limits(budget_id)
+    resources = {row["resource"] for row in limits if row["scope"] == "run" and row["scope_key"] == run_id}
+    if not {"provider_cost", "input_tokens", "output_tokens", "model_calls"}.issubset(resources):
+        raise budget.BudgetError("The native budget requires all four resource limits")
+
+
 async def validate_call_reservation(reservation_id: str, run_id: str, activation_id: str,
                                     request: dict[str, Any]) -> None:
     """Reject a missing, stale, foreign, or insufficient dispatch reservation."""
     reservation = await budget.get_reservation(reservation_id)
+    await require_resource_limits(str(reservation["budget_id"]), run_id)
     resources = reservation["resources"]
     ceiling = request.get("max_completion_tokens", request.get("max_output_tokens", request.get("max_tokens")))
     if (reservation["run_id"] != run_id or reservation["activation_id"] != activation_id

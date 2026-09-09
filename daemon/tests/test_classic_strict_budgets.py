@@ -172,3 +172,25 @@ def test_old_specifications_remain_readable_but_new_calls_require_strict_pricing
     assert ClassicSpec.model_validate(stored).limits.strict_pricing is False
     with pytest.raises(ClassicSpecError, match="strict pricing"):
         compile_pair("paper_aligned", "quick", classic={"limits.strict_pricing": False})
+
+
+@pytest.mark.asyncio
+async def test_native_endpoint_change_never_uses_legacy_transport():
+    from core.orchestrator import Orchestrator
+
+    orchestrator = object.__new__(Orchestrator)
+    response = await orchestrator._post_activation("http://replacement-agent",
+        {"role": "expert", "timeout": 10}, None, {"required": True, "url": "http://qualified-agent"})
+    assert response.json()["status"] == "failed"
+    assert "qualified dispatch plan" in response.json()["result"]
+
+
+@pytest.mark.asyncio
+async def test_missing_resource_limits_reject_native_dispatch(native_run):
+    admission = await db.get_runtime_admission(native_run["run_id"])
+    async with db._connect() as connection:
+        await connection.execute("DELETE FROM budget_limits WHERE budget_id = ? AND resource = 'output_tokens'",
+                                 (admission["run_budget_id"],))
+        await connection.commit()
+    with pytest.raises(budget.BudgetError, match="all four resource limits"):
+        await reserve_call(native_run["run_id"], "incomplete-budget", 1, {"model": "test-light"})
