@@ -251,3 +251,27 @@ async def test_response_charge_precedes_board_admission(native_run, monkeypatch)
 def test_malformed_overrides_raise_validation_errors(value):
     with pytest.raises(ValidationError):
         TaskOverrideSet.model_validate(value)
+
+
+@pytest.mark.asyncio
+async def test_indirect_judge_inherits_the_native_budget(native_run):
+    from types import SimpleNamespace
+
+    from core.orchestrator import Orchestrator
+    from core.variants.classic.effects import CURRENT_TASK
+
+    protocol_keys.reset_for_tests()
+    orchestrator = object.__new__(Orchestrator)
+    async def loop(request, **kwargs):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1}, "choices": [],
+        }))) as http:
+            return await post_completion(http, "http://provider/chat/completions", phase="evaluation_judge",
+                                         json={"model": "test-light", "messages": []})
+    orchestrator._run_classic_loop = loop
+    previous = CURRENT_TASK.get()
+    await orchestrator.run_classic_runtime(SimpleNamespace(task_id=TASK_ID),
+                                           engine_class=object, step_result_class=object, binding=SimpleNamespace())
+    assert CURRENT_TASK.get() == previous
+    records = await journal.read_journal(run_id=native_run["run_id"])
+    assert any(record.operation_type == "budget_reconciliation" for record in records)

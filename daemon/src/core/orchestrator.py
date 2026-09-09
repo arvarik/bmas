@@ -1150,30 +1150,37 @@ class Orchestrator:
         names its reason, a failure names its reason, and a
         recoverable stop such as a lease loss writes nothing.
         """
-        if binding is None:
-            return await self._run_classic_loop(
-                request, engine_class=engine_class,
-                step_result_class=step_result_class, binding=None,
-            )
+        from core.variants.classic.effects import CURRENT_TASK
+
+        effect_task = CURRENT_TASK.set(request.task_id)
         try:
-            return await self._run_classic_loop(
-                request, engine_class=engine_class,
-                step_result_class=step_result_class, binding=binding,
-            )
-        except BaseException as exc:
-            reason = binding.outcome_reason_for_exception(exc)
-            if reason is not None:
-                try:
-                    await binding.ensure_terminal_outcome(
-                        reason,
-                        detail={"error": str(exc)[:500], "phase": binding.phase},
-                    )
-                except Exception:
-                    logger.warning(
-                        "The terminal outcome of task %s was not written",
-                        request.task_id, exc_info=True,
-                    )
-            raise
+            if binding is None:
+                return await self._run_classic_loop(
+                    request, engine_class=engine_class,
+                    step_result_class=step_result_class, binding=None,
+                )
+            try:
+                return await self._run_classic_loop(
+                    request, engine_class=engine_class,
+                    step_result_class=step_result_class, binding=binding,
+                )
+            except BaseException as exc:
+                reason = binding.outcome_reason_for_exception(exc)
+                if reason is not None:
+                    try:
+                        await binding.ensure_terminal_outcome(
+                            reason,
+                            detail={"error": str(exc)[:500], "phase": binding.phase},
+                        )
+                    except Exception:
+                        logger.warning(
+                            "The terminal outcome of task %s was not written",
+                            request.task_id, exc_info=True,
+                        )
+                raise
+        finally:
+            CURRENT_TASK.reset(effect_task)
+
 
     async def _run_classic_loop(
         self,
