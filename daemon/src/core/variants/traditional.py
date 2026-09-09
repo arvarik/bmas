@@ -1087,13 +1087,27 @@ class TraditionalVariant:
             with contextlib.suppress(json.JSONDecodeError, TypeError):
                 action_payload = json.loads(text)
         if isinstance(raw, dict) and isinstance(raw.get("result"), str):
+            text = raw["result"].strip()
+            if text.startswith("```") and text.endswith("```"):
+                text = "\n".join(text.splitlines()[1:-1])
+            action_payload = None
             with contextlib.suppress(json.JSONDecodeError, TypeError):
-                decoded = json.loads(raw["result"])
+                decoded = json.loads(text)
                 if isinstance(decoded, dict):
                     action_payload = decoded
         # The legacy pair never applies the native condensation contract.
-        if isinstance(action_payload, dict) and action_payload.get("action") == "condense":
+        if any(isinstance(value, dict) and value.get("action") == "condense"
+               for value in (raw, action_payload)):
             return []
+        if actor.split(".", 1)[0] == "cleaner":
+            # Only the frozen clean action reaches the legacy removal path.
+            # Nested or contradictory wrappers cannot introduce condensation.
+            if not isinstance(action_payload, dict) or action_payload.get("action") != "clean":
+                return []
+            if isinstance(raw, dict) and raw.get("action") not in (None, "clean"):
+                return []
+            if action_payload.get("entries"):
+                return []
         if (
             actor == "critic"
             and isinstance(action_payload, dict)

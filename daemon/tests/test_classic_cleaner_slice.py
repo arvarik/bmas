@@ -356,3 +356,17 @@ def test_cleaner_cannot_remove_entries_from_another_space():
     board["e-1"].space = "private:other"
     with pytest.raises(CondensationError, match="Protected"):
         validate(proposal(), board)
+
+
+@pytest.mark.parametrize("wrapper", [
+    {"action": "condense", "result": '{"action":"contribute","entries":[]}'},
+    {"action": "clean", "result": '```json\n{"action":"condense"}\n```'},
+    {"result": '{"result":"{\\"action\\":\\"condense\\"}"}'},
+    {"action": "contribute", "result": '{"action":"clean"}'},
+])
+def test_legacy_cleaner_rejects_ambiguous_response_wrappers(wrapper):
+    from classic_harness import ClassicLifecycleHarness
+
+    harness = ClassicLifecycleHarness("sequential")
+    wrapper = {**wrapper, "removals": proposal()["removals"]}
+    assert harness.variant.parse_agent_response({"task_id": TASK_ID}, "cleaner", wrapper) == []
