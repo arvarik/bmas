@@ -163,3 +163,28 @@ The complete repository test command also runs a production Next.js build.
 ```bash
 ../scripts/bmas test
 ```
+
+## Classic specification preview
+
+Select **Classic native · test only** in the task composer or a benchmark arm.
+Both surfaces render `ClassicSpecEditor` and use `/api/classic/spec`.
+The proxy sends GET requests to `/classic/spec/schema` and POST requests to `/classic/spec/compile`.
+The daemon requires the operator key for both routes when the deployment sets one.
+
+The published JSON Schema includes an `x-editor` extension.
+It supplies six intent groups, control types, profile choices, defaults, safe ranges, and deployment caps.
+Fidelity and effort remain separate controls.
+The beginner path requires no JSON.
+The advanced view accepts all task choices, including routing, role endpoints, and seed.
+The server supplies the deployment snapshot and rejects client deployment replacements.
+
+The preview shows the specification digest, both profile differences, cost and latency estimates, provider limits, required roles, and seed support.
+It also shows every cap, adjustment, warning, and immutable effective value.
+An expandable definition list exposes the complete record without raw JSON.
+Each input change invalidates the review and the previous preview.
+The editor ignores obsolete responses and places validation errors beside the responsible control.
+
+The native pair remains test only.
+The editor permits preview review but blocks public task admission and benchmark publication for this pair.
+Ordinary endpoint edits affect new runs only.
+The preview creates no run, artifact, or provider call.

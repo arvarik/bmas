@@ -1699,3 +1699,9 @@
 .freeze-form__metrics .metric-lifecycle__evidence{padding:var(--space-2) 0}
 .judge-table tr[data-due="true"] td:first-child{border-left:3px solid var(--status-warning)}
 @media(max-width:900px){.replay-bundle__grid,.dataset-version-record__grid{grid-template-columns:1fr}}
+
+/* The native preview uses the full arm width at every viewport size. */
+.benchmark-arm--classic { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.benchmark-arm--classic > .benchmark-arm__config { grid-column: 1 / -1; min-width: 0; }
+.benchmark-arm--classic > .benchmark-icon-button { grid-column: 1 / -1; justify-self: end; }
+@media (max-width: 800px) { .benchmark-arm--classic { grid-template-columns: minmax(0, 1fr); } }

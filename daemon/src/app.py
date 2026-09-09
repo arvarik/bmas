@@ -23,6 +23,7 @@ from routes import (
     artifacts,
     benchmarks,
     capabilities,
+    classic_spec,
     datasets,
     evaluation,
     events,
@@ -114,6 +115,7 @@ app.include_router(submit.router)
 app.include_router(benchmarks.router)
 app.include_router(evaluation.router)
 app.include_router(capabilities.router)
+app.include_router(classic_spec.router)
 app.include_router(datasets.router)
 app.include_router(tasks.router)
 app.include_router(events.router)

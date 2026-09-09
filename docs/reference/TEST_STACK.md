@@ -435,3 +435,14 @@ the gate report under one digest. The daemon reads that file through
 `benchmarks/release.py` and reports the default generation on
 `GET /api/evaluation/authority`: evaluation is the default only while
 the evidence verifies and every gate passed.
+
+## Classic editor verification
+
+`daemon.classic-spec-routes` verifies schema publication, operator authentication, field errors, complete disclosures, and digest parity with the admission compiler.
+The group belongs to `ci.daemon` and the complete profile.
+
+The Mission Control unit suite verifies the authenticated compile proxy and complete value rendering.
+`mission-control/e2e/classic-editor.spec.ts` exercises the real compiler with an isolated deployment snapshot.
+It verifies equal task and benchmark digests, keyboard focus order, mobile layout, reduced motion, and beginner completion without JSON.
+It also verifies obsolete-response rejection and review invalidation after an input change.
+The tests keep native admission disabled.

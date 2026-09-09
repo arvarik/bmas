@@ -17,6 +17,8 @@ import { useReadiness } from "@/contexts/ReadinessContext";
 import { usePreferences } from "@/lib/preferences";
 import { useToast } from "@/hooks/useToast";
 import { VariantSelect } from "@/components/features/VariantSelect";
+import { ClassicSpecEditor } from "@/components/features/ClassicSpecEditor";
+import { CLASSIC_PREVIEW_CHOICE } from "@/lib/classic-spec";
 import { EffortSelect } from "@/components/features/EffortSelect";
 import {
   addAttachments,
@@ -78,7 +80,7 @@ export function LandingPageClient({
 
   const handleSubmit = useCallback(async () => {
     const input = task.trim();
-    if (!input || submitting || !variantAvailable || !stackReady) return;
+    if (!input || submitting || !variantAvailable || variant === CLASSIC_PREVIEW_CHOICE || !stackReady) return;
     // A long-horizon run costs real money and time: ask once.
     if (effort === "exhaustive" && confirmEffort !== "exhaustive") {
       setConfirmEffort("exhaustive");
@@ -140,7 +142,7 @@ export function LandingPageClient({
   }, [allowedUploadTypes, attachedFiles, maxUploadMb, storageEnabled, toast]);
 
   const hasInput = task.trim().length > 0;
-  const canSubmit = hasInput && variantAvailable && stackReady && !submitting;
+  const canSubmit = hasInput && variantAvailable && variant !== CLASSIC_PREVIEW_CHOICE && stackReady && !submitting;
   const blocker = submitting
     ? "Submitting…"
     : readiness.loading && !readiness.document
@@ -277,7 +279,7 @@ export function LandingPageClient({
                 onChange={setVariant}
                 onAvailabilityChange={setVariantAvailable}
               />
-              <EffortSelect
+              {variant !== CLASSIC_PREVIEW_CHOICE ? <EffortSelect
                 variant={variant}
                 value={effort}
                 onChange={(next) => {
@@ -286,6 +288,7 @@ export function LandingPageClient({
                   setPreferences({ defaultEffort: next });
                 }}
               />
+              : null}
             </div>
             <button
               type="button"
@@ -299,6 +302,8 @@ export function LandingPageClient({
             </button>
           </div>
         </div>
+
+        {variant === CLASSIC_PREVIEW_CHOICE ? <ClassicSpecEditor /> : null}
 
         {confirmEffort ? (
           <div className="composer__confirm" role="alertdialog" aria-label="Confirm exhaustive run">

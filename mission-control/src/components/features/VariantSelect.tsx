@@ -19,6 +19,7 @@ import {
   hasMissionControlAdapter,
   supportsMissionControlVariant,
 } from "@/lib/variant-support";
+import { CLASSIC_PREVIEW_CHOICE } from "@/lib/classic-spec";
 import { SelectMenu, type SelectOption } from "@/components/ui/SelectMenu";
 
 interface VariantSelectProps {
@@ -110,15 +111,6 @@ export function VariantSelect({
     (variant) => variant.id === value || variant.aliases.includes(value),
   ) ?? selectableVariants[0];
 
-  if (selectableVariants.length <= 1) {
-    return (
-      <span className="variant-status variant-status--fixed" title="Only one runtime is available">
-        <Layers size={14} aria-hidden="true" />
-        {selectableVariants[0]?.label ?? "No runtime available"}
-      </span>
-    );
-  }
-
   const options: SelectOption[] = variants.map((variant) => ({
     value: variant.id,
     label: variant.label,
@@ -126,12 +118,14 @@ export function VariantSelect({
     disabled: !isSelectable(variant),
   }));
 
+  options.push({ value: CLASSIC_PREVIEW_CHOICE, label: "Classic native · test only", description: "Compile and inspect a specification. Admission is unavailable." });
+
   return (
     <SelectMenu
       aria-label="Runtime"
       variant="pill"
       size="sm"
-      value={selectedVariant?.id ?? value}
+      value={value === CLASSIC_PREVIEW_CHOICE ? value : selectedVariant?.id ?? value}
       options={options}
       prefix={<Layers size={14} aria-hidden="true" />}
       onChange={(next) => {

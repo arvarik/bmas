@@ -650,6 +650,16 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.classic-spec-routes
+    state: active_required
+    owner: daemon
+    purpose: Prove authenticated schema publication, compile parity, disclosures, and control-level errors without admission.
+    argv: ["python3", "-m", "pytest", "tests/test_classic_spec_routes.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
   - id: daemon.classic-native-activations
     state: active_required
     owner: daemon
@@ -1350,6 +1360,7 @@ profiles:
         - daemon.classic-native-column
         - daemon.classic-policy-parity
         - daemon.classic-spec-compiler
+        - daemon.classic-spec-routes
         - daemon.classic-native-activations
         - daemon.classic-local-effects
         - daemon.classic-journal-projection

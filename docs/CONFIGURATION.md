@@ -376,3 +376,28 @@ The loader accepts `traditional` as an old alias for `classic`. It also accepts 
 Do not use these aliases in a new configuration. The loader reports a warning and the public examples stay warning-free.
 
 The old `blackboard_v2` field has no effect. The classic runtime always uses the durable board.
+
+## Preview a native Classic specification
+
+Mission Control offers **Classic native · test only** in the task composer and benchmark arm form.
+Choose fidelity and effort separately.
+Use the Team, Coordination, Memory, Verification, Limits, and Recovery controls to enter task choices.
+Use **Advanced JSON** for routing, role endpoints, or other task overrides.
+
+The daemon publishes the input schema at `GET /classic/spec/schema`.
+Its `x-editor.request_schema` describes the preview request.
+Send that request to `POST /classic/spec/compile`.
+The server captures the current deployment and calls the admission compiler without admitting a run.
+Equal choices against the same deployment produce the same specification digest in both forms.
+
+Review every cap adjustment and warning before admission.
+The preview shows each effective difference from the selected fidelity and effort profiles.
+It also exposes every immutable effective value, including model bindings, endpoints, prompts, prices, limits, and field sources.
+Provider context and per-call output limits remain unknown until a verified record exists.
+The cost and latency ranges are planning estimates, not guarantees.
+The native pair records seed intent but reports provider seed support as unsupported.
+
+Ordinary endpoint edits affect new runs only.
+An admitted run keeps its endpoint sets and effective values.
+A refreshed preview can change after a deployment edit, and it does not reserve that deployment for admission.
+Public admission remains unavailable while the native pair has test-only availability.
