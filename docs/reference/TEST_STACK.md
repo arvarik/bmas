@@ -446,3 +446,6 @@ The Mission Control unit suite verifies the authenticated compile proxy and comp
 It verifies equal task and benchmark digests, keyboard focus order, mobile layout, reduced motion, and beginner completion without JSON.
 It also verifies obsolete-response rejection and review invalidation after an input change.
 The tests keep native admission disabled.
+
+`mission-control/e2e/full-stack/classic-editor.spec.ts` verifies both forms through the deployed proxy and daemon.
+The editor journey runs independently from the evaluation journey.

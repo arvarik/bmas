@@ -135,3 +135,24 @@ test("a delayed obsolete preview cannot replace newer choices", async ({ page })
   await expect(editor.getByTestId("classic-spec-digest")).toHaveText(digest);
   await expect(cost).toHaveValue("8.25");
 });
+
+
+test("late benchmark defaults preserve the selected native preview", async ({ page }) => {
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/benchmarks/scorers", async (route) => {
+    await gate;
+    await route.fulfill({ json: { scorers: [{ id: "exact", name: "Exact", version: "1", description: "Exact match" }] } });
+  });
+  await page.goto("/tests");
+  await page.getByRole("button", { name: "New test", exact: true }).click();
+  const runtime = page.getByRole("combobox", { name: "Runtime", exact: true });
+  await runtime.selectOption("classic-native-preview");
+  await expect(page.getByTestId("classic-spec-digest")).toBeVisible();
+  const digest = await page.getByTestId("classic-spec-digest").innerText();
+  release?.();
+  await expect(page.getByRole("group", { name: "Scorers", exact: true }).getByRole("checkbox")).toBeChecked();
+  await expect(runtime).toHaveValue("classic-native-preview");
+  await expect(page.getByTestId("classic-spec-digest")).toHaveText(digest);
+  await expect(page.getByRole("button", { name: "Run preflight", exact: true })).toBeDisabled();
+});

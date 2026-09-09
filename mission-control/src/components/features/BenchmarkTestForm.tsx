@@ -52,7 +52,11 @@ export function BenchmarkTestForm({ testId }: { testId?: string }) {
       setDatasetVersionId(loadedDatasets[0]?.latest_version_id ?? "");
       setSelectedScorers(loadedScorers[0] ? [loadedScorers[0].id] : []);
       if (loadedRuntimes[0]) {
-        setArms((current) => current.map((arm) => ({ ...arm, runtime_id: loadedRuntimes[0].id })));
+        setArms((current) => current.map((arm) => (
+          arm.runtime_id === CLASSIC_PREVIEW_CHOICE || loadedRuntimes.some((runtime) => runtime.id === arm.runtime_id)
+            ? arm
+            : { ...arm, runtime_id: loadedRuntimes[0].id }
+        )));
       }
     }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Authoring data is unavailable"));
   }, []);
