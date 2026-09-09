@@ -212,7 +212,7 @@ async def seal_and_commit(keys, store, child):
     await activations.transition_activation(
         run_id=RUN_ID, activation_id="activation-a", attempt=1,
         target_state="proposal_recorded",
-        ledger_updates={"proposal_digest": proposal.digest()},
+        ledger_updates={"proposal_digest": proposal.digest(), "execution_envelope_digest": sealed.digest()},
         task_fence=FENCE,
     )
     record = await activations.commit_proposal_decision(

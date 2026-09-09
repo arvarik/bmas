@@ -152,14 +152,30 @@ class ModelTransport:
     def _post(self, body: dict[str, Any]) -> dict[str, Any]:
         if self._client is not None:
             return self._client(body)
+        import asyncio
+
         import httpx
 
-        response = httpx.post(
-            f"{self.settings.base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {self.settings.api_key}"},
-            json=body,
-            timeout=self.settings.timeout_seconds,
-        )
+        from core.variants.classic.effects import post_completion
+
+        async def request() -> Any:
+            async with httpx.AsyncClient(timeout=self.settings.timeout_seconds) as http:
+                return await post_completion(http, f"{self.settings.base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.settings.api_key}"}, json=body,
+                    phase="evaluation_judge")
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            response = asyncio.run(request())
+        else:
+            # Synchronous judges also run from asynchronous benchmark routes.
+            from concurrent.futures import ThreadPoolExecutor
+            from contextvars import copy_context
+
+            context = copy_context()
+            with ThreadPoolExecutor(max_workers=1) as worker:
+                response = worker.submit(context.run, lambda: asyncio.run(request())).result()
         response.raise_for_status()
         return response.json()
 

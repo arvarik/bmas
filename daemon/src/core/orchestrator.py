@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import random
+import sqlite3
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -775,7 +776,13 @@ class Orchestrator:
             )
 
             try:
-                triage = await self.triage.classify(user_task, routing_override=effective_routing)
+                from core.variants.classic.effects import CURRENT_TASK
+
+                effect_task = CURRENT_TASK.set(task_id)
+                try:
+                    triage = await self.triage.classify(user_task, routing_override=effective_routing)
+                finally:
+                    CURRENT_TASK.reset(effect_task)
             except Exception as e:
                 await self._safe_log("daemon",
                     f"WARN: Triage unavailable ({e}), defaulting to MEDIUM", task_id=task_id)
@@ -2103,7 +2110,9 @@ class Orchestrator:
         # Pass known_ids so the parser can validate ref mentions against the
         # actual board state (only IDs that exist are promoted from prose refs).
         known_ids = set(board.keys()) if isinstance(board, dict) else None
-        if resp_status in ("failed", "timeout"):
+        native_execution = response.get("native_execution") if isinstance(response, dict) else None
+        native_proposal = (native_execution or {}).get("proposal")
+        if native_execution is not None or resp_status in ("failed", "timeout"):
             entries = []
         else:
             entries = variant.parse_agent_response(
@@ -2115,6 +2124,18 @@ class Orchestrator:
 
         # Apply through gateway (if agent contributed anything)
         committed_entries: list[Any] = []
+        if native_proposal is not None and native_execution is not None:
+            from core.capabilities import capabilities_for_role
+
+            proposed = [dict(item) for item in native_proposal.get("entries", [])] if apply_to_board else []
+            for item in proposed:
+                if "confidence" in item:
+                    item["confidence"] = float(item["confidence"])
+            committed_entries = await variant.gateway.apply_proposal(
+                task_id=task_id, actor=activation.actor, capabilities=capabilities_for_role(activation.role),
+                proposed=proposed, turn_id=turn_id, attempt=int(native_execution["attempt"]),
+                round_no=round_no, space=space,
+            )
         if entries:
             for mutation_index, entry in enumerate(entries):
                 mutation = {
@@ -2422,17 +2443,25 @@ class Orchestrator:
 
         if not candidate_urls:
             return None
+        bound = getattr(self, "_run_contexts", {}).get(task_id)
+        if bound is not None and bound.runtime_key == RuntimeKey("classic", "2"):
+            document = await agent_dispatch.endpoint_capabilities(self.http, candidate_urls[0])
+            return {"context": bound, "document": document, "url": candidate_urls[0], "required": True}
         try:
             context = await agent_dispatch.native_context(task_id)
             if context is None:
                 return None
             document = await agent_dispatch.endpoint_capabilities(self.http, candidate_urls[0])
-        except Exception as exc:  # noqa: BLE001 - the legacy path stays available
+            import activation_service
+
+            identity = await activation_service.run_identity(context.run_id)
+            required = identity["runtime_id"] == "classic" and identity["runtime_contract_version"] == "2"
+        except sqlite3.Error as exc:
             logger.debug(f"Native dispatch plan unavailable for {task_id}: {exc}")
             return None
-        if not agent_dispatch.supports_native_protocol(document):
+        if not required and not agent_dispatch.supports_native_protocol(document):
             return None
-        return {"context": context, "document": document, "url": candidate_urls[0]}
+        return {"context": context, "document": document, "url": candidate_urls[0], "required": required}
 
     async def _post_activation(
         self,
@@ -2457,10 +2486,23 @@ class Orchestrator:
         import activation_service
         import agent_dispatch
         import agent_protocol
+        import budget_service
+        import effect_service
         from core.signing import SigningError
+        from core.variants.classic.activations import reserve_call, seal_response
+        from core.variants.classic.proposals import proposal_request
 
         request = httpx.Request("POST", f"{url}/bmas/activations")
         try:
+            reservation_id = None
+            if native_plan.get("required"):
+                if not agent_dispatch.supports_native_protocol(native_plan["document"]):
+                    raise agent_dispatch.DispatchError("The native run requires a qualified agent")
+                if "classic-proposal/1" not in native_plan["document"].supported_proposal_schemas:
+                    raise agent_dispatch.DispatchError("The agent does not support the Classic proposal schema")
+                payload = proposal_request(payload, activation_id=str(payload["activation_id"]), attempt=attempt_number)
+                reservation_id = await reserve_call(native_plan["context"].run_id,
+                    str(payload["activation_id"]), attempt_number, payload)
             outcome = await agent_dispatch.dispatch_activation(
                 self.http, agent_url=url,
                 run_id=native_plan["context"].run_id,
@@ -2472,13 +2514,41 @@ class Orchestrator:
                 retry_of_attempt=attempt_number - 1 if attempt_number > 1 else None,
                 timeout_s=timeout,
                 document=native_plan["document"],
+                reservation_id=reservation_id,
             )
+            if native_plan.get("required"):
+                outcome["result"] = await seal_response(run_id=native_plan["context"].run_id,
+                    activation_id=str(payload["activation_id"]), attempt=attempt_number,
+                    result=dict(outcome.get("result") or {}), role=str(payload.get("role") or "expert"))
+        except asyncio.CancelledError:
+            if native_plan.get("required"):
+                with contextlib.suppress(activation_service.ActivationServiceError):
+                    await asyncio.shield(seal_response(run_id=native_plan["context"].run_id,
+                        activation_id=str(payload["activation_id"]), attempt=attempt_number,
+                        result={"result": "", "status": "failed"}, role=str(payload.get("role") or "expert")))
+            raise
+        except (httpx.HTTPError, json.JSONDecodeError) as exc:
+            if not native_plan.get("required"):
+                raise
+            # Delivery can fail after the agent starts a model call. Preserve
+            # its receipts and stop automatic endpoint retries in that case.
+            try:
+                sealed = await seal_response(run_id=native_plan["context"].run_id,
+                    activation_id=str(payload["activation_id"]), attempt=attempt_number,
+                    result={"result": "", "status": "failed"}, role=str(payload.get("role") or "expert"))
+            except activation_service.ActivationServiceError:
+                sealed = {"status": "failed", "result": str(exc)}
+            return httpx.Response(200, json=sealed, request=request)
         except agent_dispatch.DispatchError as exc:
-            return httpx.Response(502, text=str(exc), request=request)
+            if not native_plan.get("required"):
+                return httpx.Response(502, text=str(exc), request=request)
+            return httpx.Response(200, json={"status": "failed", "result": str(exc)}, request=request)
         except (
             activation_service.ActivationServiceError,
             agent_protocol.AgentProtocolError,
             SigningError,
+            budget_service.BudgetError,
+            effect_service.EffectServiceError,
         ) as exc:
             logger.warning(f"Native dispatch ledger error for {payload['task_id']}: {exc}")
             return httpx.Response(200, json={

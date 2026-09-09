@@ -297,34 +297,11 @@ def test_total_timeout_stops_remote_run(monkeypatch):
     assert any(call["url"].endswith("/run-1/stop") for call in client.posts)
 
 
-def test_cli_fallback_preserves_selected_model(monkeypatch):
-    captured = {}
-
-    class FakeProcess:
-        returncode = 0
-
-        async def communicate(self):
-            return b"done", b""
-
-    async def fake_subprocess(*args, **kwargs):
-        captured["args"] = args
-        return FakeProcess()
-
-    monkeypatch.setattr(api_server.asyncio, "create_subprocess_exec", fake_subprocess)
-    monkeypatch.setattr(api_server, "DAEMON_INGEST_URL", None)
-
-    result = asyncio.run(api_server._run_hermes(
-        description="Do the task",
-        role_prompt=None,
-        context=None,
-        timeout=30,
-        request_id="request-1",
-        model="daemon-model",
-    ))
-
-    model_index = captured["args"].index("--model") + 1
-    assert captured["args"][model_index] == "daemon-model"
-    assert result[0] == api_server.TaskStatus.completed
+def test_hermes_requires_the_runs_api(monkeypatch):
+    monkeypatch.setattr(api_server, "EXECUTION_BACKEND", "hermes")
+    monkeypatch.setattr(api_server, "HERMES_GATEWAY_URL", None)
+    assert api_server._selected_execution_backend() == "unavailable"
+    assert not hasattr(api_server, "_run_hermes")
 
 
 def test_execute_authentication_is_optional_and_constant(monkeypatch):
@@ -1311,67 +1288,34 @@ def test_artifact_sync_sends_the_agent_role(monkeypatch, tmp_path):
     assert calls[0]["data"]["author"] == "planner"
 
 
-def test_cli_deadline_includes_attachment_staging(monkeypatch):
-    subprocess_called = False
-
+def test_runs_api_deadline_includes_attachment_staging(monkeypatch, tmp_path):
     async def slow_stage(**kwargs):
         await asyncio.sleep(1)
 
-    async def unexpected_subprocess(*args, **kwargs):
-        nonlocal subprocess_called
-        subprocess_called = True
-        raise AssertionError("Subprocess started after the deadline")
-
     monkeypatch.setattr(api_server, "_stage_attachments", slow_stage)
-    monkeypatch.setattr(api_server.asyncio, "create_subprocess_exec", unexpected_subprocess)
     monkeypatch.setattr(api_server, "DAEMON_INGEST_URL", "http://daemon")
-    monkeypatch.setattr(api_server, "BMAS_NODE_KEY", "node-key")
-
-    result = asyncio.run(api_server._run_hermes(
-        description="Do the task",
-        role_prompt=None,
-        context={"attachments": [{"file_id": "file-1"}]},
-        timeout=0.01,
-        request_id="request-1",
-        task_id="task-1",
-        turn_id="turn-1",
-    ))
+    monkeypatch.setattr(api_server, "OUTPUTS_ROOT", tmp_path)
+    client = FakeRunsClient(FakeStream())
+    result = run_api(client, timeout=0.01, context={"attachments": [{"file_id": "file-a"}]})
     assert result[0] == api_server.TaskStatus.timeout
-    assert subprocess_called is False
+    assert client.posts == []
 
 
-def test_cli_spools_bounded_trace_without_truncating_result(monkeypatch, tmp_path):
-    output = "x" * 100_000
+def test_runs_api_stages_attachments_before_submission(monkeypatch, tmp_path):
+    staged = []
 
-    class FakeProcess:
-        returncode = 0
+    async def stage(**kwargs):
+        staged.append(kwargs)
+        assert client.posts == []
 
-        async def communicate(self):
-            return output.encode(), b""
-
-    async def fake_subprocess(*args, **kwargs):
-        return FakeProcess()
-
-    monkeypatch.setattr(api_server.asyncio, "create_subprocess_exec", fake_subprocess)
+    monkeypatch.setattr(api_server, "_stage_attachments", stage)
     monkeypatch.setattr(api_server, "DAEMON_INGEST_URL", "http://daemon")
-    monkeypatch.setattr(api_server, "BMAS_NODE_KEY", "node-key")
-    monkeypatch.setattr(api_server, "TRACE_SPOOL_DIR", tmp_path)
-    monkeypatch.setattr(api_server, "TRACE_EVENT_MAX_BYTES", 1024)
-
-    result = asyncio.run(api_server._run_hermes(
-        description="Do the task",
-        role_prompt=None,
-        context={"round": 4},
-        timeout=30,
-        request_id="request-1",
-        task_id="task-1",
-        turn_id="turn-1",
-    ))
-    assert result[1] == output
-    spool = json.loads(next(tmp_path.glob("*.json")).read_text())
-    assert spool["traces"][0]["data"]["round"] == 4
-    final_trace = next(trace for trace in spool["traces"] if trace["type"] == "final")
-    assert final_trace["data"]["truncated"] is True
+    monkeypatch.setattr(api_server, "OUTPUTS_ROOT", tmp_path)
+    client = FakeRunsClient(FakeStream(["event: run.completed", 'data: {"output":"done"}', ""]))
+    result = run_api(client, context={"attachments": [{"file_id": "file-a", "name": "input.txt"}]})
+    assert result[0] == api_server.TaskStatus.completed
+    assert staged[0]["workspace"] == tmp_path / "task-1"
+    assert str(tmp_path / "task-1" / "inputs") in client.posts[0]["json"]["instructions"]
 
 
 # ── Task output workspace and artifact delivery ─────────────────────────
@@ -1491,3 +1435,23 @@ def test_sweep_removes_only_stale_task_outputs(monkeypatch, tmp_path):
     assert removed == 1
     assert not old.exists()
     assert fresh.exists()
+
+
+def _classic_proposal_cases():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    return json.loads((root / "conformance/proposal_fixtures/classic-proposals.json").read_text())["cases"]
+
+
+@pytest.mark.parametrize("case", _classic_proposal_cases())
+def test_generated_classic_response_model(case):
+    from pydantic import ValidationError
+
+    from bmas_protocol.proposals import ClassicProposalResponse
+
+    if case["valid"]:
+        assert ClassicProposalResponse.model_validate(case["payload"]).root == case["payload"]
+    else:
+        with pytest.raises(ValidationError):
+            ClassicProposalResponse.model_validate(case["payload"])

@@ -133,8 +133,9 @@ async def _run_identity(
     connection: aiosqlite.Connection, run_id: str,
 ) -> dict[str, str]:
     cursor = await connection.execute(
-        "SELECT task_id, runtime_id, runtime_contract_version, tenant_id "
-        "FROM runs WHERE run_id = ?",
+        "SELECT r.task_id, r.runtime_id, r.runtime_contract_version, r.tenant_id, "
+        "a.policy_set_digest, a.specification_digest FROM runs r "
+        "LEFT JOIN runtime_admissions a ON a.run_id = r.run_id WHERE r.run_id = ?",
         (run_id,),
     )
     row = await cursor.fetchone()
@@ -145,6 +146,8 @@ async def _run_identity(
         "runtime_id": str(row["runtime_id"]),
         "runtime_contract_version": str(row["runtime_contract_version"]),
         "tenant_id": str(row["tenant_id"]),
+        "policy_set_digest": str(row["policy_set_digest"] or ""),
+        "specification_digest": str(row["specification_digest"] or ""),
     }
 
 
@@ -173,6 +176,44 @@ async def get_activation(activation_id: str, attempt: int) -> dict[str, Any]:
     """Read one activation ledger row."""
     async with db._connect() as connection:  # noqa: SLF001
         return await _load_activation(connection, activation_id, attempt)
+
+
+async def cancel_run_work(run_id: str) -> None:
+    """Cancel queued activations, dispatch rows, and approved run effects."""
+    import effect_service
+
+    async with db._connect() as connection:  # noqa: SLF001
+        dispatches = await connection.execute_fetchall(
+            "SELECT grant_id FROM activation_dispatch_outbox WHERE run_id = ? AND dispatch_state = 'queued'",
+            (run_id,),
+        )
+        pending = await connection.execute_fetchall(
+            "SELECT activation_id, attempt FROM activations WHERE run_id = ? AND state IN ('queued', 'leased')",
+            (run_id,),
+        )
+        effects = await connection.execute_fetchall(
+            "SELECT effect_id FROM effect_attempts WHERE run_id = ? AND state IN ('intent', 'approved', 'dispatch_queued')",
+            (run_id,),
+        )
+    for row in dispatches:
+        try:
+            await cancel_activation_dispatch(grant_id=str(row["grant_id"]), run_id=run_id, reason="run_cancelled")
+        except ValueError:
+            if (await get_dispatch_row(str(row["grant_id"])))["dispatch_state"] != "cancelled":
+                raise
+    async with db._connect() as connection:  # noqa: SLF001
+        cancelled_dispatches = await connection.execute_fetchall(
+            "SELECT a.activation_id, a.attempt FROM activations a JOIN activation_dispatch_outbox d "
+            "ON d.activation_id = a.activation_id AND d.activation_attempt = a.attempt "
+            "WHERE a.run_id = ? AND a.state = 'dispatch_queued' AND d.dispatch_state = 'cancelled'",
+            (run_id,),
+        )
+    pending = [*pending, *cancelled_dispatches]
+    for row in pending:
+        await transition_activation(run_id=run_id, activation_id=str(row["activation_id"]),
+                                    attempt=int(row["attempt"]), target_state="cancelled")
+    for row in effects:
+        await effect_service.cancel_effect(run_id=run_id, effect_id=str(row["effect_id"]), reason="run_cancelled")
 
 
 async def _load_dispatch_row(
@@ -230,10 +271,12 @@ def _operation(
         run_id=run_id,
         runtime_id=identity["runtime_id"],
         runtime_contract_version=identity["runtime_contract_version"],
-        payload=payload,
+        payload={**payload, "policy_set_digest": identity["policy_set_digest"],
+                 "specification_digest": identity["specification_digest"]},
         idempotency_token=idempotency_token,
         task_fence=task_fence,
         tenant_id=identity["tenant_id"],
+        authority_type="runtime" if identity["runtime_id"] == "classic" and identity["runtime_contract_version"] == "2" else "host",
     )
 
 
@@ -650,6 +693,8 @@ async def transition_activation(
             "WHERE activation_id = ? AND attempt = ?",
             values,
         )
+        if target_state in ("committed", "cancelled", "abandoned"):
+            await connection.execute("UPDATE activation_leases SET released = 1 WHERE lease_id = ?", (row["lease_id"],))
 
     token = idempotency_token or (
         f"activation-transition-{activation_id}-{attempt}-{target_state}"
@@ -1236,8 +1281,11 @@ async def record_send_start(
         cursor = await connection.execute(
             "UPDATE activation_dispatch_outbox SET send_started_at = ? "
             "WHERE grant_id = ? AND claim_owner = ? AND claim_fence = ? "
-            "AND dispatch_state = 'claimed' AND send_started_at IS NULL",
-            (now, grant_id, claim_owner, claim_fence),
+            "AND dispatch_state = 'claimed' AND send_started_at IS NULL AND EXISTS ("
+            "SELECT 1 FROM run_controls c WHERE c.run_id = activation_dispatch_outbox.run_id "
+            "AND c.cancellation_state = 'active' AND c.deadline_expired = 0 "
+            "AND (c.deadline_at IS NULL OR c.deadline_at > ?))",
+            (now, grant_id, claim_owner, claim_fence, now),
         )
         await connection.commit()
         return cursor.rowcount == 1
@@ -1433,6 +1481,7 @@ async def cancel_activation_dispatch(
         guard=guard,
         task_fence=task_fence,
         database_time=database_time,
+        idempotency_token=f"dispatch-cancel-{grant_id}",
     )
 
 
@@ -1946,24 +1995,48 @@ async def commit_proposal_decision(
     reservation_validator: ReservationValidator | None = None,
     task_fence: str | None = None,
     database_time: str | None = None,
+    decision_payload: dict[str, Any] | None = None,
+    projection_writer: Callable[[aiosqlite.Connection, int, str], Awaitable[None]] | None = None,
 ) -> journal.JournalRecord:
     """Commit exactly one proposal decision for one eligible proposal."""
-    await validate_proposal_eligibility(
-        run_id=run_id,
-        activation_id=activation_id,
-        attempt=attempt,
-        proposal_digest=proposal_digest,
-        request_digest=request_digest,
-        effect_id=effect_id,
-        reservation_validator=reservation_validator,
-        database_time=database_time,
-    )
+    existing = await get_activation(activation_id, attempt)
+    if existing["state"] == "committed":
+        # A repeated decision reads its immutable journal record. Its lease
+        # no longer authorizes new work after the original transaction.
+        if existing["request_digest"] != request_digest:
+            raise ProposalEligibilityError("request_match")
+    else:
+        await validate_proposal_eligibility(
+            run_id=run_id,
+            activation_id=activation_id,
+            attempt=attempt,
+            proposal_digest=proposal_digest,
+            request_digest=request_digest,
+            effect_id=effect_id,
+            reservation_validator=reservation_validator,
+            database_time=database_time,
+        )
     identity = await run_identity(run_id)
 
     async def extra(
         connection: aiosqlite.Connection, journal_cursor: int, now: str,
     ) -> None:
         row = await _load_activation(connection, activation_id, attempt)
+        # Recheck authority inside the board transaction. A preflight check
+        # cannot authorize a mutation after a concurrent cancellation.
+        cursor = await connection.execute(
+            "SELECT 1 FROM run_controls c JOIN activation_leases l ON l.lease_id = ? "
+            "JOIN budget_reservations b ON b.reservation_id = ? "
+            "WHERE c.run_id = ? AND c.task_fence = ? AND c.cancellation_state = 'active' "
+            "AND c.deadline_expired = 0 AND (c.deadline_at IS NULL OR c.deadline_at > ?) "
+            "AND l.released = 0 AND l.expires_at > ? AND b.state = 'reserved'",
+            (row["lease_id"], row["reservation_id"], run_id, row["task_fence"], now, now),
+        )
+        if await cursor.fetchone() is None:
+            raise ProposalEligibilityError("live_authority")
+        if (row["proposal_digest"] != proposal_digest or row["request_digest"] != request_digest
+                or row["execution_envelope_digest"] != execution_envelope_digest):
+            raise ProposalEligibilityError("envelope_binding")
         validate_activation_transition(str(row["state"]), "committed")
         await connection.execute(
             "UPDATE activations SET state = 'committed', "
@@ -1977,6 +2050,9 @@ async def commit_proposal_decision(
                 attempt,
             ),
         )
+        if projection_writer is not None:
+            await projection_writer(connection, journal_cursor, now)
+        await connection.execute("UPDATE activation_leases SET released = 1 WHERE lease_id = ?", (row["lease_id"],))
 
     return await journal.commit_operation(
         journal.JournalOperation(
@@ -1986,6 +2062,7 @@ async def commit_proposal_decision(
             runtime_id=identity["runtime_id"],
             runtime_contract_version=identity["runtime_contract_version"],
             payload={
+                **dict(decision_payload or {}),
                 "decision": decision,
                 "proposal_digest": proposal_digest,
                 "execution_envelope_digest": execution_envelope_digest,
@@ -2005,6 +2082,7 @@ async def commit_proposal_decision(
             ),
             task_fence=task_fence,
             tenant_id=identity["tenant_id"],
+            authority_type="runtime" if identity["runtime_id"] == "classic" and identity["runtime_contract_version"] == "2" else "host",
         ),
         database_time=database_time,
         extra_writes=extra,

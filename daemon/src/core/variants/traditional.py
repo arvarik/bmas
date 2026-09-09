@@ -351,7 +351,10 @@ class TraditionalVariant:
         }
         if timeout is not None:
             request["timeout"] = timeout
-        resp = await self.http.post(f"{self.litellm_url}/chat/completions", **request)
+        from core.variants.classic.effects import post_completion
+
+        resp = await post_completion(self.http, f"{self.litellm_url}/chat/completions",
+                                     task_id=task_id, phase=phase, **request)
         resp.raise_for_status()
         resp_json = resp.json()
         # Capture control-plane LLM usage/cost (doc 06 §3.1)

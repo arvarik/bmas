@@ -249,6 +249,7 @@ async def test_the_unmocked_complete_stack_journey(journey_db, keys, store):
                 "raw_response_artifact_digest"
             ],
             "effect_ids": [provider_call["effect_id"]],
+            "execution_envelope_digest": sealed.digest(),
         },
         task_fence=FENCE,
     )

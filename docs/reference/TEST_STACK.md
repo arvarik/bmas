@@ -175,8 +175,9 @@ authority) and the activation grants the host dispatched.
 
 A native dispatch retries with one new attempt number that names the
 attempt it retries, so every attempt owns its own lease, grant, and
-acknowledgement. A run without a reserved reservation stays on the
-legacy path. A daemon-side ledger error returns one failed turn and
+acknowledgement. A native run reserves each activation separately.
+A native run rejects an unqualified endpoint or a missing proposal schema.
+It never changes to the bearer path after native dispatch starts. A daemon-side ledger error returns one failed turn and
 never opens the endpoint circuit, because it is not an endpoint
 failure.
 
@@ -220,10 +221,46 @@ cancellation. The operator abort route now also requests the
 cancellation on the run-control row, so the runtime's next mutation is
 rejected as cancelled and the run ends with the `cancelled` reason.
 
-The activation ledger case derives its value from the activation and
-effect transitions a runtime authored itself. The board and outcome
-records of the native pair leave that value at `compatibility_adapter`
-until the native activations work package.
+The activation ledger case derives its value from runtime-authored
+activation and effect transitions. The native column now observes
+`native` for the activation ledger, dispatch outbox, agent protocol,
+acknowledgement, receipts, envelope creator, and cancellation signal.
+For every completed task, the column checks each activation's reservation,
+lease, grant, acknowledgement, raw artifact, and envelope. It also checks
+two receipts and a raw artifact for every effect.
+
+`daemon.classic-native-activations` verifies the proposal registry,
+concurrent grant delivery, raw response retention, forged response
+rejection, atomic board rollback, and cancellation before commit.
+`daemon.classic-local-effects` verifies the six daemon call types,
+legacy observation without a reservation, and the Recovery Center queue.
+Both groups run in the complete profile and the daemon CI profile.
+The registry generates the agent response model, its JSON Schema, and
+`conformance/proposal_fixtures/classic-proposals.json`.
+Run `.venv/bin/python scripts/generate-classic-proposals.py` after a
+registry change. The native activation tests check generation freshness.
+The agent tests run the same fixtures independently.
+
+The local adapter in `daemon/src/core/variants/classic/effects.py` routes
+triage, control-unit, expert-generation, verifier, judge, and SolE calls
+through the effect service. A native call owns one activation reservation.
+A legacy call records an observe-only effect without a reservation.
+The adapter stops if the ledger is unavailable. Each normal response
+produces transport and response receipts. The daemon stores response bytes
+before parsing model content and records the verified receipt chain in
+one execution envelope. Cancellation removes queued dispatch obligations
+and approved effects. An uncertain transport enters `unknown_effects`
+in the Recovery Center and retains its reservation.
+
+The activation service commits the proposal decision and the board rows
+in one transaction. It checks the live cancellation state again inside
+that transaction. Reconciliation uses the immutable specification's prices
+and signed usage. An unknown price reserves the remaining cost authority.
+Missing usage consumes the reservation as an estimate. The journal records
+the charge and its exact amount in nanos.
+
+Later work packages add evidence writes, goal changes, and cleaner removals.
+The proposal schema currently rejects nonempty collections for those writes.
 
 Three stack details make that run real. The stack points every role
 in the registry at its own agent process, so the classic activations
@@ -235,7 +272,7 @@ outside code fences, with the operands next to the arithmetic word,
 so the board context that the agent appends as fenced JSON never
 changes the answer.
 
-## Receipts for the Hermes backends
+## Receipts for the Hermes Runs API
 
 The Hermes gateway backend runs one provider effect per run under one
 daemon-issued grant, with a receipt at the transport start and one at
@@ -244,9 +281,12 @@ tools before the agent sees them, so each observed tool event requests
 one tool grant and posts its receipt with the marker
 `observed_after_execution_by_hermes_gateway`. The ledger shows those
 tool effects as observed after execution, never as pre-authorized. The
-command-line backend runs one provider effect around the process and
-reports the exit code on failure. It emits no tool events, so it
-produces no tool receipts.
+agent uses the Runs API for every Hermes execution. Attachment staging
+completes before run submission, and its deadline includes staging time.
+The agent synchronizes `outputs/` after the run. A timeout without a known
+terminal response leaves the effect uncertain. The agent no longer starts
+a Hermes command-line process. The tool-free LiteLLM starter remains
+available through its explicit backend setting.
 
 ## The live-provider smoke
 

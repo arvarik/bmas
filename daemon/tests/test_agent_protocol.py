@@ -485,10 +485,7 @@ async def test_every_recovery_branch_of_the_dispatch_row(
     )
     grant_id = queued["grant"].activation_grant_id
     await db.request_run_cancellation_control(RUN_ID)
-    await activations.cancel_activation_dispatch(
-        grant_id=grant_id, run_id=RUN_ID, reason="cancellation_live",
-        task_fence=FENCE,
-    )
+    assert (await activations.get_dispatch_row(grant_id))["dispatch_state"] == "cancelled"
     row = await activations.get_dispatch_row(grant_id)
     assert row["dispatch_state"] == "cancelled"
     # The terminal row rejects every later transition; a late message
@@ -1270,3 +1267,32 @@ async def test_expired_qualification_stops_new_dispatch_only(
         )
         row = await cursor.fetchone()
     assert row["stored"] == 1
+
+
+async def test_forged_transport_receipt_never_sets_the_start_marker(protocol_db, keys, store):
+    child, grant = await make_claimed_child(keys, store)
+    receipt = support.build_receipt(child, grant, keys, sequence=1, stage="transport_starting")
+    forged = dataclasses.replace(receipt, signature="AAAA")
+    with pytest.raises(SigningError):
+        await effects.record_attempt_receipt(receipt=forged, key_registry=keys["registry"], authorize_transport=True)
+    async with db._connect() as connection:  # noqa: SLF001
+        row = await (await connection.execute(
+            "SELECT transport_started_at FROM effect_dispatch_outbox WHERE dispatch_ref = ?",
+            (receipt.dispatch_ref,),
+        )).fetchone()
+        assert row["transport_started_at"] is None
+    await effects.record_attempt_receipt(receipt=receipt, key_registry=keys["registry"], authorize_transport=True)
+
+
+async def test_cancelled_transport_receipt_never_sets_the_start_marker(protocol_db, keys, store):
+    child, grant = await make_claimed_child(keys, store)
+    receipt = support.build_receipt(child, grant, keys, sequence=1, stage="transport_starting")
+    await db.request_run_cancellation_control(RUN_ID)
+    with pytest.raises(effects.EffectDispatchError, match="cancellation"):
+        await effects.record_attempt_receipt(receipt=receipt, key_registry=keys["registry"], authorize_transport=True)
+    async with db._connect() as connection:  # noqa: SLF001
+        row = await (await connection.execute(
+            "SELECT transport_started_at FROM effect_dispatch_outbox WHERE dispatch_ref = ?",
+            (receipt.dispatch_ref,),
+        )).fetchone()
+        assert row["transport_started_at"] is None

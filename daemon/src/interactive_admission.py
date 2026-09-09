@@ -279,14 +279,14 @@ async def admit_task_run(
     )
     if compiled is not None:
         specification_digest = compiled.specification_digest
-        limit_millionths = max(-(-compiled.spec.limits.max_cost.amount_nanos // NANOS_PER_MILLIONTH), 1)
+        cost_limit = max(compiled.spec.limits.max_cost.amount_nanos, 1)
     else:
         specification_digest = digest_hex(SPECIFICATION_DIGEST_DOMAIN, plain_json({
             "runtime_key": runtime_key.to_dict(),
             "effective_configuration": effective_configuration or {},
         }))
         ceiling = budget_ceiling if budget_ceiling is not None else budget_ceiling_usd(effective_configuration)
-        limit_millionths = max(int(round(ceiling * USD_MILLIONTHS)), 1)
+        cost_limit = max(int(round(ceiling * USD_MILLIONTHS)), 1)
     request = run_admission.AdmissionRequest(
         task_id=task_id,
         run_id=run_id,
@@ -312,10 +312,10 @@ async def admit_task_run(
         budget_currency="USD",
         budget_limits=(
             run_admission.budget_service.LimitSpec(
-                "run", run_id, "provider_cost", limit_millionths, currency="USD",
+                "run", run_id, "provider_cost", cost_limit, currency="USD",
             ),
         ),
-        initial_reservation_resources={"provider_cost": limit_millionths},
+        initial_reservation_resources={"provider_cost": cost_limit},
         # A legacy contract keeps its budget advisory: the reservation records
         # intent and the classic ledger stays the spend authority.
         budget_mode="permissive" if runtime_key.runtime_contract_version == "1" else "strict",

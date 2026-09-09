@@ -16,7 +16,7 @@ import sqlite3
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -26,6 +26,9 @@ import config
 import database as db
 import protocol_keys
 from core.digest_profile import digest_hex, plain_json
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger("bmas.daemon.agent_dispatch")
 
@@ -116,7 +119,9 @@ async def native_context(task_id: str) -> NativeContext | None:
 
     # A run without a reserved reservation cannot bind an activation
     # grant, so its task stays on the legacy path.
-    if await interactive_admission.reservation_for_run(str(row["run_id"])) is None:
+    identity = await activations.run_identity(str(row["run_id"]))
+    if (identity["runtime_contract_version"] != "2"
+            and await interactive_admission.reservation_for_run(str(row["run_id"])) is None):
         return None
     return NativeContext(run_id=str(row["run_id"]), task_fence=str(row["task_fence"]))
 
@@ -135,6 +140,7 @@ async def dispatch_activation(
     reservation_id: str | None = None,
     timeout_s: float = 600.0,
     document: protocol.AgentCapabilityDocument | None = None,
+    local_executor: Callable[[Any, str], Awaitable[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Deliver one signed grant to the agent and commit its acknowledgement.
 
@@ -146,12 +152,29 @@ async def dispatch_activation(
     if not supports_native_protocol(document):
         raise DispatchError(f"The agent at {agent_url} does not qualify for protocol {protocol.CURRENT_AGENT_PROTOCOL_VERSION}")
     assert document is not None
+    identity = await activations.run_identity(run_id)
+    native_run = identity["runtime_id"] == "classic" and identity["runtime_contract_version"] == "2"
+    if (native_run and (request.get("context") or {}).get("classic_proposal_role")
+            and "classic-proposal/1" not in document.supported_proposal_schemas):
+        raise DispatchError("The agent does not support the Classic proposal schema")
     registry = await protocol_keys.registry()
     store = protocol_keys.artifact_store()
     if reservation_id is None:
         import interactive_admission
 
-        reservation_id = await interactive_admission.reservation_for_run(run_id)
+        if native_run:
+            from core.variants.classic.activations import reserve_call
+
+            reservation_id = await reserve_call(run_id, activation_id, attempt, request)
+        else:
+            reservation_id = await interactive_admission.reservation_for_run(run_id)
+    if native_run:
+        import budget_service
+
+        reservation = await budget_service.get_reservation(str(reservation_id))
+        if reservation["activation_id"] != activation_id or reservation["run_id"] != run_id:
+            raise DispatchError("The native activation requires its own reservation")
+    request = {**request, "task_id": task_id, "activation_id": activation_id}
     request_digest = digest_hex(REQUEST_DIGEST_DOMAIN, plain_json(request))
     context_view_digest = digest_hex(CONTEXT_DIGEST_DOMAIN, plain_json(request.get("context") or {}))
     if not reservation_id:
@@ -161,6 +184,8 @@ async def dispatch_activation(
         retry_of_attempt=retry_of_attempt,
         reservation_id=reservation_id, request_digest=request_digest,
         context_view_digest=context_view_digest, task_fence=task_fence,
+        retry_delay_ms=0 if retry_of_attempt is not None else None,
+        retry_jitter_ms=0 if retry_of_attempt is not None else None,
     )
     claim = await activations.claim_activation(
         run_id=run_id, activation_id=activation_id, attempt=attempt,
@@ -183,27 +208,32 @@ async def dispatch_activation(
         claim_ttl_seconds=LEASE_TTL_SECONDS, key_registry=registry, artifact_store=store,
         expected_target_agent_id=document.agent_id, task_fence=task_fence,
     )
-    await activations.record_send_start(
+    started = await activations.record_send_start(
         grant_id=grant.activation_grant_id,
         claim_owner=str(claimed["claim_owner"]), claim_fence=str(claimed["claim_fence"]),
     )
+    if not started:
+        raise activations.DispatchClaimError("The activation transport no longer holds authority")
     delivery = {
         "grant": json.loads(grant.to_bytes().decode("utf-8")),
         "grant_digest": str(queued["grant_artifact_digest"]),
-        "request": {**request, "task_id": task_id, "activation_id": activation_id},
+        "request": request,
     }
-    response = await http.post(
-        f"{agent_url.rstrip('/')}/bmas/activations", json=delivery,
-        headers=node_headers(), timeout=timeout_s,
-    )
-    if response.status_code >= 400:
-        raise DispatchError(f"The agent rejected the activation: HTTP {response.status_code} {response.text[:300]}")
-    body = response.json()
+    if local_executor is not None:
+        body = await local_executor(grant, str(queued["grant_artifact_digest"]))
+    else:
+        response = await http.post(
+            f"{agent_url.rstrip('/')}/bmas/activations", json=delivery,
+            headers=node_headers(), timeout=timeout_s,
+        )
+        if response.status_code >= 400:
+            raise DispatchError(f"The agent rejected the activation: HTTP {response.status_code} {response.text[:300]}")
+        body = response.json()
     acknowledgement = body.get("acknowledgement")
     if not isinstance(acknowledgement, dict):
         raise DispatchError("The agent returned no acknowledgement")
     outcome = await activations.process_acknowledgement(
-        text=protocol.canonicalize(acknowledgement), key_registry=registry, task_fence=task_fence,
+        text=protocol.canonicalize(acknowledgement), key_registry=await protocol_keys.registry(), task_fence=task_fence,
     )
     activation = await activations.get_activation(activation_id, attempt)
     return {

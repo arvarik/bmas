@@ -30,6 +30,8 @@ from config import (
     TRIAGE_GEMINI_MODEL,
     TRIAGE_LOCAL_MODEL,
 )
+from core.model_parameters import completion_parameters, profile_for_alias
+from core.variants.classic.effects import post_completion
 
 
 class Complexity(Enum):
@@ -186,7 +188,7 @@ class TriageRouter:
             temperature=0.1, reasoning="minimal",
         )
         for _attempt in range(2):
-            response = await self.client.post(
+            response = await post_completion(self.client,
                 f"{self.litellm_url}/chat/completions",
                 headers={"Authorization": f"Bearer {self.litellm_key}"},
                 json={
@@ -212,7 +214,7 @@ class TriageRouter:
         Uses the triage vLLM container directly (not through LiteLLM).
         guided_choice constrains output to valid tier labels at the token level.
         """
-        response = await self.client.post(
+        response = await post_completion(self.client,
             f"{self.triage_url}/chat/completions",
             json={
                 "model": TRIAGE_LOCAL_MODEL,
@@ -220,8 +222,7 @@ class TriageRouter:
                     {"role": "system", "content": TRIAGE_SYSTEM_PROMPT},
                     {"role": "user", "content": task_description},
                 ],
-                "max_tokens": 10,
-                "temperature": 0.1,
+                **completion_parameters(profile_for_alias(TRIAGE_LOCAL_MODEL), output_tokens=10, temperature=0.1),
                 # vLLM constrained decoding — top-level param, NOT inside extra_body
                 # (extra_body is an OpenAI Python SDK abstraction)
                 "guided_choice": GUIDED_CHOICE_LABELS,
@@ -241,13 +242,13 @@ class TriageRouter:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": task_description})
 
-        response = await self.client.post(
+        response = await post_completion(self.client,
             f"{self.litellm_url}/chat/completions",
             headers={"Authorization": f"Bearer {self.litellm_key}"},
             json={
                 "model": triage.litellm_model,
                 "messages": messages,
-                "max_tokens": 65536,  # Full Gemini output limit — prevent truncation bugs
+                **completion_parameters(profile_for_alias(triage.litellm_model), output_tokens=65536),
             },
         )
         response.raise_for_status()

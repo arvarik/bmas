@@ -337,6 +337,48 @@ class NativeBoardGateway(BoardGateway):
 
     # ── Content mutations ────────────────────────────────────────────
 
+    async def apply_proposal(self, *, task_id: str, actor: str, capabilities: list[str],
+                             proposed: list[dict[str, Any]], turn_id: str, attempt: int,
+                             round_no: int, space: str = "public") -> list[BoardEntry]:
+        """Validate all entries and commit exactly one model proposal decision."""
+        import activation_service
+        from core.variants.classic.activations import reconcile_call
+
+        async with self._task_lock(task_id):
+            await self._assert_commit_allowed(task_id)
+            activation = await activation_service.get_activation(turn_id, attempt)
+            if activation["state"] == "committed":
+                await reconcile_call(run_id=str(activation["run_id"]), activation_id=turn_id, attempt=attempt)
+                return []
+            entries = []
+            rejection = None
+            try:
+                for raw in proposed:
+                    entries.append(await self._prepare_entry(
+                        raw, task_id, actor, turn_id, round_no, space, capabilities))
+            except EntryRejected as exc:
+                rejection = exc.reason
+                entries = []
+            record = await self._committer.commit(BoardMutation(
+                kind="model_proposal", decision="rejected" if rejection else "accepted",
+                task_id=task_id, actor=actor, activation_id=turn_id, round=round_no,
+                token=f"proposal-decision-{turn_id}-{attempt}",
+                proposal={"activation_attempt": attempt}, reason=rejection,
+                section=_section("append", actor=actor, activation_id=turn_id, round_no=round_no,
+                    mutation_id=f"proposal-{turn_id}-{attempt}", entries=[entry_projection(e) for e in entries]),
+                bodies={e.id: e.body for e in entries},
+            ))
+            for entry in entries:
+                entry.created_at = record.recorded_at
+                entry.updated_at = record.recorded_at
+                await self._commit(task_id, entry, actor, turn_id, round_no,
+                                   mutation_id=f"{turn_id}:{entry.id}")
+                await self._emit(task_id, EVENT_BOARD_ENTRY, entry_to_dict(entry))
+            if entries:
+                await self._recompute_derived(task_id)
+            await reconcile_call(run_id=str(activation["run_id"]), activation_id=turn_id, attempt=attempt)
+            return entries
+
     async def append(
         self,
         task_id: str,

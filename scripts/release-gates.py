@@ -34,7 +34,7 @@ RELEASE_GATES: dict[str, list[str]] = {
     "foundation_runtime_routing": ["daemon.runtime-routing"],
     "foundation_unit_of_work_atomicity": ["daemon.unit-of-work-atomicity", "daemon.run-admission"],
     "foundation_journal_replay": ["daemon.journal-replay", "daemon.typed-indexes"],
-    "foundation_crash_recovery": ["daemon.activation-states", "daemon.agent-protocol", "daemon.external-effects", "daemon.execution-envelope"],
+    "foundation_crash_recovery": ["daemon.activation-states", "daemon.agent-protocol", "daemon.external-effects", "daemon.execution-envelope", "daemon.classic-native-activations", "daemon.classic-local-effects"],
     "foundation_budget_reconciliation": ["daemon.budget-states"],
     "foundation_privacy_boundary": ["daemon.privacy-boundary"],
     "foundation_evidence_and_goals": ["daemon.evidence-authority", "daemon.goal-concurrency"],

@@ -212,9 +212,26 @@ class NativeRunBinding:
             task_fence=self.task_fence,
         )
         try:
-            record = await journal.commit_operation(
-                operation, extra_writes=self._projection_writer(section) if accepted else None,
-            )
+            if mutation.kind == "model_proposal":
+                import activation_service
+
+                activation = await activation_service.get_activation(str(mutation.activation_id),
+                    int(mutation.proposal["activation_attempt"]))
+                record = await activation_service.commit_proposal_decision(
+                    run_id=self.run_id, activation_id=str(mutation.activation_id),
+                    attempt=int(activation["attempt"]), decision=mutation.decision,
+                    proposal_digest=str(activation["proposal_digest"]),
+                    request_digest=str(activation["request_digest"]),
+                    execution_envelope_digest=str(activation["execution_envelope_digest"]),
+                    projection_changes=payload["projection_changes"], checkpoint_digest=digest,
+                    decision_payload=payload,
+                    projection_writer=self._projection_writer(section) if accepted else None,
+                    task_fence=self.task_fence,
+                )
+            else:
+                record = await journal.commit_operation(
+                    operation, extra_writes=self._projection_writer(section) if accepted else None,
+                )
         except journal.JournalFenceError as exc:
             raise LeaseLostError(f"The task fence is stale: {exc}") from exc
         except journal.JournalIntegrityError as exc:

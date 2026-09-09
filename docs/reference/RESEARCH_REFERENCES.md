@@ -97,7 +97,22 @@ their reported results as design evidence, not settled guarantees.
   Paths](https://arxiv.org/abs/2603.16586) — Enforces policy on
   execution paths at runtime instead of at review time. Used for:
   the effect-grant authority chain and `validate_before_transport`
-  checks (`daemon/src/effect_service.py`).
+  checks (`daemon/src/effect_service.py`). The local adapter applies the
+  same check to daemon model calls in
+  `daemon/src/core/variants/classic/effects.py::post_completion`.
+  `daemon/tests/test_classic_local_effects.py` verifies that cancellation
+  before transport produces zero provider calls. This implementation uses
+  live deterministic checks. It does not implement the paper's probabilistic
+  policy model.
+- [JSONSchemaBench: A Rigorous Benchmark of Structured Outputs for
+  Language Models](https://arxiv.org/abs/2501.10868) separates schema
+  constraint coverage from generation efficiency and output quality.
+  This distinction motivates independent validation of stored responses
+  in `daemon/src/core/variants/classic/proposals.py::parse_proposal`.
+  The registry generates valid and invalid cases through `parser_fixtures`
+  and `scripts/generate-classic-proposals.py`. The daemon and agent tests
+  execute those cases against their parsers. This code does not import
+  the paper's dataset or claim its benchmark results.
 
 - [Why Do Multi-Agent LLM Systems Fail? (MAST, 2026
   update)](https://arxiv.org/abs/2503.13657) and [When Errors Become
