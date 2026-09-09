@@ -241,3 +241,13 @@ async def test_response_charge_precedes_board_admission(native_run, monkeypatch)
     assert reservation["state"] == "consumed" and reservation["consumption_kind"] == "actual"
     records = await journal.read_journal(run_id=native_run["run_id"])
     assert any(record.operation_type == "budget_reconciliation" for record in records)
+
+
+@pytest.mark.parametrize("value", [
+    {"classic": ["invalid"]}, {"price_overrides": ["invalid"]},
+    {"price_overrides": {"model": "invalid"}},
+    {"price_overrides": {"model": {"source": " ", "input_cost_per_token": "1", "output_cost_per_token": "1"}}},
+])
+def test_malformed_overrides_raise_validation_errors(value):
+    with pytest.raises(ValidationError):
+        TaskOverrideSet.model_validate(value)

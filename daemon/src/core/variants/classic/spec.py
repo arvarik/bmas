@@ -120,12 +120,19 @@ class TaskOverrideSet(ControlledModel):
     @classmethod
     def _exact_override_amounts(cls, value: Any) -> Any:
         if isinstance(value, dict):
-            for name, amount in (value.get("classic") or {}).items():
+            classic = value.get("classic")
+            for name, amount in (classic.items() if isinstance(classic, dict) else ()):
                 if name in ("budget_ceiling_usd", "limits.max_cost") and isinstance(amount, float):
                     raise ValueError("Money overrides require decimal strings, never binary floating point")
-            for price in (value.get("price_overrides") or {}).values():
-                source = price.get("source") if isinstance(price, dict) else price.source
-                if not source or source == "bmas.yaml":
+            prices = value.get("price_overrides")
+            for price in (prices.values() if isinstance(prices, dict) else ()):
+                if isinstance(price, dict):
+                    source = price.get("source")
+                elif isinstance(price, PriceSnapshot):
+                    source = price.source
+                else:
+                    continue
+                if not isinstance(source, str) or not source.strip() or source == "bmas.yaml":
                     raise ValueError("An explicit price override requires its own provenance")
         return value
 
