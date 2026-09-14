@@ -289,10 +289,14 @@ test("authors, previews, and publishes a study", async ({ page }) => {
 
 test("lists anchor sets with their schedule and drift and calibrates one now", async ({ page }) => {
   let calibrated = false;
+  // The judges page compares the next due date with the real clock, so
+  // the calibrated schedule falls one interval after the test runs. A
+  // fixed future date turns overdue once the calendar passes it.
+  const nextDueAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   await page.route("**/api/evaluation/judges/anchor-sets**", async (route, request) => {
     if (request.method() === "POST") return route.fulfill({ status: 201, json: { anchor_id: "anchor-new" } });
     return route.fulfill({ json: { anchor_sets: [{
-      id: "anchor-a", judge_id: "judge-a", judge_version: "2", state: "active", next_due_at: calibrated ? "2026-09-11T12:00:00Z" : "2026-09-01T00:00:00Z", last_calibrated_at: calibrated ? now : null, created_at: now, due: !calibrated,
+      id: "anchor-a", judge_id: "judge-a", judge_version: "2", state: "active", next_due_at: calibrated ? nextDueAt : "2026-09-01T00:00:00Z", last_calibrated_at: calibrated ? now : null, created_at: now, due: !calibrated,
       record: { anchor_id: "anchor-a", judge: { judge_id: "judge-a", version: "2", model: "judge-model", prompt_digest: digest("a") }, scorer: { scorer_id: "scorer-exact", version: "1" }, label_set: { dataset_id: "dataset-ops", version: "1", items: [{ item_id: "item-1", label: "pass" }, { item_id: "item-2", label: "fail" }] }, candidate_models: [], schedule: { interval_days: 7, next_due_at: "2026-09-01T00:00:00Z", created_at: now }, threshold: 0.7, drift_tolerance: 0.1, state: "active" },
     }] } });
   });
@@ -303,7 +307,7 @@ test("lists anchor sets with their schedule and drift and calibrates one now", a
   } }));
   await page.route("**/api/evaluation/judges/anchor-sets/anchor-a/calibrate**", async (route) => {
     calibrated = true;
-    return route.fulfill({ json: { anchor_id: "anchor-a", calibration_id: "calibration-b", state: "current", raw_agreement: 0.9167, next_due_at: "2026-09-11T12:00:00Z", judge_outputs: {} } });
+    return route.fulfill({ json: { anchor_id: "anchor-a", calibration_id: "calibration-b", state: "current", raw_agreement: 0.9167, next_due_at: nextDueAt, judge_outputs: {} } });
   });
 
   await page.goto("/judges");
