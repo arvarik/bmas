@@ -12,6 +12,8 @@ Stigmergic coordinates model-backed agents through durable, versioned runtime co
 
 This repository includes three runtimes. Classic uses a control unit and a shared blackboard. Patchboard integrates independent contributions. Stigmergic workspace applies ordered revisions to one shared artifact.
 
+Every runtime runs on one shared foundation. The daemon admits each run through one immutable admission, records every durable fact in an append-only runtime journal, and dispatches every agent activation through signed grants and receipts. The same daemon runs the benchmark and evaluation platform: immutable datasets, versioned tests, studies, frozen statistical reports, and release gates.
+
 ## Start the stack
 
 You need Docker 24 or newer, Docker Compose 2.20 or newer, and one provider API key.
@@ -39,9 +41,9 @@ The default stack runs on one host.
 |:---|:---|
 | Redis | Supplies locks, notifications, and live projections. |
 | LiteLLM | Routes model requests through one API. |
-| Starter agent | Executes runtime roles through LiteLLM. It does not provide tools. |
-| Daemon | Runs tasks and benchmark attempts. It saves durable state in SQLite. |
-| Mission Control | Shows tasks, benchmark data, runtime capacity, files, logs, costs, and operator actions. |
+| Starter agent | Executes runtime roles through LiteLLM. It answers signed activation grants with acknowledgements and receipts. It does not provide tools. |
+| Daemon | Admits runs, runs tasks and benchmark attempts, and records the runtime journal. It saves durable state in SQLite. |
+| Mission Control | Shows tasks, benchmark data, evaluation records, runtime capacity, files, logs, costs, and operator actions. |
 
 The optional GPU profile adds local triage through vLLM. The normal starter does not need a GPU or a separate edge node.
 
@@ -53,7 +55,15 @@ The optional GPU profile adds local triage through vLLM. The normal starter does
 | Patchboard | Contributors work independently before one integration turn. | Parallel proposals and independent analyses. |
 | Stigmergic workspace | Workers revise one shared artifact in a fixed order. | Iterative drafting and refinement. |
 
-Each runtime uses stable activation identifiers and durable recovery checkpoints. Mission Control reads the same capability contracts that the daemon enforces.
+Each runtime registers one exact runtime pair: an identifier and a contract version. A run keeps its pair, its immutable admission, and its task fence for its complete life. Every runtime uses stable activation identifiers and durable recovery checkpoints. Mission Control reads the same capability contracts that the daemon enforces.
+
+### The native Classic pair
+
+The repository carries two Classic pairs. The qualified pair, `classic/1`, serves every submission that names `classic`. The native pair, `classic/2`, is available for test deployments only, and it earns its conformance values one work package at a time.
+
+The native pair compiles every submission into one immutable specification with a fidelity profile and an effort profile. It stores its board as a projection of the runtime journal, dispatches every activation under its own reservation and signed grant, records every daemon model call with receipts, condenses the board in one atomic transaction, and reserves cost, tokens, and model calls before every provider call. Every native run ends with exactly one terminal outcome.
+
+Mission Control previews a native specification in the task composer and the benchmark arm form under **Classic native · test only**. A deployment admits the native pair only with `coordination.admit_test_only_runtimes: true` in `bmas.yaml`. Read [Configuration](docs/CONFIGURATION.md) for the specification preview and the native resource limits.
 
 <p align="center">
   <img src="docs/screenshots/bmas-hero.png" alt="Mission Control task page" width="720" />
@@ -67,11 +77,28 @@ Each runtime uses stable activation identifiers and durable recovery checkpoints
 | `./scripts/bmas up` | Builds the stack and waits for readiness. |
 | `./scripts/bmas doctor` | Checks files, secrets, Compose, and live services. |
 | `./scripts/bmas smoke` | Submits one task and waits for completion. |
+| `./scripts/bmas backup` | Writes one backup archive of the durable volumes. |
+| `./scripts/bmas restore <archive> --yes` | Restores the durable volumes from one backup archive after it writes a safety backup. |
+| `./scripts/bmas setup-dev` | Installs the development tools and the repository virtual environment. |
 | `./scripts/bmas dev` | Starts the development Compose override. |
-| `./scripts/bmas test` | Runs the same checks as continuous integration. |
+| `./scripts/bmas test` | Runs the complete test manifest profile, the same set that continuous integration covers. |
 | `./scripts/bmas docs-check` | Checks documentation links. |
 
 The `Makefile` provides matching targets, such as `make up` and `make test`.
+
+## Verification
+
+The file `test-manifest.yaml` is the one authority for every required check. It declares 84 required groups with their tools, timeouts, and artifacts. The `complete` profile runs every group. The `ci.daemon`, `ci.agent`, `ci.evaluation`, and `ci.mission-control` profiles partition the same set for continuous integration.
+
+| Command | Result |
+|:---|:---|
+| `python scripts/run-test-manifest.py --profile complete` | Runs every required group and writes one result record under `test-results/`. |
+| `python scripts/run-test-manifest.py --group <id>` | Runs one group again. |
+| `python scripts/test-stack.py start --env-file <path>` | Starts Redis, the fake provider, the daemon, and the agent as real processes for the stack-backed groups. |
+| `python scripts/release-gates.py --result <record>` | Reports every documented release gate as passed, failed, or unproven from one result record. |
+| `python scripts/check-source-naming.py` | Rejects a version token or a numeric version suffix in a source identifier. |
+
+The stack-backed groups prove the runtime contracts against the real daemon and agent: the Foundation journey survives a real restart, the Classic legacy column keeps its frozen fixtures, and the Classic native column observes every capability value the native record declares. Read [Test Stack](docs/reference/TEST_STACK.md) for the stack controller, the fake provider, and the release gates.
 
 ## Documentation
 
@@ -89,24 +116,34 @@ Start with the guide that matches your work.
 | Create and operate benchmarks | [Benchmarking](docs/BENCHMARKING.md) |
 | Understand statistical reports | [Benchmark Statistics](docs/BENCHMARK_STATISTICS.md) |
 | Compare runtime behavior | [Runtime Variants](docs/RUNTIME_VARIANTS.md) |
+| Read the shared runtime contracts | [Platform Foundations](docs/PLATFORM_FOUNDATIONS.md) |
+| Verify the Classic lifecycle and its faults | [Classic Harness](docs/CLASSIC_HARNESS.md) |
+| Run the test stack and the release gates | [Test Stack](docs/reference/TEST_STACK.md) |
+| Find the research behind each design | [Research References](docs/reference/RESEARCH_REFERENCES.md) |
 | Read all documentation | [Documentation index](docs/README.md) |
 
 ## Repository layout
 
 | Directory | Purpose |
 |:---|:---|
-| [`daemon/`](daemon/README.md) | Python orchestration API and durable task state. |
-| [`agent/`](agent/README.md) | Starter execution API and optional Hermes adapter. |
+| [`daemon/`](daemon/README.md) | Python orchestration API, the runtime journal, and durable task state. |
+| [`agent/`](agent/README.md) | Starter execution API, the native agent protocol, and the Hermes adapter. |
 | [`mission-control/`](mission-control/README.md) | Next.js operator interface. |
 | [`litellm/`](litellm/README.md) | Model gateway configuration generator. |
 | [`redis/`](redis/README.md) | Redis configuration. |
 | [`triage/`](triage/README.md) | Optional local complexity classifier. |
+| [`conformance/`](conformance/) | The durable authority map, the frozen runtime fixtures, the proposal fixtures, the reference scorer, and the release evidence. |
+| [`schemas/`](schemas/) | The JSON schemas of the test manifest and its result record. |
+| [`scripts/`](scripts/) | The `bmas` command, the test stack controller, the manifest runner, and the repository checks. |
+| [`docs/`](docs/README.md) | Guides, references, and the architecture documents. |
 | [`eval/`](eval/) | Legacy command-line evaluation tools. |
 | [`examples/`](examples/) | Supported starter and homelab configurations. |
 
 ## Research basis
 
 The classic runtime follows the blackboard multi-agent system described by Han and Zhang in [Exploring Advanced LLM Multi-Agent Systems Based on Blackboard Architecture](https://arxiv.org/abs/2507.01701).
+
+[Research References](docs/reference/RESEARCH_REFERENCES.md) lists every paper and standard behind the design with its exact use in the code.
 
 ## License
 
