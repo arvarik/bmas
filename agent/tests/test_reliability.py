@@ -144,7 +144,7 @@ def test_runs_api_uses_daemon_session_and_selected_model(monkeypatch):
     assert client.posts[0]["json"]["model"] == "selected-model"
 
 
-def test_runs_api_uses_stable_task_actor_memory_scope(monkeypatch):
+def test_runs_api_uses_the_host_session_without_a_derived_scope(monkeypatch):
     monkeypatch.setattr(api_server, "DAEMON_INGEST_URL", None)
     monkeypatch.setattr(api_server, "NODE_ID", "node-a")
     clients = []
@@ -161,8 +161,8 @@ def test_runs_api_uses_stable_task_actor_memory_scope(monkeypatch):
 
     first_headers = clients[0].posts[0]["headers"]
     second_headers = clients[1].posts[0]["headers"]
-    assert first_headers["X-Hermes-Session-Key"] == "bmas:task-session-1"
-    assert second_headers["X-Hermes-Session-Key"] == "bmas:task-session-2"
+    assert first_headers["X-Hermes-Session-Key"] == "task-session-1"
+    assert second_headers["X-Hermes-Session-Key"] == "task-session-2"
     assert second_headers["X-Hermes-Session-Key"] != first_headers[
         "X-Hermes-Session-Key"
     ]
@@ -1497,3 +1497,42 @@ def test_runs_api_sends_the_reserved_output_ceiling(monkeypatch):
     assert output == "partial" and usage["finish_reason"] == "length"
     submits = [call for call in client.posts if call["url"].endswith("/v1/runs")]
     assert submits[0]["json"]["max_tokens"] == 7
+
+
+def test_missing_session_never_reuses_the_task_or_actor_scope(monkeypatch):
+    monkeypatch.setattr(api_server, "DAEMON_INGEST_URL", None)
+    sessions = []
+    for _ in range(2):
+        client = FakeRunsClient(FakeStream(['event: run.completed', 'data: {"output":"done"}', '']))
+        run_api(client, session_id=None)
+        sessions.append(client.posts[0]["json"]["session_id"])
+        assert client.posts[0]["headers"]["X-Hermes-Session-Key"] == sessions[-1]
+    assert sessions[0] != sessions[1]
+    assert all("task-1" not in session and "planner" not in session for session in sessions)
+
+
+def test_native_hermes_sends_host_prompt_and_provider_seed_receipt(monkeypatch):
+    monkeypatch.setattr(api_server, "DAEMON_INGEST_URL", None)
+    calls = []
+    receipts = []
+
+    async def open_effect(context, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace()
+
+    async def receipt(handle, **kwargs):
+        receipts.append(kwargs)
+
+    context = SimpleNamespace(protocol=SimpleNamespace(open_provider_effect=open_effect, receipt=receipt))
+    monkeypatch.setattr(api_server.native, "current_effect_context", lambda: context)
+    event = {"output": "done", "provider_receipt": {"applied_seed": 7}}
+    client = FakeRunsClient(FakeStream(['event: run.completed', 'data: ' + json.dumps(event), '']))
+    rendered = [{"role": "system", "content": "Pinned system"}, {"role": "user", "content": "Pinned task"}]
+    result = run_api(client, role_prompt="Current template", context={"rendered_messages": rendered,
+                     "board": {"extra": "not in the host prompt"}, "provider_seed": 7, "previous_response_id": "old"})
+    assert result[0] == api_server.TaskStatus.completed
+    payload = client.posts[0]["json"]
+    assert payload["instructions"] == "Pinned system" and payload["input"] == "Pinned task"
+    assert payload["seed"] == 7 and "previous_response_id" not in payload
+    assert calls[0]["request"] == payload
+    assert json.loads(receipts[0]["provider_receipt"]) == {"applied_seed": 7}

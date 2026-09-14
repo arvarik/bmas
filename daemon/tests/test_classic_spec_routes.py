@@ -65,7 +65,7 @@ async def test_preview_discloses_caps_rejections_estimates_and_every_effective_v
     assert {item["field"] for item in data["specification"]["deployment_caps"]["adjustments"]} == {"coordination.max_rounds", "limits.max_cost"}
     assert {item["kind"] for item in data["specification"]["warnings"]} >= {"rejected_override", "clamped_value"}
     assert data["differences"]["fidelity"] and data["differences"]["effort"]
-    assert data["specification"]["provider_capabilities"]["seed_support"] == "unsupported"
+    assert data["specification"]["provider_capabilities"]["seed_support"] == "best_effort"
     assert data["provider_limits"]["context_window_tokens"] is None
     assert len(data["estimate_assumptions"]) == 4
     assert "new runs only" in data["endpoint_notice"]

@@ -32,6 +32,7 @@ class ExpertIdentity:
     slug: str               # actor id suffix (e.g. "valuation_analyst")
     ability: str            # one-line ability description D_i
     model: str              # pool-drawn model for this expert
+    definition_digest: str | None = None
 
 
 @dataclass
@@ -148,6 +149,7 @@ class RosterPolicy:
                 {"role": "system", "content": AG_SYSTEM_PROMPT.format(n=n)},
                 {"role": "user", "content": f"Task: {query}"},
             ],
+            "prompt_parameters": {"n": n},
             # 4 experts x ~200 tokens each plus the JSON wrapper; the
             # provider profile adds the reasoning headroom a thinking
             # model needs before it writes the visible JSON.
@@ -177,13 +179,28 @@ class RosterPolicy:
                 f"Increase max_tokens or switch to a non-thinking model for the AG call."
             )
 
-        data = json.loads(raw_content)
-        raw_experts = data.get("experts", [])[:n]
+        from core.variants.classic.prompts import parse_expert_definition
+        from core.variants.classic.proposals import _unique_members
+
+        data = json.loads(raw_content, object_pairs_hook=_unique_members)
+        if not isinstance(data, dict) or set(data) != {"experts"} or not isinstance(data["experts"], list):
+            raise ValueError("The expert generator must return only an experts list")
+        definitions = [parse_expert_definition(value) for value in data["experts"]]
+        if len({value["slug"] for value in definitions}) != len(definitions):
+            raise ValueError("Generated expert slugs must be unique")
+        raw_experts = definitions[:n]
         if not raw_experts:
             raise ValueError(
                 f"AG returned empty experts list. "
                 f"Raw content preview: {raw_content[:200]!r}"
             )
+        if response.get("_generator_receipt"):
+            from core.variants.classic.prompts import promote_input
+
+            raw_experts = [{**definition, "definition_digest": promote_input({
+                "schema_version": "expert-definition/1", "definition": definition,
+                "source_class": "agent_profile", "generator_receipt": response["_generator_receipt"]},
+                "generated-expert")} for definition in raw_experts]
         return list(raw_experts)
 
     def assign_models(self, raw_experts: list[dict[str, Any]], tier: str) -> list[ExpertIdentity]:
@@ -200,6 +217,7 @@ class RosterPolicy:
                 slug=slug,
                 ability=str(ex.get("ability", "Domain expert")),
                 model=model,
+                definition_digest=ex.get("definition_digest"),
             ))
         return experts
 
@@ -268,6 +286,7 @@ class RosterPolicy:
                     slug=str(raw.get("slug", "expert")),
                     ability=str(raw.get("ability", "Domain expert")),
                     model=str(raw.get("model", self.model_routing.get("medium", "medium"))),
+                    definition_digest=raw.get("definition_digest"),
                 ))
         elif isinstance(roster_data, list):
             # Read legacy metadata written before the durable roster format.
@@ -297,6 +316,7 @@ class RosterPolicy:
                     "slug": expert.slug,
                     "ability": expert.ability,
                     "model": expert.model,
+                    **({"definition_digest": expert.definition_digest} if expert.definition_digest else {}),
                 }
                 for expert in current.experts
             ],

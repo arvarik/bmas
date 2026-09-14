@@ -93,7 +93,7 @@
     "actor_memory": "host_owned",
     "causal_retrieval": true,
     "durable_goals": true,
-    "provider_session_scope": "task"
+    "provider_session_scope": "activation"
   },
   "model_lineage": {
     "assignments": {
@@ -286,11 +286,12 @@
     "registry_version": "classic-prompts/1",
     "render_engine_version": "classic-prompt-renderer/1",
     "static_template_digests": {
-      "cleaner": "92664e73a99d96d3d0f2378e5a49faef4aa6f101a0e5de02fc2002c377ecbd94",
+      "cleaner": "0665add8593ee8e06350dbf78adb6ee0108173d400992ed2ab6864567d4717f6",
       "conflict_resolver": "d0559eed6cd02a9549102a6771975e565dc56c3c9a28ee761d92d8368dc0d915",
       "control_unit": "2ab07bc42f579aacf8810b3c5b269cbdd2afb7f969e33ff65135036ba6d07fc3",
       "critic": "3a9716217b0a77db6b9ca619a79c8512a32bbf59b6252a41cf7869aaa46a9bf5",
       "decider": "f8e250b9bd20000852434c0fe2d5c2a16ef7944c37c89060c2e130ebd40a804f",
+      "evaluation_judge": "68399b9a2f75b31519e28718b0599912eafe2b3119769324b71b30e5984f16d7",
       "expert": "144cdc07882e4a32a208690767ed0b7c43072bef5749cd8b34fa9dbc69d9c431",
       "expert_generator": "37f2980b29db5088d5f4dcb3bda3b609e453e52679a9375c3bd693f257b06c86",
       "planner": "62da24d1aa0214d3d379e0cd62a3dc0ece05715423bf187871baf5c3c58c038d",
@@ -300,7 +301,7 @@
   },
   "provider_capabilities": {
     "qualification_ids": [],
-    "seed_support": "unsupported",
+    "seed_support": "best_effort",
     "session_support": true,
     "snapshot_digest": "4088195857fe22f55447f0121dd9c2013271a7db9b578aa68b7a6d1fb7b1f80b",
     "snapshot_version": "provider-capabilities/1"
@@ -636,12 +637,14 @@
       }
     },
     "memory.provider_session_scope": {
-      "layer": "deployment",
-      "not_applied": [],
+      "layer": "fidelity",
+      "not_applied": [
+        "deployment"
+      ],
       "offered": {
         "deployment": "task",
-        "fidelity": "task",
-        "schema_default": "task"
+        "fidelity": "activation",
+        "schema_default": "activation"
       }
     },
     "models.temperature": {
@@ -962,5 +965,14 @@
     "independent_verifiers": 1,
     "solution_review": "not_required"
   },
-  "warnings": []
+  "warnings": [
+    {
+      "effective": "activation",
+      "field": "memory.provider_session_scope",
+      "kind": "rejected_override",
+      "layer": "deployment",
+      "message": "The fidelity profile fixes memory.provider_session_scope; the deployment value does not apply.",
+      "requested": "task"
+    }
+  ]
 }

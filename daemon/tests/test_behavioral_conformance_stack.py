@@ -166,7 +166,7 @@ async def test_the_classic_native_column_passes_with_the_real_runtime(monkeypatc
     assert observed["assets_privacy"].observed_value == "native"
     assert observed["ui_fallback"].observed_value == "native"
     assert observed["goals"].observed_value == "native"
-    assert observed["seed_state"].observed_value == "recorded_only"
+    assert observed["seed_state"].observed_value == "native"
     assert observed["cancellation_deadlines"].observed_value == "native"
     assert observed["evidence_decisions"].observed_value == "legacy"
     assert observed["budget_reservations"].observed_value == "native"
@@ -247,6 +247,14 @@ async def _assert_native_runs_are_journal_backed(task_ids) -> None:
                 for field in ("lease_id", "request_digest", "context_view_digest", "activation_grant_id",
                               "acknowledgement_id", "execution_envelope_digest", "raw_result_artifact_digest"):
                     assert activation[field], (real_id, activation["activation_id"], field)
+            async with db._connect() as connection:  # noqa: SLF001
+                receipts = await connection.execute_fetchall("SELECT * FROM classic_render_receipts WHERE run_id = ?", (run_id,))
+            assert len(receipts) == len(activations), real_id
+            assert {(row["activation_id"], row["attempt"]) for row in receipts} == {
+                (row["activation_id"], row["attempt"]) for row in activations}, real_id
+            for receipt in receipts:
+                assert all(receipt[field] for field in ("template_digest", "renderer_digest", "task_view_digest",
+                    "memory_view_digest", "response_schema_digest", "prompt_digest", "redaction_digest", "receipt_digest"))
             assert all(row["receipts"] == 2 and row["raw_response_artifact_digest"] for row in effects), real_id
         # A replay from cursor zero rebuilds the board projection digest
         # of the last accepted decision and equals the live rows.

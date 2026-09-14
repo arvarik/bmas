@@ -522,3 +522,42 @@ The Classic specification fixtures now include price provenance, strict pricing,
 Native responses reconcile before board admission. A consumed reservation can support
 its own verified proposal, but it cannot authorize another provider transport.
 The worker group and SolE propagate budget rejection to `budget_exhausted`.
+
+
+## Classic prompt and memory gate
+
+The `classic_prompt_memory` gate checks work package 9 through
+`daemon.classic-prompt-memory`, `daemon.classic-native-column`, and `agent.tests`.
+The focused tests check isolated sessions, strict expert definitions, prompt
+receipts, bounded actor memory, replay, and the populated database upgrade.
+
+Every native activation attempt has one opaque provider session identifier.
+The host derives it from the activation identifier and attempt number.
+The agent sends that identifier as the Hermes session key.
+The agent never derives a session from the task or actor identifier.
+
+The host reads static templates from the admitted specification's artifact store.
+It validates generated expert definitions and labels them as untrusted agent-profile data.
+The host renderer records template, definition, renderer, task-view, memory-view,
+response-schema, prompt, and redaction digests in `classic_render_receipts`.
+The journal commits each receipt and its table row in one transaction.
+The activation request digest binds the receipt digest.
+The agent sends the host's rendered messages without adding prompt text.
+
+The `production_safe` profile defaults to host-owned actor memory.
+A task override can disable that memory for an experiment.
+The `paper_aligned` profile fixes actor memory to `none`.
+Both profiles fix provider session scope to `activation`.
+Actor memory contains working notes, open questions, and referenced entry identifiers.
+The pinned character tokenizer limits each record to 1,024 estimated tokens.
+An optional `memory_delta` replaces each supplied list after an accepted proposal.
+The proposal decision records the new artifact digest in the same commit as the board changes.
+A rejected proposal leaves the previous memory unchanged.
+A restart or retry reads the saved artifact by digest.
+
+The fake provider returns an `applied_seed` value in its provider receipt.
+The agent signs that receipt with its transport observation.
+The native column checks the saved provider evidence and observes `native`.
+An absent provider receipt leaves applied seed evidence unknown.
+The fake provider reads arithmetic operands from user messages only.
+System templates and memory notes cannot change the test task's operands.

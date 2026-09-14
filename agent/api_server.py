@@ -1342,6 +1342,8 @@ async def _run_via_litellm(
             f"{json.dumps(prompt_context, indent=2)}\n```"
         )
     messages.append({"role": "user", "content": input_text})
+    if native.current_effect_context() is not None and (context or {}).get("rendered_messages"):
+        messages = (context or {})["rendered_messages"]
 
     headers = {"Content-Type": "application/json"}
     if LITELLM_API_KEY:
@@ -1360,11 +1362,13 @@ async def _run_via_litellm(
         effect_handle = None
         try:
             request_body = {"model": model, "messages": messages}
+            if (context or {}).get("provider_seed") is not None:
+                request_body["seed"] = context["provider_seed"]
             if max_completion_tokens is not None:
                 request_body["max_completion_tokens"] = max_completion_tokens
             proposal_role = (context or {}).get("classic_proposal_role")
             if proposal_role:
-                schema = ClassicProposalResponse.model_json_schema()
+                schema = (context or {}).get("response_schema") or ClassicProposalResponse.model_json_schema()
                 schema = {**schema, "oneOf": [item for item in schema["oneOf"]
                     if item["properties"]["role"]["const"] == proposal_role]}
                 request_body["response_format"] = {"type": "json_schema", "json_schema": {
@@ -1390,6 +1394,7 @@ async def _run_via_litellm(
                 await effect_context.protocol.receipt(
                     effect_handle, stage=native.STAGE_RESPONSE_OBSERVED,
                     usage=usage, raw_response=result.encode("utf-8"),
+                    provider_receipt=json.dumps(body["provider_receipt"]) if isinstance(body.get("provider_receipt"), dict) else None,
                     transport_observation=json.dumps({"finish_reason": finish_reason,
                         "truncated": finish_reason in ("length", "max_tokens")}),
                 )
@@ -1474,7 +1479,7 @@ async def _run_via_api(
             f"{json.dumps(prompt_context, indent=2)}\n```"
         )
 
-    actor_session_id = session_id or f"{task_id}:{role}"
+    actor_session_id = session_id or f"activation-{uuid.uuid4().hex}"
     run_payload = {
         "input": input_text,
         "model": model,
@@ -1500,13 +1505,19 @@ async def _run_via_api(
             except TimeoutError:
                 return TaskStatus.timeout, "Attachment staging timed out", None, 0, None
             instructions += f"\nRead the uploaded files from: {outputs_dir.parent / 'inputs'}\n"
+    rendered = (context or {}).get("rendered_messages")
+    if native.current_effect_context() is not None and rendered:
+        instructions = rendered[0]["content"]
+        run_payload["input"] = rendered[1]["content"]
+    if (context or {}).get("provider_seed") is not None:
+        run_payload["seed"] = context["provider_seed"]
     if instructions:
         run_payload["instructions"] = instructions
 
     # Phase 5: Stateful turns — include previous_response_id for
     # cross-round memory via the Responses API (doc 12 §5.2)
     prev_response_id = (context or {}).get("previous_response_id")
-    if prev_response_id:
+    if prev_response_id and native.current_effect_context() is None:
         run_payload["previous_response_id"] = prev_response_id
 
     client_timeout = httpx.Timeout(
@@ -1519,7 +1530,7 @@ async def _run_via_api(
         headers = {}
         if HERMES_GATEWAY_KEY:
             headers["Authorization"] = f"Bearer {HERMES_GATEWAY_KEY}"
-        memory_scope = f"bmas:{actor_session_id}"
+        memory_scope = actor_session_id
         headers["X-Hermes-Session-Key"] = _stable_hermes_session_key(
             memory_scope
         )
@@ -1543,6 +1554,7 @@ async def _run_via_api(
         trace_seq = 2_000_000_000 if resume_run_id else 1
         final_output = ""
         final_usage: Optional[dict] = None
+        provider_receipt: Optional[str] = None
         status = TaskStatus.failed
         saw_terminal = False
         finish_reason: Optional[str] = None
@@ -1563,7 +1575,7 @@ async def _run_via_api(
 
         async def consume_events(events: list[tuple[str, dict]]) -> None:
             """Translate events and update the run result."""
-            nonlocal trace_seq, final_output, final_usage, status, saw_terminal, finish_reason
+            nonlocal trace_seq, final_output, final_usage, status, saw_terminal, finish_reason, provider_receipt
             for event_name, event_data in events:
                 trace_data = dict(event_data)
                 if run_id:
@@ -1583,6 +1595,8 @@ async def _run_via_api(
                 if event_name == "run.completed":
                     final_output = str(event_data.get("output", ""))
                     finish_reason = event_data.get("finish_reason")
+                    if isinstance(event_data.get("provider_receipt"), dict):
+                        provider_receipt = json.dumps(event_data["provider_receipt"])
                     final_usage = _normalize_usage(event_data.get("usage"), model)
                     trace_data["usage"] = final_usage or {}
                     status = TaskStatus.completed
@@ -1983,7 +1997,7 @@ async def _run_via_api(
             with contextlib.suppress(Exception):
                 await effect_context.protocol.receipt(
                     hermes_effect, stage=native.STAGE_RESPONSE_OBSERVED,
-                    usage=final_usage,
+                    usage=final_usage, provider_receipt=provider_receipt,
                     raw_response=(final_output or "").encode("utf-8") if saw_terminal else None,
                     transport_observation=json.dumps({"finish_reason": finish_reason,
                         "truncated": finish_reason in ("length", "max_tokens", "max_output_tokens"),
@@ -2883,7 +2897,7 @@ async def _execute_task_once(
     model = req.model or LITELLM_MODEL
     profile = req.profile
     context_session_id = (req.context or {}).get("session_id")
-    actor_session_id = req.session_id or context_session_id or f"{req.task_id}:{role}"
+    actor_session_id = req.session_id or context_session_id or f"activation-{uuid.uuid4().hex}"
     start = time.monotonic()
 
     logger.info(
@@ -3307,6 +3321,17 @@ async def native_activation(body: NativeActivationRequest, request: Request):
         raise HTTPException(status_code=422, detail="The request differs from its activation grant")
     if native.digest_hex("agent-context", native.plain_json(payload.get("context") or {})) != grant.get("context_view_digest"):
         raise HTTPException(status_code=422, detail="The context differs from its activation grant")
+    if grant.get("runtime_key") == {"runtime_id": "classic", "runtime_contract_version": "2"}:
+        expected_session = native.digest_hex("classic-provider-session", {
+            "activation_id": grant["activation_id"], "attempt": grant["attempt"]})
+        if payload.get("session_id") != expected_session:
+            raise HTTPException(status_code=422, detail="The native session differs from its activation attempt")
+        context = payload.get("context") or {}
+        if not context.get("render_receipt_digest") or not context.get("rendered_messages"):
+            raise HTTPException(status_code=422, detail="The native prompt requires its host render receipt")
+        forbidden = {"previous_response_id", "memory_scope", "actor_session_id", "task_session_id"}
+        if any(payload.get(name) or context.get(name) for name in forbidden) or context.get("session_id"):
+            raise HTTPException(status_code=422, detail="The native request contains a continuation key")
     payload["task_id"] = str(grant.get("task_id", payload.get("task_id", "")))
     payload["activation_id"] = str(grant.get("activation_id", payload.get("activation_id", "")))
     try:

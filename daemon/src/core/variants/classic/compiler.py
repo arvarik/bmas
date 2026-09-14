@@ -514,9 +514,9 @@ def resolve_provider_capabilities(
     return SpecProviderCapabilities(
         snapshot_version=PROVIDER_SNAPSHOT_VERSION,
         snapshot_digest=digest_hex(SPEC_INPUT_DIGEST_DOMAIN, {"provider_snapshot": snapshot}),
-        # The delegated engine sends no seed to a provider yet.
-        seed_support="unsupported",
-        session_support=values["memory.provider_session_scope"] == "task",
+        # The host sends a seed and records provider evidence separately.
+        seed_support="best_effort",
+        session_support=True,
         qualification_ids=sorted(spec_input.deployment.qualification_ids),
     )
 
@@ -597,10 +597,12 @@ def static_prompt_templates() -> dict[str, str]:
     with placeholder tokens, so its digest covers the template and
     never one generated definition.
     """
+    from benchmarks.model_backed import JUDGE_SYSTEM_PROMPT
     from core.triage import TRIAGE_SYSTEM_PROMPT
     from models.personas import (
         AG_SYSTEM_PROMPT,
         CU_SYSTEM_PROMPT,
+        NATIVE_CLEANER_INSTRUCTIONS,
         ROLE_PERSONAS,
         SOLE_SYSTEM_PROMPT,
         generate_expert_persona,
@@ -608,6 +610,7 @@ def static_prompt_templates() -> dict[str, str]:
 
     templates = {
         "triage": TRIAGE_SYSTEM_PROMPT,
+        "evaluation_judge": JUDGE_SYSTEM_PROMPT,
         "expert_generator": AG_SYSTEM_PROMPT,
         "control_unit": CU_SYSTEM_PROMPT,
         "expert": generate_expert_persona("<expert-name>", "<expert-ability>", "<task-context>"),
@@ -615,6 +618,7 @@ def static_prompt_templates() -> dict[str, str]:
     }
     for role in ("planner", "critic", "conflict_resolver", "cleaner", "decider"):
         templates[role] = ROLE_PERSONAS[role]
+    templates["cleaner"] += NATIVE_CLEANER_INSTRUCTIONS
     return templates
 
 
@@ -643,7 +647,7 @@ def _seed_stream(task_seed: int, stream: str) -> int:
 def resolve_randomness(spec_input: ClassicSpecInput, values: dict[str, Any]) -> SpecRandomness:
     task_seed = spec_input.task_overrides.seed
     return SpecRandomness(
-        # The delegated engine records the seed and never applies it yet.
+        # The specification records intent. Signed provider receipts prove application.
         seed_policy="recorded",
         task_seed=task_seed,
         roster_seed=None if task_seed is None else _seed_stream(task_seed, "roster"),

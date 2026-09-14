@@ -35,6 +35,14 @@ async def reserve_call(run_id: str, activation_id: str, attempt: int, request: d
     price = spec.prices.rates.get(str(request.get("model")))
     if price is None:
         raise budget.UnknownPriceError(f"No immutable price is registered for {request.get('model')!r}")
+    if not request.get("render_receipt_digest"):
+        from core.variants.classic.prompts import render_native_request
+
+        control = await db.get_run_control(run_id)
+        rendered = await render_native_request(request, run_id=run_id, activation_id=activation_id,
+            attempt=attempt, task_fence=str(control["task_fence"]) if control else "")
+        request.clear()
+        request.update(rendered)
     # UTF-8 bytes bound text tokenization. Reserve rendering and schema overhead.
     input_tokens = max(1, len(canonicalize(plain_json(request)).encode("utf-8")) + 8192)
     ceiling = request.get("max_completion_tokens", request.get("max_tokens", 4096))
@@ -287,13 +295,28 @@ async def seal_response(*, run_id: str, activation_id: str, attempt: int,
         store, canonicalize(envelope.to_dict()).encode(), media_type="application/json",
         access_policy="foundation-envelope", referenced_by=envelope.digest(),
     )
+    applied_seeds = []
+    if complete and not verification_failed:
+        async with db._connect() as connection:  # noqa: SLF001
+            rows = await connection.execute_fetchall(
+                "SELECT receipt_id, provider_receipt FROM attempt_receipts WHERE activation_id = ? "
+                "AND activation_attempt = ? AND stage = 'response_observed' AND provider_receipt IS NOT NULL",
+                (activation_id, attempt))
+        for row in rows:
+            try:
+                provider_receipt = json.loads(row["provider_receipt"])
+                seed = provider_receipt.get("applied_seed")
+                if isinstance(seed, int) and not isinstance(seed, bool):
+                    applied_seeds.append({"receipt_id": row["receipt_id"], "applied_seed": seed})
+            except (ValueError, AttributeError):
+                continue
     updates = {"raw_result_artifact_digest": raw_digest, "execution_envelope_digest": envelope.digest(),
                "usage": chain.usage, "effect_ids": [str(row["effect_id"]) for row in effect_rows]}
     await activations.transition_activation(
         run_id=run_id, activation_id=activation_id, attempt=attempt,
         target_state="result_received" if complete else "suspended", ledger_updates=updates,
         evidence={"execution_envelope_artifact_digest": envelope_artifact,
-                  "proposal_artifact_digest": proposal_artifact},
+                  "proposal_artifact_digest": proposal_artifact, "applied_seed_evidence": applied_seeds},
     )
     if proposal is not None:
         await activations.transition_activation(

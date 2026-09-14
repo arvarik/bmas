@@ -81,7 +81,7 @@ def test_the_classic_native_record_declares_the_ladder_start(directory):
     assert record.capabilities["benchmark_scoring"] == "compatibility_adapter"
     assert record.capabilities["typed_evidence_index"] == "legacy"
     assert record.capabilities["budget_reservation"] == "native"
-    assert record.capabilities["applied_seed_evidence"] == "recorded_only"
+    assert record.capabilities["applied_seed_evidence"] == "native"
     assert record.capabilities["ui_adapter"] == "unavailable"
     for capability in ("deterministic_analysis_replay", "foundation_reference_scoring"):
         assert record.capabilities[capability] == legacy.capabilities[capability] == "compatibility_projection"

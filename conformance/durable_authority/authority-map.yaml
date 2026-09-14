@@ -1811,6 +1811,35 @@ sqlite_tables:
       - { name: run_id, owner: daemon.evaluation-service, derived: false }
       - { name: reconciliation_id, owner: daemon.evaluation-service, derived: false }
       - { name: created_at, owner: daemon.evaluation-service, derived: false }
+  - table: classic_render_receipts
+    authority: host.prompt-renderer
+    purpose: "Immutable prompt inputs and one receipt per activation attempt."
+    writers:
+      - database
+    fields:
+      - { name: run_id, owner: host.prompt-renderer, derived: false }
+      - { name: activation_id, owner: host.prompt-renderer, derived: false }
+      - { name: attempt, owner: host.prompt-renderer, derived: false }
+      - { name: actor, owner: host.prompt-renderer, derived: false }
+      - { name: schema_version, owner: host.prompt-renderer, derived: false }
+      - { name: template_id, owner: host.prompt-renderer, derived: false }
+      - { name: template_version, owner: host.prompt-renderer, derived: false }
+      - { name: template_digest, owner: host.prompt-renderer, derived: false }
+      - { name: definition_id, owner: host.prompt-renderer, derived: false }
+      - { name: definition_digest, owner: host.prompt-renderer, derived: false }
+      - { name: renderer_id, owner: host.prompt-renderer, derived: false }
+      - { name: renderer_version, owner: host.prompt-renderer, derived: false }
+      - { name: renderer_digest, owner: host.prompt-renderer, derived: false }
+      - { name: task_view_digest, owner: host.prompt-renderer, derived: false }
+      - { name: memory_artifact_digest, owner: host.prompt-renderer, derived: false }
+      - { name: memory_view_digest, owner: host.prompt-renderer, derived: false }
+      - { name: response_schema_digest, owner: host.prompt-renderer, derived: false }
+      - { name: prompt_digest, owner: host.prompt-renderer, derived: false }
+      - { name: redaction_policy_version, owner: host.prompt-renderer, derived: false }
+      - { name: redaction_digest, owner: host.prompt-renderer, derived: false }
+      - { name: receipt_digest, owner: host.prompt-renderer, derived: false }
+      - { name: request_artifact_digest, owner: host.prompt-renderer, derived: false }
+      - { name: journal_cursor, owner: host.prompt-renderer, derived: false }
   - table: classic_specifications
     authority: daemon.classic-specification
     purpose: "Immutable compiled Classic specifications of native runs with the artifact reference of each complete object."

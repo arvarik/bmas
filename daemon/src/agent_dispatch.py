@@ -163,6 +163,11 @@ async def dispatch_activation(
         require_cleaner_dispatch(request)
     registry = await protocol_keys.registry()
     store = protocol_keys.artifact_store()
+    if native_run:
+        from core.variants.classic.prompts import render_native_request
+
+        request = await render_native_request(request, run_id=run_id, activation_id=activation_id,
+            attempt=attempt, task_fence=task_fence, phase="control_unit" if local_executor else None)
     if reservation_id is None:
         import interactive_admission
 

@@ -700,6 +700,16 @@ groups:
     tools: [python, pytest]
     parser: pytest_summary
 
+  - id: daemon.classic-prompt-memory
+    state: active_required
+    owner: daemon
+    purpose: Prove isolated sessions, immutable prompt receipts, untrusted expert definitions, memory replay, and applied seed receipts.
+    argv: ["python3", "-m", "pytest", "tests/test_classic_prompt_memory.py", "-q", "--tb=short"]
+    working_directory: daemon
+    timeout_seconds: 600
+    tools: [python, pytest]
+    parser: pytest_summary
+
   - id: daemon.classic-local-effects
     state: active_required
     owner: daemon
@@ -1395,6 +1405,7 @@ profiles:
         - daemon.classic-spec-routes
         - daemon.classic-native-activations
         - daemon.classic-local-effects
+        - daemon.classic-prompt-memory
         - daemon.classic-journal-projection
         - daemon.populated-migration
         - daemon.release-gates
