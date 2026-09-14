@@ -2535,7 +2535,12 @@ class Orchestrator:
                     raise agent_dispatch.DispatchError("The native run requires a qualified agent")
                 if "classic-proposal/1" not in native_plan["document"].supported_proposal_schemas:
                     raise agent_dispatch.DispatchError("The agent does not support the Classic proposal schema")
+                from core.variants.classic.prompts import render_native_request
+
                 payload = proposal_request(payload, activation_id=str(payload["activation_id"]), attempt=attempt_number)
+                payload = await render_native_request(payload, run_id=native_plan["context"].run_id,
+                    activation_id=str(payload["activation_id"]), attempt=attempt_number,
+                    task_fence=native_plan["context"].task_fence)
                 reservation_id = await reserve_call(native_plan["context"].run_id,
                     str(payload["activation_id"]), attempt_number, payload)
             outcome = await agent_dispatch.dispatch_activation(
@@ -2687,6 +2692,8 @@ class Orchestrator:
             logger.warning(f"Turn create failed {task_id}/{turn_id}: {e}")
 
         native_plan = await self._native_plan(task_id, candidate_urls)
+        if native_plan and native_plan.get("required"):
+            payload["actor"] = actor or role
         max_attempts = len(candidate_urls) + 2
         candidate_index = 0
         rate_limited_until: dict[str, float] = {}

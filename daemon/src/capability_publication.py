@@ -265,6 +265,7 @@ def _classic_native_starting_capabilities() -> dict[str, str]:
     # Mission Control has no native Classic adapter yet, so the pair
     # renders through the generic fallback panels.
     values["budget_reservation"] = "native"
+    values["applied_seed_evidence"] = "native"
     values["ui_adapter"] = "unavailable"
     return values
 

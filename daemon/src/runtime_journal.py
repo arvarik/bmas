@@ -55,6 +55,7 @@ SNAPSHOT_DIGEST_DOMAIN = "journal-snapshot"
 OPERATION_TYPES = (
     "admission_identity",
     "activation_transition",
+    "prompt_render",
     "effect_transition",
     "proposal_decision",
     "terminal_outcome",
@@ -292,6 +293,7 @@ _REQUIRED_PAYLOAD_FIELDS: dict[str, tuple[str, ...]] = {
         "admission_digest",
     ),
     "activation_transition": ("activation_id", "activation_state"),
+    "prompt_render": ("activation_id", "attempt", "receipt_digest", "request_artifact_digest"),
     "effect_transition": ("effect_id", "effect_state"),
     "proposal_decision": (
         "decision",
@@ -780,6 +782,8 @@ def empty_projection_state() -> dict[str, Any]:
         "runs": {},
         "admissions": {},
         "runtime_state": {},
+        "render_receipts": {},
+        "actor_memory": {},
         "checkpoints": {},
         "circuits": {},
         "activations": {},
@@ -952,6 +956,9 @@ def apply_record_to_state(
             if authoritative is not None:
                 operation["authoritative_result_effect_id"] = authoritative
         _append_trace(state, record, "effect")
+    elif record.operation_type == "prompt_render":
+        state.setdefault("render_receipts", {})[f"{payload['activation_id']}:{payload['attempt']}"] = {
+            **payload, "journal_cursor": record.journal_cursor}
     elif record.operation_type == "proposal_decision":
         accepted = payload["decision"] == "accepted"
         state["activations"].setdefault(run_id, {})[
@@ -963,6 +970,9 @@ def apply_record_to_state(
         }
         _append_trace(state, record, "proposal")
         if accepted:
+            memory = payload.get("actor_memory")
+            if memory:
+                state.setdefault("actor_memory", {}).setdefault(run_id, {})[memory["actor"]] = memory["artifact_digest"]
             runtime_state = state["runtime_state"].setdefault(run_id, {})
             runtime_state.update(payload["projection_changes"])
             if payload.get("mutation", {}).get("kind") == "condensation":
@@ -1268,6 +1278,12 @@ async def verify_durable_projections() -> None:
         raise JournalIntegrityError(
             "The durable board projection disagrees with journal replay"
         )
+
+    async with _journal_connect() as connection:
+        receipt_rows = await connection.execute_fetchall("SELECT * FROM classic_render_receipts")
+    durable_receipts = {f"{row['activation_id']}:{row['attempt']}": dict(row) for row in receipt_rows}
+    if durable_receipts != result.state.get("render_receipts", {}):
+        raise JournalIntegrityError("The durable render receipts disagree with journal replay")
 
 
 def create_snapshot(result: ReplayResult) -> dict[str, Any]:

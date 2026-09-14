@@ -80,6 +80,9 @@ def proposal_schema(role: str | None = None) -> dict[str, Any]:
                 "schema_version": {"const": PROPOSAL_SCHEMA_VERSION},
                 "role": {"const": role_name}, "action": {"const": action},
                 **ACTION_FIELDS[action],
+                "memory_delta": _object({name: {"type": "array", "maxItems": 32,
+                    "items": {"type": "string", "maxLength": 1024}}
+                    for name in ("working_notes", "open_questions", "entry_ids")}, []),
             }
             required = ["schema_version", "role", "action"]
             required += ["entries"] if "entries" in fields else []
@@ -102,15 +105,15 @@ def _unique_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def proposal_request(request: dict[str, Any], *, activation_id: str, attempt: int) -> dict[str, Any]:
     """Bind the role schema and fresh context to one native attempt."""
     role = str(request.get("role") or "expert")
+    from core.variants.classic.memory import isolated_request
     from models.personas import NATIVE_CLEANER_INSTRUCTIONS
 
-    session_id = f"{activation_id}:{attempt}"
     cleaner_instructions = NATIVE_CLEANER_INSTRUCTIONS if role == "cleaner" else ""
-    return {**request, "activation_id": activation_id, "session_id": session_id,
-            "role_prompt": str(request.get("role_prompt") or "") + cleaner_instructions
-            + "\nReturn exactly one JSON proposal that matches this schema:\n" + json.dumps(proposal_schema(role)),
-            "context": {**(request.get("context") or {}), "classic_proposal_role": role,
-                        "previous_response_id": None, "session_id": session_id}}
+    result = isolated_request(request, activation_id, attempt)
+    return {**result, "activation_id": activation_id,
+            "role_prompt": str(request.get("role_prompt") or "") + cleaner_instructions,
+            "context": {**result["context"], "classic_proposal_role": role}}
+
 
 
 def parse_proposal(raw: bytes, *, role: str) -> ModelProposal:
@@ -120,6 +123,10 @@ def parse_proposal(raw: bytes, *, role: str) -> ModelProposal:
         errors = list(Draft202012Validator(proposal_schema(role)).iter_errors(payload))
         if errors:
             raise ModelProposalError(errors[0].message)
+        if "memory_delta" in payload:
+            from core.variants.classic.memory import validate_memory
+
+            validate_memory(payload["memory_delta"])
         return parse_model_proposal(plain_json(payload), schema_version=PROPOSAL_SCHEMA_VERSION)
     except (ValueError, UnicodeError) as exc:
         raise ModelProposalError(f"Invalid Classic proposal: {exc}") from exc

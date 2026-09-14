@@ -721,7 +721,17 @@ async def _seed_state(env: BehaviorEnvironment) -> CaseResult:
     equal = first.answer == second.answer and first.result.get("digest") == second.result.get("digest")
     differs = other.answer != first.answer
     recorded = await recorded_seed(first.task_id) == 7
-    if equal and differs and recorded:
+    receipt_applied = False
+    if isinstance(executor, StackExecutor) and executor.runtime_key == RuntimeKey("classic", "2"):
+        observations = []
+        for execution, requested in ((first, 7), (second, 7), (other, 8)):
+            records = await journal.read_journal(run_id=f"run-{execution.task_id}")
+            journal.verify_chain(records)
+            supplied = [item["applied_seed"] for record in records
+                for item in record.payload.get("evidence", {}).get("applied_seed_evidence", [])]
+            observations.append(bool(supplied) and all(seed == requested for seed in supplied))
+        receipt_applied = all(observations)
+    if receipt_applied or (equal and differs and recorded):
         observed = "native"
     elif equal and recorded:
         observed = "recorded_only"
@@ -729,7 +739,7 @@ async def _seed_state(env: BehaviorEnvironment) -> CaseResult:
         observed = "unavailable"
     return CaseResult(
         "seed_state", observed == expected, expected, observed,
-        detail=f"equal_seed_equal_output={equal}, other_seed_differs={differs}, seed_recorded={recorded}",
+        detail=f"equal_seed_equal_output={equal}, other_seed_differs={differs}, seed_recorded={recorded}, provider_receipt_applied={receipt_applied}",
     )
 
 

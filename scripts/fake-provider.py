@@ -68,7 +68,7 @@ def deterministic_answer(prompt: str) -> str:
 
 def structured_answer(prompt: str, request: dict) -> str:
     """Emit the requested native role contract for the real parser journey."""
-    answer = deterministic_answer(prompt)
+    answer = deterministic_answer(_run_prompt(request) or prompt)
     schema = (request.get("response_format") or {}).get("json_schema") or {}
     variants = (schema.get("schema") or {}).get("oneOf") or []
     role = variants[0]["properties"]["role"]["const"] if variants else None
@@ -184,6 +184,7 @@ class Handler(BaseHTTPRequestHandler):
             + "data: " + json.dumps({
                 "event": "run.completed", "run_id": run["id"],
                 "output": run["output"], "usage": run["usage"],
+                "provider_receipt": run.get("provider_receipt"),
             }) + "\n\n"
         ).encode("utf-8")
         self.send_response(200)
@@ -216,7 +217,7 @@ class Handler(BaseHTTPRequestHandler):
             usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
             _RUNS[run_id] = {"id": run_id, "run_id": run_id,
                              "status": "completed", "output": output,
-                             "usage": usage, "session_id":
+                             "usage": usage, "provider_receipt": {"applied_seed": request.get("seed")}, "session_id":
                              request.get("session_id")}
             self._emit(event="run_submitted", run_id=run_id,
                        prompt_digest=digest)
@@ -245,6 +246,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {
             "id": f"chatcmpl-{digest[:12]}",
             "object": "chat.completion",
+            "provider_receipt": {"applied_seed": request.get("seed")},
             "created": 0,
             "model": str(request.get("model") or "fake-model"),
             "choices": [{

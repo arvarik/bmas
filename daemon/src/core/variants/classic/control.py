@@ -194,6 +194,7 @@ class ControlPolicy:
             try:
                 response = await complete({
                     "model": model,
+                    "prompt_parameters": {"max_concurrent": limits.max_concurrent},
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": prompt},

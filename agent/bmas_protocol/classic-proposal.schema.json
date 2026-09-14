@@ -72,6 +72,37 @@
           "maxItems": 0,
           "type": "array"
         },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
         "role": {
           "const": "expert"
         },
@@ -96,6 +127,37 @@
       "properties": {
         "action": {
           "const": "skip"
+        },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
         },
         "reason": {
           "type": "string"
@@ -185,6 +247,37 @@
           "maxItems": 0,
           "type": "array"
         },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
         "role": {
           "const": "critic"
         },
@@ -209,6 +302,37 @@
       "properties": {
         "action": {
           "const": "skip"
+        },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
         },
         "reason": {
           "type": "string"
@@ -298,6 +422,37 @@
           "maxItems": 0,
           "type": "array"
         },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
         "role": {
           "const": "planner"
         },
@@ -322,6 +477,37 @@
       "properties": {
         "action": {
           "const": "skip"
+        },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
         },
         "reason": {
           "type": "string"
@@ -411,6 +597,37 @@
           "maxItems": 0,
           "type": "array"
         },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
         "role": {
           "const": "conflict_resolver"
         },
@@ -435,6 +652,37 @@
       "properties": {
         "action": {
           "const": "skip"
+        },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
         },
         "reason": {
           "type": "string"
@@ -503,6 +751,37 @@
           "minItems": 1,
           "type": "array"
         },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
         "removals": {
           "items": {
             "additionalProperties": false,
@@ -546,6 +825,37 @@
       "properties": {
         "action": {
           "const": "skip"
+        },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
         },
         "reason": {
           "type": "string"
@@ -635,6 +945,37 @@
           "maxItems": 0,
           "type": "array"
         },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
         "role": {
           "const": "decider"
         },
@@ -659,6 +1000,37 @@
       "properties": {
         "action": {
           "const": "skip"
+        },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
         },
         "reason": {
           "type": "string"
@@ -748,6 +1120,37 @@
           "maxItems": 0,
           "type": "array"
         },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
         "role": {
           "const": "verifier"
         },
@@ -772,6 +1175,37 @@
       "properties": {
         "action": {
           "const": "skip"
+        },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
         },
         "reason": {
           "type": "string"
@@ -800,6 +1234,37 @@
           "minLength": 1,
           "type": "string"
         },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
         "reason": {
           "type": "string"
         },
@@ -823,6 +1288,37 @@
       "properties": {
         "action": {
           "const": "skip"
+        },
+        "memory_delta": {
+          "additionalProperties": false,
+          "properties": {
+            "entry_ids": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "working_notes": {
+              "items": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
         },
         "reason": {
           "type": "string"

@@ -39,7 +39,7 @@ LONG_AGO = "2000-01-01T00:00:00.000Z"
 
 
 @pytest_asyncio.fixture
-async def native_run(tmp_path, monkeypatch):
+async def native_run(tmp_path, monkeypatch, request):
     """One admitted native run with its context, services, and lease."""
     monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "native.db"))
     monkeypatch.setattr(config, "FOUNDATION_GATES", {name: True for name in foundation_gates.PLANNED_WRITER_GATES}, raising=False)
@@ -57,7 +57,7 @@ async def native_run(tmp_path, monkeypatch):
     monkeypatch.setattr(settings_store, "_store", None)
     admission.reset_for_tests()
     await db.init_db()
-    envelope = await ClassicRuntime.capture_configuration({"effort": "quick"})
+    envelope = await ClassicRuntime.capture_configuration({"effort": "quick", **getattr(request, "param", {})})
     await db.create_task_with_meta(
         TASK_ID, "native board", "Add 20 and 22.", "classic",
         {"effective_configuration": envelope}, runtime_contract_version="2", run_state="staging",

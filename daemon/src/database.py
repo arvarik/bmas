@@ -24,7 +24,7 @@ import aiosqlite
 logger = logging.getLogger("bmas.database")
 
 DB_PATH = os.getenv("BMAS_DB_PATH", "/data/bmas.db")
-SCHEMA_VERSION = 29
+SCHEMA_VERSION = 30
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -79,6 +79,43 @@ async def _assert_task_lease(
 
 
 # ── Schema DDL ───────────────────────────────────────────────────────
+
+CLASSIC_RENDER_RECEIPTS_DDL = """
+CREATE TABLE IF NOT EXISTS classic_render_receipts (
+    run_id TEXT NOT NULL,
+    activation_id TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    actor TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    template_id TEXT NOT NULL,
+    template_version TEXT NOT NULL,
+    template_digest TEXT NOT NULL,
+    definition_id TEXT,
+    definition_digest TEXT,
+    renderer_id TEXT NOT NULL,
+    renderer_version TEXT NOT NULL,
+    renderer_digest TEXT NOT NULL,
+    task_view_digest TEXT NOT NULL,
+    memory_artifact_digest TEXT,
+    memory_view_digest TEXT NOT NULL,
+    response_schema_digest TEXT NOT NULL,
+    prompt_digest TEXT NOT NULL,
+    redaction_policy_version TEXT NOT NULL,
+    redaction_digest TEXT NOT NULL,
+    receipt_digest TEXT NOT NULL,
+    request_artifact_digest TEXT NOT NULL,
+    journal_cursor INTEGER NOT NULL,
+    PRIMARY KEY (activation_id, attempt)
+);
+CREATE TRIGGER IF NOT EXISTS classic_render_receipts_immutable_update
+BEFORE UPDATE ON classic_render_receipts BEGIN
+    SELECT RAISE(ABORT, 'classic_render_receipts rows are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS classic_render_receipts_immutable_delete
+BEFORE DELETE ON classic_render_receipts BEGIN
+    SELECT RAISE(ABORT, 'classic_render_receipts rows are immutable');
+END;
+"""
 
 SCHEMA_DDL = """
 -- ── Core task record ─────────────────────────────────────────────
@@ -171,7 +208,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
     version         INTEGER PRIMARY KEY,
     applied_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-"""
+""" + CLASSIC_RENDER_RECEIPTS_DDL
 
 
 # ── Migration v2 DDL (doc 07 — additive tables/columns) ─────────────
@@ -3485,6 +3522,11 @@ END;
 """
 
 
+async def _migrate_add_classic_render_receipts(db: aiosqlite.Connection) -> None:
+    """Add immutable prompt render receipts to populated databases."""
+    await db.executescript(CLASSIC_RENDER_RECEIPTS_DDL)
+
+
 async def _migrate_add_classic_board_projection(db: aiosqlite.Connection) -> None:
     """Add the journal-backed board projection of the Classic native pair.
 
@@ -3531,6 +3573,7 @@ async def _migrate(db: aiosqlite.Connection, version: int) -> None:
         27: _migrate_add_agent_signing_keys,
         28: _migrate_add_classic_specifications,
         29: _migrate_add_classic_board_projection,
+        30: _migrate_add_classic_render_receipts,
     }
     fn = migrations.get(version)
     if fn is None:
@@ -6764,3 +6807,27 @@ async def database_utc_now() -> str:
     """Return the authoritative database UTC time."""
     async with _connect() as db:
         return await _control_now(db, None)
+
+
+async def get_classic_render_receipt(activation_id: str, attempt: int) -> dict[str, Any] | None:
+    """Read the immutable render receipt for one activation attempt."""
+    async with _connect() as connection:
+        rows = await connection.execute_fetchall(
+            "SELECT * FROM classic_render_receipts WHERE activation_id = ? AND attempt = ?",
+            (activation_id, attempt))
+    return dict(rows[0]) if rows else None
+
+
+async def insert_classic_render_receipt(connection: aiosqlite.Connection, row: dict[str, Any], journal_cursor: int) -> None:
+    """Insert a receipt inside its journal transaction."""
+    values = {**row, "journal_cursor": journal_cursor}
+    columns = (
+        "run_id", "activation_id", "attempt", "actor", "schema_version",
+        "template_id", "template_version", "template_digest", "definition_id", "definition_digest",
+        "renderer_id", "renderer_version", "renderer_digest", "task_view_digest",
+        "memory_artifact_digest", "memory_view_digest", "response_schema_digest", "prompt_digest",
+        "redaction_policy_version", "redaction_digest", "receipt_digest", "request_artifact_digest", "journal_cursor",
+    )
+    await connection.execute(
+        "INSERT INTO classic_render_receipts (" + ", ".join(columns) + ") VALUES (" + ", ".join("?" for _ in columns) + ")",
+        tuple(values[name] for name in columns))

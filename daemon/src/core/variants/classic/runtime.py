@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
@@ -219,6 +220,26 @@ class NativeRunBinding:
 
                 activation = await activation_service.get_activation(str(mutation.activation_id),
                     int(mutation.proposal["activation_attempt"]))
+                import protocol_keys
+                from core.variants.classic.memory import read_memory, store_memory, validate_memory
+                from core.variants.classic.prompts import read_input
+                from core.variants.classic.proposals import parse_proposal
+
+                receipt = await db.get_classic_render_receipt(str(mutation.activation_id), int(activation["attempt"]))
+                memory_digest = (receipt or {}).get("memory_artifact_digest")
+                if accepted and memory_digest:
+                    if receipt["actor"] != mutation.actor:
+                        raise ClassicIntegrityError("The proposal actor differs from the prompt actor")
+                    memory_record = read_memory(str(memory_digest))
+                    raw = protocol_keys.artifact_store().read_object(str(activation["raw_result_artifact_digest"]))
+                    request = read_input(str(receipt["request_artifact_digest"]))
+                    proposal = parse_proposal(bytes(raw["payload"]), role=request["context"]["classic_proposal_role"])
+                    delta = proposal.content.get("memory_delta", {})
+                    notes = validate_memory({**memory_record["memory"], **delta})
+                    if any(entry_id not in next_board["entries"] for entry_id in notes["entry_ids"]):
+                        raise ClassicIntegrityError("Actor memory references an unknown board entry")
+                    payload["actor_memory"] = {"actor": mutation.actor, "previous_digest": memory_digest,
+                        "artifact_digest": store_memory(self.run_id, mutation.actor, notes, previous_digest=str(memory_digest))}
                 if mutation.kind == "condensation":
                     payload["budget_reference"] = str(activation["reservation_id"])
                 record = await activation_service.commit_proposal_decision(
@@ -229,7 +250,7 @@ class NativeRunBinding:
                     execution_envelope_digest=str(activation["execution_envelope_digest"]),
                     projection_changes=payload["projection_changes"], checkpoint_digest=digest,
                     decision_payload=payload,
-                    projection_writer=self._projection_writer(section) if accepted else None,
+                    projection_writer=self._memory_projection_writer(section, payload.get("actor_memory")) if accepted else None,
                     task_fence=self.task_fence,
                     expected_projection_version=mutation.proposal.get("expected_projection_version"),
                 )
@@ -245,6 +266,29 @@ class NativeRunBinding:
             self.board = next_board
         self.mutation_count += 1
         return record
+
+    def _memory_projection_writer(self, section: dict[str, Any] | None, memory: dict[str, Any] | None) -> Any:
+        writer = self._projection_writer(section)
+
+        async def write(connection: Any, journal_cursor: int, now: str) -> None:
+            if memory:
+                from core.variants.classic.memory import store_memory
+
+                rows = await connection.execute_fetchall(
+                    "SELECT payload FROM runtime_journal WHERE run_id = ? AND operation_type = 'proposal_decision' "
+                    "AND journal_cursor < ? ORDER BY journal_cursor DESC", (self.run_id, journal_cursor))
+                previous = None
+                for row in rows:
+                    data = json.loads(row["payload"])
+                    candidate = data.get("actor_memory")
+                    if candidate and candidate["actor"] == memory["actor"] and data["decision"] == "accepted":
+                        previous = candidate["artifact_digest"]
+                        break
+                expected = previous or store_memory(self.run_id, memory["actor"], {})
+                if memory["previous_digest"] != expected:
+                    raise ClassicIntegrityError("A concurrent proposal changed the actor memory")
+            await writer(connection, journal_cursor, now)
+        return write
 
     def _projection_writer(self, section: dict[str, Any] | None) -> Any:
         run_id = self.run_id

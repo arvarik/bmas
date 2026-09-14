@@ -85,7 +85,8 @@ async def observation_context(task_id: str | None) -> agent_dispatch.NativeConte
 
 
 async def _record_receipt(grant: Any, *, sequence: int, raw: bytes | None = None,
-                          usage: dict[str, int] | None = None, observation: str | None = None) -> None:
+                          usage: dict[str, int] | None = None, observation: str | None = None,
+                          provider_receipt: str | None = None) -> None:
     receipt = protocol.sign_attempt_receipt({
         "schema_version": "1", "receipt_id": f"receipt-{grant.effect_id}-{sequence}",
         "effect_operation_id": grant.effect_operation_id, "effect_id": grant.effect_id,
@@ -95,7 +96,7 @@ async def _record_receipt(grant: Any, *, sequence: int, raw: bytes | None = None
         "request_digest": grant.request_digest, "provider": grant.provider, "model": grant.model,
         "tool": grant.tool, "operation": grant.operation,
         "stage": "transport_starting" if sequence == 1 else "response_observed",
-        "transport_observation": observation, "provider_run_id": None, "provider_receipt": None,
+        "transport_observation": observation, "provider_run_id": None, "provider_receipt": provider_receipt,
         "raw_response_digest": hashlib.sha256(raw).hexdigest() if raw is not None else None,
         "usage": usage, "agent_id": LOCAL_AGENT_ID, "protocol_version": "2",
         "agent_observed_at": await _now(), "key_id": LOCAL_KEY_ID,
@@ -111,6 +112,13 @@ async def post_completion(http: httpx.AsyncClient, url: str, *, json: dict[str, 
     identity = await activations.run_identity(context.run_id)
     observe_only = identity["runtime_contract_version"] == "1"
     activation_id = f"control-{uuid.uuid4().hex}"
+    if not observe_only:
+        from core.variants.classic.prompts import render_native_request
+
+        json = await render_native_request(json, run_id=context.run_id, activation_id=activation_id,
+            attempt=1, task_fence=context.task_fence, phase=phase)
+    else:
+        json = {name: value for name, value in json.items() if name != "prompt_parameters"}
     reservation_id = "" if observe_only else await reserve_call(context.run_id, activation_id, 1, json)
     document = capability_document()
     await protocol_keys.register_agent_key(LOCAL_AGENT_ID, LOCAL_KEY_ID,
@@ -150,7 +158,8 @@ async def post_completion(http: httpx.AsyncClient, url: str, *, json: dict[str, 
             if not started:
                 raise effects.EffectDispatchError("The model transport no longer holds authority")
             await _record_receipt(grant, sequence=1)
-            response = await http.post(url, json=json, **kwargs)
+            response = await http.post(url, json={name: value for name, value in json.items()
+                if name not in {"context", "render_receipt_digest", "session_id", "task_id", "activation_id"}}, **kwargs)
             raw = response.content
             # Persist bytes before reading the provider JSON or its usage.
             await effects.observe_response(run_id=context.run_id, effect_id=effect_id, raw_response=raw,
@@ -166,6 +175,7 @@ async def post_completion(http: httpx.AsyncClient, url: str, *, json: dict[str, 
             choices = body.get("choices", []) if isinstance(body, dict) else []
             finish_reason = choices[0].get("finish_reason") if choices else None
             await _record_receipt(grant, sequence=2, raw=raw, usage=usage,
+                provider_receipt=jsonlib.dumps(body["provider_receipt"]) if isinstance(body, dict) and isinstance(body.get("provider_receipt"), dict) else None,
                 observation=jsonlib.dumps({"finish_reason": finish_reason,
                     "truncated": finish_reason in ("length", "max_tokens"), "http_status": response.status_code}))
             return {"result": raw.decode("utf-8", errors="replace"), "status": "completed"}
@@ -218,6 +228,14 @@ async def post_completion(http: httpx.AsyncClient, url: str, *, json: dict[str, 
             reservation_id=reservation_id, document=document, local_executor=local_executor)
         await seal_response(run_id=context.run_id, activation_id=activation_id, attempt=1,
                             result=outcome["result"], role=None)
+        if phase in ("control_plane:ag", "expert_generation") and response is not None and response.is_success:
+            async with db._connect() as connection:  # noqa: SLF001
+                rows = await connection.execute_fetchall(
+                    "SELECT receipt_id FROM attempt_receipts WHERE activation_id = ? AND stage = 'response_observed'",
+                    (activation_id,))
+            body = response.json()
+            body["_generator_receipt"] = {"activation_id": activation_id, "receipt_ids": [row["receipt_id"] for row in rows]}
+            response = type(response)(response.status_code, json=body, headers=response.headers, request=response.request)
         if execution_error is not None:
             raise execution_error
     assert response is not None

@@ -461,3 +461,13 @@ async def test_the_legacy_admission_keeps_the_envelope_digest_and_no_specificati
         "runtime_key": LEGACY.to_dict(), "effective_configuration": envelope,
     }))
     assert chain[0].payload["specification_digest"] == expected
+
+
+def test_memory_profiles_fix_isolated_sessions_and_allow_production_memory_experiments():
+    for fidelity in profiles.FIDELITY_PROFILES:
+        spec = compile_pair(fidelity, "quick", classic={"actor_context": "chained"})
+        assert spec.memory.provider_session_scope == "activation"
+    spec = compile_pair("production_safe", "quick", classic={"memory.actor_memory": "none"})
+    assert spec.memory.actor_memory == "none"
+    spec = compile_pair("paper_aligned", "quick", classic={"memory.actor_memory": "host_owned"})
+    assert spec.memory.actor_memory == "none"

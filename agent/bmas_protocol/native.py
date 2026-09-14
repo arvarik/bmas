@@ -606,6 +606,7 @@ class NativeProtocol:
         usage: dict[str, Any] | None = None,
         raw_response: bytes | None = None,
         transport_observation: str | None = None,
+        provider_receipt: str | None = None,
     ) -> dict[str, Any]:
         """Sign and post one attempt receipt for one nested effect."""
         handle.sequence += 1
@@ -629,7 +630,7 @@ class NativeProtocol:
             "stage": stage,
             "transport_observation": transport_observation,
             "provider_run_id": None,
-            "provider_receipt": None,
+            "provider_receipt": provider_receipt,
             "raw_response_digest": hashlib.sha256(raw_response).hexdigest() if raw_response is not None else None,
             "usage": _usage_ints(usage),
             "agent_id": self.agent_id,
